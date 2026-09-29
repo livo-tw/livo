@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Analytics + canonical are injected at build time for the CLOUD build
+         only (see cloudHeadPlugin in vite.config.ts). Customer self-host
+         builds ship zero third-party analytics and no vendor-domain refs. -->
+
+    <title>LIVO</title>
+    <meta name="description" content="LIVO 專案管理工具">
+    <meta name="author" content="LIVO" />
+    <!-- /demo/* is the LIVO React app (auth-gated SaaS). Not public content for search engines. -->
+    <meta name="robots" content="noindex,nofollow" />
+
+    <!-- PWA meta tags -->
+    <meta name="theme-color" content="#1a1a2e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LIVO" />
+    <link rel="icon" type="image/png" href="/livo-logo.png" />
+    <link rel="apple-touch-icon" href="pwa-icon-192.png" />
+
+    <!-- OG -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="LIVO">
+    <meta property="og:description" content="LIVO 專案管理工具">
+    <meta property="og:image" content="/livo-logo.png">
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="LIVO">
+    <meta name="twitter:description" content="LIVO 專案管理工具">
+    <meta name="twitter:image" content="/livo-logo.png">
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+ALTER TABLE public.tasks ADD COLUMN sprint_id uuid REFERENCES public.sprints(id) ON DELETE SET NULL;

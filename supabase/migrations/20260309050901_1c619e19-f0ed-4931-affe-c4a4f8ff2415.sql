@@ -1,0 +1,1 @@
+ALTER TABLE public.backup_settings ADD COLUMN IF NOT EXISTS notify_channel text NOT NULL DEFAULT '';

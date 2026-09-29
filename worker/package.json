@@ -1,0 +1,27 @@
+{
+  "name": "livo-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:alter:local": "node migrate/apply-tenant-alters.mjs --local",
+    "db:alter:remote": "node migrate/apply-tenant-alters.mjs --remote",
+    "db:migrate:local": "npm run db:alter:local && wrangler d1 execute livo-db --local --file=./schema.sql",
+    "db:migrate:remote": "npm run db:alter:remote && wrangler d1 execute livo-db --remote --file=./schema.sql",
+    "db:seed:local": "wrangler d1 execute livo-db --local --file=./seed.sql",
+    "db:seed:remote": "wrangler d1 execute livo-db --remote --file=./seed.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260710.1",
+    "@types/bcryptjs": "^2.4.6",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.110.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.12.29"
+  }
+}

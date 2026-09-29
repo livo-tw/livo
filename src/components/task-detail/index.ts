@@ -1,0 +1,11 @@
+export { default } from './TaskDetailContent';
+export { default as TaskDetailContent } from './TaskDetailContent';
+export { default as TaskSpecTab } from './TaskSpecTab';
+export { default as TaskCommentsTab } from './TaskCommentsTab';
+export { default as TaskMetricsTab } from './TaskMetricsTab';
+export { default as TaskTimeTab } from './TaskTimeTab';
+export { default as TaskActivityTab } from './TaskActivityTab';
+export { default as TaskSubtasksTab } from './TaskSubtasksTab';
+export { default as TaskSidebarFields } from './TaskSidebarFields';
+export { useTaskDetail } from './hooks/useTaskDetail';
+export type { TaskDetailState } from './hooks/useTaskDetail';

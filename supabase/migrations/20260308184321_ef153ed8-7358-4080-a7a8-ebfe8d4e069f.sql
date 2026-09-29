@@ -1,0 +1,1 @@
+ALTER TYPE public.app_member_role ADD VALUE IF NOT EXISTS 'super_admin';

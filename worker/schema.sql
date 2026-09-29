@@ -1,0 +1,925 @@
+-- LIVO D1 schema — full Postgres → SQLite translation.
+-- Conventions (DESIGN.md):
+--   ids/timestamps/json → TEXT; booleans → INTEGER 0/1; enums → TEXT + CHECK.
+--   uuid/expression PK defaults are generated in db.ts (crypto.randomUUID()),
+--   NOT via SQL default. Timestamp columns keep a strftime() fallback default,
+--   but db.ts fills ISO strings on insert (autoNowCols in tables.ts).
+--   PRAGMA foreign_keys is always ON in D1.
+--
+-- Idempotent: every statement is CREATE ... IF NOT EXISTS.
+--
+-- TENANCY (2026-07 cloud beta, see CLOUD-BETA-DESIGN.md): every tenant table
+-- carries `workspace_id TEXT NOT NULL DEFAULT 'default'`. Fresh DBs get it
+-- from these CREATEs; PRE-EXISTING DBs must run migrate/tenant-alters.sql
+-- via migrate/apply-tenant-alters.mjs BEFORE this file (CI does this).
+-- Self-host / local installs keep everything in workspace 'default' and see
+-- no behavior change.
+
+-- ── Auth (Worker-issued JWTs; replaces Supabase GoTrue) ─────────────────────
+
+CREATE TABLE IF NOT EXISTS auth_users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  password_hash TEXT,
+  banned        INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- replaced_by / consumed_at support a short refresh-token reuse-grace window so
+-- rotation does not sign out other tabs racing on the same token. NOTE: these
+-- columns are added only to this CREATE — D1 has no IF NOT EXISTS for ADD COLUMN,
+-- so an existing local DB needs a fresh schema apply to pick them up.
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  created_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  replaced_by TEXT,
+  consumed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_user ON auth_refresh_tokens (user_id);
+-- The refresh handler purges expired tokens by expires_at (perf audit §3):
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_expires ON auth_refresh_tokens (expires_at);
+
+-- ── Core team / board tables ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS members (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  avatar     TEXT NOT NULL,
+  role       TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('super_admin','admin','member')),
+  job_title  TEXT NOT NULL DEFAULT '',
+  color      TEXT NOT NULL DEFAULT '#6B778C',
+  email      TEXT NOT NULL DEFAULT '',
+  is_active  INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  auth_id    TEXT,                          -- no FK: imported data may hold stale ids; app heals by email
+  theme      TEXT NOT NULL DEFAULT 'dark'
+);
+-- Unique email so the email-fallback heal in requireMember can never match two rows.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_members_email_nocase ON members(email COLLATE NOCASE);
+-- requireMember's primary lookup — the hottest query in the system (perf audit §1):
+CREATE INDEX IF NOT EXISTS idx_members_auth_id ON members (auth_id);
+
+-- Supabase profiles table (auth-coupled; kept for parity, unused by the app UI)
+CREATE TABLE IF NOT EXISTS profiles (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- = auth_users.id
+  display_name TEXT NOT NULL DEFAULT '',
+  avatar_url   TEXT,
+  created_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS product_lines (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  icon       TEXT NOT NULL DEFAULT '📁',
+  color      TEXT NOT NULL DEFAULT '#6B778C',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,
+  line_id     TEXT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  color       TEXT NOT NULL DEFAULT '#6B778C',
+  is_archived INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS statuses (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,                 -- deliberately NOT unique (skipped migration)
+  color      TEXT NOT NULL DEFAULT '#6B778C',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_done    INTEGER NOT NULL DEFAULT 0,
+  auto_start INTEGER NOT NULL DEFAULT 0,
+  auto_done  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sprints (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id              TEXT PRIMARY KEY,         -- uuid generated in db.ts
+  name            TEXT NOT NULL DEFAULT '',
+  started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  completed_at    TEXT,
+  completed_count INTEGER NOT NULL DEFAULT 0,
+  pending_count   INTEGER NOT NULL DEFAULT 0,
+  is_active       INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                  TEXT PRIMARY KEY,
+  task_key            TEXT NOT NULL,
+  project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title               TEXT NOT NULL,
+  status_id           TEXT NOT NULL REFERENCES statuses(id),
+  priority            TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('highest','high','medium','low','lowest')),
+  creator_id          TEXT NOT NULL REFERENCES members(id),
+  assignee_id         TEXT REFERENCES members(id),
+  reviewer_id         TEXT REFERENCES members(id),
+  due_date            TEXT,
+  started_at          TEXT,
+  completed_at        TEXT,
+  gitlab_url          TEXT,
+  sort_order          INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d','now')),
+  comment_count       INTEGER NOT NULL DEFAULT 0,
+  sprint_id           TEXT REFERENCES sprints(id) ON DELETE SET NULL,
+  department          TEXT,
+  parent_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  approval_status     TEXT,
+  current_approval_id TEXT,                 -- no FK (PG had none)
+  requires_approval   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS tasks_parent_task_id_idx ON tasks (parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks (project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status_id ON tasks (status_id);
+-- Hot filters used by board/sprint views and the Slack digest (perf audit §1):
+CREATE INDEX IF NOT EXISTS idx_tasks_sprint_id   ON tasks (sprint_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id ON tasks (assignee_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_reviewer_id ON tasks (reviewer_id);
+
+CREATE TABLE IF NOT EXISTS task_deployments (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
+  task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  environment TEXT NOT NULL CHECK (environment IN ('Dev','QA','Stage','Live Staging','Prod')),
+  status      TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('deployed','scheduled')),
+  deploy_date TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_task_deployments_task ON task_deployments (task_id);
+
+CREATE TABLE IF NOT EXISTS task_specs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,
+  task_id     TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+  background  TEXT NOT NULL DEFAULT '',
+  requirement TEXT NOT NULL DEFAULT '',
+  notes       TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS task_checks (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,
+  task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  is_done    INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_task_checks_task ON task_checks (task_id);
+
+CREATE TABLE IF NOT EXISTS task_todos (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,
+  task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  is_done    INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_task_todos_task ON task_todos (task_id);
+
+CREATE TABLE IF NOT EXISTS comments (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id              TEXT PRIMARY KEY,
+  task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id         TEXT NOT NULL REFERENCES members(id),
+  content         TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  attachment_url  TEXT,
+  attachment_name TEXT,
+  attachment_size INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_comments_task ON comments (task_id);
+
+CREATE TABLE IF NOT EXISTS status_logs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id             TEXT PRIMARY KEY,
+  task_id        TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  from_status_id TEXT REFERENCES statuses(id),
+  to_status_id   TEXT NOT NULL REFERENCES statuses(id),
+  changed_by     TEXT NOT NULL REFERENCES members(id),
+  changed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_status_logs_task ON status_logs (task_id);
+
+-- No FK on task_id (app inserts '' — DESIGN.md exception); nullable per schema report §9.13
+CREATE TABLE IF NOT EXISTS notifications (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  recipient_id TEXT NOT NULL REFERENCES members(id),
+  sender_id    TEXT NOT NULL REFERENCES members(id),
+  type         TEXT NOT NULL,
+  task_id      TEXT,
+  content      TEXT NOT NULL DEFAULT '',
+  is_read      INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications (recipient_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS member_manuals (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id            TEXT PRIMARY KEY,           -- uuid generated in db.ts
+  member_id     TEXT NOT NULL UNIQUE REFERENCES members(id) ON DELETE CASCADE,
+  best_state    TEXT NOT NULL DEFAULT '',
+  communication TEXT NOT NULL DEFAULT '',
+  difficulty    TEXT NOT NULL DEFAULT '',
+  landmine      TEXT NOT NULL DEFAULT '',
+  bonus         TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- ── Tags (pre-migration Supabase tables; shape from frontend usage) ─────────
+
+CREATE TABLE IF NOT EXISTS tags (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id    TEXT PRIMARY KEY,
+  name  TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '#6B778C'
+);
+
+CREATE TABLE IF NOT EXISTS task_tags (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id      TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_task_tags_task ON task_tags (task_id);
+CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags (tag_id);
+
+-- ── Backups ─────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS backup_settings (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                  TEXT PRIMARY KEY,     -- uuid generated in db.ts
+  enabled             INTEGER NOT NULL DEFAULT 0,
+  interval_days       INTEGER NOT NULL DEFAULT 7,
+  backup_hour         INTEGER NOT NULL DEFAULT 3,
+  notify_email        TEXT NOT NULL DEFAULT '',
+  last_backup_at      TEXT,
+  updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  notify_channel      TEXT NOT NULL DEFAULT '',
+  task_notify_channel TEXT NOT NULL DEFAULT '',
+  task_notify_types   TEXT NOT NULL DEFAULT '["task_created","status_changed","assignee_changed","comment_added"]',  -- JSON array (was text[])
+  -- Slack DM notify window (read by slack-notify, written by 系統管理 → 通知).
+  -- NOTE: pre-existing DBs created without these columns need a one-time
+  --   ALTER TABLE backup_settings ADD COLUMN dm_notify_enabled INTEGER NOT NULL DEFAULT 1;
+  --   ALTER TABLE backup_settings ADD COLUMN dm_notify_start_hour INTEGER NOT NULL DEFAULT 0;
+  --   ALTER TABLE backup_settings ADD COLUMN dm_notify_end_hour INTEGER NOT NULL DEFAULT 24;
+  -- (slack.ts reads defensively via SELECT *, so reads work either way.)
+  dm_notify_enabled    INTEGER NOT NULL DEFAULT 1,
+  dm_notify_start_hour INTEGER NOT NULL DEFAULT 0,
+  dm_notify_end_hour   INTEGER NOT NULL DEFAULT 24
+);
+
+CREATE TABLE IF NOT EXISTS backup_history (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  filename     TEXT NOT NULL,
+  file_size    INTEGER NOT NULL DEFAULT 0,
+  storage_path TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- ── Attachments / user prefs / logs ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS task_attachments (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  task_id      TEXT NOT NULL,               -- no FK (PG had none)
+  file_name    TEXT NOT NULL,
+  file_size    INTEGER NOT NULL DEFAULT 0,
+  file_type    TEXT NOT NULL DEFAULT '',
+  storage_path TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  uploaded_by  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments (task_id);
+
+CREATE TABLE IF NOT EXISTS user_column_configs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  member_id    TEXT NOT NULL,
+  view_key     TEXT NOT NULL,
+  visible_keys TEXT NOT NULL DEFAULT '[]',  -- JSON
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (member_id, view_key)
+);
+
+-- user_id nullable (PG had NOT NULL + ON DELETE SET NULL contradiction; resolved per report §2.20)
+CREATE TABLE IF NOT EXISTS activity_logs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
+  user_id     TEXT REFERENCES members(id) ON DELETE SET NULL,
+  action      TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT 'task',
+  task_id     TEXT,
+  task_key    TEXT,
+  detail      TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_task_id ON activity_logs (task_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs (created_at DESC);
+
+-- ── Collaborative field locks (written by rpc.ts) ───────────────────────────
+
+-- Composite PK: lock keys are client strings (e.g. 'status-manage-presence')
+-- that repeat across workspaces. Pre-tenancy DBs are recreated by
+-- migrate/tenant-alters.sql (locks are 30s-TTL ephemera — safe to drop).
+CREATE TABLE IF NOT EXISTS field_locks (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  lock_key   TEXT NOT NULL,
+  locked_by  TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, lock_key)
+);
+CREATE INDEX IF NOT EXISTS idx_field_locks_expires ON field_locks (expires_at);
+CREATE INDEX IF NOT EXISTS idx_field_locks_locked_by ON field_locks (locked_by);
+
+-- ── Settings key/value stores ───────────────────────────────────────────────
+
+-- Composite PKs: every workspace has its own 'license'/'required_fields'/…
+-- rows. Pre-tenancy DBs are recreated (data-preserving) by
+-- migrate/tenant-alters.sql; db.ts extends upsert conflict targets with
+-- workspace_id for these tables (meta wsConflict flag).
+CREATE TABLE IF NOT EXISTS system_settings (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL DEFAULT '{}',    -- JSON
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_by TEXT,
+  PRIMARY KEY (workspace_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS team_settings (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL DEFAULT '{}',    -- JSON
+  updated_by TEXT REFERENCES members(id) ON DELETE SET NULL,
+  updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (workspace_id, key)
+);
+
+-- ── Slack notify prefs / auto-report configs ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS user_notification_preferences (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  user_id          TEXT PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+  enabled          INTEGER NOT NULL DEFAULT 0,
+  frequency        TEXT NOT NULL DEFAULT 'daily',
+  weekday          INTEGER NOT NULL DEFAULT 1,
+  hour             INTEGER NOT NULL DEFAULT 9,
+  include_assigned INTEGER NOT NULL DEFAULT 1,
+  include_review   INTEGER NOT NULL DEFAULT 1,
+  last_sent_at     TEXT,
+  -- Email 通知（指派/提及/到期）；既有 DB 需手動 ALTER（見 email_config 註解）
+  email_notify_enabled INTEGER NOT NULL DEFAULT 1,
+  email_notify_types   TEXT NOT NULL DEFAULT '["assigned","mentioned","due_soon"]',
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS user_report_configs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                TEXT PRIMARY KEY,       -- expression default in PG → generated in db.ts
+  user_id           TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  report_type       TEXT NOT NULL DEFAULT 'daily',
+  enabled           INTEGER NOT NULL DEFAULT 0,
+  hour              INTEGER NOT NULL DEFAULT 17,
+  minute            INTEGER NOT NULL DEFAULT 30,
+  weekday           INTEGER NOT NULL DEFAULT 5,
+  template_key      TEXT NOT NULL DEFAULT 'default_daily',
+  custom_template   TEXT,
+  scope             TEXT NOT NULL DEFAULT 'assigned_to_me',
+  scope_project_ids TEXT,                   -- JSON array (was text[])
+  send_target       TEXT NOT NULL DEFAULT 'dm',
+  send_channel      TEXT,
+  last_sent_at      TEXT,
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (user_id, report_type)
+);
+
+-- ── Orders (server-only; never exposed via /api/query) ──────────────────────
+
+CREATE TABLE IF NOT EXISTS orders (
+  id                  TEXT PRIMARY KEY,     -- uuid generated in db.ts / payments.ts
+  merchant_trade_no   TEXT NOT NULL UNIQUE,
+  email               TEXT NOT NULL,
+  plan_type           TEXT NOT NULL CHECK (plan_type IN ('standard','professional')),
+  amount              INTEGER NOT NULL,
+  payment_status      TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','failed')),
+  license_key         TEXT,
+  download_token      TEXT,
+  download_expires_at TEXT,
+  ecpay_trade_no      TEXT,
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  paid_at             TEXT
+);
+CREATE INDEX IF NOT EXISTS orders_download_token_idx ON orders (download_token) WHERE download_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS orders_merchant_trade_no_idx ON orders (merchant_trade_no);
+
+-- Buyer「我已完成付款」reports for the manual rails (bank transfer / PayPal).
+-- Server-only (never registered in tables.ts). Keyed by order so re-reports
+-- refresh the row. Feeds the seller-notification email + one-click fulfill link.
+CREATE TABLE IF NOT EXISTS order_payment_reports (
+  order_no     TEXT PRIMARY KEY,   -- orders.merchant_trade_no
+  last5        TEXT,               -- buyer-reported account last-5 digits / note
+  reported_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  notified_at  TEXT                -- when the seller-notify email went out
+);
+
+-- ── Trial leads (14-day self-host trial funnel; server-only) ────────────────
+-- Written by functions/trial.ts (create-trial). Not client-queryable (never
+-- registered in tables.ts). One row per email; `key` is a real PRO license key
+-- whose expiry is today+14d (same HMAC scheme as orders). reminded_at is set
+-- when the "3 days left" reminder email has been sent (scheduled() cron).
+CREATE TABLE IF NOT EXISTS trial_leads (
+  email              TEXT PRIMARY KEY COLLATE NOCASE,
+  key                TEXT NOT NULL,
+  tier               TEXT NOT NULL DEFAULT 'professional',
+  issued_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at         TEXT NOT NULL,
+  team               TEXT,
+  ip                 TEXT,
+  reminded_at        TEXT,
+  converted_order_id TEXT
+);
+-- Reminder cron scans by expiry among not-yet-reminded leads:
+CREATE INDEX IF NOT EXISTS idx_trial_leads_expires ON trial_leads (expires_at);
+-- Soft IP cap (recent issuances from one IP):
+CREATE INDEX IF NOT EXISTS idx_trial_leads_ip ON trial_leads (ip, issued_at);
+
+-- ── Custom fields ───────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS custom_fields (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  field_name    TEXT NOT NULL,
+  field_type    TEXT NOT NULL CHECK (field_type IN ('text','textarea','number','select','date','boolean','user')),
+  options       TEXT,                       -- JSON
+  is_required   INTEGER NOT NULL DEFAULT 0,
+  default_value TEXT,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_custom_fields_project_id ON custom_fields (project_id);
+
+CREATE TABLE IF NOT EXISTS task_custom_field_values (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id            TEXT PRIMARY KEY,
+  task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  field_id      TEXT NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+  value_text    TEXT,
+  value_number  REAL,
+  value_date    TEXT,
+  value_boolean INTEGER,
+  value_user_id TEXT,
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (task_id, field_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_custom_field_values_task_id ON task_custom_field_values (task_id);
+CREATE INDEX IF NOT EXISTS idx_task_custom_field_values_field_id ON task_custom_field_values (field_id);
+
+-- ── Dependencies / templates ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                 TEXT PRIMARY KEY,      -- expression default in PG → generated in db.ts
+  task_id            TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  dependency_type    TEXT NOT NULL DEFAULT 'finish_to_start',
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (task_id, depends_on_task_id),
+  CHECK (task_id <> depends_on_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_task_id ON task_dependencies (task_id);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on ON task_dependencies (depends_on_task_id);
+
+CREATE TABLE IF NOT EXISTS task_templates (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                       TEXT PRIMARY KEY,
+  project_id               TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  name                     TEXT NOT NULL,
+  description              TEXT NOT NULL DEFAULT '',
+  default_priority         TEXT CHECK (default_priority IN ('highest','high','medium','low','lowest')),
+  default_tag_ids          TEXT NOT NULL DEFAULT '[]',  -- JSON
+  default_spec_background  TEXT NOT NULL DEFAULT '',
+  default_spec_requirement TEXT NOT NULL DEFAULT '',
+  default_spec_notes       TEXT NOT NULL DEFAULT '',
+  created_by               TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  default_check_items      TEXT NOT NULL DEFAULT '[]', -- JSON array of strings
+  default_todo_items       TEXT NOT NULL DEFAULT '[]'  -- JSON array of strings
+);
+
+-- ── Work reports / board prefs / transition rules ───────────────────────────
+
+CREATE TABLE IF NOT EXISTS work_reports (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  user_id      TEXT NOT NULL,               -- no FK (PG had none after type fix)
+  report_type  TEXT NOT NULL CHECK (report_type IN ('daily','weekly','monthly')),
+  period_start TEXT NOT NULL,
+  period_end   TEXT NOT NULL,
+  title        TEXT NOT NULL,
+  content      TEXT NOT NULL DEFAULT '',
+  is_edited    INTEGER NOT NULL DEFAULT 0,
+  generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_work_reports_user_type_period ON work_reports (user_id, report_type, period_start DESC);
+
+CREATE TABLE IF NOT EXISTS user_board_prefs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  user_id            TEXT PRIMARY KEY,
+  card_fields        TEXT NOT NULL DEFAULT '{}',  -- JSON
+  custom_card_fields TEXT NOT NULL DEFAULT '{}',  -- JSON
+  subtask_mode       TEXT NOT NULL DEFAULT 'independent' CHECK (subtask_mode IN ('independent','nested')),
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS status_transition_rules (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                 TEXT PRIMARY KEY,      -- expression default in PG → generated in db.ts
+  target_status_id   TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  required_status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  created_at         TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (target_status_id, required_status_id)
+);
+
+-- ── Approval workflow ───────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS approval_rules (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
+  project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = global
+  from_status TEXT NOT NULL,                -- stores status IDs in practice
+  to_status   TEXT NOT NULL,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_by  TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (project_id, from_status, to_status)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_rules_project ON approval_rules (project_id);
+
+CREATE TABLE IF NOT EXISTS approval_rule_steps (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id               TEXT PRIMARY KEY,        -- uuid generated in db.ts
+  rule_id          TEXT NOT NULL REFERENCES approval_rules(id) ON DELETE CASCADE,
+  step_order       INTEGER NOT NULL,
+  approver_type    TEXT NOT NULL CHECK (approver_type IN ('role','user')),
+  approver_role    TEXT,
+  approver_user_id TEXT REFERENCES members(id) ON DELETE SET NULL,
+  allow_delegate   INTEGER NOT NULL DEFAULT 0,
+  timeout_hours    INTEGER,
+  timeout_action   TEXT CHECK (timeout_action IN ('remind','auto_approve','escalate')),
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (rule_id, step_order)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_steps_rule ON approval_rule_steps (rule_id);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,            -- uuid generated in db.ts
+  task_id      TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  rule_id      TEXT REFERENCES approval_rules(id) ON DELETE CASCADE,  -- nullable
+  requested_by TEXT NOT NULL,
+  from_status  TEXT NOT NULL,
+  to_status    TEXT NOT NULL,
+  current_step INTEGER NOT NULL DEFAULT 1,
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','returned','cancelled')),
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_task ON approval_requests (task_id);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests (status);
+
+CREATE TABLE IF NOT EXISTS approval_actions (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,              -- uuid generated in db.ts
+  request_id TEXT NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  action_by  TEXT NOT NULL,
+  action     TEXT NOT NULL CHECK (action IN ('approve','reject','return')),
+  comment    TEXT,
+  acted_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_approval_actions_request ON approval_actions (request_id);
+
+-- ── External integrations (bidirectional) ───────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS external_account_bindings (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id               TEXT PRIMARY KEY,        -- uuid generated in db.ts
+  member_id        TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  platform         TEXT NOT NULL CHECK (platform IN ('slack','teams','line')),
+  platform_user_id TEXT NOT NULL,
+  platform_team_id TEXT,
+  display_name     TEXT,
+  is_verified      INTEGER NOT NULL DEFAULT 0,
+  bound_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_active_at   TEXT,
+  UNIQUE (platform, platform_user_id, platform_team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_bindings_member ON external_account_bindings (member_id);
+CREATE INDEX IF NOT EXISTS idx_external_bindings_platform ON external_account_bindings (platform, platform_user_id);
+
+CREATE TABLE IF NOT EXISTS external_action_logs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                  TEXT PRIMARY KEY,     -- uuid generated in db.ts
+  member_id           TEXT NOT NULL,
+  binding_id          TEXT REFERENCES external_account_bindings(id) ON DELETE SET NULL,
+  platform            TEXT NOT NULL,
+  action_type         TEXT NOT NULL CHECK (action_type IN ('approval_approve','approval_reject','approval_return','status_change','comment_add','task_view','task_assign','slash_command')),
+  target_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  action_payload      TEXT,                 -- JSON
+  result_status       TEXT NOT NULL DEFAULT 'success' CHECK (result_status IN ('success','failed','denied','expired')),
+  error_message       TEXT,
+  platform_message_id TEXT,
+  acted_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_external_actions_member ON external_action_logs (member_id);
+CREATE INDEX IF NOT EXISTS idx_external_actions_date ON external_action_logs (acted_at);
+
+CREATE TABLE IF NOT EXISTS slack_thread_mappings (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                TEXT PRIMARY KEY,       -- uuid generated in db.ts
+  slack_channel_id  TEXT NOT NULL,
+  slack_thread_ts   TEXT NOT NULL,
+  task_id           TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  notification_type TEXT,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (slack_channel_id, slack_thread_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_slack_threads_task ON slack_thread_mappings (task_id);
+
+-- Customer-bound Slack credentials (single row id='singleton'). Server-only:
+-- NEVER registered in tables.ts, so the bot token can never be read via
+-- /api/query. Set through the admin-gated /api/functions/slack-config endpoint
+-- (which runs auth.test and stores the resolved team name for display). Lets a
+-- self-host customer bind their OWN Slack workspace from the app UI without
+-- editing env/secrets. resolveSlackToken() reads this first, else env.SLACK_BOT_TOKEN.
+CREATE TABLE IF NOT EXISTS slack_config (
+  id            TEXT PRIMARY KEY DEFAULT 'singleton',
+  bot_token     TEXT,          -- xoxb-… ; server-only, never returned to clients
+  team_name     TEXT,          -- from auth.test, shown to admin as 已連線: {team}
+  configured_at TEXT,
+  configured_by TEXT           -- member id who set it
+);
+
+CREATE TABLE IF NOT EXISTS interaction_tokens (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
+  token_hash  TEXT NOT NULL UNIQUE,
+  action_type TEXT NOT NULL,
+  target_id   TEXT NOT NULL,
+  platform    TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  is_used     INTEGER NOT NULL DEFAULT 0,
+  used_at     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- ── Report sending ──────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS report_send_targets (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id             TEXT PRIMARY KEY,          -- uuid generated in db.ts
+  project_id     TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = global
+  report_type    TEXT NOT NULL CHECK (report_type IN ('daily','weekly','monthly')),
+  channel_type   TEXT NOT NULL CHECK (channel_type IN ('slack','email','line','webhook')),
+  channel_config TEXT NOT NULL,             -- JSON
+  format         TEXT NOT NULL DEFAULT 'text' CHECK (format IN ('text','full','pdf')),
+  is_enabled     INTEGER NOT NULL DEFAULT 1,
+  created_by     TEXT NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_report_targets_project ON report_send_targets (project_id);
+CREATE INDEX IF NOT EXISTS idx_report_targets_type ON report_send_targets (report_type);
+
+CREATE TABLE IF NOT EXISTS report_send_logs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id              TEXT PRIMARY KEY,         -- uuid generated in db.ts
+  report_type     TEXT NOT NULL,
+  target_id       TEXT REFERENCES report_send_targets(id) ON DELETE SET NULL,
+  channel_type    TEXT NOT NULL,
+  channel_target  TEXT NOT NULL,
+  format          TEXT NOT NULL,
+  content_preview TEXT,
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed')),
+  error_message   TEXT,
+  retry_count     INTEGER NOT NULL DEFAULT 0,
+  sent_by         TEXT NOT NULL,
+  sent_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  completed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_report_logs_date ON report_send_logs (sent_at);
+
+-- ── Smart notifications ─────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS notification_templates (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id               TEXT PRIMARY KEY,        -- uuid generated in db.ts
+  organization_id  TEXT,
+  name             TEXT NOT NULL,
+  event_type       TEXT NOT NULL CHECK (event_type IN ('task_created','status_changed','assignee_changed','due_reminder','overdue','approval_requested','approval_completed','comment_added','custom')),
+  template_content TEXT NOT NULL DEFAULT '',
+  tone             TEXT NOT NULL DEFAULT 'neutral' CHECK (tone IN ('neutral','celebration','urgent','warning','friendly')),
+  is_default       INTEGER NOT NULL DEFAULT 0,
+  created_by       TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+-- Template names are unique PER WORKSPACE (the old global uq_…_name index is
+-- dropped by migrate/tenant-alters.sql on pre-tenancy DBs).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_templates_ws_name ON notification_templates (workspace_id, name);
+CREATE INDEX IF NOT EXISTS idx_notification_templates_event ON notification_templates (event_type);
+
+CREATE TABLE IF NOT EXISTS notification_rules (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                      TEXT PRIMARY KEY, -- uuid generated in db.ts
+  project_id              TEXT,             -- NULL = global; no FK (PG had none)
+  event_type              TEXT NOT NULL CHECK (event_type IN ('task_created','status_changed','assignee_changed','due_reminder','overdue','approval_requested','approval_completed','comment_added','custom')),
+  from_status             TEXT,
+  to_status               TEXT,
+  is_enabled              INTEGER NOT NULL DEFAULT 1,
+  template_id             TEXT REFERENCES notification_templates(id) ON DELETE SET NULL,
+  target_channels         TEXT NOT NULL DEFAULT '[]',  -- JSON
+  priority_overrides      TEXT NOT NULL DEFAULT '{}',  -- JSON
+  auto_send               INTEGER NOT NULL DEFAULT 0,
+  auto_send_delay_seconds INTEGER NOT NULL DEFAULT 3,
+  created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_event ON notification_rules (event_type);
+CREATE INDEX IF NOT EXISTS idx_notification_rules_project ON notification_rules (project_id);
+
+CREATE TABLE IF NOT EXISTS notification_delivery_logs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id              TEXT PRIMARY KEY,         -- uuid generated in db.ts
+  rule_id         TEXT REFERENCES notification_rules(id) ON DELETE SET NULL,
+  task_id         TEXT,
+  event_type      TEXT NOT NULL CHECK (event_type IN ('task_created','status_changed','assignee_changed','due_reminder','overdue','approval_requested','approval_completed','comment_added','custom')),
+  triggered_by    TEXT,
+  message_content TEXT NOT NULL DEFAULT '',
+  was_customized  INTEGER NOT NULL DEFAULT 0,
+  channel_type    TEXT NOT NULL DEFAULT '',
+  channel_target  TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','failed','skipped')),
+  error_message   TEXT,
+  sent_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_logs_task ON notification_delivery_logs (task_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_logs_sent_at ON notification_delivery_logs (sent_at DESC);
+
+CREATE TABLE IF NOT EXISTS due_date_reminders (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id            TEXT PRIMARY KEY,           -- uuid generated in db.ts
+  task_id       TEXT NOT NULL,
+  remind_at     TEXT NOT NULL,
+  reminder_type TEXT NOT NULL CHECK (reminder_type IN ('before_1day','due_day','overdue')),
+  is_sent       INTEGER NOT NULL DEFAULT 0,
+  sent_at       TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_due_reminders_remind_at ON due_date_reminders (remind_at) WHERE is_sent = 0;
+CREATE INDEX IF NOT EXISTS idx_due_reminders_task ON due_date_reminders (task_id);
+
+-- ── Standup ─────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS standup_sessions (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                     TEXT PRIMARY KEY,  -- uuid generated in db.ts
+  created_by             TEXT NOT NULL,
+  started_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  ended_at               TEXT,
+  sprint_id              TEXT,              -- no FK (PG had none)
+  created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  default_speak_duration INTEGER NOT NULL DEFAULT 120,
+  sort_mode              TEXT NOT NULL DEFAULT 'by_member' CHECK (sort_mode IN ('by_member','by_project','by_due_date','by_department')),
+  auto_advance           INTEGER NOT NULL DEFAULT 1,
+  buffer_seconds         INTEGER NOT NULL DEFAULT 15
+);
+
+CREATE TABLE IF NOT EXISTS standup_member_durations (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id                 TEXT PRIMARY KEY,      -- uuid generated in db.ts
+  standup_session_id TEXT NOT NULL REFERENCES standup_sessions(id) ON DELETE CASCADE,
+  member_id          TEXT NOT NULL,
+  speak_duration     INTEGER NOT NULL,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (standup_session_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS idx_standup_member_durations_session ON standup_member_durations (standup_session_id);
+
+-- ── 時間追蹤（time tracking）────────────────────────────────────────────────
+-- 進行中的計時 = started_at 有值且 ended_at IS NULL 的 entry（minutes 0）；
+-- 停止時前端結算 minutes 並補 ended_at。手動補登直接寫 minutes + entry_date。
+CREATE TABLE IF NOT EXISTS time_entries (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id         TEXT PRIMARY KEY,              -- uuid generated in db.ts
+  task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  member_id  TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  minutes    INTEGER NOT NULL DEFAULT 0,
+  note       TEXT NOT NULL DEFAULT '',
+  entry_date TEXT NOT NULL,                 -- YYYY-MM-DD（工時歸屬日）
+  started_at TEXT,                          -- 計時器起點（ISO）
+  ended_at   TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_time_entries_task ON time_entries (task_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_member_date ON time_entries (member_id, entry_date);
+
+-- ── Email 通知設定（客戶自綁 Resend，slack_config 同款 server-only）────────
+-- NEVER registered in tables.ts；經 admin-gated /api/functions/email-config
+-- 設定（驗證 key 後儲存）。resolveEmailConfig() 先讀這裡，否則退回
+-- env.RESEND_API_KEY（雲端實例）。
+-- NOTE: 既有 prod D1 需一次性 ALTER 加 user_notification_preferences 欄位：
+--   ALTER TABLE user_notification_preferences ADD COLUMN email_notify_enabled INTEGER NOT NULL DEFAULT 1;
+--   ALTER TABLE user_notification_preferences ADD COLUMN email_notify_types TEXT NOT NULL DEFAULT '["assigned","mentioned","due_soon"]';
+CREATE TABLE IF NOT EXISTS email_config (
+  id            TEXT PRIMARY KEY DEFAULT 'singleton',
+  api_key       TEXT,          -- Resend API key; server-only, never returned
+  from_address  TEXT,          -- 寄件人（客戶自己已驗證的網域）
+  configured_at TEXT,
+  configured_by TEXT
+);
+
+-- ── API tokens（PAT；server-only，經 /api/functions/api-tokens 管理）────────
+-- token 明文只在建立當下回傳一次；儲存 sha256。requireMember 接受
+-- Authorization: Bearer livo_pat_… 並以 member_id 的身分行事（含權限層）。
+CREATE TABLE IF NOT EXISTS api_tokens (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  member_id    TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  created_by   TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_used_at TEXT,
+  revoked_at   TEXT
+);
+
+-- ── Webhooks（server-only：secret 不可外洩；經 /api/functions/webhooks 管理）─
+-- 事件由 worker 端派送（db.ts 變更事件 → dispatchWebhooks），HMAC-SHA256 簽名
+-- 放 X-Livo-Signature。events 是 JSON 陣列。
+CREATE TABLE IF NOT EXISTS webhook_configs (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  id           TEXT PRIMARY KEY,
+  url          TEXT NOT NULL,
+  events       TEXT NOT NULL DEFAULT '["task_created","task_updated","task_deleted","comment_added"]',
+  secret       TEXT NOT NULL,
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  created_by   TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_status  TEXT,
+  last_sent_at TEXT
+);
+
+-- ── Cloud beta tenancy plane（server-only；見 CLOUD-BETA-DESIGN.md）──────────
+-- workspaces：每個雲端 Beta 租戶一列。workspace 'default' 沒有列（= 舊有資料／
+-- 自架安裝／公開 demo，額度不受限）。cloud_waitlist：官網排隊名單（email PK）。
+CREATE TABLE IF NOT EXISTS workspaces (
+  id                 TEXT PRIMARY KEY,
+  name               TEXT NOT NULL,
+  plan               TEXT NOT NULL DEFAULT 'beta',
+  member_limit       INTEGER NOT NULL DEFAULT 10,
+  storage_limit_mb   INTEGER NOT NULL DEFAULT 500,
+  storage_used_bytes INTEGER NOT NULL DEFAULT 0,
+  status             TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended')),
+  owner_email        TEXT,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS cloud_waitlist (
+  email               TEXT PRIMARY KEY COLLATE NOCASE,
+  name                TEXT,
+  team_size           TEXT,
+  status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','invited','joined')),
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  invited_at          TEXT,
+  joined_workspace_id TEXT,
+  ip                  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_waitlist_ip ON cloud_waitlist (ip, created_at);
+
+-- Per-workspace hot-path indexes（tenancy filter 注入後的查詢路徑）
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_comments_workspace ON comments (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_workspace ON activity_logs (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_status_logs_workspace ON status_logs (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_workspace ON time_entries (workspace_id, entry_date);
+CREATE INDEX IF NOT EXISTS idx_members_workspace ON members (workspace_id);

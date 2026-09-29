@@ -1,0 +1,36 @@
+# ============================================================
+# LIVO frontend (static SPA) served inside Docker.
+# No Node.js needed on the host — the bundled server.cjs runs
+# in a node:20-alpine container.
+#
+# Used together with docker-compose.yml (run inside docker/):
+#   docker compose -f docker-compose.yml -f compose.frontend.yml up -d
+#
+# Change the host port: add a line to docker/.env, e.g.
+#   LIVO_FRONTEND_PORT=3001
+# ============================================================
+services:
+  livo-frontend:
+    container_name: livo-frontend
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /srv/app
+    environment:
+      PORT: "3000"
+    command: ["node", "server.cjs"]
+    volumes:
+      - ../app:/srv/app:ro
+    ports:
+      - "${LIVO_FRONTEND_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/demo/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

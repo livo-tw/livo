@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "livo-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  // Optional custom domain for the API (the zone must be on your Cloudflare account):
+  // "routes": [{ "pattern": "api.example.com", "custom_domain": true }],
+  //
+  // Hourly cron drives scheduled backup, the Slack digest and due-date
+  // reminders (each self-gates on its configured hour in Taiwan time).
+  "triggers": { "crons": ["0 * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "livo-db",
+      // Paste the id printed by `npx wrangler d1 create livo-db`.
+      // Local development (`npm run dev`) works without changing it.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "livo-attachments"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "REALTIME", "class_name": "RealtimeHub" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+  ],
+  "vars": {
+    // Comma-separated origins allowed to call the API (your web app's origin).
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000",
+    // Public origins used when building links in emails and notifications.
+    "APP_BASE_URL": "http://localhost:5173",
+    "API_BASE_URL": "http://localhost:8787",
+    // "1" turns the whole instance into a public demo: admin actions are
+    // blocked for everyone and (with DEMO_RESET="1") data resets hourly.
+    "DEMO_MODE": "0",
+    "DEMO_RESET": "0",
+    "DEMO_LOCK_LICENSE": "0",
+    "DEMO_ACCOUNT_EMAIL": "",
+    // "1" enables hosted sign-up (public waitlist → invite email → one
+    // workspace per team). Leave "0" for a normal single-team install.
+    "CLOUD_SIGNUP": "0"
+  }
+  // Secrets — `npx wrangler secret put NAME` in production, or a .dev.vars
+  // file (see .dev.vars.example) for local development:
+  //   JWT_SECRET          required. Signs access/refresh tokens and invite links.
+  //   RESEND_API_KEY      optional. Enables email notifications via Resend.
+  //   RESEND_FROM_EMAIL   optional. Sender address for those emails.
+  //   SLACK_BOT_TOKEN     optional. Default Slack bot (teams can also bind their own).
+  //   SELLER_NOTIFY_EMAIL optional. Receives hosted sign-up requests (CLOUD_SIGNUP=1).
+}

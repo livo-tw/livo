@@ -1,0 +1,1 @@
+ALTER TABLE public.backup_settings ADD COLUMN task_notify_types text[] NOT NULL DEFAULT ARRAY['task_created','status_changed','assignee_changed','comment_added'];

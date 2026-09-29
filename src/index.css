@@ -1,0 +1,597 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ========================================
+     Theme: dark (default) — slate dark sidebar
+     Content area is light, sidebar is dark slate
+     ======================================== */
+  :root,
+  [data-theme="dark"] {
+    --background: 220 14% 96%;
+    --foreground: 222 20% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 20% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 20% 14%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 20% 14%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 94%;
+    --accent-foreground: 222 20% 14%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.625rem;
+
+    /* Sidebar: dark slate with left→right gradient */
+    --sidebar-bg: 222 27% 11%;
+    --sidebar-fg: 220 14% 78%;
+    --sidebar-active: 221 83% 53%;
+    --sidebar-hover: 222 22% 16%;
+    --sidebar-section-bg: 222 24% 13%;
+    --sidebar-section-alt: 222 22% 15%;
+    --sidebar-gradient-end: 222 18% 22%;
+
+    --status-todo: 220 9% 46%;
+    --status-inprogress: 221 83% 53%;
+    --status-review: 38 92% 50%;
+    --status-discuss: 262 52% 56%;
+    --status-deploy: 189 94% 43%;
+    --status-done: 160 64% 43%;
+    --status-cancelled: 220 9% 64%;
+
+    --priority-highest: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 38 92% 50%;
+    --priority-low: 221 83% 53%;
+    --priority-lowest: 220 9% 58%;
+
+    --board-bg: 220 14% 96%;
+    --board-column: 0 0% 100%;
+
+    --section-header: 222 20% 14%;
+
+    --sidebar-background: 222 27% 11%;
+    --sidebar-foreground: 220 14% 78%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 22% 16%;
+    --sidebar-accent-foreground: 220 14% 88%;
+    --sidebar-border: 222 20% 18%;
+    --sidebar-ring: 221 83% 53%;
+
+    /* TopBar gradient: sidebar-background → tab-bar-bg */
+    --tab-bar-bg: 222 20% 20%;
+    --tab-active-bg: 221 83% 53%;
+    --tab-active-fg: 0 0% 100%;
+    --tab-inactive-fg: 220 12% 55%;
+    --tab-hover-bg: 222 18% 24%;
+
+    --sidebar-logo-filter: brightness(0) invert(1);
+  }
+
+  /* ========================================
+     Theme: blue — deep ocean sidebar
+     ======================================== */
+  [data-theme="blue"] {
+    --background: 214 32% 96%;
+    --foreground: 222 28% 12%;
+
+    --card: 210 40% 100%;
+    --card-foreground: 222 28% 12%;
+
+    --popover: 210 40% 100%;
+    --popover-foreground: 222 28% 12%;
+
+    --primary: 217 91% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 214 20% 95%;
+    --secondary-foreground: 222 28% 12%;
+
+    --muted: 214 20% 95%;
+    --muted-foreground: 215 14% 45%;
+
+    --accent: 214 20% 93%;
+    --accent-foreground: 222 28% 12%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 18% 90%;
+    --input: 214 18% 90%;
+    --ring: 217 91% 50%;
+
+    --radius: 0.625rem;
+
+    --sidebar-bg: 222 44% 18%;
+    --sidebar-fg: 214 25% 82%;
+    --sidebar-active: 217 91% 56%;
+    --sidebar-hover: 222 38% 24%;
+    --sidebar-section-bg: 222 42% 20%;
+    --sidebar-section-alt: 222 38% 22%;
+    --sidebar-gradient-end: 222 32% 30%;
+
+    --status-todo: 220 9% 46%;
+    --status-inprogress: 217 91% 50%;
+    --status-review: 38 92% 50%;
+    --status-discuss: 262 52% 56%;
+    --status-deploy: 189 94% 43%;
+    --status-done: 160 64% 43%;
+    --status-cancelled: 220 9% 64%;
+
+    --priority-highest: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 38 92% 50%;
+    --priority-low: 217 91% 50%;
+    --priority-lowest: 220 9% 58%;
+
+    --board-bg: 214 32% 96%;
+    --board-column: 0 0% 100%;
+
+    --section-header: 222 28% 12%;
+
+    --sidebar-background: 222 44% 18%;
+    --sidebar-foreground: 214 25% 82%;
+    --sidebar-primary: 217 91% 56%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 38% 24%;
+    --sidebar-accent-foreground: 214 25% 90%;
+    --sidebar-border: 222 36% 24%;
+    --sidebar-ring: 217 91% 56%;
+
+    --tab-bar-bg: 222 36% 28%;
+    --tab-active-bg: 217 91% 56%;
+    --tab-active-fg: 0 0% 100%;
+    --tab-inactive-fg: 214 18% 58%;
+    --tab-hover-bg: 222 32% 32%;
+
+    --sidebar-logo-filter: brightness(0) invert(1);
+  }
+
+  /* ========================================
+     Theme: white — light, clean, airy
+     ======================================== */
+  [data-theme="white"] {
+    --background: 0 0% 97%;
+    --foreground: 224 12% 18%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 12% 18%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 12% 18%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 9% 96%;
+    --secondary-foreground: 224 12% 18%;
+
+    --muted: 220 9% 96%;
+    --muted-foreground: 220 8% 46%;
+
+    --accent: 220 9% 95%;
+    --accent-foreground: 224 12% 18%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 9% 91%;
+    --input: 220 9% 91%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.625rem;
+
+    --sidebar-bg: 0 0% 100%;
+    --sidebar-fg: 220 9% 40%;
+    --sidebar-active: 221 83% 53%;
+    --sidebar-hover: 220 14% 96%;
+    --sidebar-section-bg: 220 9% 98%;
+    --sidebar-section-alt: 220 9% 96%;
+    --sidebar-gradient-end: 220 14% 93%;
+
+    --status-todo: 220 9% 46%;
+    --status-inprogress: 221 83% 53%;
+    --status-review: 38 92% 50%;
+    --status-discuss: 262 52% 56%;
+    --status-deploy: 189 94% 43%;
+    --status-done: 160 64% 43%;
+    --status-cancelled: 220 9% 64%;
+
+    --priority-highest: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 38 92% 50%;
+    --priority-low: 221 83% 53%;
+    --priority-lowest: 220 9% 58%;
+
+    --board-bg: 0 0% 97%;
+    --board-column: 0 0% 100%;
+
+    --section-header: 224 12% 18%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 9% 40%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 220 9% 26%;
+    --sidebar-border: 220 9% 92%;
+    --sidebar-ring: 221 83% 53%;
+
+    --tab-bar-bg: 220 12% 92%;
+    --tab-active-bg: 221 83% 53%;
+    --tab-active-fg: 0 0% 100%;
+    --tab-inactive-fg: 220 8% 42%;
+    --tab-hover-bg: 220 10% 88%;
+
+    --sidebar-logo-filter: none;
+  }
+
+  /* ========================================
+     Theme: beige — soft cream / light yellow
+     Light warm sidebar, butter-cream palette
+     ======================================== */
+  [data-theme="beige"] {
+    /* Content area: very light warm cream */
+    --background: 48 50% 96%;
+    --foreground: 45 10% 16%;
+
+    --card: 50 55% 99%;
+    --card-foreground: 45 10% 16%;
+
+    --popover: 50 55% 99%;
+    --popover-foreground: 45 10% 16%;
+
+    /* Primary: warm golden, NOT orange */
+    --primary: 42 76% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 48 30% 93%;
+    --secondary-foreground: 45 10% 16%;
+
+    --muted: 48 30% 93%;
+    --muted-foreground: 45 8% 44%;
+
+    --accent: 48 30% 91%;
+    --accent-foreground: 45 10% 16%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 47 24% 86%;
+    --input: 47 24% 86%;
+    --ring: 42 76% 48%;
+
+    --radius: 0.625rem;
+
+    /* Sidebar: pale yellow cream — 淡黃米色 */
+    --sidebar-bg: 48 45% 93%;
+    --sidebar-fg: 45 12% 30%;
+    --sidebar-active: 42 76% 48%;
+    --sidebar-hover: 48 38% 88%;
+    --sidebar-section-bg: 48 42% 91%;
+    --sidebar-section-alt: 47 36% 89%;
+    --sidebar-gradient-end: 46 24% 82%;
+
+    --status-todo: 220 9% 46%;
+    --status-inprogress: 42 76% 48%;
+    --status-review: 30 95% 55%;
+    --status-discuss: 262 52% 56%;
+    --status-deploy: 189 94% 43%;
+    --status-done: 160 64% 43%;
+    --status-cancelled: 220 9% 64%;
+
+    --priority-highest: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 42 92% 50%;
+    --priority-low: 42 76% 48%;
+    --priority-lowest: 45 8% 58%;
+
+    --board-bg: 48 50% 96%;
+    --board-column: 50 55% 99%;
+
+    --section-header: 45 10% 16%;
+
+    --sidebar-background: 48 45% 93%;
+    --sidebar-foreground: 45 12% 30%;
+    --sidebar-primary: 42 76% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 48 38% 88%;
+    --sidebar-accent-foreground: 45 12% 20%;
+    --sidebar-border: 47 24% 85%;
+    --sidebar-ring: 42 76% 48%;
+
+    /* Tab bar: deeper cream for visible gradient */
+    --tab-bar-bg: 45 24% 80%;
+    --tab-active-bg: 42 76% 48%;
+    --tab-active-fg: 0 0% 100%;
+    --tab-inactive-fg: 45 8% 35%;
+    --tab-hover-bg: 45 20% 76%;
+
+    /* Light sidebar → dark logo */
+    --sidebar-logo-filter: none;
+  }
+
+  /* ========================================
+     Theme: green — vivid emerald
+     ======================================== */
+  [data-theme="green"] {
+    --background: 152 18% 96%;
+    --foreground: 156 16% 13%;
+
+    --card: 150 22% 99%;
+    --card-foreground: 156 16% 13%;
+
+    --popover: 150 22% 99%;
+    --popover-foreground: 156 16% 13%;
+
+    --primary: 156 72% 37%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 152 16% 94%;
+    --secondary-foreground: 156 16% 13%;
+
+    --muted: 152 16% 94%;
+    --muted-foreground: 154 10% 44%;
+
+    --accent: 152 16% 92%;
+    --accent-foreground: 156 16% 13%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 152 14% 88%;
+    --input: 152 14% 88%;
+    --ring: 156 72% 37%;
+
+    --radius: 0.625rem;
+
+    --sidebar-bg: 156 42% 11%;
+    --sidebar-fg: 150 20% 78%;
+    --sidebar-active: 156 72% 42%;
+    --sidebar-hover: 156 36% 17%;
+    --sidebar-section-bg: 156 40% 13%;
+    --sidebar-section-alt: 156 36% 15%;
+    --sidebar-gradient-end: 155 34% 20%;
+
+    --status-todo: 220 9% 46%;
+    --status-inprogress: 156 72% 37%;
+    --status-review: 38 92% 50%;
+    --status-discuss: 262 52% 56%;
+    --status-deploy: 189 94% 43%;
+    --status-done: 152 69% 47%;
+    --status-cancelled: 220 9% 64%;
+
+    --priority-highest: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 38 92% 50%;
+    --priority-low: 156 72% 37%;
+    --priority-lowest: 154 10% 58%;
+
+    --board-bg: 152 18% 96%;
+    --board-column: 150 22% 99%;
+
+    --section-header: 156 16% 13%;
+
+    --sidebar-background: 156 42% 11%;
+    --sidebar-foreground: 150 20% 78%;
+    --sidebar-primary: 156 72% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 156 36% 17%;
+    --sidebar-accent-foreground: 150 20% 88%;
+    --sidebar-border: 156 34% 16%;
+    --sidebar-ring: 156 72% 42%;
+
+    --tab-bar-bg: 155 34% 20%;
+    --tab-active-bg: 156 72% 42%;
+    --tab-active-fg: 0 0% 100%;
+    --tab-inactive-fg: 152 14% 54%;
+    --tab-hover-bg: 155 30% 24%;
+
+    --sidebar-logo-filter: brightness(0) invert(1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif;
+    font-size: 15px;
+  }
+
+  /* PC版全域最小字體 14px */
+  @media (min-width: 768px) {
+    /* Override Tailwind text-xs (12px) → 14px */
+    .text-xs {
+      font-size: 0.875rem !important;
+      line-height: 1.35 !important;
+    }
+    /* Override all arbitrary sub-14px font sizes */
+    .text-\[10px\],
+    .text-\[11px\],
+    .text-\[12px\],
+    .text-\[13px\] {
+      font-size: 14px !important;
+      line-height: 1.35 !important;
+    }
+    /* Keep avatar initials & tiny UI elements compact */
+    .rounded-full.text-\[8px\] {
+      font-size: 8px !important;
+      line-height: 1 !important;
+    }
+    .rounded-full.text-\[9px\] {
+      font-size: 9px !important;
+      line-height: 1 !important;
+    }
+    .rounded-full.text-\[7px\] {
+      font-size: 7px !important;
+      line-height: 1 !important;
+    }
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* TipTap Editor Styles */
+.tiptap-editor .tiptap {
+  padding: 8px 12px;
+  min-height: 60px;
+  max-height: 300px;
+  overflow-y: auto;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: hsl(var(--foreground));
+}
+
+.tiptap-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground) / 0.5);
+  pointer-events: none;
+  height: 0;
+}
+
+.tiptap-editor .tiptap h1 { font-size: 1.4em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.tiptap-editor .tiptap h2 { font-size: 1.2em; font-weight: 600; margin: 0.4em 0 0.2em; }
+.tiptap-editor .tiptap h3 { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.2em; }
+
+.tiptap-editor .tiptap ul { list-style: disc; padding-left: 1.5em; margin: 0.3em 0; }
+.tiptap-editor .tiptap ol { list-style: decimal; padding-left: 1.5em; margin: 0.3em 0; }
+.tiptap-editor .tiptap li { margin: 0.1em 0; }
+
+.tiptap-editor .tiptap blockquote {
+  border-left: 3px solid hsl(var(--primary));
+  padding-left: 12px;
+  margin: 0.5em 0;
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.tiptap-editor .tiptap img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+
+.tiptap-editor .tiptap p { margin: 0.2em 0; }
+
+/* Read-only rich content display */
+.rich-content h1 { font-size: 1.4em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.rich-content h2 { font-size: 1.2em; font-weight: 600; margin: 0.4em 0 0.2em; }
+.rich-content h3 { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.2em; }
+.rich-content h4 { font-size: 1em; font-weight: 600; margin: 0.2em 0; }
+.rich-content h5, .rich-content h6 { font-size: 0.95em; font-weight: 600; margin: 0.2em 0; }
+.rich-content ul { list-style: disc; padding-left: 1.5em; margin: 0.3em 0; }
+.rich-content ul ul { list-style: circle; }
+.rich-content ul ul ul { list-style: square; }
+.rich-content ol { list-style: decimal; padding-left: 1.5em; margin: 0.3em 0; }
+.rich-content li { margin: 0.1em 0; }
+.rich-content strong { font-weight: 700; }
+.rich-content em { font-style: italic; }
+.rich-content code { background: hsl(var(--muted)); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em; font-family: monospace; }
+.rich-content blockquote { border-left: 3px solid hsl(var(--primary)); padding-left: 12px; margin: 0.5em 0; color: hsl(var(--muted-foreground)); font-style: italic; }
+.rich-content img { max-width: 100%; border-radius: 6px; margin: 0.5em 0; }
+.rich-content p { margin: 0.2em 0; }
+.rich-content a { color: hsl(var(--primary)); text-decoration: underline; }
+.rich-content s, .rich-content del, .rich-content strike { text-decoration: line-through; }
+
+/* Table styling */
+.rich-content table, .tiptap-editor .tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+}
+.rich-content th, .rich-content td,
+.tiptap-editor .tiptap th, .tiptap-editor .tiptap td {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.9em;
+  min-width: 60px;
+}
+.rich-content th, .tiptap-editor .tiptap th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+.tiptap-editor .tiptap .selectedCell {
+  background: hsl(var(--primary) / 0.1);
+}
+
+/* Mention styling */
+.mention {
+  background-color: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-weight: 600;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+.tiptap-editor .mention {
+  background-color: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-weight: 600;
+}
+
+/* Hide scrollbar for nav tabs on mobile */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Accessibility: focus-visible ────────────────────────────────────────── */
+/* Show focus ring only for keyboard / programmatic focus, not mouse clicks  */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Suppress default outline for mouse / touch users */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+/* Restore pointer cursor on interactive elements */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}

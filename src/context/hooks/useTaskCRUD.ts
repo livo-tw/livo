@@ -1,0 +1,254 @@
+import { useCallback, useRef } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import i18n from '@/i18n';
+import { getDepartment } from '@/lib/department';
+import { getWebhookConfig, triggerWebhook, type WebhookConfig } from '@/lib/webhook';
+import type { Task, Status, StatusLog, User, Project } from '@/types';
+import type { Database } from '@/integrations/supabase/types';
+
+interface TaskCRUDDeps {
+  allTasks: Task[];
+  statuses: Status[];
+  setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+  refreshTasks: () => Promise<void>;
+  appendStatusLog: (log: StatusLog) => void;
+  webhookConfigRef: React.MutableRefObject<WebhookConfig | null>;
+}
+
+export function useTaskCRUD({
+  allTasks, statuses, setAllTasks, refreshTasks, appendStatusLog, webhookConfigRef,
+}: TaskCRUDDeps) {
+  const allTasksRef = useRef(allTasks);
+  allTasksRef.current = allTasks;
+
+  const createTaskInDb = useCallback(async (task: Task) => {
+    const { error } = await supabase.from('tasks').insert({
+      id: task.id,
+      task_key: task.taskKey,
+      project_id: task.projectId,
+      title: task.title,
+      status_id: task.statusId,
+      priority: task.priority,
+      creator_id: task.creatorId,
+      assignee_id: task.assigneeId || null,
+      reviewer_id: task.reviewerId || null,
+      due_date: task.dueDate || null,
+      started_at: task.startedAt || null,
+      completed_at: task.completedAt || null,
+      gitlab_url: task.gitlabUrl || null,
+      sort_order: task.sortOrder,
+      created_at: task.createdAt,
+      comment_count: task.commentCount,
+      sprint_id: task.sprintId || null,
+      parent_task_id: task.parentTaskId || null,
+    } as Record<string, unknown>);
+    if (error) {
+      toast.error(i18n.t('task.createFailed') + error.message);
+      await refreshTasks();
+      return;
+    }
+    // Webhook: task_created (advertised in the integrations UI, but previously
+    // never dispatched from anywhere). getWebhookConfig() fallback picks up a
+    // config saved in this session (the ref is only hydrated at initial load).
+    const wbCfg = webhookConfigRef.current ?? getWebhookConfig();
+    if (wbCfg?.enabled) {
+      triggerWebhook(wbCfg, 'task_created', {
+        task: {
+          id: task.id,
+          taskKey: task.taskKey,
+          title: task.title,
+          status: task.statusId,
+          priority: task.priority,
+          assigneeId: task.assigneeId,
+          projectId: task.projectId,
+        },
+      }).catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
+    }
+  }, [refreshTasks, webhookConfigRef]);
+
+  const createUpdateTaskInDb = useCallback(
+    (
+      currentMemberId: string,
+      users: User[],
+      setSelectedTask: (fn: (prev: Task | null) => Task | null) => void,
+    ) =>
+      async (taskId: string, updates: Partial<Task>) => {
+        const dbUpdates: Record<string, string | number | boolean | null | undefined> = {};
+        // Captured BEFORE the optimistic update / awaits so the webhook
+        // dispatch below can't misread the already-updated task state.
+        let crossedToDone = false;
+        if ('statusId' in updates) {
+          dbUpdates.status_id = updates.statusId;
+          const oldTask = allTasksRef.current.find(t => t.id === taskId);
+          const newIsDone = statuses.find(s => s.id === updates.statusId)?.isDone ?? false;
+          const oldIsDone = oldTask ? (statuses.find(s => s.id === oldTask.statusId)?.isDone ?? false) : false;
+          crossedToDone = newIsDone && !oldIsDone;
+          if (!('completedAt' in updates)) {
+            if (newIsDone && !oldIsDone) {
+              const now = new Date().toISOString();
+              dbUpdates.completed_at = now;
+              updates.completedAt = now;
+            } else if (!newIsDone && oldIsDone) {
+              dbUpdates.completed_at = null;
+              updates.completedAt = undefined;
+            }
+          }
+        }
+        if ('projectId' in updates) dbUpdates.project_id = updates.projectId;
+        if ('title' in updates) dbUpdates.title = updates.title;
+        if ('priority' in updates) dbUpdates.priority = updates.priority;
+        if ('assigneeId' in updates) {
+          dbUpdates.assignee_id = updates.assigneeId || null;
+          if (!('department' in updates)) {
+            const assignee = users.find(u => u.id === updates.assigneeId);
+            if (assignee) {
+              const dept = getDepartment(assignee);
+              if (dept) {
+                dbUpdates.department = dept;
+                updates.department = dept;
+              }
+            }
+          }
+        }
+        if ('reviewerId' in updates) dbUpdates.reviewer_id = updates.reviewerId || null;
+        if ('dueDate' in updates) dbUpdates.due_date = updates.dueDate || null;
+        if ('startedAt' in updates) dbUpdates.started_at = updates.startedAt || null;
+        if ('completedAt' in updates) dbUpdates.completed_at = updates.completedAt || null;
+        if ('gitlabUrl' in updates) dbUpdates.gitlab_url = updates.gitlabUrl || null;
+        if ('sortOrder' in updates) dbUpdates.sort_order = updates.sortOrder;
+        if ('sprintId' in updates) dbUpdates.sprint_id = updates.sprintId || null;
+        if ('department' in updates) dbUpdates.department = updates.department || null;
+        if ('parentTaskId' in updates) dbUpdates.parent_task_id = updates.parentTaskId || null;
+        if ('approvalStatus' in updates) dbUpdates.approval_status = updates.approvalStatus ?? null;
+        if ('currentApprovalId' in updates) dbUpdates.current_approval_id = updates.currentApprovalId ?? null;
+        if ('requiresApproval' in updates) dbUpdates.requires_approval = updates.requiresApproval ?? false;
+
+        // Optimistic update
+        if (Object.keys(updates).length > 0) {
+          setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
+          setSelectedTask(prev => prev && prev.id === taskId ? { ...prev, ...updates } : prev);
+        }
+
+        if (Object.keys(dbUpdates).length > 0) {
+          const { error } = await supabase.from('tasks').update(dbUpdates).eq('id', taskId);
+          if (error) {
+            toast.error(i18n.t('error.updateFailed') + error.message);
+            await refreshTasks();
+            return;
+          }
+        }
+
+        // Sync deployments
+        if ('deployments' in updates) {
+          const deployments = updates.deployments ?? [];
+          await supabase.from('task_deployments').delete().eq('task_id', taskId);
+          if (deployments.length > 0) {
+            const deployRows = deployments.map(d => ({
+              task_id: taskId,
+              environment: d.environment as Database['public']['Enums']['deploy_environment'],
+              status: d.status as Database['public']['Enums']['deploy_status'],
+              deploy_date: d.deployDate ?? null,
+            }));
+            await supabase.from('task_deployments').insert(deployRows);
+          }
+        }
+
+        // Record status log
+        if ('statusId' in updates) {
+          const oldTask = allTasksRef.current.find(t => t.id === taskId);
+          const logId = `sl-${crypto.randomUUID()}`;
+          const changedAt = new Date().toISOString();
+          const { error: logError } = await supabase.from('status_logs').insert({
+            id: logId,
+            task_id: taskId,
+            from_status_id: oldTask?.statusId || null,
+            to_status_id: updates.statusId!,
+            changed_by: currentMemberId || 'unknown',
+            changed_at: changedAt,
+          });
+          if (logError) {
+            console.error('[LIVO] Status log insert failed:', logError);
+          } else {
+            appendStatusLog({
+              id: logId,
+              taskId,
+              fromStatusId: oldTask?.statusId,
+              toStatusId: updates.statusId!,
+              changedBy: currentMemberId || 'unknown',
+              changedAt,
+            });
+          }
+        }
+
+        // Trigger webhook (getWebhookConfig() fallback: config saved in this
+        // session, before any reload re-hydrates the ref)
+        const wbCfg = webhookConfigRef.current ?? getWebhookConfig();
+        if (wbCfg?.enabled && Object.keys(dbUpdates).length > 0) {
+          const task = allTasksRef.current.find(t => t.id === taskId);
+          const events = ['statusId' in updates ? 'status_changed' : 'task_updated'];
+          // task_completed (advertised in the integrations UI, previously never
+          // dispatched): fires when the status crosses from not-done to done.
+          if (crossedToDone) events.push('task_completed');
+          const payload = {
+            task: {
+              id: taskId,
+              title: updates.title ?? task?.title,
+              status: updates.statusId ?? task?.statusId,
+              priority: updates.priority ?? task?.priority,
+              assigneeId: updates.assigneeId ?? task?.assigneeId,
+            },
+          };
+          for (const event of events) {
+            triggerWebhook(wbCfg, event, payload)
+              .catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
+          }
+        }
+      },
+    [refreshTasks, appendStatusLog, statuses, webhookConfigRef],
+  );
+
+  const createCreateSubtask = useCallback(
+    (allProjects: Project[], currentMemberId: string) =>
+      async (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task): Promise<Task | null> => {
+        const parent = parentTaskOverride ?? allTasks.find(t => t.id === parentTaskId);
+        if (!parent) return null;
+        if (parent.parentTaskId) {
+          toast.error(i18n.t('task.noNestedSubtasks', { defaultValue: 'Nested subtasks are not allowed' }));
+          return null;
+        }
+        const project = allProjects.find(p => p.id === projectId);
+        if (!project) return null;
+        const projectTasks = allTasks.filter(t => t.projectId === projectId);
+        const maxNum = projectTasks.reduce((max, t) => {
+          const parts = t.taskKey.split('-');
+          const num = parseInt(parts[parts.length - 1], 10);
+          return isNaN(num) ? max : Math.max(max, num);
+        }, 0);
+        const taskKey = `${project.key}-${maxNum + 1}`;
+        const taskId = `task_${crypto.randomUUID()}`;
+        const newTask: Task = {
+          id: taskId,
+          taskKey,
+          projectId,
+          title: title.trim(),
+          statusId,
+          priority: 'medium',
+          creatorId: currentMemberId,
+          sortOrder: 0,
+          createdAt: new Date().toISOString(),
+          commentCount: 0,
+          attachmentCount: 0,
+          deployments: [],
+          parentTaskId,
+          sprintId: parent.sprintId,
+        };
+        setAllTasks(prev => [...prev, newTask]);
+        await createTaskInDb(newTask);
+        return newTask;
+      },
+    [allTasks, createTaskInDb],
+  );
+
+  return { createUpdateTaskInDb, createTaskInDb, createCreateSubtask };
+}

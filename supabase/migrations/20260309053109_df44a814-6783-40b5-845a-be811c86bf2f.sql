@@ -1,0 +1,1 @@
+ALTER TABLE public.backup_settings ADD COLUMN task_notify_channel text NOT NULL DEFAULT '';

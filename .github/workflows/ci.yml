@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Type check (app)
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Build app
+        run: npx vite build
+        env:
+          VITE_API_URL: http://localhost:8787
+          VITE_LOCAL_MODE: 'false'
+
+      - name: Install worker dependencies
+        working-directory: worker
+        run: npm ci
+
+      - name: Type check (worker)
+        working-directory: worker
+        run: npx tsc --noEmit
