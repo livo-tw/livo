@@ -12,7 +12,7 @@
 //      （連 localhost:8000 的自架 Docker Supabase）
 //   2. 組出交付包：app/（前端 + server.cjs）、docker/（自架 Supabase 設定，
 //      排除 467MB 資料與上傳檔）、schema/（合併後的資料庫結構）、說明文件
-//   3. 用 PowerShell Compress-Archive 壓成 zip，並印出摘要與大小
+//   3. 壓成 zip（路徑分隔一律 '/'，壓完讀回自檢），並印出摘要與大小
 //
 // 只讀取專案既有檔案，不改動任何現有檔案；所有產物都寫進 release/ 與
 // _release_build/（兩者皆已列入 .gitignore）。
@@ -173,6 +173,28 @@ function listFilesWithSize(root) {
   return out;
 }
 
+// 讀出 zip 每個項目的原始檔名（中央目錄與對應的 local header 各一份，以 UTF-8 解碼），
+// 自檢用。只處理一般 zip（非 zip64；交付包遠小於 4GB）。
+function readZipEntryNames(zipPath) {
+  const buf = fs.readFileSync(zipPath);
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (eocd < 0) die(`${zipPath} 不是有效的 zip（找不到中央目錄結尾）`);
+  const entries = [];
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let n = buf.readUInt16LE(eocd + 10); n > 0; n--) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) die(`${zipPath} 的中央目錄格式不對`);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const lh = buf.readUInt32LE(p + 42);
+    if (buf.readUInt32LE(lh) !== 0x04034b50) die(`${zipPath} 的 local header 格式不對`);
+    entries.push({
+      central: buf.toString('utf8', p + 46, p + 46 + nameLen),
+      local: buf.toString('utf8', lh + 30, lh + 30 + buf.readUInt16LE(lh + 26)),
+    });
+    p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  }
+  return entries;
+}
+
 // 印出精簡目錄樹（限制深度）
 function printTree(root, maxDepth = 2) {
   const rootName = path.basename(root);
@@ -326,7 +348,7 @@ if (skippedUntracked.length) {
 for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql']) {
   if (!fs.existsSync(path.join(DOCKER_DEST, rel))) die(`docker/${rel} 沒有進交付包，請檢查 docker/ 的複製規則。`);
 }
-// 確保 storage 目錄存在且非空（Compress-Archive 會略過空目錄；Docker bind mount 需要它）
+// 確保 storage 目錄存在且非空（空目錄不一定每種壓縮／解壓工具都會保留；Docker bind mount 需要它）
 const storageDir = path.join(DOCKER_DEST, 'volumes', 'storage');
 fs.mkdirSync(storageDir, { recursive: true });
 fs.writeFileSync(path.join(storageDir, '.gitkeep'), '');
@@ -527,11 +549,28 @@ if (fs.existsSync(localEnvPath)) {
 step(3, '壓縮 → release/livo-release.zip ...');
 rmrf(ZIP_PATH);
 if (process.platform === 'win32') {
-  const psCmd =
-    `Compress-Archive -Path '${STAGING}' -DestinationPath '${ZIP_PATH}' -Force`;
-  const zip = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd],
-    { stdio: 'inherit' });
-  if (zip.status !== 0) die(`Compress-Archive 失敗（回傳 ${zip.status ?? zip.signal}）`);
+  // 不用 Compress-Archive：Windows PowerShell 5.1 內建的 Archive 模組（1.0.1.0）把路徑
+  // 寫成反斜線（livo-release\docker\.env），違反 ZIP 規格 APPNOTE 4.4.17（一律用 '/'）。
+  // Info-ZIP unzip 會警告後自動轉換，但 Python zipfile 這類照規格解讀的工具會把整包
+  // 攤平成一堆檔名帶 '\' 的檔案，客戶照 README 跑 install.sh 就找不到檔案。
+  // 改用 .NET ZipFile.CreateFromDirectory，並關掉 UseBackslash 相容開關（在 PowerShell 5.1
+  // 裡預設是開的，不關一樣寫反斜線）。其餘和 Compress-Archive 相同：頂層資料夾
+  // livo-release/、中文檔名 UTF-8、保留空目錄、不帶 Unix 權限。
+  // Windows 內建 tar.exe 不適合：它把檔案記成 Unix 權限 0666、目錄 0777（Linux 用 unzip
+  // 解壓後連 docker/.env 都人人可寫），中文檔名預設寫成本機 ANSI 碼頁（如 Big5）。
+  // 路徑走環境變數，免處理引號跳脫。
+  const psCmd = [
+    "$ErrorActionPreference = 'Stop'",
+    "[AppContext]::SetSwitch('Switch.System.IO.Compression.ZipFile.UseBackslash', $false)",
+    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    '[IO.Compression.ZipFile]::CreateFromDirectory($env:LIVO_ZIP_SRC, $env:LIVO_ZIP_DEST, ' +
+      '[IO.Compression.CompressionLevel]::Optimal, $true)',
+  ].join('; ');
+  const zip = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+    stdio: 'inherit',
+    env: { ...process.env, LIVO_ZIP_SRC: STAGING, LIVO_ZIP_DEST: ZIP_PATH },
+  });
+  if (zip.status !== 0) die(`ZipFile.CreateFromDirectory 失敗（回傳 ${zip.status ?? zip.signal}）`);
 } else {
   // 非 Windows 後備：用 zip -r
   const zip = spawnSync('zip', ['-r', '-q', ZIP_PATH, 'livo-release'],
@@ -540,6 +579,25 @@ if (process.platform === 'win32') {
 }
 if (!fs.existsSync(ZIP_PATH)) die('壓縮後找不到 zip 檔');
 const zipBytes = fs.statSync(ZIP_PATH).size;
+
+// 自檢：讀回 zip，任何項目名稱含 '\' 就中止（中央目錄與 local header 都看，
+// 解壓工具有的讀前者、有的讀後者）；再確認檔案清單和 staging 完全一致
+//（沒有漏檔，中文檔名也沒變亂碼）。
+const zipEntries = readZipEntryNames(ZIP_PATH);
+const backslashed = zipEntries.filter((e) => e.central.includes('\\') || e.local.includes('\\'));
+if (backslashed.length) {
+  die(`zip 內有 ${backslashed.length} 個項目名稱含反斜線（ZIP 規格要求用 '/'，不少解壓工具會把目錄攤平）：\n  ` +
+      backslashed.slice(0, 5).map((e) => e.central).join('\n  '));
+}
+const zipFiles = new Set(zipEntries.map((e) => e.central).filter((n) => !n.endsWith('/')));
+const stagingFiles = listFilesWithSize(STAGING)
+  .map((f) => ['livo-release', ...path.relative(STAGING, f.path).split(path.sep)].join('/'));
+const notInZip = stagingFiles.filter((n) => !zipFiles.has(n));
+if (notInZip.length || zipFiles.size !== stagingFiles.length) {
+  die(`zip 的檔案清單和 staging 不一致（staging ${stagingFiles.length} 檔／zip ${zipFiles.size} 檔）` +
+      (notInZip.length ? `，zip 缺：\n  ${notInZip.slice(0, 5).join('\n  ')}` : ''));
+}
+log(`  ✔ 自檢：${zipEntries.length} 個項目路徑都用 '/'，${zipFiles.size} 個檔案與 staging 一致`);
 
 // ---------- [4] 摘要 ----------
 step(4, '完成摘要');
