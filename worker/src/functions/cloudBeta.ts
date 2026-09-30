@@ -181,7 +181,7 @@ async function sendInviteEmail(
     </p>
     <p style="color:#94A3B8;margin:0 0 16px;font-size:12px;line-height:1.7">按鈕無法點擊時，複製這個連結到瀏覽器：<br><span style="word-break:break-all">${esc(signupUrl)}</span></p>
     <p style="color:#64748B;margin:0;font-size:13px;line-height:1.7">
-      連結 7 天內有效；過期只要回到定價頁重新留一次 Email 就會再寄。有任何問題，回覆這封信或加 LINE <strong>@321oxwbw</strong>。— Lingye
+      連結 7 天內有效；過期只要回到定價頁重新留一次 Email 就會再寄。有任何問題，直接回覆這封信，或寫信到 <strong>service@livo-tw.com</strong>。— Lingye
     </p>`)
   );
   return { sent, signupUrl };
