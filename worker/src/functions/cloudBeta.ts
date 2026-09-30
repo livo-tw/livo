@@ -25,6 +25,7 @@
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
 import { appBaseUrl, apiBaseUrl } from '../env';
+import { signLink, verifyLink } from '../linkSigning';
 
 const INVITE_TTL_MS = 7 * 24 * 3_600_000;
 const IP_CAP_24H = 8; // trial.ts pattern: soft cap per IP per rolling 24h
@@ -88,10 +89,9 @@ export async function verifyInviteToken(env: Env, token: unknown): Promise<strin
   return email;
 }
 
-/** Approve-link signature (seller notify email → one-click GET). */
-function approveSig(env: Env, email: string): Promise<string> {
-  return hmacHex32(env.JWT_SECRET, `cloud-approve:${email.toLowerCase()}`);
-}
+/** Signed payload of the approve link (seller notify email → one-click GET).
+ *  The signature itself comes from linkSigning.ts (32 hex chars). */
+const approvePayload = (email: string): string => `cloud-approve:${email.toLowerCase()}`;
 
 export async function markWaitlistJoined(env: Env, email: string, wsId: string): Promise<void> {
   try {
@@ -260,8 +260,15 @@ export const handleCloudWaitlist = async (c: Context<AppContext>): Promise<Respo
 
     // Seller FYI (new leads only) with a manual resend link for support cases.
     if (!existing && env.SELLER_NOTIFY_EMAIL) {
-      const sig = await approveSig(env, email);
-      const resendUrl = `${apiBaseUrl(env)}/api/functions/cloud-waitlist-approve?email=${encodeURIComponent(email)}&sig=${sig}`;
+      // The invite already went out, so a missing signing secret only drops
+      // the resend button from this FYI; it must not fail the form.
+      const sig = await signLink(env, approvePayload(email), 32).catch((e) => {
+        console.error('[cloud-waitlist] resend link not signed:', e);
+        return null;
+      });
+      const resendUrl = sig
+        ? `${apiBaseUrl(env)}/api/functions/cloud-waitlist-approve?email=${encodeURIComponent(email)}&sig=${sig}`
+        : null;
       c.executionCtx.waitUntil(
         sendEmail(
           env,
@@ -275,9 +282,9 @@ export const handleCloudWaitlist = async (c: Context<AppContext>): Promise<Respo
       ${teamSize ? `團隊規模：${esc(teamSize)}<br>` : ''}
       不需要任何操作——對方點信中連結即可自行建立 workspace。
     </p>
-    <p style="margin:0 0 20px">
+    ${resendUrl ? `<p style="margin:0 0 20px">
       <a href="${resendUrl}" style="display:inline-block;background:#64748B;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">手動重寄開通連結（客服用）→</a>
-    </p>
+    </p>` : ''}
     <p style="color:#94A3B8;margin:0;font-size:12px;line-height:1.7">連結 7 天有效；對方也可以自己回定價頁重留 Email 重寄（每 10 分鐘最多一次）。</p>`)
         ).then(() => undefined)
       );
@@ -310,8 +317,7 @@ export const handleCloudWaitlistApprove = async (c: Context<AppContext>): Promis
     const email = (c.req.query('email') || '').toLowerCase().trim();
     const sig = c.req.query('sig') || '';
     if (!email || !sig) return htmlPage('連結無效', '缺少參數。', 400);
-    const expected = await approveSig(env, email);
-    if (!timingSafeEqStr(sig, expected)) {
+    if (!(await verifyLink(env, approvePayload(email), sig, 32))) {
       return htmlPage('連結無效', '簽名驗證失敗。', 403);
     }
 
