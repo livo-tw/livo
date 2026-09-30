@@ -182,21 +182,24 @@ const Auth = () => {
             >
               {t('auth.backToWebsite')}
             </a>
-            <div className="flex gap-3">
-              <a
-                href="/demo/auth"
-                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {t('auth.tryBasicPlan')}
-              </a>
-              <span className="text-[11px] text-muted-foreground/40">|</span>
-              <a
-                href="/demo/?demo=pro"
-                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {t('auth.tryProPlan')}
-              </a>
-            </div>
+            {/* Demo shortcuts only exist on LIVO's public demo, not on a self-hosted cloud deploy */}
+            {IS_PUBLIC_DEMO && (
+              <div className="flex gap-3">
+                <a
+                  href="/demo/auth"
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {t('auth.tryBasicPlan')}
+                </a>
+                <span className="text-[11px] text-muted-foreground/40">|</span>
+                <a
+                  href="/demo/?demo=pro"
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {t('auth.tryProPlan')}
+                </a>
+              </div>
+            )}
           </div>
         )}
       </div>

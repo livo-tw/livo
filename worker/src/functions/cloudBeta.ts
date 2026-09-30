@@ -174,7 +174,7 @@ async function sendInviteEmail(
     <h2 style="font-size:20px;font-weight:700;margin:0 0 8px">開通你的 LIVO 雲端版 workspace</h2>
     <p style="color:#64748B;margin:0 0 24px;line-height:1.7">
       點下方按鈕建立你的團隊（設定密碼與團隊名稱，約 2 分鐘）。<br>
-      Beta 期間<strong>完全免費</strong>：單一團隊 10 人、500MB 附件空間、功能與專業版相同。
+      Beta 期間<strong>完全免費</strong>：單一團隊 10 人、500MB 附件空間、功能與自架版相同。
     </p>
     <p style="margin:0 0 24px">
       <a href="${signupUrl}" style="display:inline-block;background:#0D9488;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">建立我的 workspace →</a>
