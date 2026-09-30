@@ -7,7 +7,7 @@
 - 你保證貢獻是你自己寫的，或你有權提交；如果是在公司職務上寫的，你已取得公司同意。
 - 你的貢獻「按現狀」提供，你沒有提供支援的義務。
 
-簽署方式：在你的 pull request 留言「I have read the CLA Document and I hereby sign the CLA」。
+簽署方式：第一次開 pull request 時，CLA assistant 機器人會在 PR 留言附上簽署連結，用你的 GitHub 帳號登入、按同意就完成，之後的 PR 不用再簽。
 
 ---
 
