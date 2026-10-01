@@ -11,7 +11,8 @@ import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, M
 import { toast } from 'sonner';
 import RichTextEditor from '@/components/RichTextEditor';
 import { fixHtml } from '@/components/task-detail/utils';
-import { getDepartment, sortUsersByDept, DEPARTMENTS } from '@/lib/department';
+import { getDepartment, sortUsersByDept, type Department } from '@/lib/department';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import TeamIntroTemplateEditor from '@/components/TeamIntroTemplateEditor';
@@ -46,11 +47,11 @@ function formatManualText(text: string): string {
 }
 
 const TeamIntroView = () => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { users } = useMemberContext();
   const { currentMemberId, currentMember } = useAuthContext();
   const { allTasks } = useTaskContext();
-  const { allProjects } = useProjectContext();
+  const { allProjects, productLines } = useProjectContext();
   const [manuals, setManuals] = useState<MemberManual[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<MemberManual>>({});
@@ -66,49 +67,47 @@ const TeamIntroView = () => {
   const [announcementSaving, setAnnouncementSaving] = useState(false);
   const isAdmin = currentMember?.role === 'admin' || currentMember?.role === 'super_admin';
 
-  const activeUsers = sortUsersByDept(users.filter(u => u.isActive));
+  const activeUsers = useMemo(() => sortUsersByDept(users.filter(u => u.isActive)), [users]);
 
   const projectNamesByMember = useMemo(() => {
-    const projectNames = new Map(allProjects.map(project => [project.id, project.name.trim()]));
-    const namesByMember = new Map<string, Set<string>>();
-
-    // Include completed tasks and archived projects from the full task/project stores.
+    // Match the sidebar's line/project order, retaining archived project history.
+    const orderedProjects = groupProjectsByLine(
+      productLines, allProjects, allProjects.filter(project => project.isArchived).map(project => project.id),
+    ).flatMap(group => group.projects);
+    const projectsByMember = new Map<string, Set<string>>();
     for (const task of allTasks) {
-      const projectName = projectNames.get(task.projectId);
-      if (!task.assigneeId || !projectName) continue;
-
-      const names = namesByMember.get(task.assigneeId) ?? new Set<string>();
-      names.add(projectName);
-      namesByMember.set(task.assigneeId, names);
+      if (!task.assigneeId) continue;
+      const projectIds = projectsByMember.get(task.assigneeId) ?? new Set<string>();
+      projectIds.add(task.projectId);
+      projectsByMember.set(task.assigneeId, projectIds);
     }
 
-    const collator = new Intl.Collator(i18n.language, { numeric: true });
-    return new Map(Array.from(namesByMember, ([memberId, names]) => [
-      memberId, [...names].sort(collator.compare),
+    return new Map(Array.from(projectsByMember, ([memberId, projectIds]) => [
+      memberId, [...new Set(orderedProjects
+        .filter(project => projectIds.has(project.id))
+        .map(project => project.name.trim())
+        .filter(Boolean))],
     ]));
-  }, [allTasks, allProjects, i18n.language]);
+  }, [allTasks, allProjects, productLines]);
 
   const deptDotColors: Record<string, string> = {
-    Manager: '#EF4444', '产品': '#A855F7', BE: '#3B82F6', FE: '#22C55E', SRE: '#06B6D4', QA: '#F97316', other: '#6B778C',
+    MGR: '#EF4444', PM: '#A855F7', BE: '#3B82F6', FE: '#22C55E', SRE: '#06B6D4', QA: '#F97316', other: '#6B778C',
   };
 
   const deptLabels: Record<string, string> = {
-    Manager: t('teamIntro.departments.manager'), '产品': t('teamIntro.departments.product'), BE: t('teamIntro.departments.backend'), FE: t('teamIntro.departments.frontend'), SRE: t('teamIntro.departments.sre'), QA: t('teamIntro.departments.qa'), other: t('teamIntro.departments.other'),
+    MGR: t('teamIntro.departments.manager'), PM: t('teamIntro.departments.product'), BE: t('teamIntro.departments.backend'), FE: t('teamIntro.departments.frontend'), SRE: t('teamIntro.departments.sre'), QA: t('teamIntro.departments.qa'), other: t('teamIntro.departments.other'),
   };
 
   const deptGroups = useMemo(() => {
-    const groups: { dept: string; label: string; members: typeof activeUsers }[] = [];
-    const allDepts = [...DEPARTMENTS, 'other'] as string[];
-    for (const dept of allDepts) {
-      const members = activeUsers.filter(u => {
-        const d = getDepartment(u);
-        return dept === 'other' ? d === null : d === dept;
-      });
-      if (members.length > 0) {
-        groups.push({ dept, label: deptLabels[dept] || dept, members });
-      }
+    const groups = new Map<Department | 'other', typeof activeUsers>();
+    // A department appears where its first member occurs in the managed order.
+    for (const user of activeUsers) {
+      const dept = getDepartment(user) ?? (user.jobTitle.includes('老大') ? 'MGR' : 'other');
+      const members = groups.get(dept) ?? [];
+      members.push(user);
+      groups.set(dept, members);
     }
-    return groups;
+    return Array.from(groups, ([dept, members]) => ({ dept, members }));
   }, [activeUsers]);
 
   useEffect(() => {
@@ -259,12 +258,12 @@ const TeamIntroView = () => {
           </CardContent>
         </Card>
 
-        {deptGroups.map(({ dept, label, members }) => (
+        {deptGroups.map(({ dept, members }) => (
           members.length > 0 && (
             <div key={dept} className="mb-8">
               <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full" style={{ backgroundColor: deptDotColors[dept] }} />
-                {label}
+                {deptLabels[dept] || dept}
                 <span className="text-xs text-muted-foreground font-normal">({members.length})</span>
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">

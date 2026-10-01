@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TeamIntroView from '@/components/TeamIntroView';
 import { defaultTeamIntroTemplate, type TeamIntroTemplate } from '@/lib/teamIntroTemplate';
 import zhTW from '@/i18n/locales/zh-TW.json';
-import type { Project, Task, User } from '@/types';
+import type { Project, ProductLine, Task, User } from '@/types';
 
 const state = vi.hoisted(() => ({
   user: null as User | null,
@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [state.user] }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: state.user?.id, currentMember: state.user }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[] }) }));
+vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[], productLines: [] as ProductLine[] }) }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
 vi.mock('@/components/RichTextEditor', () => ({ default: (): null => null }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
