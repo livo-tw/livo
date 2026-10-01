@@ -1,6 +1,6 @@
 import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, taskOption, UNAVAILABLE, type Row } from './core.ts';
 import type { Actions } from './handler.ts';
-export const fail = (message: string): never => { throw Object.assign(new Error(message), { name: 'ActionError' }); };
+export function fail(message: string): never { throw Object.assign(new Error(message), { name: 'ActionError' }); }
 export interface Environment { get(name: string): string | undefined }
 const encoder = new TextEncoder();
 export async function constantTimeSecret(actual: string, expected: string) {
@@ -37,15 +37,15 @@ export class Database {
   write(table: string, body: unknown, query: Row = {}, method = 'POST') { return this.request(`/rest/v1/${table}`, method, body, query); }
   async setting(key: string) { return (await this.rows('system_settings', { select: 'value', key: `eq.${key}`, limit: '1' }))[0]?.value; }
 }
-export function createActions(env: Environment, background: (work: Promise<unknown>) => void): Actions {
-  const admin = new Database(env);
+/** Slack Web API calls with the bot token from slack_config (or SLACK_BOT_TOKEN). */
+export function slackClient(env: Environment, admin = new Database(env)) {
   let tokenPromise: Promise<string> | undefined;
   const token = () => tokenPromise ??= (async () => {
     const row = (await admin.rows('slack_config', { select: 'bot_token', id: 'eq.singleton' }))[0];
     return row?.bot_token || env.get('SLACK_BOT_TOKEN') || fail('請管理員先連接 Slack Bot');
   })();
-  const slack = async (method: string, body: Row): Promise<Row> => {
-    const read = ['users.info', 'chat.getPermalink'].includes(method);
+  return async (method: string, body: Row): Promise<Row> => {
+    const read = ['users.info', 'users.list', 'chat.getPermalink'].includes(method);
     const res = await fetch(`https://slack.com/api/${method}${read ? '?' + new URLSearchParams(body) : ''}`, { method: read ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json; charset=utf-8' },
       ...(read ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(12000) });
@@ -53,6 +53,10 @@ export function createActions(env: Environment, background: (work: Promise<unkno
     if (!res.ok || !result.ok) throw new Error('Slack operation failed');
     return result;
   };
+}
+export function createActions(env: Environment, background: (work: Promise<unknown>) => void): Actions {
+  const admin = new Database(env);
+  const slack = slackClient(env, admin);
   const memberDb = (actor: Row) => new Database(env, actor.jwt);
   const getTask = async (actor: Row, id: string, byKey = false) => (await memberDb(actor).rows('tasks', {
     select: '*', [byKey ? 'task_key' : 'id']: `eq.${id}`, limit: '1',
@@ -70,20 +74,27 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       if (!info || info.deleted || info.is_bot || (info.team_id && info.team_id !== team)) fail(NO_ACCOUNT);
       let binding = (await admin.rows('external_account_bindings', { select: '*', platform: 'eq.slack',
         platform_user_id: `eq.${user}`, platform_team_id: `eq.${team}`, limit: '1' }))[0];
-      const email = info.profile?.email;
-      if (typeof email !== 'string' || !email.trim()) fail(NO_ACCOUNT);
-      const pattern = email.replace(/[\\%_]/g, (c: string) => '\\' + c);
-      const candidates = await admin.rows('members', { select: '*', email: `ilike.${pattern}`, limit: '2' });
-      const member = matchEmail(candidates, email);
-      // Old installations allowed members to edit their own binding rows. A
-      // preexisting verified flag is never proof of Slack identity by itself.
-      if (binding?.is_verified && binding.member_id !== member?.id) fail(NO_ACCOUNT);
+      let member: Row | undefined;
+      if (binding?.is_verified && binding.verified_by === 'admin') {
+        // An admin assigned this Slack user to a member whose LIVO email differs.
+        // Only the server writes verified_by (livo_guard_slack_binding).
+        member = (await admin.rows('members', { select: '*', id: `eq.${binding.member_id}`, limit: '1' }))[0];
+      } else {
+        const email = info.profile?.email;
+        if (typeof email !== 'string' || !email.trim()) fail(NO_ACCOUNT);
+        const pattern = email.replace(/[\\%_]/g, (c: string) => '\\' + c);
+        const candidates = await admin.rows('members', { select: '*', email: `ilike.${pattern}`, limit: '2' });
+        member = matchEmail(candidates, email);
+        // Old installations allowed members to edit their own binding rows. A
+        // preexisting verified flag is never proof of Slack identity by itself.
+        if (binding?.is_verified && binding.member_id !== member?.id) fail(NO_ACCOUNT);
+      }
       if (!member || member.is_active !== true || !member.auth_id) fail(NO_ACCOUNT);
       const authUser = await admin.request(`/auth/v1/admin/users/${encodeURIComponent(member.auth_id)}`);
       if (authUser.deleted_at || (authUser.banned_until && Date.parse(authUser.banned_until) > Date.now())) fail(NO_ACCOUNT);
       if (!binding?.is_verified) binding = (await admin.write('external_account_bindings', { member_id: member.id, platform: 'slack',
         platform_user_id: user, platform_team_id: team, display_name: info.profile?.display_name || info.real_name || member.name,
-        is_verified: true }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];
+        is_verified: true, verified_by: 'email' }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];
       return { ...member, binding_id: binding.id, team, slack_user: user, locale: info.locale || 'zh-TW',
         jwt: await memberJwt(env.get('JWT_SECRET') || '', member, binding) };
     },

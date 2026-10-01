@@ -1,5 +1,19 @@
 {
   "slackActions": {
+    "manual": {
+      "title": "Manual mapping (when Slack and LIVO emails differ)",
+      "hint": "Pick a LIVO member, then their Slack account. After that, /livo no longer compares emails for them. Admins can map plain members or themselves; super admins can map anyone.",
+      "load": "Load Slack members",
+      "loadFailed": "Could not read Slack members. Check that the bot has the users:read and users:read.email scopes.",
+      "member": "Choose a LIVO member",
+      "slackUser": "Choose a Slack account",
+      "bind": "Map",
+      "failed": "Mapping failed. Please try again.",
+      "notAssignable": "This member can't be mapped: they may be deactivated, have no login yet, or your role can't map them.",
+      "otherOwner": "This Slack account's email already belongs to another LIVO member, so it can't be mapped to someone else.",
+      "byAdmin": "Set by admin",
+      "byEmail": "Matched by email"
+    },
     "title": "Create cards and comments from Slack",
     "demo": "Demo mode does not connect to Slack. Configure a Docker installation to use this feature.",
     "connected": "Relay connected",
@@ -17,7 +31,7 @@
       "socket": "Enable Socket Mode in your Slack app and create an app-level token with connections:write.",
       "commands": "Enable Interactivity. Add /livo and the livo_create_task and livo_comment_task message shortcuts. Add commands to the bot scopes and reinstall the app.",
       "env": "Set SLACK_APP_TOKEN and APP_BASE_URL in docker/.env, rerun the installer, then recreate the Compose services. The installer generates the internal secret.",
-      "accounts": "First use matches the Slack email to an active LIVO login. Unbinding requires email verification again on the next use."
+      "accounts": "On first use, the Slack email is matched to an active LIVO account that can log in. Map members whose emails differ below. After unbinding, the next use checks the email again."
     }
   },
   "featureToggles": {

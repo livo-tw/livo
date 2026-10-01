@@ -452,6 +452,8 @@ docker compose -f docker-compose.yml -f compose.frontend.yml up -d
 - 訊息捷徑帶入原訊息及 permalink；留言捷徑可搜尋有權限看到的卡片（最多 20 筆），已對應卡片的討論串會預選卡片。
 
 首次使用依 Slack Email（不分大小寫）綁定唯一、已啟用且具登入帳號的 LIVO 成員。若尚未建立登入帳號，請先由管理員啟用帳號並完成一次登入。
+
+Slack 與 LIVO 的 Email 不同時（例如 Slack 用私人信箱、公司信箱有別名），管理員可在「整合 → Slack → 手動對應」選擇 LIVO 成員與他的 Slack 帳號（需 Bot 具 `users:read` 與 `users:read.email` 權限）。對應後該 Slack 帳號不再比對 Email；管理員只能對應一般成員或自己，超級管理員可對應任何成員，每次對應都會寫入操作歷程。**請勿為了配合 Slack 直接修改 LIVO 成員的 Email**：登入帳號的 Email 不會跟著改，該成員之後會無法登入。
 找不到、重複 Email 或停用帳號不會建立卡片／留言。解除綁定保留操作歷史，下次使用重新驗證 Email。
 搜尋、建卡及留言使用該成員的 authenticated 身分與既有 RLS；提交時再次檢查功能開關、綁定及啟用狀態。
 卡號依專案編號，重送不重複建立；留言、計數、站內通知、活動紀錄與操作紀錄同一交易提交。

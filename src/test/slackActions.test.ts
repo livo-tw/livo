@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
+import { canAssignSlackMember, slackEmailBelongsToOther, commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
   messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, shouldPostChannel } from '../../docker/volumes/functions/slack-interact/core';
 import { constantTimeSecret, createActions, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
 import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
@@ -164,6 +164,84 @@ describe('backend security and effects', () => {
     }));
     await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
     expect(writes).toEqual([]);
+  });
+  // A Slack backend fake: one bound Slack user (UEXAMPLE), a member list and recorded writes.
+  function slackFake({ binding, members, slackEmail }: { binding?: Record<string, unknown>; members: Record<string, unknown>[]; slackEmail: string }) {
+    const writes: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (url.includes('slack_config')) return response([{ bot_token: 'example-bot' }]);
+      if (path.endsWith('auth.test')) return response({ ok: true, team_id: 'TEXAMPLE' });
+      if (path.endsWith('users.info')) return response({ ok: true, user: { id: 'UEXAMPLE', team_id: 'TEXAMPLE', profile: { email: slackEmail } } });
+      if (path.includes('/auth/v1/admin/users/')) return response({ id: actor.auth_id });
+      if (init.method && init.method !== 'GET') {
+        writes.push({ url, body: JSON.parse(String(init.body)) });
+        return response([{ id: 'binding-new', ...JSON.parse(String(init.body)) }]);
+      }
+      if (path.endsWith('/external_account_bindings')) return response(binding ? [binding] : []);
+      if (path.endsWith('/members')) {
+        const params = new URL(url).searchParams;
+        const id = params.get('id')?.replace(/^eq\./, '');
+        return response(id ? members.filter(m => m.id === id) : members);
+      }
+      return response([]);
+    }));
+    return writes;
+  }
+  it('uses an admin-assigned binding even when the Slack email differs', async () => {
+    const writes = slackFake({ slackEmail: 'personal@example.org', members: [actor],
+      binding: { id: 'binding-admin', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+    const resolved = await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' });
+    expect(resolved).toMatchObject({ id: actor.id, binding_id: 'binding-admin' });
+    expect(writes).toEqual([]);
+  });
+  it('never trusts a verified binding without the server admin marker when emails differ', async () => {
+    slackFake({ slackEmail: 'personal@example.org', members: [actor],
+      binding: { id: 'binding-old', member_id: actor.id, is_verified: true, verified_by: null } });
+    await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
+  });
+  it('still refuses a deactivated member behind an admin-assigned binding', async () => {
+    slackFake({ slackEmail: 'personal@example.org', members: [{ ...actor, is_active: false }],
+      binding: { id: 'binding-admin', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+    await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
+  });
+  it('marks a first-time email match as verified by email', async () => {
+    const writes = slackFake({ slackEmail: actor.email, members: [actor] });
+    await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].body).toMatchObject({ member_id: actor.id, is_verified: true, verified_by: 'email' });
+  });
+  it('lets admins map only plain members or themselves; super admins map anyone who can log in', () => {
+    const member = { id: 'm1', role: 'member', is_active: true, auth_id: 'a1' };
+    const otherAdmin = { id: 'a2', role: 'admin', is_active: true, auth_id: 'a2' };
+    const superAdmin = { id: 's1', role: 'super_admin', is_active: true, auth_id: 's1' };
+    const admin = { id: 'a1', role: 'admin' };
+    expect(canAssignSlackMember(admin, member)).toBe(true);
+    expect(canAssignSlackMember(admin, { ...otherAdmin, id: 'a1' })).toBe(true);
+    expect(canAssignSlackMember(admin, otherAdmin)).toBe(false);
+    expect(canAssignSlackMember(admin, superAdmin)).toBe(false);
+    expect(canAssignSlackMember({ id: 's1', role: 'super_admin' }, otherAdmin)).toBe(true);
+    expect(canAssignSlackMember({ id: 's1', role: 'super_admin' }, { ...member, is_active: false })).toBe(false);
+    expect(canAssignSlackMember({ id: 's1', role: 'super_admin' }, { ...member, auth_id: null })).toBe(false);
+    expect(canAssignSlackMember({ id: 'x', role: 'member' }, member)).toBe(false);
+    expect(canAssignSlackMember(admin, undefined)).toBe(false);
+  });
+  it('refuses to map a Slack account whose email already identifies another member', () => {
+    const owners = [{ id: 'admin-self', email: 'Admin@Example.com' }, { id: 'member-off', email: 'off@example.com' }];
+    // An admin cannot hand their own Slack account to a plain member…
+    expect(slackEmailBelongsToOther(owners, 'admin@example.com', 'member-plain')).toBe(true);
+    // …nor reuse a deactivated member's address.
+    expect(slackEmailBelongsToOther(owners, 'off@example.com', 'member-plain')).toBe(true);
+    // The real case: a Slack email that matches nobody, or matches the target.
+    expect(slackEmailBelongsToOther(owners, 'personal@example.org', 'member-plain')).toBe(false);
+    expect(slackEmailBelongsToOther(owners, 'admin@example.com', 'admin-self')).toBe(false);
+    expect(slackEmailBelongsToOther(owners, '', 'member-plain')).toBe(false);
+    expect(slackEmailBelongsToOther(owners, undefined, 'member-plain')).toBe(false);
+  });
+  it('stores how a binding was verified in a constrained, server-only column', () => {
+    const migration = readFileSync(new URL('../../supabase/migrations/20261002_slack_manual_binding.sql', import.meta.url), 'utf8');
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS verified_by text');
+    expect(migration).toContain("verified_by IN ('email', 'admin')");
   });
   it('leaves signed webhooks and email to the existing SQL triggers', () => {
     const migration = readFileSync(new URL('../../supabase/migrations/20261002_slack_actions.sql', import.meta.url), 'utf8');

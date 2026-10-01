@@ -157,5 +157,5 @@ Socket Mode connects outbound, so an internal installation needs no public Reque
 Off by default: an administrator enables **Feature switches → Slack actions**, then configures the bot in **Integrations → Slack**.
 Enable Socket Mode and Interactivity in the Slack app. Create an app-level token with `connections:write`, add `/livo` and the `livo_create_task` / `livo_comment_task` message shortcuts, add the `commands` bot scope and reinstall the app.
 Set `SLACK_APP_TOKEN` and `APP_BASE_URL` in `docker/.env` and rerun the installer. It generates the internal secret once and preserves existing values.
-Accounts bind by email to active LIVO logins. Searches and writes use the member's normal permissions. Disabling the feature retains configuration and history.
+Accounts bind by email to active LIVO logins; when the emails differ, an administrator can map the Slack account manually in the Slack settings. Searches and writes use the member's normal permissions. Disabling the feature retains configuration and history.
 Cloudflare hides this feature; demo mode makes no backend calls. See the [Docker setup guide](release-template/README.md) for scopes, Compose commands, account binding and limits.

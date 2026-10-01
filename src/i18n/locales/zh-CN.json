@@ -1,5 +1,19 @@
 {
   "slackActions": {
+    "manual": {
+      "title": "手动对应（Slack 与 LIVO 的 Email 不同时）",
+      "hint": "选一位 LIVO 成员，再选他在 Slack 的账号。对应后他用 /livo 时不再比对 Email。管理员只能对应一般成员或自己；超级管理员可对应任何人。",
+      "load": "载入 Slack 成员",
+      "loadFailed": "无法读取 Slack 成员，请确认 Bot 有 users:read 与 users:read.email 权限。",
+      "member": "选择 LIVO 成员",
+      "slackUser": "选择 Slack 账号",
+      "bind": "对应",
+      "failed": "对应失败，请重试。",
+      "notAssignable": "无法对应这位成员：可能已停用、尚未开通登录，或你的角色不能对应他。",
+      "otherOwner": "这个 Slack 账号的 Email 已属于另一位 LIVO 成员，不能对应给别人。",
+      "byAdmin": "管理员指定",
+      "byEmail": "Email 对应"
+    },
     "title": "从 Slack 建卡与留言",
     "demo": "演示模式不连接 Slack，请在 Docker 自托管版设置。",
     "connected": "Relay 已连接",
@@ -17,7 +31,7 @@
       "socket": "Slack App 启用 Socket Mode，创建具有 connections:write 的 App-level Token。",
       "commands": "启用 Interactivity，新增 /livo 命令、livo_create_task 与 livo_comment_task 消息快捷方式；加入 commands 权限后重新安装 App。",
       "env": "将 SLACK_APP_TOKEN 写入 docker/.env，设置 APP_BASE_URL，重跑安装程序，再重新创建 Compose 服务。内部密钥由安装程序生成。",
-      "accounts": "首次使用依 Slack Email 对应已启用且可登录的 LIVO 账号；解除绑定后，下次使用会重新验证 Email。"
+      "accounts": "首次使用依 Slack Email 对应已启用且可登录的 LIVO 账号；Email 不同的成员请在下方手动对应。解除绑定后，下次使用会重新验证 Email。"
     }
   },
   "featureToggles": {

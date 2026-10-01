@@ -1,7 +1,7 @@
 // Portable interaction rules: no tokens, network calls or runtime globals.
 export type Row = Record<string, any>;
 export const DISABLED = 'LIVO 的 Slack 功能目前未啟用，請洽管理員';
-export const NO_ACCOUNT = '找不到對應的 LIVO 帳號，請請管理員確認你的 Email';
+export const NO_ACCOUNT = '找不到對應的 LIVO 帳號：請管理員確認你的 Slack Email 與 LIVO 相同，或在 LIVO 的 Slack 設定手動對應你的帳號';
 export const UNAVAILABLE = '找不到卡片，或你沒有權限查看這張卡片';
 const words: Record<string, [string, string]> = {
   '建立 LIVO 卡片': ['创建 LIVO 卡片', 'Create LIVO card'], '留言到 LIVO 卡片': ['留言到 LIVO 卡片', 'Comment on LIVO card'],
@@ -29,6 +29,27 @@ export function parseCommand(text: string) {
   if (comment) return { kind: 'comment' as const, key: (comment[1] || '').toUpperCase(), text: (comment[2] || '').trim() };
   if (!trimmed || /^new(?:\s|$)/i.test(trimmed)) return { kind: 'new' as const, text: trimmed.replace(/^new\s*/i, '') };
   return { kind: 'help' as const };
+}
+/**
+ * Who may an admin assign a Slack account to? A super admin: any active member
+ * who can log in. An admin: only plain members or themselves, so nobody can map
+ * their own Slack account onto a higher role.
+ */
+export function canAssignSlackMember(caller: Row, target: Row | undefined): boolean {
+  if (!target || target.is_active !== true || !target.auth_id) return false;
+  if (caller.role === 'super_admin') return true;
+  return caller.role === 'admin' && (target.role === 'member' || target.id === caller.id);
+}
+export const SLACK_USER_ID = /^[UW][A-Z0-9]{2,30}$/;
+/**
+ * Manual mapping is for a Slack account whose email matches nobody in LIVO.
+ * If the Slack email already belongs to another LIVO member (active or not),
+ * assigning that account elsewhere would let someone act as another person.
+ */
+export function slackEmailBelongsToOther(members: Row[], slackEmail: unknown, targetId: string): boolean {
+  if (typeof slackEmail !== 'string' || !slackEmail.trim()) return false;
+  const email = slackEmail.trim().toLowerCase();
+  return members.some(m => m.email?.trim().toLowerCase() === email && m.id !== targetId);
 }
 export function matchEmail(members: Row[], email: string): Row | undefined {
   if (!email?.trim()) return;
