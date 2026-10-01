@@ -2029,6 +2029,28 @@
     "countUnit": "個"
   },
   "teamIntro": {
+    "template": {
+      "edit": "調整模板",
+      "title": "團隊介紹模板",
+      "description": "全體成員共用這份模板。調整順序或停用欄位不會刪除已填寫的內容。",
+      "fieldName": "欄位名稱",
+      "hint": "填寫提示",
+      "hintPlaceholder": "選填，協助成員理解如何填寫",
+      "enabled": "啟用",
+      "disabledNote": "已停用：對成員隱藏，原有內容仍會保留。",
+      "automaticProjects": "這一欄由任務紀錄自動彙整，成員不需手動填寫。",
+      "newField": "新欄位",
+      "addField": "新增欄位",
+      "moveUp": "將「{{name}}」往上移",
+      "moveDown": "將「{{name}}」往下移",
+      "fieldLimit": "{{count}} / {{max}} 個欄位（含停用欄位）",
+      "nameRequired": "請填寫每個欄位的名稱",
+      "invalid": "模板格式不正確，請檢查欄位設定",
+      "saved": "團隊介紹模板已儲存",
+      "conflict": "模板已被其他管理員更新。請保留你的修改內容，關閉後重新開啟模板再調整。",
+      "loadFailed": "無法載入團隊介紹模板，請重試。",
+      "retry": "重試"
+    },
     "pageTitle": "團隊成員工作說明書",
     "pageDesc": "根據「Working with Me 訪談工作坊」整理，每位夥伴一份個人使用手冊。",
     "announcementTitle": "團隊公告 / 公約佈告欄",

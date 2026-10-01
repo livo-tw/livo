@@ -42,6 +42,16 @@ function tryWrangler(args) {
   }
 }
 
+// Independent column upgrades must run before the tenancy sentinel can exit.
+const manualProbe = tryWrangler('--command "SELECT custom_fields FROM member_manuals LIMIT 0"');
+if (!manualProbe.ok && /no such column/i.test(manualProbe.out)) {
+  wrangler(`--file="${join(WORKER_DIR, 'migrate', 'member-manual-alters.sql')}"`);
+  console.log('[member-manual-alters] custom_fields added; existing answers preserved.');
+} else if (!manualProbe.ok && !/no such table/i.test(manualProbe.out)) {
+  console.error('[member-manual-alters] unexpected probe failure:\n' + manualProbe.out);
+  process.exit(1);
+}
+
 // ── Probe ─────────────────────────────────────────────────────────────────
 const probe = tryWrangler('--command "SELECT workspace_id FROM tasks LIMIT 0"');
 if (probe.ok) {

@@ -2091,6 +2091,28 @@
     "countUnit": ""
   },
   "teamIntro": {
+    "template": {
+      "edit": "Edit template",
+      "title": "Team introduction template",
+      "description": "Everyone uses this template. Reordering or disabling fields preserves existing answers.",
+      "fieldName": "Field name",
+      "hint": "Writing prompt",
+      "hintPlaceholder": "Optional guidance for members",
+      "enabled": "Enabled",
+      "disabledNote": "Disabled: hidden from members, with existing answers preserved.",
+      "automaticProjects": "This field is generated from task history. Members do not fill it in manually.",
+      "newField": "New field",
+      "addField": "Add field",
+      "moveUp": "Move {{name}} up",
+      "moveDown": "Move {{name}} down",
+      "fieldLimit": "{{count}} / {{max}} fields (including disabled fields)",
+      "nameRequired": "Enter a name for every field",
+      "invalid": "Check the template field settings",
+      "saved": "Team introduction template saved",
+      "conflict": "Another administrator updated the template. Keep a copy of your changes, close this editor, and reopen it before editing again.",
+      "loadFailed": "Unable to load the team introduction template. Please retry.",
+      "retry": "Retry"
+    },
     "fields": {
       "bestState": "Best State",
       "communication": "Communication Style",

@@ -14,6 +14,18 @@ export type Database = {
   }
   public: {
     Tables: {
+      system_settings: {
+        Row: { key: string; value: Json; updated_at: string; updated_by: string | null }
+        Insert: { key: string; value?: Json; updated_at?: string; updated_by?: string | null }
+        Update: { key?: string; value?: Json; updated_at?: string; updated_by?: string | null }
+        Relationships: []
+      }
+      team_settings: {
+        Row: { key: string; value: Json; updated_at: string; updated_by: string | null }
+        Insert: { key: string; value?: Json; updated_at?: string; updated_by?: string | null }
+        Update: { key?: string; value?: Json; updated_at?: string; updated_by?: string | null }
+        Relationships: []
+      }
       activity_logs: {
         Row: {
           action: string
@@ -172,6 +184,7 @@ export type Database = {
           best_state: string
           bonus: string
           communication: string
+          custom_fields: Json
           difficulty: string
           id: string
           landmine: string
@@ -182,6 +195,7 @@ export type Database = {
           best_state?: string
           bonus?: string
           communication?: string
+          custom_fields?: Json
           difficulty?: string
           id?: string
           landmine?: string
@@ -192,6 +206,7 @@ export type Database = {
           best_state?: string
           bonus?: string
           communication?: string
+          custom_fields?: Json
           difficulty?: string
           id?: string
           landmine?: string

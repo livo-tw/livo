@@ -326,6 +326,7 @@ CREATE TABLE IF NOT EXISTS member_manuals (
   difficulty    TEXT NOT NULL DEFAULT '',
   landmine      TEXT NOT NULL DEFAULT '',
   bonus         TEXT NOT NULL DEFAULT '',
+  custom_fields TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(custom_fields) AND json_type(custom_fields) = 'object'),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

@@ -149,6 +149,7 @@ export const TABLES: TableRegistry = {
     pk: 'id',
     uniques: [['member_id']],
     clientAccess: 'full',
+    jsonCols: ['custom_fields'],
     autoId: true,
     autoNowCols: ['updated_at'],
     write: { insert: 'own', update: 'own', delete: 'none', ownerCol: 'member_id' },

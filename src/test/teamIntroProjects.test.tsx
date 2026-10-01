@@ -22,6 +22,8 @@ vi.mock('@/context/AuthContext', () => ({
 }));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
+    channel: () => ({ on() { return this; }, subscribe() { return this; } }),
+    removeChannel: vi.fn(),
     from: () => ({
       select: () => ({
         data: null as null,

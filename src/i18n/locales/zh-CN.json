@@ -2029,6 +2029,28 @@
     "countUnit": "个"
   },
   "teamIntro": {
+    "template": {
+      "edit": "调整模板",
+      "title": "团队介绍模板",
+      "description": "全体成员共用这份模板。调整顺序或停用字段不会删除已填写的内容。",
+      "fieldName": "字段名称",
+      "hint": "填写提示",
+      "hintPlaceholder": "选填，帮助成员理解如何填写",
+      "enabled": "启用",
+      "disabledNote": "已停用：对成员隐藏，原有内容仍会保留。",
+      "automaticProjects": "这一栏由任务记录自动汇总，成员无需手动填写。",
+      "newField": "新字段",
+      "addField": "新增字段",
+      "moveUp": "将“{{name}}”上移",
+      "moveDown": "将“{{name}}”下移",
+      "fieldLimit": "{{count}} / {{max}} 个字段（含停用字段）",
+      "nameRequired": "请填写每个字段的名称",
+      "invalid": "模板格式不正确，请检查字段设置",
+      "saved": "团队介绍模板已保存",
+      "conflict": "模板已被其他管理员更新。请保留你的修改内容，关闭后重新打开模板再调整。",
+      "loadFailed": "无法加载团队介绍模板，请重试。",
+      "retry": "重试"
+    },
     "fields": {
       "bestState": "最佳状态",
       "communication": "沟通方式",

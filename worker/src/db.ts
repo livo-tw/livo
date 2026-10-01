@@ -18,6 +18,7 @@ import type {
 } from './protocol';
 import { TABLES } from './tables';
 import { decideMembersUpdate } from './memberProfile';
+import { protectTeamIntroTemplate } from './teamIntroTemplate';
 import { writeKnowledge } from './knowledge';
 import { rowToWire, valueToDb, nowIso } from './meta';
 import type { TableMeta, WriteRule } from './meta';
@@ -96,6 +97,8 @@ function enforceWritePolicy(
   if (req.op === 'select') return null;
   const rank = roleRank(auth?.member?.role);
   const memberId = auth?.member?.id ?? '';
+
+  if (!protectTeamIntroTemplate(req, rank)) return permissionDenied(table);
 
   // ── members SPECIAL rule (checked before the generic rules) ──
   // insert/delete are server-only (manage-member function writes directly).

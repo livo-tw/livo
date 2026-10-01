@@ -7,12 +7,16 @@ import { supabase } from '@/integrations/supabase/client';
 import { logActivity } from '@/lib/activityLog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
-import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, Megaphone, FolderKanban } from 'lucide-react';
+import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, Megaphone, FolderKanban, FileText, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 import RichTextEditor from '@/components/RichTextEditor';
 import { fixHtml } from '@/components/task-detail/utils';
-import { getDepartment, sortUsersByDept, DEPARTMENTS, type Department } from '@/lib/department';
+import { getDepartment, sortUsersByDept, DEPARTMENTS } from '@/lib/department';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
+import TeamIntroTemplateEditor from '@/components/TeamIntroTemplateEditor';
+import { useTeamIntroTemplate } from '@/hooks/useTeamIntroTemplate';
+import { isManualTextKey, teamIntroFieldLabel, type TeamIntroTemplate } from '@/lib/teamIntroTemplate';
 
 interface MemberManual {
   id: string;
@@ -22,15 +26,17 @@ interface MemberManual {
   difficulty: string;
   landmine: string;
   bonus: string;
+  custom_fields?: Record<string, string>;
 }
 
-const FIELD_DEFS = [
-  { key: 'best_state' as const, labelKey: 'teamIntro.fields.bestState', icon: Sparkles, color: 'text-yellow-500' },
-  { key: 'communication' as const, labelKey: 'teamIntro.fields.communication', icon: MessageCircle, color: 'text-blue-500' },
-  { key: 'difficulty' as const, labelKey: 'teamIntro.fields.difficulty', icon: AlertTriangle, color: 'text-orange-500' },
-  { key: 'landmine' as const, labelKey: 'teamIntro.fields.landmine', icon: Bomb, color: 'text-red-500' },
-  { key: 'bonus' as const, labelKey: 'teamIntro.fields.bonus', icon: Star, color: 'text-green-500' },
-];
+const FIELD_STYLES: Record<string, { icon: typeof Sparkles; color: string }> = {
+  best_state: { icon: Sparkles, color: 'text-yellow-500' },
+  communication: { icon: MessageCircle, color: 'text-blue-500' },
+  difficulty: { icon: AlertTriangle, color: 'text-orange-500' },
+  landmine: { icon: Bomb, color: 'text-red-500' },
+  bonus: { icon: Star, color: 'text-green-500' },
+  projects: { icon: FolderKanban, color: 'text-violet-500' },
+};
 
 /** Format text: add line breaks before numbered items */
 function formatManualText(text: string): string {
@@ -48,6 +54,10 @@ const TeamIntroView = () => {
   const [manuals, setManuals] = useState<MemberManual[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<MemberManual>>({});
+  const [manualSaving, setManualSaving] = useState(false);
+  const templateState = useTeamIntroTemplate();
+  const [templateEditor, setTemplateEditor] = useState<{ template: TeamIntroTemplate; revision: string | null } | null>(null);
+  const canManageTemplate = currentMember?.role === 'super_admin';
 
   // Announcement board state
   const [announcementContent, setAnnouncementContent] = useState('');
@@ -117,10 +127,10 @@ const TeamIntroView = () => {
     setAnnouncementSaving(true);
     await supabase.from('team_settings').upsert({
       key: 'team_announcement',
-      value: { content: announcementDraft } as unknown,
+      value: { content: announcementDraft },
       updated_by: currentMemberId,
       updated_at: new Date().toISOString(),
-    } as Record<string, unknown>);
+    });
     setAnnouncementContent(announcementDraft);
     setEditingAnnouncement(false);
     setAnnouncementSaving(false);
@@ -134,7 +144,7 @@ const TeamIntroView = () => {
 
   const startEdit = (manual: MemberManual) => {
     setEditingId(manual.member_id);
-    setEditDraft({ ...manual });
+    setEditDraft({ ...manual, custom_fields: { ...manual.custom_fields } });
   };
 
   const cancelEdit = () => {
@@ -143,39 +153,56 @@ const TeamIntroView = () => {
   };
 
   const saveEdit = async (memberId: string) => {
-    const { best_state, communication, difficulty, landmine, bonus } = editDraft;
+    if (manualSaving || !templateState.ready || memberId !== currentMemberId) return;
+    const { best_state = '', communication = '', difficulty = '', landmine = '', bonus = '', custom_fields = {} } = editDraft;
     const existing = manuals.find(m => m.member_id === memberId);
-
-    if (existing) {
-      const { error } = await supabase
-        .from('member_manuals')
-        .update({ best_state, communication, difficulty, landmine, bonus, updated_at: new Date().toISOString() })
-        .eq('member_id', memberId);
-      if (error) { toast.error(t('teamIntro.saveFailed')); return; }
-    } else {
-      const { error } = await supabase
-        .from('member_manuals')
-        .insert({ member_id: memberId, best_state: best_state || '', communication: communication || '', difficulty: difficulty || '', landmine: landmine || '', bonus: bonus || '' });
-      if (error) { toast.error(t('teamIntro.saveFailed')); return; }
-    }
-
-    toast.success(t('teamIntro.saved'));
-    const memberName = users.find(u => u.id === memberId)?.name || memberId;
-    if (currentMemberId) {
-      await logActivity(currentMemberId, 'update_team_intro', t('teamIntro.editActivityDetail', { name: memberName }), undefined, undefined, 'member');
-    }
-    setEditingId(null);
-    setEditDraft({});
-    fetchManuals();
+    const values = { best_state, communication, difficulty, landmine, bonus, custom_fields, updated_at: new Date().toISOString() };
+    setManualSaving(true);
+    try {
+      const result = existing
+        ? await supabase.from('member_manuals').update(values).eq('member_id', memberId).select('id').maybeSingle()
+        : await supabase.from('member_manuals').insert({ member_id: memberId, ...values }).select('id').single();
+      if (result.error || !result.data) throw result.error ?? new Error('Manual was not saved');
+      toast.success(t('teamIntro.saved'));
+      const memberName = users.find(u => u.id === memberId)?.name || memberId;
+      if (currentMemberId) {
+        await logActivity(currentMemberId, 'update_team_intro', t('teamIntro.editActivityDetail', { name: memberName }), undefined, undefined, 'member');
+      }
+      setEditingId(null);
+      setEditDraft({});
+      await fetchManuals();
+    } catch { toast.error(t('teamIntro.saveFailed')); }
+    finally { setManualSaving(false); }
   };
 
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="w-full max-w-[1600px] mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-foreground">{t('teamIntro.pageTitle')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t('teamIntro.pageDesc')}</p>
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">{t('teamIntro.pageTitle')}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t('teamIntro.pageDesc')}</p>
+          </div>
+          {canManageTemplate && (
+            <Button variant="outline" size="sm" disabled={!templateState.ready}
+              onClick={() => setTemplateEditor({ template: templateState.template, revision: templateState.revision })}>
+              <Settings2 size={15} className="mr-1.5" />{t('teamIntro.template.edit')}
+            </Button>
+          )}
         </div>
+        {templateState.loadError && (
+          <div role="alert" className="mb-4 flex items-center gap-3 text-sm text-destructive">
+            {t('teamIntro.template.loadFailed')}
+            <Button variant="outline" size="sm" onClick={() => { void templateState.reload(); }}>{t('teamIntro.template.retry')}</Button>
+          </div>
+        )}
+        {templateEditor && canManageTemplate && (
+          <TeamIntroTemplateEditor initialTemplate={templateEditor.template} onClose={() => setTemplateEditor(null)}
+            onSave={async next => {
+              if (!currentMemberId || !canManageTemplate) throw new Error('Permission denied');
+              await templateState.save(next, templateEditor.revision, currentMemberId);
+            }} />
+        )}
 
         {/* 團隊公告/公約佈告欄 */}
         <Card className="mb-8 border-border/60">
@@ -271,10 +298,10 @@ const TeamIntroView = () => {
                   )}
                   {isEditing && (
                     <div className="flex gap-1">
-                      <button onClick={() => saveEdit(user.id)} className="p-1.5 rounded-md hover:bg-accent text-green-600 transition-colors" title={t('common.save')}>
+                      <button disabled={manualSaving || !templateState.ready} onClick={() => saveEdit(user.id)} className="p-1.5 rounded-md hover:bg-accent text-green-600 transition-colors disabled:opacity-50" title={t('common.save')}>
                         <Check size={15} />
                       </button>
-                      <button onClick={cancelEdit} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors" title={t('common.cancel')}>
+                      <button disabled={manualSaving} onClick={cancelEdit} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground transition-colors disabled:opacity-50" title={t('common.cancel')}>
                         <X size={15} />
                       </button>
                     </div>
@@ -283,22 +310,39 @@ const TeamIntroView = () => {
 
                 {/* Content */}
                 <CardContent className="p-4 space-y-3">
-                  {FIELD_DEFS.map(field => {
-                    const Icon = field.icon;
-                    const value = isEditing
-                      ? (editDraft[field.key] ?? '')
-                      : (manual?.[field.key] || '');
+                  {templateState.template.fields.filter(field => field.enabled).map(field => {
+                    const style = FIELD_STYLES[field.key] ?? { icon: FileText, color: 'text-primary' };
+                    const Icon = style.icon;
+                    const label = teamIntroFieldLabel(field, t);
+                    const source = isEditing ? editDraft : manual;
+                    const rawValue = isManualTextKey(field.key) ? source?.[field.key] : source?.custom_fields?.[field.key];
+                    const value = typeof rawValue === 'string' ? rawValue : '';
+                    const inputId = `manual-${user.id}-${field.key}`;
 
                     return (
-                      <div key={field.key}>
+                      <section key={field.key} aria-label={label}>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <Icon size={13} className={field.color} />
-                          <span className="text-xs font-medium text-muted-foreground">{t(field.labelKey)}</span>
+                          <Icon size={13} className={`${style.color} shrink-0`} aria-hidden="true" />
+                          <label htmlFor={isEditing && field.key !== 'projects' ? inputId : undefined} className="text-xs font-medium text-muted-foreground">{label}</label>
                         </div>
-                        {isEditing ? (
+                        {field.key === 'projects' ? (
+                          <>
+                            {field.hint && <p className="text-xs text-muted-foreground mb-1">{field.hint}</p>}
+                            {projectNames.length > 0 ? (
+                              <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80 leading-relaxed marker:text-muted-foreground/60">
+                                {projectNames.map(name => <li key={name} className="[overflow-wrap:anywhere]">{name}</li>)}
+                              </ul>
+                            ) : <p className="text-sm text-muted-foreground/50 italic">{t('teamIntro.noProjects')}</p>}
+                          </>
+                        ) : isEditing ? (
                           <textarea
+                            id={inputId}
                             value={value}
-                            onChange={e => setEditDraft(prev => ({ ...prev, [field.key]: e.target.value }))}
+                            disabled={manualSaving}
+                            placeholder={field.hint}
+                            onChange={e => setEditDraft(prev => isManualTextKey(field.key)
+                              ? { ...prev, [field.key]: e.target.value }
+                              : { ...prev, custom_fields: { ...prev.custom_fields, [field.key]: e.target.value } })}
                             className="w-full text-sm bg-muted/50 border border-border rounded-md px-2.5 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary min-h-[56px]"
                             rows={2}
                           />
@@ -309,24 +353,9 @@ const TeamIntroView = () => {
                         ) : (
                           <p className="text-sm text-muted-foreground/50 italic">{t('teamIntro.notFilled')}</p>
                         )}
-                      </div>
+                      </section>
                     );
                   })}
-                  <section aria-label={t('teamIntro.fields.projects')}>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <FolderKanban size={13} className="text-violet-500 shrink-0" aria-hidden="true" />
-                      <span className="text-xs font-medium text-muted-foreground">{t('teamIntro.fields.projects')}</span>
-                    </div>
-                    {projectNames.length > 0 ? (
-                      <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80 leading-relaxed marker:text-muted-foreground/60">
-                        {projectNames.map(name => (
-                          <li key={name} className="[overflow-wrap:anywhere]">{name}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-sm text-muted-foreground/50 italic">{t('teamIntro.noProjects')}</p>
-                    )}
-                  </section>
                 </CardContent>
               </Card>
             );
