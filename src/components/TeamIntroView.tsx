@@ -5,7 +5,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { supabase } from '@/integrations/supabase/client';
 import { logActivity } from '@/lib/activityLog';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
 import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, Megaphone, FolderKanban } from 'lucide-react';
 import { toast } from 'sonner';
@@ -252,9 +252,8 @@ const TeamIntroView = () => {
                 {/* Header */}
                 <div className="flex items-center gap-3 p-4 pb-2 border-b border-border/40">
                   <Avatar className="h-12 w-12 ring-2 ring-offset-2 ring-offset-background" style={{ '--tw-ring-color': user.color } as React.CSSProperties}>
-                    <AvatarImage src={user.avatar} alt={user.name} />
                     <AvatarFallback style={{ backgroundColor: user.color, color: '#fff' }}>
-                      {user.name.charAt(0)}
+                      {user.avatar || user.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">

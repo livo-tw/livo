@@ -11,7 +11,7 @@ vi.mock('@/integrations/supabase/client', async () => {
   return { supabase: createMockClient(), USING_MOCK_BACKEND: true };
 });
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: 'm-001', currentMember: { role: state.role } }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: state.projects, selectedProjectId: state.projectId }) }));
+vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: state.projects, productLines: [], selectedProjectId: state.projectId }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'm-001', name: 'Example Member' }] }) }));
 vi.mock('@/hooks/usePresenceLock', () => ({ usePresenceLock: () => ({ acquireLock: state.acquire, releaseLock: vi.fn(), isLockedBy: (): null => null }) }));
 vi.mock('@/components/RichTextEditorLazy', () => ({ default: ({ content, onChange }: { content: string; onChange: (v: string) => void }) => <textarea aria-label="Body" value={content} onChange={e => onChange(e.target.value)} /> }));

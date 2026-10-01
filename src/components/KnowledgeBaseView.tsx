@@ -9,6 +9,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useKnowledgeBase, uploadKnowledgeFile } from '@/hooks/useKnowledgeBase';
 import { buildKnowledgeTree, knowledgeSnippet, searchKnowledge, validateKnowledgeTree, type KnowledgeNode } from '@/lib/knowledge';
+import { groupProjectsByLine, projectGroupLabel } from '@/lib/projectGroups';
 import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeClient';
 import RichTextEditor from '@/components/RichTextEditorLazy';
@@ -22,7 +23,7 @@ const selectStyle = 'h-9 rounded-md border border-input bg-background px-2 text-
 export default function KnowledgeBaseView() {
   const { t } = useTranslation();
   const { currentMemberId, currentMember } = useAuthContext();
-  const { allProjects, selectedProjectId } = useProjectContext();
+  const { allProjects, productLines, selectedProjectId } = useProjectContext();
   const { users } = useMemberContext();
   const [scope, setScope] = useState(selectedProjectId || 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -48,6 +49,15 @@ export default function KnowledgeBaseView() {
   const visible = pages.filter(p => showArchived || !p.is_archived);
   const results = useMemo(() => searchKnowledge(visible, query), [pages, query, showArchived]);
   const groups = [{ id: 'shared', name: t('kb.shared') }, ...allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, name: p.name }))];
+  const projectGroups = useMemo(() => groupProjectsByLine(productLines, allProjects), [productLines, allProjects]);
+  const scopeOptions = <>
+    <option value="shared">{t('kb.shared')}</option>
+    {projectGroups.map(group => (
+      <optgroup key={group.line?.id ?? 'other'} label={projectGroupLabel(group.line, t('common.other'))}>
+        {group.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+      </optgroup>
+    ))}
+  </>;
 
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);
 
@@ -180,7 +190,7 @@ export default function KnowledgeBaseView() {
         <div className="p-3 space-y-3 border-b">
           <div className="relative"><Search size={15} className="absolute left-3 top-3 text-muted-foreground" /><Input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('kb.search')} aria-label={t('kb.search')} className="pl-9" /></div>
           <select className={`${selectStyle} w-full`} aria-label={t('kb.scope')} value={scope} onChange={e => setScope(e.target.value)}>
-            <option value="all">{t('kb.allScopes')}</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            <option value="all">{t('kb.allScopes')}</option>{scopeOptions}
           </select>
           <label className="flex gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />{t('kb.showArchived')}</label>
         </div>
@@ -223,7 +233,7 @@ export default function KnowledgeBaseView() {
           {draft ? <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
             <label className="block text-sm space-y-1"><span>{t('kb.pageTitle')}</span><Input value={draft.title} maxLength={200} disabled={busy} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
             <div className="grid sm:grid-cols-3 gap-3">
-              <label className="flex flex-col gap-1 text-xs">{t('kb.scope')}<select disabled={busy} className={selectStyle} value={draft.project_id || 'shared'} onChange={e => setDraft({ ...draft, project_id: e.target.value === 'shared' ? null : e.target.value, parent_id: null })}>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1 text-xs">{t('kb.scope')}<select disabled={busy} className={selectStyle} value={draft.project_id || 'shared'} onChange={e => setDraft({ ...draft, project_id: e.target.value === 'shared' ? null : e.target.value, parent_id: null })}>{scopeOptions}</select></label>
               <label className="flex flex-col gap-1 text-xs">{t('kb.parent')}<select disabled={busy} className={selectStyle} value={draft.parent_id || ''} onChange={e => setDraft({ ...draft, parent_id: e.target.value || null })}>
                 <option value="">{t('kb.noParent')}</option>{pages.filter(p => p.id !== draft.id && p.project_id === draft.project_id && (!p.is_archived || p.id === draft.parent_id)).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
               </select></label>
@@ -270,7 +280,7 @@ export default function KnowledgeBaseView() {
     <Dialog open={creating} onOpenChange={open => { if (!busy) setCreating(open); }}><DialogContent><DialogHeader><DialogTitle>{t('kb.newPage')}</DialogTitle></DialogHeader>
       <form onSubmit={e => { e.preventDefault(); void create(); }} className="space-y-4">
         <label className="block space-y-1 text-sm"><span>{t('kb.pageTitle')}</span><Input autoFocus required maxLength={200} value={newTitle} disabled={busy} onChange={e => setNewTitle(e.target.value)} /></label>
-        <label className="flex flex-col gap-1 text-sm">{t('kb.scope')}<select className={selectStyle} value={newScope} disabled={busy} onChange={e => setNewScope(e.target.value)}>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+        <label className="flex flex-col gap-1 text-sm">{t('kb.scope')}<select className={selectStyle} value={newScope} disabled={busy} onChange={e => setNewScope(e.target.value)}>{scopeOptions}</select></label>
         <DialogFooter><Button type="submit" disabled={busy || !newTitle.trim()}>{busy ? t('kb.saving') : t('kb.create')}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
