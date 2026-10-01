@@ -11,16 +11,18 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createMockClient } from './mockClient';
 import { createCfClient } from '../backend/cfClient';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
+import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import type { Database } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 
 function selectClient(): unknown {
   if (IS_DEMO_PRO || (!API_URL && !SUPABASE_URL)) return createMockClient();
   if (API_URL) return createCfClient();
+  // SUPABASE_URL, not the raw env value: on a self-host install opened from
+  // another machine it points at the server instead of the visitor's localhost.
   return createClient<Database>(
-    import.meta.env.VITE_SUPABASE_URL,
+    SUPABASE_URL,
     import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
     {
       auth: {

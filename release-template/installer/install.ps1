@@ -886,6 +886,9 @@ if ($adminDone -eq 'created' -or $adminDone -eq 'reset') {
   Say "  管理員帳號： $adminEmail"
 }
 Say "  管理後台：   http://localhost:$KongPort（Supabase Studio，帳密見 docker\.env）"
+Say ''
+Say "  同事從自己的電腦使用：http://<這台機器的 IP 或主機名稱>:$FrontendPort/demo/"
+Say "  （防火牆要開放 $FrontendPort 和 $KongPort 兩個連接埠）"
 if ($KongPort -ne 8000) {
   Say ''
   Say "  （註：LIVO API 閘道使用連接埠 $KongPort——8000 在這台機器上無法使用，"
