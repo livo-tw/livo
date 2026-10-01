@@ -1,6 +1,8 @@
 import DOMPurify from 'dompurify';
 import { supabase } from '@/integrations/supabase/client';
 import i18n from '@/i18n';
+import { isApprovalEvent } from '@/lib/featureToggles';
+import { loadFeatureToggles } from '@/lib/featureToggleQueries';
 
 const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'del', 'strike',
   'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'blockquote', 'code', 'pre',
@@ -22,6 +24,10 @@ export const createNotification = async (
   content: string = '',
 ) => {
   if (recipientId === senderId) return;
+  if (isApprovalEvent(type)) {
+    try { if (!(await loadFeatureToggles()).approvals) return; }
+    catch (error) { console.error('[LIVO] Approval notification skipped:', error); return; }
+  }
   const { error } = await supabase.from('notifications').insert({
     recipient_id: recipientId, sender_id: senderId, type, task_id: taskId, content,
   });

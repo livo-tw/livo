@@ -427,6 +427,13 @@ backup_env
 # ============================================================
 say ""
 say "[3/7] 啟動後端與前端服務（第一次執行需下載映像檔，約 5-10 分鐘）..."
+# 每次安裝與重跑都檢查；放在金鑰／前端改寫之後，避免新檔又受 umask 限制。
+if [ -r "$ROOT/installer/permissions.sh" ]; then
+  . "$ROOT/installer/permissions.sh"
+  normalize_package_permissions "$ROOT" || :
+else
+  say "  [!] 找不到 installer/permissions.sh，略過程式檔權限檢查。"
+fi
 if ! dc up -d </dev/null; then
   die "docker compose 啟動失敗。" "常見原因：
   1. 網路無法下載映像檔：請確認這台機器可以連外網

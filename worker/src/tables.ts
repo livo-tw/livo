@@ -42,8 +42,10 @@ export const TABLES: TableRegistry = {
     clientAccess: 'full',
     boolCols: ['is_active'],
     // update is governed by the members SPECIAL rule in db.ts (runs before
-    // the generic rules): super_admin unrestricted; admin limited to
-    // {theme, auth_id, sort_order}; member limited to own row + {theme, auth_id}.
+    // the generic rules, columns in memberProfile.ts): super_admin
+    // unrestricted; admin limited to {theme, auth_id, sort_order}; member
+    // limited to own row + {theme, auth_id}; everyone may set their own
+    // {avatar, color}.
     // insert/delete stay server-only (manage-member function).
     write: { insert: 'none', update: 'all', delete: 'none' },
   },

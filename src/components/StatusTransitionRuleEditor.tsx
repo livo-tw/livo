@@ -1,3 +1,4 @@
+import { useUIContext } from '@/context/UIContext';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -46,6 +47,7 @@ const StatusTransitionRuleEditor = ({
   activeProjects,
   users,
 }: StatusTransitionRuleEditorProps) => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -64,9 +66,9 @@ const StatusTransitionRuleEditor = ({
   const targetRules = rules.filter(r => r.targetStatusId === targetStatus.id);
   const requiredIds = new Set(targetRules.map(r => r.requiredStatusId));
 
-  const approvalCount = approvalRules?.length ?? 0;
+  const approvalCount = approvalsEnabled ? approvalRules?.length ?? 0 : 0;
   const totalBadge = targetRules.length + approvalCount;
-  const hasCrud = onCreateApprovalRule && onUpdateApprovalRule && onDeleteApprovalRule && activeProjects && users;
+  const hasCrud = approvalsEnabled && onCreateApprovalRule && onUpdateApprovalRule && onDeleteApprovalRule && activeProjects && users;
 
   const handleToggle = async (statusId: string) => {
     if (saving) return;
@@ -294,7 +296,7 @@ const StatusTransitionRuleEditor = ({
           )}
 
           {/* Read-only fallback when no CRUD available */}
-          {!hasCrud && approvalRules && approvalRules.length > 0 && (
+          {approvalsEnabled && !hasCrud && approvalRules && approvalRules.length > 0 && (
             <div className="pt-2 border-t border-border/50">
               <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
                 <ShieldCheck size={12} className="text-amber-600" />

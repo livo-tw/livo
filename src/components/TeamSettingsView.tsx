@@ -1,3 +1,4 @@
+import { useUIContext } from '@/context/UIContext';
 import { MessageSquare, ClipboardCheck, Link2, SendHorizonal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import NotificationRuleManager from '@/components/notifications/NotificationRuleManager';
@@ -7,6 +8,7 @@ import ExternalPlatformSettings from '@/components/integrations/ExternalPlatform
 import ReportSendConfig from '@/components/reports/ReportSendConfig';
 
 const TeamSettingsView = () => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   return (
     <div className="flex-1 overflow-auto">
@@ -42,7 +44,7 @@ const TeamSettingsView = () => {
         </section>
 
         {/* Approval Rules */}
-        <section className="space-y-3">
+        {approvalsEnabled && <section className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground border-b border-border pb-2">
             <ClipboardCheck size={16} className="text-primary" />
             {t('teamSettings.approvalRules')}
@@ -51,7 +53,7 @@ const TeamSettingsView = () => {
             <p className="text-xs text-muted-foreground mb-3">{t('teamSettings.approvalRulesDesc')}</p>
             <ApprovalRuleConfig />
           </div>
-        </section>
+        </section>}
 
         {/* External Platform */}
         <section className="space-y-3">

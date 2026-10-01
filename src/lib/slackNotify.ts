@@ -1,3 +1,5 @@
+import { loadFeatureToggles } from '@/lib/featureToggleQueries';
+import { isApprovalEvent } from '@/lib/featureToggles';
 import { supabase } from '@/integrations/supabase/client';
 import {
   buildTaskNotificationBlocks,
@@ -70,8 +72,10 @@ export async function sendSlackReportAsync(
   title: string,
   reportType: string,
   channelTarget?: string,
+  eventType?: string,
 ): Promise<void> {
   try {
+    if (eventType && isApprovalEvent(eventType) && !(await loadFeatureToggles()).approvals) return;
     await supabase.functions.invoke('slack-notify', {
       body: {
         type: 'report',
@@ -79,6 +83,7 @@ export async function sendSlackReportAsync(
         reportTitle: title,
         reportType,
         channelTarget,
+        eventType,
       },
     });
   } catch (err) {
@@ -95,6 +100,7 @@ export async function sendSlackApprovalRequest(
   steps: ApprovalRuleStep[],
 ): Promise<void> {
   try {
+    if (!(await loadFeatureToggles()).approvals) return;
     const blocks = buildApprovalRequestBlocks(task, request, steps);
     await supabase.functions.invoke('slack-notify', {
       body: {
@@ -120,6 +126,7 @@ export async function sendSlackApprovalCompleted(
   context: { actorName: string; comment?: string },
 ): Promise<void> {
   try {
+    if (!(await loadFeatureToggles()).approvals) return;
     const blocks = buildApprovalCompletedBlocks(task, action, context);
     await supabase.functions.invoke('slack-notify', {
       body: {

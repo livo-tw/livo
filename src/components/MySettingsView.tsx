@@ -1,7 +1,8 @@
-import { Palette, Bell, FileText, Globe, Info, KeyRound, Mail } from 'lucide-react';
+import { Palette, Bell, FileText, Globe, Info, KeyRound, Mail, UserCircle } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useTranslation } from 'react-i18next';
 import ThemeSelector from '@/components/ThemeSelector';
+import MyAvatarSettings from '@/components/MyAvatarSettings';
 import ChangePasswordForm from '@/components/ChangePasswordForm';
 import SlackNotifyPreferences from '@/components/SlackNotifyPreferences';
 import EmailNotifyPreferences from '@/components/EmailNotifyPreferences';
@@ -21,6 +22,18 @@ const MySettingsView = () => {
           <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('settings.mySettings')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('settings.mySettingsDesc')}</p>
         </div>
+
+        {/* Avatar badge — every member edits their own */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground border-b border-border pb-2">
+            <UserCircle size={16} className="text-primary" />
+            {t('settings.avatarLabel')}
+          </div>
+          <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-5">
+            <p className="text-sm text-muted-foreground mb-4">{t('settings.avatarDesc')}</p>
+            <MyAvatarSettings />
+          </div>
+        </section>
 
         {/* Theme — always available */}
         <section className="space-y-3">

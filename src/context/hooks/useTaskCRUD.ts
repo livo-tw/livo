@@ -6,6 +6,7 @@ import { getDepartment } from '@/lib/department';
 import { getWebhookConfig, triggerWebhook, type WebhookConfig } from '@/lib/webhook';
 import type { Task, Status, StatusLog, User, Project } from '@/types';
 import type { Database } from '@/integrations/supabase/types';
+import { randomUUID } from '@/lib/generateId';
 
 interface TaskCRUDDeps {
   allTasks: Task[];
@@ -157,7 +158,7 @@ export function useTaskCRUD({
         // Record status log
         if ('statusId' in updates) {
           const oldTask = allTasksRef.current.find(t => t.id === taskId);
-          const logId = `sl-${crypto.randomUUID()}`;
+          const logId = `sl-${randomUUID()}`;
           const changedAt = new Date().toISOString();
           const { error: logError } = await supabase.from('status_logs').insert({
             id: logId,
@@ -226,7 +227,7 @@ export function useTaskCRUD({
           return isNaN(num) ? max : Math.max(max, num);
         }, 0);
         const taskKey = `${project.key}-${maxNum + 1}`;
-        const taskId = `task_${crypto.randomUUID()}`;
+        const taskId = `task_${randomUUID()}`;
         const newTask: Task = {
           id: taskId,
           taskKey,

@@ -21,6 +21,7 @@ The live demo needs no sign-up. Everything you change stays in that browser tab 
 - **Collaboration**: live updates, and a lock with a notice when two people edit the same field
 - **Notifications and integrations**: in-app, email (Resend), Slack, webhooks, personal API tokens
 - **Administration**: members and roles, activity log, JSON backup and export, Jira CSV import
+- **Feature switches**: administrators enable or disable approvals for the whole team; off on fresh installs
 - **Interface**: Traditional Chinese, Simplified Chinese and English; dark and light themes; `Ctrl/Cmd + K` search
 
 | Gantt chart | Work report |
@@ -28,6 +29,12 @@ The live demo needs no sign-up. Everything you change stays in that browser tab 
 | ![Gantt chart](docs/images/gantt.jpg) | ![Work report](docs/images/report.jpg) |
 | **Dashboard** | **Stand-up** |
 | ![Dashboard](docs/images/dashboard.jpg) | ![Stand-up](docs/images/standup.jpg) |
+
+### Approval feature switch
+
+Open **System administration → Feature switches** to enable the approval workflow, rules and notifications for your team. Only admins and super admins can change it. Both Docker and Cloudflare are supported, with no third-party service or license key required. The `?demo=pro` demo starts with approvals on and uses only in-memory data.
+
+Existing installations with any approval rules or requests keep approvals on after upgrading. Turning approvals off lists all pending tasks: cancel or choose **Withdraw all and turn off**. Withdrawal clears each task's pending state and records the activity through the normal withdrawal path. With approvals off, approval screens, status interception and notifications disappear. Rules and history are retained and become visible when enabled again. Existing Realtime broadcasts propagate changes; offline clients pick them up on the next load. Rerun the Docker installer to apply the migration, or apply the updated `worker/schema.sql` on Cloudflare.
 
 ## Getting started
 

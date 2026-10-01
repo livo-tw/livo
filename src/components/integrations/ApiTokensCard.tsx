@@ -25,6 +25,7 @@ import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { authGetJson, authPostJson } from './fnFetch';
 import { Field, inputCls } from './shared';
 import { type ApiToken, bindableMembers, normalizeToken } from './apiTokenUtils';
+import { copyText } from '@/lib/clipboard';
 
 const ApiTokensCard = () => {
   const { t } = useTranslation();
@@ -121,12 +122,8 @@ const ApiTokensCard = () => {
 
   const copyToken = async () => {
     if (!createdToken) return;
-    try {
-      await navigator.clipboard.writeText(createdToken);
-      toast.success(t('integrations.apiTokens.copied'));
-    } catch {
-      /* clipboard unavailable — user can select the text manually */
-    }
+    if (await copyText(createdToken)) toast.success(t('integrations.apiTokens.copied'));
+    else toast.error(t('common.copyFailed'));
   };
 
   return (

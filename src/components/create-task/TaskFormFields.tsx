@@ -8,7 +8,8 @@ import { Calendar } from '@/components/ui/calendar';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import type { Priority, Tag, TaskDeployment, Project, Status } from '@/types';
+import type { Priority, Tag, TaskDeployment, Status } from '@/types';
+import { projectGroupLabel, type ProjectGroup } from '@/lib/projectGroups';
 
 const envList = ['Dev', 'QA', 'Stage', 'Live Staging', 'Prod'] as const;
 type EnvName = typeof envList[number];
@@ -47,7 +48,7 @@ export interface TaskFormFieldsProps {
   showValidationErrors: boolean;
   setShowValidationErrors: (v: boolean) => void;
   requiredFields: Record<string, boolean>;
-  groupedProjects: { line: { id: string; name: string; icon: string }; projects: Project[] }[];
+  groupedProjects: ProjectGroup[];
   statuses: Status[];
   // Tag picker state
   tagPickerOpen: boolean;
@@ -93,7 +94,7 @@ const TaskFormFields = ({
         <select value={projectId} onChange={e => setProjectId(e.target.value)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
           {groupedProjects.map(g => (
-            <optgroup key={g.line.id} label={`${g.line.icon} ${g.line.name}`}>
+            <optgroup key={g.line?.id ?? 'other'} label={projectGroupLabel(g.line, t('common.other'))}>
               {g.projects.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}

@@ -1,3 +1,5 @@
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -54,6 +56,7 @@ interface Props {
 }
 
 export function AddRuleDialog({ open, onOpenChange, templates, statusNames, onSubmit }: Props) {
+  const { approvalsEnabled } = useUIContext();
   const [form, setForm] = useState<NewRuleForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
@@ -66,7 +69,7 @@ export function AddRuleDialog({ open, onOpenChange, templates, statusNames, onSu
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && isEventEnabled(form.event_type, approvalsEnabled)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>新增通知規則</DialogTitle>
@@ -82,7 +85,7 @@ export function AddRuleDialog({ open, onOpenChange, templates, statusNames, onSu
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {EVENT_TYPES.map(([v, l]) => (
+                {EVENT_TYPES.filter(([event]) => isEventEnabled(event, approvalsEnabled)).map(([v, l]) => (
                   <SelectItem key={v} value={v} disabled={COMING_SOON_EVENTS.includes(v)}>{l}</SelectItem>
                 ))}
               </SelectContent>

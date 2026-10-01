@@ -1,6 +1,7 @@
 import { createContext, useContext, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
+import { randomUUID } from '@/lib/generateId';
 
 export interface UndoEntry {
   id: string;
@@ -47,7 +48,7 @@ export function useUndoStackState(): UndoStackAPI {
   }, []);
 
   const push = useCallback((entry: Omit<UndoEntry, 'id' | 'timestamp'>) => {
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     const full: UndoEntry = { ...entry, id, timestamp: Date.now() };
     stackRef.current = [full, ...stackRef.current].slice(0, MAX_STACK);
 

@@ -159,6 +159,7 @@ async function postMessage(
 
 interface NotifyPayload {
   type: string;
+  eventType?: string;
   taskKey?: string;
   taskTitle?: string;
   taskId?: string;
@@ -350,6 +351,14 @@ Deno.serve(async (req) => {
     }
 
     const payload: NotifyPayload = await req.json();
+    if (payload.type.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
+      const { data: enabled, error } = await supabase.rpc('livo_approvals_enabled');
+      if (error || enabled !== true) {
+        return new Response(JSON.stringify({ skipped: 'approvals_disabled' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
     const sc: SlackCtx = { token, usersCache: null };
 
     const { data: settings } = await supabase

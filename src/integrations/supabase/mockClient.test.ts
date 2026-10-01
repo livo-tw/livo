@@ -22,6 +22,10 @@ beforeEach(async () => {
 });
 
 describe('mockClient filters', () => {
+  it('keeps approvals enabled in the isolated demo data', async () => {
+    const result = await db.from('system_settings').select('value').eq('key', 'feature_toggles').single();
+    expect(result.data).toMatchObject({ value: { approvals: true } });
+  });
   it('gt / gte / lt / lte compare numbers and never match NULL', async () => {
     expect(ids(await select().gt('n', 1))).toEqual(['b']);
     expect(ids(await select().gte('n', 1))).toEqual(['a', 'b']);

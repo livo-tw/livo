@@ -9,14 +9,17 @@ import {
   type ApprovalRuleStep,
 } from '@/lib/approvalQueries';
 import { useAuthContext } from '@/context/AuthContext';
+import { useUIContext } from '@/context/UIContext';
 
 export const useApprovalRules = () => {
   const { currentMemberId } = useAuthContext();
+  const { approvalsEnabled, featureTogglesReady } = useUIContext();
   const [rules, setRules] = useState<ApprovalRule[]>([]);
   const [stepsMap, setStepsMap] = useState<Record<string, ApprovalRuleStep[]>>({});
   const [loading, setLoading] = useState(false);
 
   const fetchRules = useCallback(async (projectId: string) => {
+    if (!approvalsEnabled || !featureTogglesReady) { setRules([]); setStepsMap({}); return; }
     setLoading(true);
     const { data, error } = await ruleQueries.fetchByProject(supabase, projectId);
     if (error) {
@@ -33,10 +36,10 @@ export const useApprovalRules = () => {
       setStepsMap(Object.fromEntries(entries));
     }
     setLoading(false);
-  }, []);
+  }, [approvalsEnabled, featureTogglesReady]);
 
   const fetchRulesForProjects = useCallback(async (projectIds: string[]) => {
-    if (projectIds.length === 0) { setRules([]); setStepsMap({}); return; }
+    if (!approvalsEnabled || !featureTogglesReady || projectIds.length === 0) { setRules([]); setStepsMap({}); return; }
     setLoading(true);
     const allRules: ApprovalRule[] = [];
     const allSteps: [string, ApprovalRuleStep[]][] = [];
@@ -57,7 +60,7 @@ export const useApprovalRules = () => {
     setRules(allRules);
     setStepsMap(Object.fromEntries(allSteps));
     setLoading(false);
-  }, []);
+  }, [approvalsEnabled, featureTogglesReady]);
 
   const createRule = useCallback(async (
     projectId: string,
@@ -154,22 +157,24 @@ export const useApprovalRules = () => {
     fromStatus: string,
     toStatus: string,
   ): Promise<boolean> => {
+    if (!approvalsEnabled || !featureTogglesReady) return false;
     const { data, error } = await ruleQueries.fetchForTransition(supabase, projectId, fromStatus, toStatus);
     if (error) console.error('[LIVO] approval rule query error:', error);
     return !!data;
-  }, []);
+  }, [approvalsEnabled, featureTogglesReady]);
 
   const getRuleForTransition = useCallback(async (
     projectId: string,
     fromStatus: string,
     toStatus: string,
   ): Promise<{ rule: ApprovalRule; steps: ApprovalRuleStep[] } | null> => {
+    if (!approvalsEnabled || !featureTogglesReady) return null;
     const { data: rule } = await ruleQueries.fetchForTransition(supabase, projectId, fromStatus, toStatus);
     if (!rule) return null;
     const r = rule as ApprovalRule;
     const { data: steps } = await stepQueries.fetchByRule(supabase, r.id);
     return { rule: r, steps: (steps as ApprovalRuleStep[]) ?? [] };
-  }, []);
+  }, [approvalsEnabled, featureTogglesReady]);
 
   return {
     rules,

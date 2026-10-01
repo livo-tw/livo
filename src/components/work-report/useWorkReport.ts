@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { format, addDays, isWithinInterval, parseISO } from 'date-fns';
 import { WorkReport, ReportType, getPeriodRange, periodTitle } from './types';
 import i18n from '@/i18n';
+import { copyText } from '@/lib/clipboard';
 
 export function useWorkReport() {
   const { allTasks, statuses } = useTaskContext();
@@ -283,10 +284,9 @@ export function useWorkReport() {
 
   const handleCopy = () => {
     if (!content.trim()) { toast.error(i18n.t('workReport.nothingToCopy')); return; }
-    navigator.clipboard.writeText(content).then(() => {
-      toast.success(i18n.t('workReport.copied'));
-    }).catch(() => {
-      toast.error(i18n.t('workReport.copyFailed'));
+    void copyText(content).then(ok => {
+      if (ok) toast.success(i18n.t('workReport.copied'));
+      else toast.error(i18n.t('workReport.copyFailed'));
     });
   };
 

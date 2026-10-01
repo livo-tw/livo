@@ -1,6 +1,25 @@
 {
+  "featureToggles": {
+    "externalDescription": "綁定後可在外部平台更新任務狀態，系統會自動同步至 LIVO。",
+    "title": "功能開關",
+    "description": "由管理員設定全體成員可使用的功能，變更會同步套用。",
+    "approvalsLabel": "簽核流程",
+    "approvalsDescription": "啟用任務簽核、簽核規則與相關通知；關閉後可直接變更任務狀態。",
+    "saved": "功能設定已儲存",
+    "saving": "處理中…",
+    "retry": "重試",
+    "loadFailed": "無法載入功能設定，請重試。",
+    "saveFailed": "無法儲存設定。請重新載入，確認是否仍有待簽核任務後再試。",
+    "withdrawTitle": "撤回待簽核申請並關閉",
+    "pendingDescription": "目前有 {{count}} 筆待簽核申請。關閉前必須先全部撤回。",
+    "historyKept": "簽核規則與歷史紀錄會保留，重新開啟後即可查看。",
+    "withdrawAndDisable": "全部撤回並關閉",
+    "withdrawFailed": "撤回未全部完成，這次未關閉簽核。請重新確認清單後再試；已完成撤回的申請會保留紀錄。",
+    "requestUnavailable": "簽核設定或申請已變更，請重新載入任務。"
+  },
   "common": {
     "loading": "載入中...",
+    "copyFailed": "複製失敗，請手動選取複製",
     "processing": "處理中...",
     "saving": "儲存中...",
     "uploading": "上傳中...",
@@ -283,7 +302,11 @@
     "noFilterResults": "找不到符合條件的任務",
     "adjustFilters": "試著調整篩選條件",
     "noTasks": "看板上還沒有任務",
-    "noTasksDesc": "建立第一個任務，開始管理你的工作流程"
+    "noTasksDesc": "建立第一個任務，開始管理你的工作流程",
+    "noTasksInSprint": "目前衝刺裡沒有這裡的任務",
+    "tasksInOtherSprints": "這裡有 {{count}} 個任務屬於其他衝刺（例如已結束的衝刺）。看板只顯示目前衝刺和還沒排進衝刺的任務，左側數字則包含全部任務。",
+    "otherSprintsShort": "另 {{count}} 個在其他衝刺",
+    "viewAllInList": "到「列表」查看全部任務"
   },
   "list": {
     "title": "待辦事項列表",
@@ -1089,6 +1112,15 @@
   "settings": {
     "mySettings": "我的設定",
     "mySettingsDesc": "個人化偏好與通知設定",
+    "avatarLabel": "我的頭像",
+    "avatarDesc": "設定自己在看板、留言和成員列表裡顯示的頭像文字與底色，其他人都會看到。",
+    "avatarPreview": "頭像預覽",
+    "avatarTextLabel": "頭像文字",
+    "avatarTextHint": "最多 2 個字，也可以用一個 emoji。",
+    "avatarColorLabel": "底色",
+    "avatarCustomColor": "自訂顏色",
+    "avatarSaved": "頭像已更新",
+    "avatarSaveFailed": "頭像更新失敗：",
     "themeLabel": "介面主題",
     "themeDesc": "選擇你喜好的介面配色，設定會同步到所有裝置",
     "slackNotifyLabel": "Slack 主動推播",
@@ -1970,6 +2002,7 @@
     "editMyManual": "編輯我的說明書",
     "teamMember": "團隊成員",
     "notFilled": "尚未填寫",
+    "noProjects": "尚無經辦專案",
     "saveFailed": "儲存失敗",
     "saved": "已儲存",
     "editActivityDetail": "編輯「{{name}}」的團隊介紹",
@@ -1978,7 +2011,8 @@
       "communication": "溝通方式",
       "difficulty": "遇到困難時",
       "landmine": "地雷",
-      "bonus": "加分"
+      "bonus": "加分",
+      "projects": "負責過的專案"
     },
     "departments": {
       "manager": "主管",

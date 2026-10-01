@@ -75,7 +75,7 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
 
 const BoardView = () => {
   const { t } = useTranslation();
-  const { allTasks, setAllTasks, selectedProjectId, selectedLineId, standupMode, setStandupMode, standupUserId, allProjects, statuses, productLines, updateTaskInDb, sprintActive, currentSprint, users, currentMemberId, currentMember, completeSprint, renameSprint, startSprint, getDefaultSprintName, setSelectedProjectId, setSelectedLineId, setCurrentView, statusLogs, setSelectedTask, customFields, setShowCreateTask } = useAppContext();
+  const { approvalsEnabled, featureTogglesReady, allTasks, setAllTasks, selectedProjectId, selectedLineId, standupMode, setStandupMode, standupUserId, allProjects, statuses, productLines, updateTaskInDb, sprintActive, currentSprint, users, currentMemberId, currentMember, completeSprint, renameSprint, startSprint, getDefaultSprintName, setSelectedProjectId, setSelectedLineId, setCurrentView, statusLogs, setSelectedTask, customFields, setShowCreateTask } = useAppContext();
   const isMobile = useIsMobile();
   const { hasFeature } = useLicense();
   const { canTransitionTo } = useStatusTransitionRules();
@@ -121,7 +121,11 @@ const BoardView = () => {
     );
   };
 
-  const filteredTasks = useMemo(() => {
+  // Every filter except the sprint scope. While a sprint runs, the board shows
+  // its tasks plus unscheduled ones; tasks of other (usually finished) sprints
+  // stay countable here so the board can say where they went (the sidebar
+  // counts and the 列表 view include them).
+  const unscopedTasks = useMemo(() => {
     let tasks = allTasks;
     if (selectedProjectId) {
       tasks = tasks.filter(t => t.projectId === selectedProjectId);
@@ -131,9 +135,6 @@ const BoardView = () => {
     }
     if (standupMode && standupUserId) {
       tasks = tasks.filter(t => t.assigneeId === standupUserId);
-    }
-    if (sprintActive && currentSprint) {
-      tasks = tasks.filter(t => t.sprintId === currentSprint.id || !t.sprintId);
     }
     if (filterDept.length > 0) {
       const deptSet = new Set(filterDept);
@@ -148,7 +149,24 @@ const BoardView = () => {
     if (filterReviewers.length > 0) { const s = new Set(filterReviewers); tasks = tasks.filter(t => t.reviewerId && s.has(t.reviewerId)); }
     if (filterProjects.length > 0) { const s = new Set(filterProjects); tasks = tasks.filter(t => s.has(t.projectId)); }
     return tasks;
-  }, [allTasks, selectedProjectId, selectedLineId, standupMode, standupUserId, sprintActive, currentSprint, filterDept, users, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, allProjects]);
+  }, [allTasks, selectedProjectId, selectedLineId, standupMode, standupUserId, filterDept, users, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, allProjects]);
+
+  const scopeSprintId = sprintActive && currentSprint ? currentSprint.id : null;
+  const filteredTasks = useMemo(() => scopeSprintId
+    ? unscopedTasks.filter(t => t.sprintId === scopeSprintId || !t.sprintId)
+    : unscopedTasks,
+  [unscopedTasks, scopeSprintId]);
+
+  /** Tasks the filters match that sit in another sprint, per project. */
+  const otherSprintCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!scopeSprintId) return counts;
+    for (const t of unscopedTasks) {
+      if (t.sprintId && t.sprintId !== scopeSprintId) counts.set(t.projectId, (counts.get(t.projectId) || 0) + 1);
+    }
+    return counts;
+  }, [unscopedTasks, scopeSprintId]);
+  const otherSprintTotal = unscopedTasks.length - filteredTasks.length;
 
   const visibleProjects = useMemo(() =>
     selectedProjectId
@@ -160,6 +178,7 @@ const BoardView = () => {
   const totalFiltered = filteredTasks.length;
 
   const handleDrop = useCallback(async (taskId: string, newStatusId: string) => {
+    if (!featureTogglesReady) { toast.error(t('featureToggles.loadFailed')); return; }
     try {
       const task = allTasks.find(t => t.id === taskId);
       if (!task || task.statusId === newStatusId) return;
@@ -175,7 +194,7 @@ const BoardView = () => {
 
       // When requiresApproval is true, ALL status changes go through approval
       const project = allProjects.find(p => p.id === task.projectId);
-      if (task.requiresApproval) {
+      if (approvalsEnabled && task.requiresApproval) {
         const toStatusName = statuses.find(s => s.id === newStatusId)?.name || '—';
         const confirmPayload = { taskId, fromStatusId: task.statusId, toStatusId: newStatusId, projectId: project?.id || '', toStatusName };
         setApprovalConfirm(confirmPayload);
@@ -183,7 +202,7 @@ const BoardView = () => {
       }
 
       // Advisory: if a matching approval rule exists but task doesn't require approval, warn
-      if (!task.requiresApproval && project) {
+      if (approvalsEnabled && !task.requiresApproval && project) {
         try {
           const ruleInfo = await getRuleForTransition(project.id, task.statusId, newStatusId);
           if (ruleInfo) {
@@ -246,7 +265,7 @@ const BoardView = () => {
       console.error('[LIVO] handleDrop error:', err);
       toast.error(t('error.updateFailed') + String(err));
     }
-  }, [allTasks, statuses, statusLogs, setAllTasks, updateTaskInDb, allProjects, users, currentMember, canTransitionTo, triggerNotification]);
+  }, [approvalsEnabled, featureTogglesReady, getRuleForTransition, setApprovalConfirm, t, allTasks, statuses, statusLogs, setAllTasks, updateTaskInDb, allProjects, users, currentMember, canTransitionTo, triggerNotification]);
 
   /* ── dnd-kit sensors & handlers ── */
   const sensors = useSensors(
@@ -403,7 +422,16 @@ const BoardView = () => {
       {/* Empty state */}
       {filteredTasks.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center py-20 px-4 text-center">
-          {hasFilters ? (
+          {otherSprintTotal > 0 ? (
+            <>
+              <ClipboardList size={48} className="mb-3 text-muted-foreground/40" />
+              <p className="text-sm font-semibold text-foreground mb-1">{t('board.noTasksInSprint')}</p>
+              <p className="text-xs text-muted-foreground mb-3 max-w-md">{t('board.tasksInOtherSprints', { count: otherSprintTotal })}</p>
+              <button onClick={() => setCurrentView('all-list')} className="text-sm text-primary hover:text-primary/80 font-medium transition-colors">
+                {t('board.viewAllInList')}
+              </button>
+            </>
+          ) : hasFilters ? (
             <>
               <Search size={48} className="mb-3 text-muted-foreground/40" />
               <p className="text-sm font-semibold text-foreground mb-1">{t('board.noFilterResults')}</p>
@@ -458,7 +486,12 @@ const BoardView = () => {
                   </span>
                 )}
                 <span className="text-sm md:text-[15px] font-bold text-foreground truncate">{project.name}</span>
-                <span className="text-[13px] text-muted-foreground font-medium ml-auto flex-shrink-0">({projectTasks.length})</span>
+                {(otherSprintCounts.get(project.id) || 0) > 0 && (
+                  <span className="ml-auto flex-shrink-0 text-[12px] text-muted-foreground/70" title={t('board.tasksInOtherSprints', { count: otherSprintCounts.get(project.id) })}>
+                    {t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}
+                  </span>
+                )}
+                <span className={`text-[13px] text-muted-foreground font-medium flex-shrink-0 ${(otherSprintCounts.get(project.id) || 0) > 0 ? '' : 'ml-auto'}`}>({projectTasks.length})</span>
               </div>
 
               {!isCollapsed && (
@@ -533,7 +566,7 @@ const BoardView = () => {
       )}
 
       {/* Approval confirm modal (from drag-and-drop) */}
-      {approvalConfirm && (
+      {approvalsEnabled && approvalConfirm && (
         <BoardApprovalModal
           approvalConfirm={approvalConfirm}
           onClose={() => setApprovalConfirm(null)}

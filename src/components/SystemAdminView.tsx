@@ -9,6 +9,7 @@ import { useLicense } from '@/context/LicenseContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import AdminLicenseSection from '@/components/system-admin/AdminLicenseSection';
+import AdminFeatureToggles from '@/components/system-admin/AdminFeatureToggles';
 import AdminUsageSection from '@/components/system-admin/AdminUsageSection';
 import AdminBackupSection from '@/components/system-admin/AdminBackupSection';
 import AdminNotifySection from '@/components/system-admin/AdminNotifySection';
@@ -102,6 +103,7 @@ const SystemAdminView = () => {
           {/* Tab content */}
           {activeTab === 'admin' && (
             <div className="space-y-6">
+              <AdminFeatureToggles />
               <AdminLicenseSection />
 
               <AdminUsageSection currentMemberId={currentMemberId} />

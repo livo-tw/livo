@@ -1,3 +1,5 @@
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { useState, useEffect, useRef } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -75,6 +77,7 @@ interface FormState {
 }
 
 const TemplateManager = () => {
+  const { approvalsEnabled } = useUIContext();
   const { templates, loading, fetchTemplates, createTemplate, updateTemplate, deleteTemplate } = useNotificationTemplates();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -241,7 +244,7 @@ const TemplateManager = () => {
       )}
 
       {/* Edit / Create dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen && isEventEnabled(form.event_type, approvalsEnabled)} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingId ? '編輯訊息範本' : '新增訊息範本'}</DialogTitle>
@@ -266,7 +269,7 @@ const TemplateManager = () => {
                 >
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {EVENT_TYPES.map(([v, l]) => (
+                    {EVENT_TYPES.filter(([event]) => isEventEnabled(event, approvalsEnabled)).map(([v, l]) => (
                       <SelectItem key={v} value={v}>{l}</SelectItem>
                     ))}
                   </SelectContent>

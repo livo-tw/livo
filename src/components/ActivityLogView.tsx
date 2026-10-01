@@ -1,3 +1,4 @@
+import { isEventEnabled } from '@/lib/featureToggles';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useMemberContext } from '@/context/MemberContext';
 import { useTaskContext } from '@/context/TaskContext';
@@ -65,11 +66,13 @@ const formatTime = (iso: string) => {
 };
 
 const ActivityLogView = () => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const { users } = useMemberContext();
   const { allTasks } = useTaskContext();
   const { setSelectedTask } = useUIContext();
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [allLogs, setLogs] = useState<ActivityLog[]>([]);
+  const logs = useMemo(() => allLogs.filter(log => isEventEnabled(log.action, approvalsEnabled)), [allLogs, approvalsEnabled]);
   const [viewMode, setViewMode] = useState<'timeline' | 'by-user'>('timeline');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

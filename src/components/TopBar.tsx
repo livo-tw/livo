@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { IS_DEMO_PRO } from '@/lib/demoMode';
 
 const navItemDefs = [
   { id: 'dashboard' as const, labelKey: 'nav.dashboard', icon: BarChart3 },
@@ -31,7 +32,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const { t } = useTranslation();
   const { currentMember, currentMemberId, setCurrentMemberId, realMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { setShowCreateTask, setCurrentView, currentView, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
+  const { approvalsEnabled, setShowCreateTask, setCurrentView, currentView, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
   const { allProjects, setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { allTasks, statuses, taskSpecs } = useTaskContext();
   const { hasFeature } = useLicense();
@@ -51,7 +52,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const roleLevel = (role: string) => role === 'super_admin' ? 3 : role === 'admin' ? 2 : 1;
   const realRole = realMember?.role || 'member';
   const realLevel = roleLevel(realRole);
-  const canSwitch = realLevel >= 2; // admin or super_admin
+  // Identity switching exists only in the ?demo=pro showcase, so visitors can
+  // try each role. On a real install it would let an admin act and post as
+  // someone else, so it is never offered there.
+  const canSwitch = IS_DEMO_PRO && realLevel >= 2; // admin or super_admin
   const switchableUsers = canSwitch
     ? users.filter(u => roleLevel(u.role) < realLevel || u.id === realMember?.id)
     : users.filter(u => u.id === realMember?.id);
@@ -218,7 +222,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
           )}
 
           {/* Pending approvals button */}
-          <div className="relative" ref={approvalPanelRef}>
+          {approvalsEnabled && <div className="relative" ref={approvalPanelRef}>
             <button
               onClick={() => setShowPendingApprovals(v => !v)}
               aria-label={t('approval.pending')}
@@ -247,7 +251,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                 </div>
               </>
             )}
-          </div>
+          </div>}
 
           <NotificationPanel />
 
@@ -406,4 +410,3 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
 };
 
 export default TopBar;
-        

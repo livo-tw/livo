@@ -1,3 +1,5 @@
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled, isNotificationVariableEnabled } from '@/lib/featureToggles';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Trash2, Edit2, Check, X, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -99,13 +101,15 @@ function useVariableAutocomplete(
   value: string,
   setValue: (fn: (prev: string) => string) => void,
 ) {
+  const { approvalsEnabled } = useUIContext();
+  const availableKeys = NOTIF_VAR_KEYS.filter(key => isNotificationVariableEnabled(key, approvalsEnabled));
   const [show, setShow] = useState(false);
   const [filter, setFilter] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   const filtered = filter
-    ? NOTIF_VAR_KEYS.filter(k => getNotifLabel(k).includes(filter) || k.includes(filter.toLowerCase()))
-    : [...NOTIF_VAR_KEYS];
+    ? availableKeys.filter(k => getNotifLabel(k).includes(filter) || k.includes(filter.toLowerCase()))
+    : availableKeys;
 
   // Detect 【 typed in textarea
   useEffect(() => {
@@ -186,12 +190,16 @@ function AutocompleteDropdown({ ac, id }: { ac: ReturnType<typeof useVariableAut
 // ── Grouped Variable Buttons ──────────────────────────────────
 
 function GroupedVariableButtons({ onInsert, compact }: { onInsert: (displayVar: string) => void; compact?: boolean }) {
+  const { approvalsEnabled } = useUIContext();
+  const groups = NOTIF_GROUPS.map(group => ({
+    ...group, keys: group.keys.filter(key => isNotificationVariableEnabled(key, approvalsEnabled)),
+  })).filter(group => group.keys.length > 0);
   const { t } = useTranslation();
 
   if (compact) {
     return (
       <div className="space-y-1.5">
-        {NOTIF_GROUPS.map(({ group, keys }) => (
+        {groups.map(({ group, keys }) => (
           <div key={group}>
             <span className="text-[9px] font-medium text-muted-foreground/70 uppercase tracking-wider">{getNotifGroupLabel(group)}</span>
             <div className="flex flex-wrap gap-1 mt-0.5">
@@ -219,7 +227,7 @@ function GroupedVariableButtons({ onInsert, compact }: { onInsert: (displayVar: 
         {t('templateVar.title')}
       </div>
       <div className="p-2 space-y-2 max-h-48 overflow-y-auto">
-        {NOTIF_GROUPS.map(({ group, keys }) => (
+        {groups.map(({ group, keys }) => (
           <div key={group}>
             <div className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider mb-1">
               {getNotifGroupLabel(group)}
@@ -364,6 +372,7 @@ interface AddTemplateFormProps {
 }
 
 export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [eventType, setEventType] = useState<EventType>('status_changed');
@@ -388,10 +397,17 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
   const ac = useVariableAutocomplete(textareaRef, content, setContent);
 
   const handleAdd = () => {
-    if (!name.trim() || !content.trim()) return;
+    if (!isEventEnabled(eventType, approvalsEnabled) || !name.trim() || !content.trim()) return;
     // Convert display → storage for persistence
     onAdd({ name, event_type: eventType, template_content: notifToStorage(content), tone, is_default: false, organization_id: null });
   };
+
+  useEffect(() => {
+    if (!isEventEnabled(eventType, approvalsEnabled)) {
+      setEventType('status_changed');
+      setContent(notifToDisplay(DEFAULT_CONTENT.status_changed));
+    }
+  }, [eventType, approvalsEnabled]);
 
   const previewContent = content ? resolveTemplate(notifToStorage(content), PREVIEW_CTX) : '';
 
@@ -407,7 +423,7 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
         <Select value={eventType} onValueChange={v => handleEventChange(v as EventType)}>
           <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {EVENT_TYPES.map(e => <SelectItem key={e} value={e} className="text-xs">{EVENT_LABELS[e]}</SelectItem>)}
+            {EVENT_TYPES.filter(event => isEventEnabled(event, approvalsEnabled)).map(e => <SelectItem key={e} value={e} className="text-xs">{EVENT_LABELS[e]}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={tone} onValueChange={v => setTone(v as Tone)}>

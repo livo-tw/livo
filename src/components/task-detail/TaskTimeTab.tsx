@@ -18,8 +18,8 @@ import { useTranslation } from 'react-i18next';
 import { Play, Square, Loader2, Timer, Plus, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { generateId } from '@/lib/generateId';
 import type { TaskDetailState } from './hooks/useTaskDetail';
+import { randomUUID } from '@/lib/generateId';
 
 type Props = { detail: TaskDetailState };
 
@@ -55,6 +55,11 @@ const fmtHMS = (ms: number): string => {
 };
 
 const isRunning = (e: TimeEntry): boolean => !!e.started_at && !e.ended_at;
+
+// A bare UUID: the self-host (Postgres) time_entries.id column is uuid, so a
+// prefixed id like "te_<uuid>" is rejected there. The Cloudflare build stores
+// any TEXT id, so this works on both backends.
+const newEntryId = (): string => randomUUID();
 
 // The generated supabase types predate the time_entries table, so query it
 // through a minimal structural facade (runtime behaviour is unchanged — the
@@ -178,7 +183,7 @@ const TaskTimeTab = ({ detail }: Props) => {
         toast.info(t('taskDetail.time.stoppedOtherTask', { key: otherTask?.taskKey || '?', minutes: mins }));
       }
       const { error } = await timeEntries().insert({
-        id: generateId('te'),
+        id: newEntryId(),
         task_id: taskId,
         member_id: currentMemberId,
         minutes: 0,
@@ -192,6 +197,8 @@ const TaskTimeTab = ({ detail }: Props) => {
       if (error) toast.error(t('taskDetail.time.startFailed') + error.message);
       else toast.success(t('taskDetail.time.timerStarted'));
       await load();
+    } catch (err) {
+      toast.error(t('taskDetail.time.startFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
     } finally {
       setBusy(false);
     }
@@ -215,6 +222,8 @@ const TaskTimeTab = ({ detail }: Props) => {
       setNoteText('');
       setNoteDialogEntryId(runningHere.id);
       await load();
+    } catch (err) {
+      toast.error(t('taskDetail.time.stopFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
     } finally {
       setBusy(false);
     }
@@ -243,7 +252,7 @@ const TaskTimeTab = ({ detail }: Props) => {
     try {
       const nowIso = new Date().toISOString();
       const { error } = await timeEntries().insert({
-        id: generateId('te'),
+        id: newEntryId(),
         task_id: taskId,
         member_id: currentMemberId,
         minutes: total,
@@ -264,6 +273,8 @@ const TaskTimeTab = ({ detail }: Props) => {
       setManualNote('');
       toast.success(t('taskDetail.time.added'));
       await load();
+    } catch (err) {
+      toast.error(t('taskDetail.time.saveFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
     } finally {
       setBusy(false);
     }

@@ -52,6 +52,7 @@ async function startServer(name: string, upstreamOrigin?: string): Promise<Runni
   writeFileSync(path.join(dir, 'deploy-local', 'index.html'), '<h1>Website</h1>');
   writeFileSync(path.join(dir, 'deploy-local', 'demo', 'index.html'), '<h1>App</h1>');
   writeFileSync(path.join(dir, 'deploy-local', 'demo', 'app.js'), 'window.example = true;');
+  writeFileSync(path.join(dir, 'deploy-local', 'demo', 'favicon.ico'), 'example-icon');
   const child = spawn(process.execPath, [path.join(dir, 'server.cjs')], {
     env: { ...process.env, PORT: '0', LIVO_API_UPSTREAM: upstreamOrigin || '' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -266,6 +267,17 @@ describe('server.cjs proxy integration', () => {
       expect((await request(running.port, '/demo/app.js')).headers['content-type']).toBe('application/javascript');
     }
     expect((await request(staticServer.port, '/pricing')).body).toBe('<h1>Website</h1>');
+  });
+
+  it('serves the app icon at /favicon.ico, e.g. for an attachment image opened in its own tab', async () => {
+    const before = upstreamCalls;
+    for (const running of [proxy, staticServer]) {
+      const icon = await request(running.port, '/favicon.ico');
+      expect(icon.status).toBe(200);
+      expect(icon.headers['content-type']).toBe('image/x-icon');
+      expect(icon.body).toBe('example-icon');
+    }
+    expect(upstreamCalls).toBe(before);
     expect((await request(staticServer.port, '/rest/v1/tasks')).body).toBe('<h1>Website</h1>');
   });
 
@@ -304,6 +316,11 @@ describe('server.cjs proxy integration', () => {
     const upgrade = await websocketRequest(proxy.port, '/realtime/v1/websocket');
     expect(upgrade.status).toBe(502);
     expect(JSON.parse(upgrade.text)).toEqual({ error: 'Bad gateway' });
+    // The child's stderr reaches this process asynchronously, possibly after
+    // the 502 responses: wait for both log lines before checking them.
+    for (const deadline = Date.now() + 2000; proxy.errors().trim().split('\n').filter(Boolean).length < 2 && Date.now() < deadline;) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     expect(proxy.errors()).not.toMatch(/example-token|example-key|authorization|apikey/i);
     expect(proxy.errors().trim().split('\n')).toHaveLength(2);
   });

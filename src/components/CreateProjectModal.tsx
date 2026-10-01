@@ -108,9 +108,17 @@ const CreateProjectModal = () => {
       color,
       isArchived: false,
     };
-    await createProjectInDb(newProject);
+    const createError = await createProjectInDb(newProject);
+    if (createError) {
+      // Keep the dialog open with the reason, so a failure is never silent.
+      setError(t('project.createFailed') + createError);
+      return;
+    }
     if (currentMemberId) await logActivity(currentMemberId, 'add_project', t('project.activityCreated', { name: name.trim(), key }), undefined, undefined, 'project');
     setShowCreateProject(false);
+    } catch (err) {
+      // Never fail silently: show what went wrong inside the dialog.
+      setError(t('project.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
     } finally {
       setIsSubmitting(false);
     }

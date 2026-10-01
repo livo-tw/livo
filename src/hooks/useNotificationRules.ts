@@ -1,4 +1,6 @@
 import { useState, useCallback } from 'react';
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { supabase } from '@/integrations/supabase/client';
 import {
   ruleQueries,
@@ -14,6 +16,7 @@ export interface NotificationEvent {
 }
 
 export function useNotificationRules() {
+  const { approvalsEnabled } = useUIContext();
   const [rules, setRules] = useState<NotificationRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +86,7 @@ export function useNotificationRules() {
 
   /** Return all enabled rules matching this event (for batch triggering) */
   const evaluateRules = useCallback((event: NotificationEvent): NotificationRule[] => {
+    if (!isEventEnabled(event.eventType, approvalsEnabled)) return [];
     return rules.filter(r => {
       if (!r.is_enabled) return false;
       if (r.event_type !== event.eventType) return false;
@@ -90,7 +94,7 @@ export function useNotificationRules() {
       if (r.to_status && r.to_status !== event.toStatus) return false;
       return true;
     });
-  }, [rules]);
+  }, [rules, approvalsEnabled]);
 
   /** Project-level rules take priority over global rules */
   const getEffectiveRule = useCallback((
@@ -99,6 +103,7 @@ export function useNotificationRules() {
     toStatus?: string,
     projectId?: string,
   ): NotificationRule | null => {
+    if (!isEventEnabled(eventType, approvalsEnabled)) return null;
     const candidates = rules.filter(r => {
       if (!r.is_enabled) return false;
       if (r.event_type !== eventType) return false;
@@ -111,10 +116,10 @@ export function useNotificationRules() {
       if (projectRule) return projectRule;
     }
     return candidates.find(r => r.project_id === null) ?? null;
-  }, [rules]);
+  }, [rules, approvalsEnabled]);
 
   return {
-    rules,
+    rules: rules.filter(rule => isEventEnabled(rule.event_type, approvalsEnabled)),
     loading,
     error,
     fetchRules,

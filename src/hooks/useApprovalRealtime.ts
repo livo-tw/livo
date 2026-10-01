@@ -8,12 +8,13 @@ import { supabase } from '@/integrations/supabase/client';
 export function useApprovalRealtime(
   currentMemberId: string | null | undefined,
   onRefresh: () => void,
+  enabled = true,
 ) {
   const refreshRef = useRef(onRefresh);
   useEffect(() => { refreshRef.current = onRefresh; }, [onRefresh]);
 
   useEffect(() => {
-    if (!currentMemberId) return;
+    if (!currentMemberId || !enabled) return;
     const channel = supabase
       .channel('approval-requests-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'approval_requests' },
@@ -22,5 +23,5 @@ export function useApprovalRealtime(
         () => { void refreshRef.current(); })
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [currentMemberId]);
+  }, [currentMemberId, enabled]);
 }

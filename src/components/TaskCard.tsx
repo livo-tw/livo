@@ -88,7 +88,7 @@ function QuickPopover({ anchorRef, onClose, children }: { anchorRef: React.RefOb
 
 const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactive }: { task: Task; fields?: CardFieldVisibility; subtaskMode?: 'independent' | 'nested'; customCardFields?: Record<string, boolean>; interactive?: boolean }) => {
   const { t } = useTranslation();
-  const { setSelectedTask } = useUIContext();
+  const { approvalsEnabled, featureTogglesReady, setSelectedTask } = useUIContext();
   const { users } = useMemberContext();
   const { tags, taskDependencies, allTasks, setAllTasks, statuses, customFields, customFieldValues, updateTaskInDb } = useTaskContext();
   const { allProjects } = useProjectContext();
@@ -114,16 +114,16 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
 
   const handleQuickStatusChange = useCallback(async (newStatusId: string) => {
     setQuickEdit(null);
-    if (task.statusId === newStatusId) return;
+    if (!featureTogglesReady || task.statusId === newStatusId) return;
     const project = allProjects.find(p => p.id === task.projectId);
     // Mandatory approval: task has requiresApproval flag
-    if (task.requiresApproval) {
+    if (approvalsEnabled && task.requiresApproval) {
       const toStatusName = statuses.find(s => s.id === newStatusId)?.name || '—';
       setApprovalConfirm({ taskId: task.id, fromStatusId: task.statusId, toStatusId: newStatusId, projectId: project?.id || '', toStatusName });
       return;
     }
     // Advisory: check if an approval rule exists for this transition
-    if (project) {
+    if (approvalsEnabled && project) {
       try {
         const ruleInfo = await getRuleForTransition(project.id, task.statusId, newStatusId);
         if (ruleInfo) {
@@ -144,7 +144,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
     if (!s?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
     setAllTasks(prev => prev.map(t2 => t2.id === task.id ? { ...t2, ...updates } : t2));
     updateTaskInDb(task.id, updates as Record<string, unknown>);
-  }, [task, allProjects, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, setApprovalConfirm]);
+  }, [approvalsEnabled, featureTogglesReady, task, allProjects, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, setApprovalConfirm]);
 
   const subtasks = useMemo(() => {
     if (!hasFeature('subtasks') || subtaskMode !== 'nested') return [];
@@ -198,7 +198,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
       )}
       {/* Blocked state is now indicated by amber left border on the card */}
       {/* Pending approval indicator */}
-      {task.approvalStatus === 'pending_approval' && (
+      {approvalsEnabled && task.approvalStatus === 'pending_approval' && (
         <div className="flex items-center gap-1 text-[10px] text-purple-600 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400 rounded px-1.5 py-0.5 mb-1.5">
           <span>⏳</span>
           <span>{t('approval.pending')}</span>
@@ -431,7 +431,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
         ))}
       </div>
       {/* Approval confirm modal for quick status change */}
-      {approvalConfirm && (
+      {approvalsEnabled && approvalConfirm && (
         <BoardApprovalModal
           approvalConfirm={approvalConfirm}
           onClose={() => setApprovalConfirm(null)}

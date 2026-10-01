@@ -97,6 +97,7 @@ function initializeData() {
 
   // ── Populate all demo data via seedData ──
   seedAllDemoData(db);
+  db['system_settings'] = [{ key: 'feature_toggles', value: { approvals: true }, updated_at: new Date().toISOString() }];
 
   // Restore auth session.
   // In ?demo=pro sales mode we auto-sign-in as a real seeded super_admin

@@ -1,4 +1,6 @@
 import { useRef, useCallback, useEffect } from 'react';
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { supabase } from '@/integrations/supabase/client';
 import {
   logQueries,
@@ -19,6 +21,9 @@ interface PendingEntry {
 }
 
 export function useNotificationSender(templates: Array<{ id: string; template_content: string }> = []) {
+  const { approvalsEnabled } = useUIContext();
+  const enabledRef = useRef(approvalsEnabled);
+  enabledRef.current = approvalsEnabled;
   const pending = useRef<Map<string, PendingEntry>>(new Map());
 
   // Clear all pending timers on unmount to avoid memory leaks / post-unmount state updates
@@ -36,6 +41,7 @@ export function useNotificationSender(templates: Array<{ id: string; template_co
     const entry = pending.current.get(channelKey);
     if (!entry) return;
     pending.current.delete(channelKey);
+    if (!isEventEnabled(entry.logBase.event_type, enabledRef.current)) return;
 
     const merged = entry.messages.length === 1
       ? entry.messages[0]
@@ -48,7 +54,7 @@ export function useNotificationSender(templates: Array<{ id: string; template_co
 
     if (channel_type === 'slack') {
       try {
-        await sendSlackReportAsync(merged, merged, '', channel_target);
+        await sendSlackReportAsync(merged, merged, '', channel_target, entry.logBase.event_type);
         status = 'sent';
       } catch (e) {
         status = 'failed';
@@ -79,6 +85,7 @@ export function useNotificationSender(templates: Array<{ id: string; template_co
     fromStatus?: string,
     toStatus?: string,
   ) => {
+    if (!isEventEnabled(rule.event_type, enabledRef.current)) return;
     const channels = rule.target_channels ?? [];
     if (channels.length === 0) return;
 
@@ -89,7 +96,7 @@ export function useNotificationSender(templates: Array<{ id: string; template_co
     const resolved = customMessage ?? resolveTemplate(templateContent, ctx);
 
     for (const channel of channels) {
-      const channelKey = `${channel.type}:${channel.target}`;
+      const channelKey = `${rule.event_type}:${channel.type}:${channel.target}`;
       const existing = pending.current.get(channelKey);
 
       if (existing) {

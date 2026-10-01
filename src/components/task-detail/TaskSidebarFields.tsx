@@ -4,9 +4,11 @@ import ApprovalProgress from '@/components/approval/ApprovalProgress';
 import { getDepartment, DEPARTMENTS, type Department } from '@/lib/department';
 import { supabase } from '@/integrations/supabase/client';
 import { X, ChevronDown, ChevronRight, GripVertical, Settings2 } from 'lucide-react';
+import { useUIContext } from '@/context/UIContext';
 import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
 import { getPriorityOptions, envList } from './utils';
+import { groupProjectsByLine, projectGroupLabel } from '@/lib/projectGroups';
 import { Priority } from '@/types';
 import TaskDeploymentSection from './TaskDeploymentSection';
 import { CustomFieldInput } from './fields/CustomFieldInput';
@@ -16,9 +18,10 @@ import ApprovalHistory from './ApprovalHistory';
 type Props = { detail: TaskDetailState };
 
 const TaskSidebarFields = ({ detail }: Props) => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const {
-    task, allProjects, users, statuses, tags, permissions,
+    task, allProjects, productLines, users, statuses, tags, permissions,
     currentMemberId, customFields, customFieldValues, upsertCustomFieldValue,
     hasFeature, getFieldLocker, trackPresence,
 
@@ -115,7 +118,11 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.project', '專案')}</label>
       <select value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
-        {allProjects.filter(p => !p.isArchived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        {groupProjectsByLine(productLines, allProjects, [task.projectId]).map(g => (
+          <optgroup key={g.line?.id ?? 'other'} label={projectGroupLabel(g.line, t('common.other'))}>
+            {g.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </optgroup>
+        ))}
       </select>
     </div>
   );
@@ -146,7 +153,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
         )}
       </div>
       {/* Requires Approval toggle */}
-      <div className="flex items-center justify-between mt-2">
+      {approvalsEnabled && <div className="flex items-center justify-between mt-2">
         <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.requiresApproval', '需要簽核')}</span>
         <button
           type="button"
@@ -155,8 +162,8 @@ const TaskSidebarFields = ({ detail }: Props) => {
         >
           <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${task.requiresApproval ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
         </button>
-      </div>
-      {task.approvalStatus === 'pending_approval' && task.currentApprovalId && (
+      </div>}
+      {approvalsEnabled && task.approvalStatus === 'pending_approval' && task.currentApprovalId && (
         <div className="mt-2 bg-purple-50 dark:bg-purple-900/10 rounded-lg p-2.5">
           <ApprovalProgress
             approvalRequestId={task.currentApprovalId}
@@ -182,7 +189,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
         </div>
       )}
       {/* Approval History */}
-      <ApprovalHistory key={`ah-${task.id}-${task.currentApprovalId ?? ''}`} taskId={task.id} requiresApproval={task.requiresApproval} users={users} statuses={statuses} />
+      {approvalsEnabled && <ApprovalHistory key={`ah-${task.id}-${task.currentApprovalId ?? ''}`} taskId={task.id} requiresApproval={task.requiresApproval} users={users} statuses={statuses} />}
     </div>
   );
 

@@ -1,3 +1,5 @@
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
@@ -18,7 +20,9 @@ type Props = { detail: TaskDetailState };
 
 const TaskActivityTab = ({ detail }: Props) => {
   const { t } = useTranslation();
-  const { taskActivityLogs, users, isMobile } = detail;
+  const { taskActivityLogs: allActivityLogs, users, isMobile } = detail;
+  const { approvalsEnabled } = useUIContext();
+  const taskActivityLogs = allActivityLogs.filter(log => isEventEnabled(log.action, approvalsEnabled));
 
   const pad = (n: number) => String(n).padStart(2, '0');
 

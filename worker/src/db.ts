@@ -17,6 +17,7 @@ import type {
   ChangeEvent,
 } from './protocol';
 import { TABLES } from './tables';
+import { decideMembersUpdate } from './memberProfile';
 import { rowToWire, valueToDb, nowIso } from './meta';
 import type { TableMeta, WriteRule } from './meta';
 import { notifyChanges } from './notify';
@@ -77,12 +78,6 @@ function valuesAsRows(reqValues: unknown): Row[] {
   );
 }
 
-// members SPECIAL rule column allowlists (see enforceWritePolicy). theme and
-// auth_id must stay self-writable — the login linking flow depends on them
-// (App.tsx:141 / useAuthState.ts) — and admins additionally get sort_order.
-const MEMBERS_ADMIN_COLS = new Set(['theme', 'auth_id', 'sort_order']);
-const MEMBERS_SELF_COLS = new Set(['theme', 'auth_id']);
-
 /**
  * Permission floor for /api/query mutations — the server-side replacement for
  * the permissive RLS this backend inherited. Runs BEFORE any mutation SQL.
@@ -103,23 +98,25 @@ function enforceWritePolicy(
 
   // ── members SPECIAL rule (checked before the generic rules) ──
   // insert/delete are server-only (manage-member function writes directly).
-  // update: super_admin unrestricted; admin may set {theme, auth_id,
-  // sort_order} on any row; member may set {theme, auth_id} on their OWN row
-  // (own-row via injected id filter — ANDs with the client's id/auth_id
-  // filter and still matches their row in the login-linking flows).
+  // update: column rules in memberProfile.ts (super_admin unrestricted; admin
+  // {theme, auth_id, sort_order} on any row; member {theme, auth_id} on their
+  // OWN row; everyone {avatar, color} on their own row). Own-row goes through
+  // an injected id filter — ANDs with the client's id/auth_id filter and
+  // still matches their row in the login-linking flows.
   if (table === 'members') {
     if (req.op !== 'update') return permissionDenied(table); // insert/upsert/delete
-    if (rank >= 2) return null;
     const patch =
       req.values !== null && typeof req.values === 'object' && !Array.isArray(req.values)
         ? (req.values as Row)
         : {};
-    // Same column set db.ts will SET (keys with defined values; db.ts adds no
-    // autofields on update, so nothing needs excluding).
-    const setCols = Object.keys(patch).filter((k) => patch[k] !== undefined);
-    const allowed = rank >= 1 ? MEMBERS_ADMIN_COLS : MEMBERS_SELF_COLS;
-    if (setCols.some((c) => !allowed.has(c))) return permissionDenied(table);
-    if (rank === 0 && req.filters && req.filters.length) {
+    // decideMembersUpdate looks at the same column set db.ts will SET (keys
+    // with defined values; db.ts adds no autofields on update).
+    const decision = decideMembersUpdate(rank, patch);
+    if (decision === 'deny') return permissionDenied(table);
+    if (decision === 'invalid') {
+      return { data: null, error: { message: 'avatar must be 1-16 characters and color #RRGGBB', code: '22023' } };
+    }
+    if (decision === 'own-row' && req.filters && req.filters.length) {
       req.filters = [...req.filters, { col: 'id', op: 'eq', val: memberId }];
     }
     return null;

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useUIContext } from '@/context/UIContext';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { Task } from '@/types';
@@ -23,6 +24,8 @@ export function useBoardApproval({
   requestApproval,
   t,
 }: UseBoardApprovalDeps) {
+  const { approvalsEnabled, featureTogglesReady } = useUIContext();
+  useEffect(() => { if (!approvalsEnabled) setApprovalConfirm(null); }, [approvalsEnabled]);
   const [approvalConfirm, setApprovalConfirm] = useState<ApprovalConfirmPayload | null>(null);
 
   // Escape key handler for approval modal
@@ -57,6 +60,7 @@ export function useBoardApproval({
   }, [allTasks, statuses, setAllTasks, updateTaskInDb, t]);
 
   const handleApprovalSubmit = useCallback(async (payload: ApprovalConfirmPayload) => {
+    if (!approvalsEnabled || !featureTogglesReady) return;
     try {
       const { taskId, fromStatusId, toStatusId, projectId } = payload;
       setApprovalConfirm(null);
@@ -74,9 +78,10 @@ export function useBoardApproval({
       console.error('[LIVO] advisory submit approval error:', err);
       toast.error(t('error.updateFailed') + String(err));
     }
-  }, [allTasks, setAllTasks, getRuleForTransition, requestApproval, t]);
+  }, [approvalsEnabled, featureTogglesReady, allTasks, setAllTasks, getRuleForTransition, requestApproval, t]);
 
   const handleMandatoryApproval = useCallback(async (payload: ApprovalConfirmPayload) => {
+    if (!approvalsEnabled || !featureTogglesReady) return;
     try {
       const { taskId, fromStatusId, toStatusId, projectId } = payload;
       setApprovalConfirm(null);
@@ -90,7 +95,7 @@ export function useBoardApproval({
       console.error('[LIVO] approval submit error:', err);
       toast.error(t('error.updateFailed') + String(err));
     }
-  }, [allTasks, getRuleForTransition, requestApproval, t]);
+  }, [approvalsEnabled, featureTogglesReady, allTasks, getRuleForTransition, requestApproval, t]);
 
   return {
     approvalConfirm,

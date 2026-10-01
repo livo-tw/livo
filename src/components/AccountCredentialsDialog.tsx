@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Download, KeyRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
+import { copyText } from '@/lib/clipboard';
 
 // One-time display of temporary passwords for logins an admin just created
 // (Jira import, 「啟用帳號」) when email sending is not configured — or when
@@ -47,11 +48,10 @@ const AccountCredentialsDialog = ({ credentials, onClose }: AccountCredentialsDi
   };
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText([header, ...rows].map((r) => r.join('\t')).join('\n'));
+    if (await copyText([header, ...rows].map((r) => r.join('\t')).join('\n'))) {
       toast.success(t('accountCredentials.copied'));
       setSaved(true);
-    } catch {
+    } else {
       toast.error(t('accountCredentials.copyFailed'));
     }
   };

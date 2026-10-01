@@ -10,11 +10,12 @@ import TaskActivityTab from './TaskActivityTab';
 import TaskSubtasksTab from './TaskSubtasksTab';
 import TaskTimeTab from './TaskTimeTab';
 import TaskSidebarFields from './TaskSidebarFields';
-import type { TaskDisplayMode } from '@/context/UIContext';
+import { useUIContext, type TaskDisplayMode } from '@/context/UIContext';
 
 type Props = { onClose: () => void };
 
 const TaskDetailContent = ({ onClose }: Props) => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const detail = useTaskDetail();
   const {
@@ -219,7 +220,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
       {detail.ConfirmDialog}
 
       {/* Advisory approval 3-button dialog — portal to body */}
-      {detail.advisoryState && createPortal(
+      {approvalsEnabled && detail.advisoryState && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={() => detail.setAdvisoryState(null)}>
           <div role="dialog" aria-modal="true" className="bg-card rounded-xl shadow-xl border border-border p-5 w-full max-w-sm mx-4 animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-foreground mb-2">{t('approval.advisoryTitle')}</h3>
@@ -240,7 +241,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
       )}
 
       {/* Approval confirm dialog (requiresApproval tasks) — portal to body */}
-      {detail.approvalConfirmState && createPortal(
+      {approvalsEnabled && detail.approvalConfirmState && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={() => detail.setApprovalConfirmState(null)}>
           <div role="dialog" aria-modal="true" className="bg-card rounded-xl shadow-xl border border-border p-5 w-full max-w-sm mx-4 animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-foreground mb-2">{t('taskDetail.approvalNeeded')}</h3>

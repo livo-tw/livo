@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useUIContext } from '@/context/UIContext';
 import { supabase } from '@/integrations/supabase/client';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { toast } from 'sonner';
@@ -25,6 +26,7 @@ export interface UseTaskStatusChangeParams {
 }
 
 export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
+  const { approvalsEnabled, featureTogglesReady } = useUIContext();
   const {
     task, project, statuses, statusLogs, users,
     currentMemberId, currentMember, assignee,
@@ -40,7 +42,12 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
     taskId: string; fromStatusId: string; toStatusId: string; toStatusName: string;
   } | null>(null);
 
+  useEffect(() => {
+    if (!approvalsEnabled) { setAdvisoryState(null); setApprovalConfirmState(null); }
+  }, [approvalsEnabled]);
+
   const handleStatusChange = async (newStatusId: string) => {
+    if (!featureTogglesReady) { toast.error(i18n.t('featureToggles.loadFailed')); return; }
     try {
       if (!task) return;
       const result = canTransitionTo(task.id, newStatusId, statusLogs);
@@ -53,14 +60,14 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
       }
 
       // When requiresApproval is true, ALL status changes go through approval
-      if (task.requiresApproval) {
+      if (approvalsEnabled && task.requiresApproval) {
         const toStatusName = statuses.find(s => s.id === newStatusId)?.name || '—';
         setApprovalConfirmState({ taskId: task.id, fromStatusId: task.statusId, toStatusId: newStatusId, toStatusName });
         return;
       }
 
       // Advisory: if a matching approval rule exists but task doesn't require approval, show 3-button dialog
-      if (!task.requiresApproval && project) {
+      if (approvalsEnabled && !task.requiresApproval && project) {
         try {
           const ruleInfo = await getRuleForTransition(project.id, task.statusId, newStatusId);
           if (ruleInfo) {
@@ -116,7 +123,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
   };
 
   const handleAdvisorySubmitApproval = async () => {
-    if (!advisoryState || !task) return;
+    if (!approvalsEnabled || !featureTogglesReady || !advisoryState || !task) return;
     const { fromStatusId, toStatusId, ruleId } = advisoryState;
     setAdvisoryState(null);
     await supabase.from('tasks').update({ requires_approval: true }).eq('id', task.id);
@@ -130,7 +137,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
   };
 
   const handleApprovalConfirm = async () => {
-    if (!approvalConfirmState || !task) return;
+    if (!approvalsEnabled || !featureTogglesReady || !approvalConfirmState || !task) return;
     const { fromStatusId, toStatusId } = approvalConfirmState;
     setApprovalConfirmState(null);
     try {

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { AppProvider } from '@/context/AppContext';
 import { useAuthContext } from '@/context/AuthContext';
+import { resolveApprovalView } from '@/lib/featureToggles';
 import { useUIContext } from '@/context/UIContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { LicenseProvider, useLicense } from '@/context/LicenseContext';
@@ -48,7 +49,11 @@ const ViewFallback = () => (
 
 const AppContent = () => {
   const { permissions } = useAuthContext();
-  const { currentView, standupMode, selectedTask, setSelectedTask, taskDisplayMode, setTaskDisplayMode } = useUIContext();
+  const { currentView: requestedView, setCurrentView, approvalsEnabled, standupMode, selectedTask, setSelectedTask, taskDisplayMode, setTaskDisplayMode } = useUIContext();
+  const currentView = resolveApprovalView(requestedView, approvalsEnabled);
+  useEffect(() => {
+    if (requestedView !== currentView) setCurrentView(currentView);
+  }, [requestedView, currentView, setCurrentView]);
   const { allTasks } = useTaskContext();
   const { hasFeature } = useLicense();
   const [sidePanelWidth, setSidePanelWidth] = useState(580);

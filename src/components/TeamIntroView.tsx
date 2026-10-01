@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useMemberContext } from '@/context/MemberContext';
 import { useAuthContext } from '@/context/AuthContext';
+import { useTaskContext } from '@/context/TaskContext';
+import { useProjectContext } from '@/context/ProjectContext';
 import { supabase } from '@/integrations/supabase/client';
 import { logActivity } from '@/lib/activityLog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
-import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, Megaphone } from 'lucide-react';
+import { Pencil, Check, X, Sparkles, MessageCircle, AlertTriangle, Bomb, Star, Megaphone, FolderKanban } from 'lucide-react';
 import { toast } from 'sonner';
 import RichTextEditor from '@/components/RichTextEditor';
 import { fixHtml } from '@/components/task-detail/utils';
@@ -38,9 +40,11 @@ function formatManualText(text: string): string {
 }
 
 const TeamIntroView = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { users } = useMemberContext();
   const { currentMemberId, currentMember } = useAuthContext();
+  const { allTasks } = useTaskContext();
+  const { allProjects } = useProjectContext();
   const [manuals, setManuals] = useState<MemberManual[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<MemberManual>>({});
@@ -53,6 +57,26 @@ const TeamIntroView = () => {
   const isAdmin = currentMember?.role === 'admin' || currentMember?.role === 'super_admin';
 
   const activeUsers = sortUsersByDept(users.filter(u => u.isActive));
+
+  const projectNamesByMember = useMemo(() => {
+    const projectNames = new Map(allProjects.map(project => [project.id, project.name.trim()]));
+    const namesByMember = new Map<string, Set<string>>();
+
+    // Include completed tasks and archived projects from the full task/project stores.
+    for (const task of allTasks) {
+      const projectName = projectNames.get(task.projectId);
+      if (!task.assigneeId || !projectName) continue;
+
+      const names = namesByMember.get(task.assigneeId) ?? new Set<string>();
+      names.add(projectName);
+      namesByMember.set(task.assigneeId, names);
+    }
+
+    const collator = new Intl.Collator(i18n.language, { numeric: true });
+    return new Map(Array.from(namesByMember, ([memberId, names]) => [
+      memberId, [...names].sort(collator.compare),
+    ]));
+  }, [allTasks, allProjects, i18n.language]);
 
   const deptDotColors: Record<string, string> = {
     Manager: '#EF4444', '产品': '#A855F7', BE: '#3B82F6', FE: '#22C55E', SRE: '#06B6D4', QA: '#F97316', other: '#6B778C',
@@ -221,9 +245,10 @@ const TeamIntroView = () => {
             const manual = manuals.find(m => m.member_id === user.id);
             const isEditing = editingId === user.id;
             const canEdit = currentMemberId === user.id;
+            const projectNames = projectNamesByMember.get(user.id) ?? [];
 
             return (
-              <Card key={user.id} className="overflow-hidden border-border/60 hover:shadow-md transition-shadow">
+              <Card key={user.id} className="min-w-0 overflow-hidden border-border/60 hover:shadow-md transition-shadow">
                 {/* Header */}
                 <div className="flex items-center gap-3 p-4 pb-2 border-b border-border/40">
                   <Avatar className="h-12 w-12 ring-2 ring-offset-2 ring-offset-background" style={{ '--tw-ring-color': user.color } as React.CSSProperties}>
@@ -288,6 +313,21 @@ const TeamIntroView = () => {
                       </div>
                     );
                   })}
+                  <section aria-label={t('teamIntro.fields.projects')}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <FolderKanban size={13} className="text-violet-500 shrink-0" aria-hidden="true" />
+                      <span className="text-xs font-medium text-muted-foreground">{t('teamIntro.fields.projects')}</span>
+                    </div>
+                    {projectNames.length > 0 ? (
+                      <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80 leading-relaxed marker:text-muted-foreground/60">
+                        {projectNames.map(name => (
+                          <li key={name} className="[overflow-wrap:anywhere]">{name}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground/50 italic">{t('teamIntro.noProjects')}</p>
+                    )}
+                  </section>
                 </CardContent>
               </Card>
             );

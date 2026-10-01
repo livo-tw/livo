@@ -1,3 +1,5 @@
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Slack, Users, MessageCircle, Link, Unlink, Clock, CheckCircle2, AlertCircle, ShieldAlert, Construction } from 'lucide-react';
@@ -134,13 +136,15 @@ function ActionLogItem({ log }: { log: ExternalActionLog }) {
 }
 
 const ExternalPlatformSettings = () => {
+  const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const {
-    bindings, actionLogs, loading,
+    bindings, actionLogs: allActionLogs, loading,
     fetchBindings, fetchActionLogs,
     unbindAccount, getBindingForPlatform,
   } = useExternalBindings();
 
+  const actionLogs = allActionLogs.filter(log => isEventEnabled(log.action_type, approvalsEnabled));
   const [activeTab, setActiveTab] = useState<'bindings' | 'logs'>('bindings');
 
   useEffect(() => {
@@ -217,7 +221,7 @@ const ExternalPlatformSettings = () => {
               <li>{t('integrations.external.teamsInstruction')} <code className="bg-muted rounded px-1 py-0.5">@LIVO bind</code> {t('integrations.external.toBot')}</li>
               <li>{t('integrations.external.lineInstruction')} <code className="bg-muted rounded px-1 py-0.5">/bind</code></li>
             </ul>
-            <p className="text-xs text-muted-foreground pt-0.5">{t('integrations.external.bindSyncDesc')}</p>
+            <p className="text-xs text-muted-foreground pt-0.5">{t(approvalsEnabled ? 'integrations.external.bindSyncDesc' : 'featureToggles.externalDescription')}</p>
           </div>
           <div className="flex items-start gap-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 px-4 py-3">
             <ShieldAlert size={14} className="text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />

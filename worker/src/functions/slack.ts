@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import type { AppContext, Ctx, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoWorkspace } from '../env';
 import { TABLES } from '../tables';
+import { approvalsEnabled } from '../featureToggles';
 import { rowToWire, type TableMeta } from '../meta';
 import { checkProfessional } from '../license';
 
@@ -238,6 +239,7 @@ async function postMessage(
 
 interface NotifyPayload {
   type: string;
+  eventType?: string;
   taskKey?: string;
   taskTitle?: string;
   taskId?: string;
@@ -468,6 +470,9 @@ export async function handleSlackNotify(c: Context<AppContext>): Promise<Respons
 
   try {
     const payload = (await c.req.json()) as NotifyPayload;
+    if ((payload.type.startsWith('approval_') || payload.eventType?.startsWith('approval_')) && !await approvalsEnabled(env, ws)) {
+      return c.json({ skipped: 'approvals_disabled' });
+    }
 
     // License check — professional feature (caller's workspace)
     if (!(await checkProfessional(env, ws))) {

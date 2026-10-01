@@ -24,6 +24,7 @@ interface RealtimeSubsDeps {
   refreshUsers: () => Promise<void>;
   refreshStatuses: () => Promise<void>;
   refreshProductLines: () => Promise<void>;
+  refreshFeatureToggles: () => Promise<void>;
 }
 
 export function useRealtimeSubs(deps: RealtimeSubsDeps) {

@@ -8,6 +8,7 @@
 # ============================================================
 
 $ErrorActionPreference = 'Continue'
+# POSIX 權限修正僅用於 Linux/macOS；Windows Docker Desktop 的 bind mount 不使用 POSIX 模式，無需 chmod。
 
 # ---------- 路徑與常數 ----------
 $Root       = Split-Path -Parent $PSScriptRoot          # installer\ 的上一層 = 套件根目錄

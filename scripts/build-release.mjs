@@ -187,6 +187,7 @@ for (const [label, p] of [
   ['release-template/installer/install.ps1', path.join(TEMPLATE_DIR, 'installer', 'install.ps1')],
   ['release-template/installer/create-admin.sql', path.join(TEMPLATE_DIR, 'installer', 'create-admin.sql')],
   ['release-template/installer/generate-keys.js', path.join(TEMPLATE_DIR, 'installer', 'generate-keys.js')],
+  ['release-template/installer/permissions.sh', path.join(TEMPLATE_DIR, 'installer', 'permissions.sh')],
 ]) {
   if (!fs.existsSync(p)) die(`找不到必要來源：${label}（${p}）`);
 }
@@ -509,6 +510,10 @@ fs.writeFileSync(
 fs.writeFileSync(
   path.join(INSTALLER_DEST, 'generate-keys.js'),
   toLF(fs.readFileSync(path.join(TEMPLATE_DIR, 'installer', 'generate-keys.js'), 'utf8'))
+);
+fs.writeFileSync(
+  path.join(INSTALLER_DEST, 'permissions.sh'),
+  toLF(fs.readFileSync(path.join(TEMPLATE_DIR, 'installer', 'permissions.sh'), 'utf8'))
 );
 log('  ✔ install.sh（mac/Linux）/ install.bat + installer/（Windows）← 一鍵安裝程式');
 

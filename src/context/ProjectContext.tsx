@@ -10,7 +10,8 @@ export interface ProjectContextType {
   setSelectedLineId: (id: string | null) => void;
   productLines: ProductLine[];
   refreshProductLines: () => Promise<void>;
-  createProjectInDb: (project: Project) => Promise<void>;
+  /** Resolves to the error message on failure, null on success. */
+  createProjectInDb: (project: Project) => Promise<string | null>;
   updateProjectInDb: (projectId: string, updates: Partial<Project>) => Promise<void>;
   deleteProjectInDb: (projectId: string) => Promise<void>;
   createProductLineInDb: (line: ProductLine) => Promise<void>;

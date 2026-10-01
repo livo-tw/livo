@@ -19,7 +19,7 @@ interface AppSidebarProps {
 const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const { t } = useTranslation();
   const { permissions, currentMember, currentMemberId } = useAuthContext();
-  const { setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
+  const { approvalsEnabled, setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
   const { selectedProjectId, setSelectedProjectId, selectedLineId, setSelectedLineId, allProjects, productLines, deleteProjectInDb } = useProjectContext();
   const { allTasks } = useTaskContext();
   const { hasFeature } = useLicense();
@@ -171,7 +171,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         </button>
 
         {/* Approvals */}
-        <button
+        {approvalsEnabled && <button
           onClick={() => nav(() => setCurrentView('approvals'))}
           className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-all ${
             currentView === 'approvals'
@@ -181,7 +181,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         >
           <ClipboardCheck size={16} />
           {t('sidebar.approvals')}
-        </button>
+        </button>}
       </div>
 
       {/* ─── 專案 Section (main scrollable area) ─── */}

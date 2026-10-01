@@ -14,6 +14,8 @@ import {
 } from '@/lib/approvalQueries';
 import { useAuthContext } from '@/context/AuthContext';
 import { useMemberContext } from '@/context/MemberContext';
+import { useUIContext } from '@/context/UIContext';
+import { withdrawApproval } from '@/lib/withdrawApproval';
 import { sendSlackApprovalRequest, sendSlackApprovalCompleted } from '@/lib/slackNotify';
 import { createNotification } from '@/components/task-detail/utils';
 import { logActivity } from '@/lib/activityLog';
@@ -41,6 +43,7 @@ export interface ApprovalProgress {
 export const useApprovalWorkflow = () => {
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
+  const { approvalsEnabled, featureTogglesReady } = useUIContext();
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -51,6 +54,7 @@ export const useApprovalWorkflow = () => {
     toStatus: string,
     task?: Task,
   ): Promise<ApprovalRequest | null> => {
+    if (!featureTogglesReady || !approvalsEnabled) return null;
     const { data, error } = await requestQueries.create(supabase, {
       task_id: taskId,
       rule_id: ruleId,
@@ -60,13 +64,18 @@ export const useApprovalWorkflow = () => {
       current_step: 1,
       status: 'pending',
     });
-    if (error) {
-      toast.error(i18n.t('approval.requestFailed', { error: (error as { message: string }).message }));
+    if (error || !data) {
+      toast.error(i18n.t('approval.requestFailed', { error: (error as { message: string } | null)?.message ?? '' }));
       return null;
     }
     const req = data as ApprovalRequest;
     // Mark task as pending_approval
-    await taskApprovalQueries.setPendingApproval(supabase, taskId, req.id);
+    const pendingResult = await taskApprovalQueries.setPendingApproval(supabase, taskId, req.id);
+    if (pendingResult.error) {
+      await requestQueries.updateStatus(supabase, req.id, 'cancelled', new Date().toISOString());
+      toast.error(i18n.t('featureToggles.requestUnavailable'));
+      return null;
+    }
 
     // Activity log
     logActivity(currentMemberId, 'approval_requested', i18n.t('activityLog.approvalRequested', { taskTitle: task?.title ?? taskId }), taskId, undefined, 'task');
@@ -103,7 +112,7 @@ export const useApprovalWorkflow = () => {
     }
 
     return req;
-  }, [currentMemberId, users]);
+  }, [currentMemberId, users, approvalsEnabled, featureTogglesReady]);
 
   const performAction = useCallback(async (
     requestId: string,
@@ -111,6 +120,7 @@ export const useApprovalWorkflow = () => {
     comment?: string,
     task?: Task,
   ): Promise<{ ok: boolean; approvedToStatus?: string; taskId?: string }> => {
+    if (!featureTogglesReady || !approvalsEnabled) return { ok: false };
     // Fetch current request
     const { data: reqData } = await fromTable(supabase, 'approval_requests')
       .select('*')
@@ -118,6 +128,7 @@ export const useApprovalWorkflow = () => {
       .single();
     if (!reqData) { toast.error(i18n.t('approval.noRule')); return { ok: false }; }
     const req = reqData as ApprovalRequest;
+    if (req.status !== 'pending') return { ok: false };
 
     // Resolve task for Slack notification
     let resolvedTask = task;
@@ -165,7 +176,8 @@ export const useApprovalWorkflow = () => {
 
     if (action === 'reject' || action === 'return') {
       const finalStatus = action === 'reject' ? 'rejected' : 'returned';
-      await requestQueries.updateStatus(supabase, requestId, finalStatus, new Date().toISOString());
+      const completed = await requestQueries.updateStatus(supabase, requestId, finalStatus, new Date().toISOString());
+      if (completed.error || !completed.data) return { ok: false };
       await taskApprovalQueries.clearApprovalStatus(supabase, req.task_id);
       toast.success(action === 'reject' ? i18n.t('approval.rejectedSuccess') : i18n.t('approval.returnedSuccess'));
       setPendingApprovals(prev => prev.filter(p => p.id !== requestId));
@@ -203,7 +215,8 @@ export const useApprovalWorkflow = () => {
 
     if (nextStep > allSteps.length) {
       // All steps approved — apply the status change with side effects
-      await requestQueries.updateStatus(supabase, requestId, 'approved', new Date().toISOString());
+      const completed = await requestQueries.updateStatus(supabase, requestId, 'approved', new Date().toISOString());
+      if (completed.error || !completed.data) return { ok: false };
       // Compute startedAt / completedAt side effects
       const extra: { started_at?: string; completed_at?: string | null } = {};
       const { data: statusRow } = await supabase.from('statuses').select('auto_start, is_done').eq('id', req.to_status).single();
@@ -247,6 +260,7 @@ export const useApprovalWorkflow = () => {
         .update({ current_step: nextStep })
         .eq('id', requestId)
         .eq('current_step', req.current_step)  // optimistic lock
+        .eq('status', 'pending')
         .select()
         .single();
 
@@ -259,37 +273,25 @@ export const useApprovalWorkflow = () => {
 
     setPendingApprovals(prev => prev.filter(p => p.id !== requestId));
     return { ok: true };
-  }, [currentMemberId, currentMember]);
+  }, [currentMemberId, currentMember, approvalsEnabled, featureTogglesReady]);
 
-  const cancelApproval = useCallback(async (requestId: string): Promise<boolean> => {
-    const { data: reqData } = await fromTable(supabase, 'approval_requests')
-      .select('*')
-      .eq('id', requestId)
-      .single();
-    if (!reqData) { toast.error(i18n.t('approval.requestNotFound')); return false; }
-    const req = reqData as ApprovalRequest;
-
-    if (req.requested_by !== currentMemberId) {
-      toast.error(i18n.t('approval.cancelNotAllowed'));
+  const cancelApproval = useCallback(async (requestId: string, options?: { silent?: boolean }): Promise<boolean> => {
+    try {
+      await withdrawApproval(supabase, requestId, { id: currentMemberId, role: currentMember?.role },
+        req => logActivity(currentMemberId, 'approval_cancelled',
+          i18n.t('activityLog.approval_cancelled', { taskId: req.task_id }), req.task_id, undefined, 'task'));
+      if (!options?.silent) toast.success(i18n.t('approval.approvalCancelled'));
+      setPendingApprovals(prev => prev.filter(p => p.id !== requestId));
+      return true;
+    } catch (error) {
+      console.error('[LIVO] Approval withdrawal failed:', error);
+      if (!options?.silent) toast.error(i18n.t('featureToggles.withdrawFailed'));
       return false;
     }
-
-    await fromTable(supabase, 'approval_requests')
-      .update({ status: 'cancelled', completed_at: new Date().toISOString() })
-      .eq('id', requestId)
-      .eq('requested_by', currentMemberId); // DB-level guard: only cancel own requests
-    await taskApprovalQueries.clearApprovalStatus(supabase, req.task_id);
-
-    toast.success(i18n.t('approval.approvalCancelled'));
-    setPendingApprovals(prev => prev.filter(p => p.id !== requestId));
-
-    // Activity log
-    logActivity(currentMemberId, 'approval_cancelled', i18n.t('activityLog.approval_cancelled', { taskId: req.task_id }), req.task_id, undefined, 'task');
-
-    return true;
-  }, [currentMemberId]);
+  }, [currentMemberId, currentMember?.role]);
 
   const fetchPendingApprovals = useCallback(async (): Promise<void> => {
+    if (!approvalsEnabled || !featureTogglesReady) { setPendingApprovals([]); return; }
     setLoading(true);
     const { data, error } = await requestQueries.fetchPending(supabase);
     if (!error) {
@@ -337,10 +339,10 @@ export const useApprovalWorkflow = () => {
       }
     }
     setLoading(false);
-  }, [currentMemberId, currentMember]);
+  }, [currentMemberId, currentMember, approvalsEnabled, featureTogglesReady]);
 
   // Realtime subscription: re-fetch pending approvals on any INSERT/UPDATE to approval_requests
-  useApprovalRealtime(currentMemberId, fetchPendingApprovals);
+  useApprovalRealtime(currentMemberId, fetchPendingApprovals, approvalsEnabled && featureTogglesReady);
 
   const fetchApprovalHistory = useCallback(async (taskId: string): Promise<ApprovalRequest[]> => {
     const { data } = await requestQueries.fetchByTask(supabase, taskId);
@@ -393,7 +395,7 @@ export const useApprovalWorkflow = () => {
   }, []);
 
   return {
-    pendingApprovals,
+    pendingApprovals: approvalsEnabled ? pendingApprovals : [],
     loading,
     requestApproval,
     performAction,

@@ -22,7 +22,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   // ─── Domain State Hooks ───
   const member = useMemberState();
   const auth = useAuthState(member.users, member.usersLoaded);
-  const ui = useUIState();
+  const ui = useUIState(auth.currentMember?.role);
   const project = useProjectState();
   const task = useTaskState();
   const sprint = useSprintState();
@@ -73,6 +73,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     setTaskDependencies: task.setTaskDependencies,
     setUserThemeState: auth.setUserThemeState,
     setRequiredFields: ui.setRequiredFields,
+    refreshFeatureToggles: ui.refreshFeatureToggles,
     setIsLoading: ui.setIsLoading,
     setSprintActive: sprint.setSprintActive,
     webhookConfigRef: task.webhookConfigRef,
@@ -99,6 +100,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     refreshUsers: member.refreshUsers,
     refreshStatuses: task.refreshStatuses,
     refreshProductLines: project.refreshProductLines,
+    refreshFeatureToggles: ui.refreshFeatureToggles,
   });
 
   // ─── Side Effects (due-soon, auto-report) ───
@@ -116,6 +118,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   }), [member.users, member.refreshUsers]);
 
   const uiValue = useMemo(() => ({
+    featureToggles: ui.featureToggles, approvalsEnabled: ui.approvalsEnabled,
+    featureTogglesReady: ui.featureTogglesReady, featureTogglesError: ui.featureTogglesError,
+    refreshFeatureToggles: ui.refreshFeatureToggles, saveFeatureToggle: ui.saveFeatureToggle,
     currentView: ui.currentView, setCurrentView: ui.setCurrentView,
     selectedTask: ui.selectedTask, setSelectedTask: ui.setSelectedTask,
     standupMode: ui.standupMode, setStandupMode: ui.setStandupMode,
@@ -126,7 +131,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     taskDisplayMode: ui.taskDisplayMode, setTaskDisplayMode: ui.setTaskDisplayMode,
     requiredFields: ui.requiredFields, setRequiredFields: ui.setRequiredFields, saveRequiredFields: ui.saveRequiredFields,
     isLoading: ui.isLoading,
-  }), [ui.currentView, ui.selectedTask, ui.standupMode, ui.standupUserId, ui.showCreateProject, ui.showCreateTask, ui.editingProject, ui.taskDisplayMode, ui.requiredFields, ui.saveRequiredFields, ui.isLoading]);
+  }), [ui.featureToggles, ui.approvalsEnabled, ui.featureTogglesReady, ui.featureTogglesError, ui.refreshFeatureToggles, ui.saveFeatureToggle, ui.currentView, ui.selectedTask, ui.standupMode, ui.standupUserId, ui.showCreateProject, ui.showCreateTask, ui.editingProject, ui.taskDisplayMode, ui.requiredFields, ui.saveRequiredFields, ui.isLoading]);
 
   const projectValue = useMemo(() => ({
     allProjects: project.allProjects, setAllProjects: project.setAllProjects,

@@ -89,6 +89,7 @@ export async function workspaceProvisionStatements(
   const installationId = crypto.randomUUID();
   const licenseValue = '{}';
   const sysSettings: Array<[string, string]> = [
+    ['feature_toggles', '{"approvals":false}'],
     ['required_fields', REQUIRED_FIELDS_JSON],
     ['required_custom_fields', '[]'],
     ['installation_id', JSON.stringify(installationId)],

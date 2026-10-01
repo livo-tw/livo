@@ -36,6 +36,7 @@ interface InitialLoadDeps {
   setTaskDependencies: (d: TaskDependency[]) => void;
   setUserThemeState: (t: ThemeKey) => void;
   setRequiredFields: (f: RequiredFieldsConfig) => void;
+  refreshFeatureToggles: () => Promise<void>;
   setIsLoading: (v: boolean) => void;
   setSprintActive: (v: boolean) => void;
   webhookConfigRef: React.MutableRefObject<WebhookConfig | null>;
@@ -60,6 +61,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
     const loadAll = async () => {
       deps.setIsLoading(true);
       const sprintsPromise = deps.refreshSprints();
+      const featureTogglesPromise = deps.refreshFeatureToggles();
       const [
         { data: memberRows },
         { data: statusRows },
@@ -169,7 +171,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         deps.setAllTasks(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: attCounts.get(r.id) || 0, tagIds: tagMap.get(r.id) || undefined })));
       }
 
-      await sprintsPromise;
+      await Promise.all([sprintsPromise, featureTogglesPromise]);
       if (!activeCheck || activeCheck.length === 0) {
         const now = new Date();
         const y = now.getFullYear();

@@ -1,3 +1,4 @@
+import { isEventEnabled } from '@/lib/featureToggles';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bell, BellRing, BellOff, Clock } from 'lucide-react';
@@ -56,8 +57,9 @@ const NotificationPanel = () => {
   const { currentMemberId } = useAuthContext();
   const { users } = useMemberContext();
   const { allTasks } = useTaskContext();
-  const { setSelectedTask, setTaskDisplayMode, currentView, setCurrentView } = useUIContext();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const { approvalsEnabled, setSelectedTask, setTaskDisplayMode, currentView, setCurrentView } = useUIContext();
+  const [allNotifications, setNotifications] = useState<Notification[]>([]);
+  const notifications = allNotifications.filter(notification => isEventEnabled(notification.type, approvalsEnabled));
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { permission, requestPermission, sendNotification } = useBrowserNotification();
@@ -113,7 +115,7 @@ const NotificationPanel = () => {
       .channel('notifications-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
         const r = payload.new as { id: string; recipient_id: string; sender_id: string; type: string; task_id: string; content: string; is_read: boolean; created_at: string };
-        if (r.recipient_id === currentMemberId) {
+        if (r.recipient_id === currentMemberId && isEventEnabled(r.type, approvalsEnabled)) {
           const newNotif: Notification = {
             id: r.id, recipientId: r.recipient_id, senderId: r.sender_id,
             type: r.type, taskId: r.task_id, content: r.content,
@@ -128,7 +130,7 @@ const NotificationPanel = () => {
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [currentMemberId, userMap, sendNotification]);
+  }, [approvalsEnabled, currentMemberId, userMap, sendNotification]);
 
   // ── Close on click outside ────────────────────────────────────────────────
 

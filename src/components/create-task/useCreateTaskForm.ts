@@ -13,9 +13,11 @@ import { sendSlackNotify } from '@/lib/slackNotify';
 import { logActivity } from '@/lib/activityLog';
 import { supabase } from '@/integrations/supabase/client';
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { Task, Priority, TaskDeployment } from '@/types';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { randomUUID } from '@/lib/generateId';
 
 interface PendingFile {
   file: File;
@@ -150,7 +152,7 @@ export function useCreateTaskForm() {
       toast.error(t('taskDetail.attachments.fileSizeExceeded', { files: oversized.map(f => f.name).join(', '), size: MAX_UPLOAD_MB }));
     }
     const newFiles: PendingFile[] = all.filter(f => f.size <= MAX_UPLOAD_BYTES).map(f => ({
-      file: f, id: `pf_${crypto.randomUUID()}`,
+      file: f, id: `pf_${randomUUID()}`,
       preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
     }));
     if (newFiles.length > 0) setPendingFiles(prev => [...prev, ...newFiles]);
@@ -184,7 +186,7 @@ export function useCreateTaskForm() {
     const failed: { name: string; message: string }[] = [];
     for (const pf of pendingFiles) {
       const ext = pf.file.name.split('.').pop() || '';
-      const storagePath = `${taskId}/${crypto.randomUUID()}.${ext}`;
+      const storagePath = `${taskId}/${randomUUID()}.${ext}`;
       // Store the SERVER's effective path — cloud workspaces get a ws/ prefix.
       const { data: up, error } = await supabase.storage.from('task-images').upload(storagePath, pf.file);
       if (error) {
@@ -230,7 +232,7 @@ export function useCreateTaskForm() {
     const status = statuses.find(s => s.id === statusId);
     const now = new Date().toISOString().split('T')[0];
     const taskKey = generateTaskKey();
-    const taskId = `t_${crypto.randomUUID()}`;
+    const taskId = `t_${randomUUID()}`;
     const newTask: Task = {
       id: taskId, taskKey, projectId, title: title.trim(), statusId, priority,
       creatorId: currentMemberId,
@@ -256,21 +258,21 @@ export function useCreateTaskForm() {
         dueDate: dueDate ? format(dueDate, 'yyyy-MM-dd') : undefined,
       });
       if (background || requirement || notes) {
-        await supabase.from('task_specs').insert({ id: `ts_${crypto.randomUUID()}`, task_id: taskId, background, requirement, notes });
+        await supabase.from('task_specs').insert({ id: `ts_${randomUUID()}`, task_id: taskId, background, requirement, notes });
       }
       if (checkItems.length > 0) {
-        await supabase.from('task_checks').insert(checkItems.map((text, i) => ({ id: `tc_${crypto.randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
+        await supabase.from('task_checks').insert(checkItems.map((text, i) => ({ id: `tc_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
       }
       if (todoItems.length > 0) {
-        await supabase.from('task_todos').insert(todoItems.map((text, i) => ({ id: `td_${crypto.randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
+        await supabase.from('task_todos').insert(todoItems.map((text, i) => ({ id: `td_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
       }
       if (deployments.length > 0) {
         await supabase.from('task_deployments').insert(deployments.map(d => ({ task_id: taskId, environment: d.environment, status: d.status, deploy_date: d.deployDate || null })));
       }
       if (pendingFiles.length > 0) { setUploading(true); await uploadFiles(taskId); setUploading(false); }
-      await supabase.from('status_logs').insert({ id: `sl_${crypto.randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId });
+      await supabase.from('status_logs').insert({ id: `sl_${randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId });
       if (selectedTagIds.length > 0) {
-        await supabase.from('task_tags').insert(selectedTagIds.map(tagId => ({ id: `tt_${crypto.randomUUID()}`, task_id: taskId, tag_id: tagId })) as unknown as Record<string, unknown>[]);
+        await supabase.from('task_tags').insert(selectedTagIds.map(tagId => ({ id: `tt_${randomUUID()}`, task_id: taskId, tag_id: tagId })) as unknown as Record<string, unknown>[]);
       }
       if (subtaskItems.length > 0) {
         for (const subtaskTitle of subtaskItems) {
@@ -289,9 +291,7 @@ export function useCreateTaskForm() {
     }
   };
 
-  const groupedProjects = productLines
-    .map(line => ({ line, projects: allProjects.filter(p => p.lineId === line.id && !p.isArchived) }))
-    .filter(g => g.projects.length > 0);
+  const groupedProjects = groupProjectsByLine(productLines, allProjects);
 
   const fieldsProps = {
     projectId, setProjectId, statusId, setStatusId, priority, setPriority,

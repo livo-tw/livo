@@ -15,6 +15,7 @@ export interface ConfigSubsDeps {
   refreshUsers: () => Promise<void>;
   refreshStatuses: () => Promise<void>;
   refreshProductLines: () => Promise<void>;
+  refreshFeatureToggles: () => Promise<void>;
 }
 
 export function useConfigSubs(deps: ConfigSubsDeps) {
@@ -27,6 +28,10 @@ export function useConfigSubs(deps: ConfigSubsDeps) {
     };
     const configChannel = supabase
       .channel('config-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, () => {
+        void deps.refreshFeatureToggles();
+        debouncedRefreshTasks();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sprints' }, () => {
         deps.refreshSprints();
         debouncedRefreshTasks();
@@ -88,5 +93,5 @@ export function useConfigSubs(deps: ConfigSubsDeps) {
       if (refreshTasksTimerRef.current) clearTimeout(refreshTasksTimerRef.current);
       supabase.removeChannel(configChannel);
     };
-  }, [deps.refreshTags, deps.refreshCustomFields, deps.refreshTaskTemplates, deps.refreshSprints, deps.refreshTasks, deps.refreshUsers, deps.refreshStatuses, deps.refreshProductLines]);
+  }, [deps.refreshFeatureToggles, deps.refreshTags, deps.refreshCustomFields, deps.refreshTaskTemplates, deps.refreshSprints, deps.refreshTasks, deps.refreshUsers, deps.refreshStatuses, deps.refreshProductLines]);
 }

@@ -1,4 +1,6 @@
 import { useState, useCallback } from 'react';
+import { useUIContext } from '@/context/UIContext';
+import { isEventEnabled } from '@/lib/featureToggles';
 import { supabase } from '@/integrations/supabase/client';
 import {
   templateQueries,
@@ -36,6 +38,7 @@ export function resolveTemplate(content: string, ctx: TemplateContext): string {
 }
 
 export function useNotificationTemplates() {
+  const { approvalsEnabled } = useUIContext();
   const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +96,7 @@ export function useNotificationTemplates() {
   }, []);
 
   return {
-    templates,
+    templates: templates.filter(template => isEventEnabled(template.event_type, approvalsEnabled)),
     loading,
     error,
     fetchTemplates,

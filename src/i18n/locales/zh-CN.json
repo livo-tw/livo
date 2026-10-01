@@ -1,6 +1,25 @@
 {
+  "featureToggles": {
+    "externalDescription": "绑定后可在外部平台更新任务状态，系统会自动同步至 LIVO。",
+    "title": "功能开关",
+    "description": "由管理员设置全体成员可使用的功能，变更会同步应用。",
+    "approvalsLabel": "签核流程",
+    "approvalsDescription": "启用任务签核、签核规则与相关通知；关闭后可直接变更任务状态。",
+    "saved": "功能设置已保存",
+    "saving": "处理中…",
+    "retry": "重试",
+    "loadFailed": "无法加载功能设置，请重试。",
+    "saveFailed": "无法保存设置。请重新加载，确认是否仍有待签核任务后再试。",
+    "withdrawTitle": "撤回待签核申请并关闭",
+    "pendingDescription": "目前有 {{count}} 笔待签核申请。关闭前必须先全部撤回。",
+    "historyKept": "签核规则与历史记录会保留，重新开启后即可查看。",
+    "withdrawAndDisable": "全部撤回并关闭",
+    "withdrawFailed": "撤回未全部完成，这次未关闭签核。请重新确认列表后再试；已完成撤回的申请会保留记录。",
+    "requestUnavailable": "签核设置或申请已变更，请重新加载任务。"
+  },
   "common": {
     "loading": "载入中...",
+    "copyFailed": "复制失败，请手动选取复制",
     "processing": "处理中...",
     "saving": "储存中...",
     "uploading": "上传中...",
@@ -283,7 +302,11 @@
     "noFilterResults": "找不到符合条件的任务",
     "adjustFilters": "试着调整筛选条件",
     "noTasks": "看板上还没有任务",
-    "noTasksDesc": "创建第一个任务，开始管理你的工作流程"
+    "noTasksDesc": "创建第一个任务，开始管理你的工作流程",
+    "noTasksInSprint": "当前冲刺里没有这里的任务",
+    "tasksInOtherSprints": "这里有 {{count}} 个任务属于其他冲刺（例如已结束的冲刺）。看板只显示当前冲刺和还没排进冲刺的任务，左侧数字则包含全部任务。",
+    "otherSprintsShort": "另 {{count}} 个在其他冲刺",
+    "viewAllInList": "到「列表」查看全部任务"
   },
   "list": {
     "title": "待办事项列表",
@@ -1089,6 +1112,15 @@
   "settings": {
     "mySettings": "我的设定",
     "mySettingsDesc": "个人化偏好与通知设定",
+    "avatarLabel": "我的头像",
+    "avatarDesc": "设置自己在看板、评论和成员列表里显示的头像文字与底色，其他人都会看到。",
+    "avatarPreview": "头像预览",
+    "avatarTextLabel": "头像文字",
+    "avatarTextHint": "最多 2 个字，也可以用一个 emoji。",
+    "avatarColorLabel": "底色",
+    "avatarCustomColor": "自定义颜色",
+    "avatarSaved": "头像已更新",
+    "avatarSaveFailed": "头像更新失败：",
     "themeLabel": "介面主题",
     "themeDesc": "选择你喜好的介面配色，设定会同步到所有装置",
     "slackNotifyLabel": "Slack 主动推播",
@@ -1965,7 +1997,8 @@
       "communication": "沟通方式",
       "difficulty": "遇到困难时",
       "landmine": "地雷",
-      "bonus": "加分"
+      "bonus": "加分",
+      "projects": "负责过的项目"
     },
     "departments": {
       "manager": "主管",
@@ -1986,6 +2019,7 @@
     "editMyManual": "编辑我的说明书",
     "teamMember": "团队成员",
     "notFilled": "尚未填写",
+    "noProjects": "暂无经办项目",
     "saveFailed": "保存失败",
     "saved": "已保存",
     "editActivityDetail": "编辑「{{name}}」的团队介绍"

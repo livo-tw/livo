@@ -58,16 +58,18 @@ export function useProjectState() {
   }, []);
 
   // ─── Project CRUD ───
-  const createProjectInDb = useCallback(async (project: Project) => {
+  /** Returns the error message when the insert fails, null on success. */
+  const createProjectInDb = useCallback(async (project: Project): Promise<string | null> => {
     const { error } = await supabase.from('projects').insert({
       id: project.id, line_id: project.lineId, name: project.name,
       key: project.key, color: project.color, is_archived: project.isArchived,
     });
     if (error) {
       toast.error(i18n.t('project.createFailed') + error.message);
-    } else {
-      setAllProjects(prev => [...prev, project]);
+      return error.message;
     }
+    setAllProjects(prev => prev.some(p => p.id === project.id) ? prev : [...prev, project]);
+    return null;
   }, []);
 
   const updateProjectInDb = useCallback(async (projectId: string, updates: Partial<Project>) => {

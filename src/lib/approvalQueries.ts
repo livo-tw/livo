@@ -133,6 +133,7 @@ export const requestQueries = {
     q(db, 'approval_requests')
       .update({ status, completed_at: completedAt ?? null })
       .eq('id', id)
+      .eq('status', 'pending')
       .select()
       .single(),
 };

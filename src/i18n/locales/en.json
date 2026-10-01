@@ -1,6 +1,25 @@
 {
+  "featureToggles": {
+    "externalDescription": "After binding an account, status updates from external platforms sync to LIVO.",
+    "title": "Feature switches",
+    "description": "Administrators choose the features available to everyone on the team. Changes apply live.",
+    "approvalsLabel": "Approval workflow",
+    "approvalsDescription": "Enable task approvals, approval rules and notifications. When off, task statuses can be changed directly.",
+    "saved": "Feature settings saved",
+    "saving": "Working…",
+    "retry": "Retry",
+    "loadFailed": "Could not load feature settings. Please retry.",
+    "saveFailed": "Could not save settings. Reload and check for pending approvals before trying again.",
+    "withdrawTitle": "Withdraw pending requests and turn off",
+    "pendingDescription": "There are {{count}} pending approval requests. Withdraw all of them before turning approvals off.",
+    "historyKept": "Approval rules and history are kept and become visible again when approvals are turned on.",
+    "withdrawAndDisable": "Withdraw all and turn off",
+    "withdrawFailed": "Some withdrawals did not complete, so this action did not turn approvals off. Review the list and retry; completed withdrawals remain in the history.",
+    "requestUnavailable": "The approval settings or request changed. Please reload the task."
+  },
   "common": {
     "loading": "Loading...",
+    "copyFailed": "Copy failed. Please select and copy it manually.",
     "processing": "Processing...",
     "saving": "Saving...",
     "uploading": "Uploading...",
@@ -283,7 +302,11 @@
     "noFilterResults": "No tasks match the current filters",
     "adjustFilters": "Try adjusting the filters",
     "noTasks": "No tasks on the board yet",
-    "noTasksDesc": "Create your first task to start managing your workflow"
+    "noTasksDesc": "Create your first task to start managing your workflow",
+    "noTasksInSprint": "No tasks here in the current sprint",
+    "tasksInOtherSprints": "{{count}} task(s) here belong to other sprints, such as finished ones. The board shows only the current sprint and unscheduled tasks; the sidebar counts every task.",
+    "otherSprintsShort": "+{{count}} in other sprints",
+    "viewAllInList": "View all tasks in the List view"
   },
   "list": {
     "title": "Task List",
@@ -1151,6 +1174,15 @@
   "settings": {
     "mySettings": "My Settings",
     "mySettingsDesc": "Personal preferences and notification settings",
+    "avatarLabel": "My avatar",
+    "avatarDesc": "Set the text and colour of your badge on the board, in comments and in the member list. Everyone sees it.",
+    "avatarPreview": "Avatar preview",
+    "avatarTextLabel": "Badge text",
+    "avatarTextHint": "Up to 2 characters, or one emoji.",
+    "avatarColorLabel": "Colour",
+    "avatarCustomColor": "Custom colour",
+    "avatarSaved": "Avatar updated",
+    "avatarSaveFailed": "Failed to update avatar: ",
     "themeLabel": "Theme",
     "themeDesc": "Choose your preferred color scheme. Settings sync across all devices",
     "slackNotifyLabel": "Slack Push Notifications",
@@ -2027,7 +2059,8 @@
       "communication": "Communication Style",
       "difficulty": "When Facing Difficulties",
       "landmine": "Pet Peeves",
-      "bonus": "Bonus Points"
+      "bonus": "Bonus Points",
+      "projects": "Projects Worked On"
     },
     "departments": {
       "manager": "Manager",
@@ -2048,6 +2081,7 @@
     "editMyManual": "Edit My Manual",
     "teamMember": "Team Members",
     "notFilled": "Not filled in",
+    "noProjects": "No assigned projects yet",
     "saveFailed": "Save failed",
     "saved": "Saved",
     "editActivityDetail": "Edit team intro for \"{{name}}\""

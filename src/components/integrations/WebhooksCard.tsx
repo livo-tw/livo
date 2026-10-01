@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { useLicense } from '@/context/LicenseContext';
 import { authGetJson, authPostJson } from './fnFetch';
 import { Field, Toggle, inputCls } from './shared';
+import { copyText } from '@/lib/clipboard';
 
 export interface ServerWebhook {
   id: string;
@@ -150,12 +151,8 @@ const WebhooksCard = () => {
 
   const copySecret = async () => {
     if (!createdSecret) return;
-    try {
-      await navigator.clipboard.writeText(createdSecret);
-      toast.success(t('integrations.webhooks.copied'));
-    } catch {
-      /* clipboard unavailable — user can select the text manually */
-    }
+    if (await copyText(createdSecret)) toast.success(t('integrations.webhooks.copied'));
+    else toast.error(t('common.copyFailed'));
   };
 
   const renderLastStatus = (wh: ServerWebhook) => {

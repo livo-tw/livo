@@ -923,3 +923,103 @@ CREATE INDEX IF NOT EXISTS idx_activity_logs_workspace ON activity_logs (workspa
 CREATE INDEX IF NOT EXISTS idx_status_logs_workspace ON status_logs (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_workspace ON time_entries (workspace_id, entry_date);
 CREATE INDEX IF NOT EXISTS idx_members_workspace ON members (workspace_id);
+
+-- Feature switches: preserve legacy teams and keep fresh workspaces opt-in.
+INSERT OR IGNORE INTO system_settings (workspace_id, key, value)
+SELECT ws, 'feature_toggles', json_object('approvals', json(CASE WHEN
+  EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = ws) OR
+  EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = ws)
+  THEN 'true' ELSE 'false' END))
+FROM (SELECT 'default' AS ws UNION SELECT id FROM workspaces
+  UNION SELECT workspace_id FROM approval_rules UNION SELECT workspace_id FROM approval_requests);
+
+CREATE TRIGGER IF NOT EXISTS feature_toggles_no_pending_insert
+BEFORE INSERT ON system_settings
+WHEN NEW.key = 'feature_toggles' AND json_type(NEW.value, '$.approvals') = 'false'
+BEGIN
+  SELECT RAISE(ABORT, 'Withdraw pending approvals before disabling')
+  WHERE EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id AND status = 'pending')
+     OR EXISTS (SELECT 1 FROM tasks WHERE workspace_id = NEW.workspace_id
+       AND (approval_status = 'pending_approval' OR current_approval_id IS NOT NULL));
+END;
+CREATE TRIGGER IF NOT EXISTS feature_toggles_no_pending_update
+BEFORE UPDATE ON system_settings
+WHEN NEW.key = 'feature_toggles' AND json_type(NEW.value, '$.approvals') = 'false'
+BEGIN
+  SELECT RAISE(ABORT, 'Withdraw pending approvals before disabling')
+  WHERE EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id AND status = 'pending')
+     OR EXISTS (SELECT 1 FROM tasks WHERE workspace_id = NEW.workspace_id
+       AND (approval_status = 'pending_approval' OR current_approval_id IS NOT NULL));
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_withdraw_clears_task
+AFTER UPDATE OF status ON approval_requests
+WHEN OLD.status = 'pending' AND NEW.status = 'cancelled'
+BEGIN
+  UPDATE tasks SET approval_status = NULL, current_approval_id = NULL
+  WHERE workspace_id = NEW.workspace_id AND id = NEW.task_id AND current_approval_id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_request_enabled_insert
+BEFORE INSERT ON approval_requests WHEN NEW.status = 'pending'
+BEGIN
+  SELECT RAISE(ABORT, 'Approval workflow is disabled') WHERE NOT COALESCE(
+    (SELECT CASE WHEN json_type(value, '$.approvals') IN ('true','false')
+      THEN json_extract(value, '$.approvals') END FROM system_settings
+     WHERE workspace_id = NEW.workspace_id AND key = 'feature_toggles'),
+    EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = NEW.workspace_id) OR
+    EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id)
+  );
+END;
+CREATE TRIGGER IF NOT EXISTS approval_task_pending_insert
+BEFORE INSERT ON tasks WHEN NEW.approval_status = 'pending_approval'
+BEGIN
+  SELECT RAISE(ABORT, 'Approval request is no longer pending')
+  WHERE NOT COALESCE(
+    (SELECT CASE WHEN json_type(value, '$.approvals') IN ('true','false')
+      THEN json_extract(value, '$.approvals') END FROM system_settings
+     WHERE workspace_id = NEW.workspace_id AND key = 'feature_toggles'),
+    EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = NEW.workspace_id) OR
+    EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id
+      AND id = NEW.current_approval_id AND task_id = NEW.id AND status = 'pending');
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_request_enabled_update
+BEFORE UPDATE ON approval_requests WHEN NEW.status = 'pending'
+BEGIN
+  SELECT RAISE(ABORT, 'Approval workflow is disabled') WHERE NOT COALESCE(
+    (SELECT CASE WHEN json_type(value, '$.approvals') IN ('true','false')
+      THEN json_extract(value, '$.approvals') END FROM system_settings
+     WHERE workspace_id = NEW.workspace_id AND key = 'feature_toggles'),
+    EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = NEW.workspace_id) OR
+    EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id)
+  );
+END;
+CREATE TRIGGER IF NOT EXISTS approval_task_pending_update
+BEFORE UPDATE OF approval_status, current_approval_id ON tasks WHEN NEW.approval_status = 'pending_approval'
+BEGIN
+  SELECT RAISE(ABORT, 'Approval request is no longer pending')
+  WHERE NOT COALESCE(
+    (SELECT CASE WHEN json_type(value, '$.approvals') IN ('true','false')
+      THEN json_extract(value, '$.approvals') END FROM system_settings
+     WHERE workspace_id = NEW.workspace_id AND key = 'feature_toggles'),
+    EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = NEW.workspace_id) OR
+    EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id
+      AND id = NEW.current_approval_id AND task_id = NEW.id AND status = 'pending');
+END;
+
+CREATE TRIGGER IF NOT EXISTS approval_notification_enabled
+BEFORE INSERT ON notifications WHEN substr(NEW.type, 1, 9) = 'approval_'
+BEGIN
+  SELECT RAISE(IGNORE) WHERE NOT COALESCE(
+    (SELECT CASE WHEN json_type(value, '$.approvals') IN ('true','false')
+      THEN json_extract(value, '$.approvals') END FROM system_settings
+     WHERE workspace_id = NEW.workspace_id AND key = 'feature_toggles'),
+    EXISTS (SELECT 1 FROM approval_rules WHERE workspace_id = NEW.workspace_id) OR
+    EXISTS (SELECT 1 FROM approval_requests WHERE workspace_id = NEW.workspace_id)
+  );
+END;

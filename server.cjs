@@ -64,6 +64,10 @@ const server = http.createServer((req, res) => {
     if (fs.existsSync(idx)) { serve(res, idx); return; }
   }
 
+  // Browsers ask the origin root for /favicon.ico on pages that declare no
+  // icon, such as an attachment image opened in its own tab. Use the app's.
+  if (url === "/favicon.ico" && serve(res, path.join(ROOT, "demo", "favicon.ico"))) return;
+
   // SPA fallback: /demo/* -> /demo/index.html, everything else -> /index.html
   if (url.startsWith("/demo/") || url === "/demo") {
     serve(res, path.join(ROOT, "demo", "index.html"));
