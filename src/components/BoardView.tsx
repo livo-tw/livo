@@ -13,7 +13,7 @@ import BoardApprovalModal from '@/components/board/BoardApprovalModal';
 import { type CardFieldVisibility, DEFAULT_CARD_FIELDS } from '@/lib/fieldRegistry';
 import { useLicense } from '@/context/LicenseContext';
 import type { PendingTaskAction } from '@/context/SprintContext';
-import { ChevronDown, ChevronRight, ClipboardList, Search, Plus } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, ClipboardList, Search, Plus } from 'lucide-react';
 import { getDepartment, type Department } from '@/lib/department';
 import { useUndoStack } from '@/hooks/useUndoStack';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -486,9 +486,16 @@ const BoardView = () => {
                   </span>
                 )}
                 <span className="text-sm md:text-[15px] font-bold text-foreground truncate">{project.name}</span>
-                <button className="text-xs text-primary hover:underline shrink-0" onClick={event => {
-                  event.stopPropagation(); setSelectedProjectId(project.id); setSelectedLineId(null); setCurrentView('knowledge-base');
-                }}>{t('kb.title')}</button>
+                <button
+                  type="button"
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border/70 bg-muted/40 px-2 text-xs font-medium leading-none text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  onClick={event => {
+                    event.stopPropagation(); setSelectedProjectId(project.id); setSelectedLineId(null); setCurrentView('knowledge-base');
+                  }}
+                >
+                  <BookOpen size={14} strokeWidth={1.75} aria-hidden="true" />
+                  <span>{t('kb.title')}</span>
+                </button>
                 {(otherSprintCounts.get(project.id) || 0) > 0 && (
                   <span className="ml-auto flex-shrink-0 text-[12px] text-muted-foreground/70" title={t('board.tasksInOtherSprints', { count: otherSprintCounts.get(project.id) })}>
                     {t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}
