@@ -14,6 +14,8 @@ $Root       = Split-Path -Parent $PSScriptRoot          # installer\ 的上一�
 $DockerDir  = Join-Path $Root 'docker'
 $SchemaFile = Join-Path $Root 'schema\livo-schema.sql'
 $FirstRun   = Join-Path $Root 'schema\first-run.sql'
+$UpgradesDir = Join-Path $Root 'schema\upgrades'
+$BackupDir  = Join-Path $Root 'backups'
 $AdminSql   = Join-Path $PSScriptRoot 'create-admin.sql'
 $KeygenJs   = Join-Path $PSScriptRoot 'generate-keys.js'
 $EnvFile    = Join-Path $DockerDir '.env'
@@ -117,6 +119,62 @@ function Get-DotenvValue([string]$Name) {
   return $null
 }
 
+# ---------- docker\.env：這套安裝專屬的金鑰 ----------
+# 安裝包只附出廠範本 docker\.env.factory，第一次安裝才複製成 docker\.env。
+# 升級時把新版檔案整包蓋過來，也不會動到既有的 .env。
+$FactoryEnvFile = Join-Path $DockerDir '.env.factory'
+
+function Initialize-EnvFile {
+  if (Test-Path $script:EnvFile) { return }
+  if (Test-Path (Join-Path $DockerDir 'volumes\db\data')) {
+    Fail '找不到 docker\.env，但這台機器已經有 LIVO 的資料庫。' ("docker\.env 存著這套安裝專屬的金鑰，不能用出廠值重建。`n" +
+      '請把 backups\ 裡最新的 docker-env-*.bak 複製回 docker\.env，再重新執行 install.bat。')
+  }
+  if (-not (Test-Path $FactoryEnvFile)) {
+    Fail '找不到 docker\.env.factory。' '套件不完整，請重新解壓縮。'
+  }
+  try { Copy-Item -Path $FactoryEnvFile -Destination $script:EnvFile -ErrorAction Stop }
+  catch { Fail '無法建立 docker\.env。' '請確認目前的使用者可以寫入 docker\ 資料夾。' }
+}
+
+# 檔名是時間戳，依名稱排序 = 依時間排序
+function Get-EnvBackups {
+  if (-not (Test-Path $BackupDir)) { return @() }
+  return @(Get-ChildItem -Path $BackupDir -Filter 'docker-env-*.bak' -File | Sort-Object Name)
+}
+
+# 已有專屬金鑰的 .env 每次執行都備份一份到 backups\（內容沒變就不重複備份）。
+function Backup-EnvFile {
+  if (-not (Test-Path $script:EnvFile)) { return }
+  $raw = [System.IO.File]::ReadAllText($script:EnvFile)
+  if ($raw -notmatch '(?m)^LIVO_KEYS_ROTATED=1') { return }
+  $backups = @(Get-EnvBackups)
+  if ($backups.Count -gt 0) {
+    $latest = [System.IO.File]::ReadAllText($backups[-1].FullName)
+    if ($latest -eq $raw) { return }
+  }
+  try {
+    if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force -ErrorAction Stop | Out-Null }
+    $bak = Join-Path $BackupDir ('docker-env-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak')
+    Copy-Item -Path $script:EnvFile -Destination $bak -ErrorAction Stop
+    Ok ('已備份 docker\.env → backups\' + (Split-Path -Leaf $bak))
+  } catch {}
+}
+
+# 既有安裝的 .env 被出廠預設值蓋掉（例如升級時把舊版套件的 docker\.env 一起複製
+# 進來）：繼續跑會用公開的出廠密碼啟動，服務連不上資料庫。先停下來。
+function Assert-EnvNotOverwritten {
+  $raw = [System.IO.File]::ReadAllText($script:EnvFile)
+  if ($raw -match '(?m)^LIVO_KEYS_ROTATED=1') { return }
+  if (-not (Test-Path (Join-Path $DockerDir 'volumes\db\data'))) { return }
+  $rotated = @(Get-EnvBackups | Where-Object {
+    [System.IO.File]::ReadAllText($_.FullName) -match '(?m)^LIVO_KEYS_ROTATED=1'
+  })
+  if ($rotated.Count -eq 0) { return }
+  Fail 'docker\.env 被換成出廠預設值了，這套安裝原本的專屬金鑰不在裡面。' ("請把備份複製回去，再重新執行 install.bat：`n" +
+    '  把 backups\' + $rotated[-1].Name + ' 複製成 docker\.env')
+}
+
 # 前端 bundle 的 .js 檔（app\demo\assets\*.js + app\*.js）
 function Get-BundleJsFiles {
   $files = @()
@@ -146,6 +204,10 @@ foreach ($req in @(
     Fail ("找不到 " + $req.n + "。") "套件不完整。請把整個 zip 完整解壓縮後，再執行套件根目錄的 install.bat。"
   }
 }
+
+Initialize-EnvFile
+Assert-EnvNotOverwritten
+Backup-EnvFile
 
 # ============================================================
 # [1/7] 環境檢查
@@ -240,17 +302,21 @@ function Update-KongPortBinding {
     }
   }
 
-  if ($bundlePort -ne [int]$script:KongPort) {
-    $oldRef = 'localhost:' + $bundlePort
-    $newRef = 'localhost:' + $script:KongPort
-    $patched = 0
-    foreach ($f in (Get-BundleJsFiles)) {
-      $txt = [System.IO.File]::ReadAllText($f.FullName)
-      if ($txt.Contains($oldRef)) {
-        [System.IO.File]::WriteAllText($f.FullName, $txt.Replace($oldRef, $newRef), $script:Utf8NoBom)
-        $patched++
-      }
+  # 逐檔檢查：升級換上新版 app\ 後，新檔案又是出廠的 8000，舊檔可能還留著
+  $newRef = 'localhost:' + $script:KongPort
+  $oldRefs = @(@($bundlePort, 8000) | Select-Object -Unique | Where-Object { $_ -ne [int]$script:KongPort } |
+               ForEach-Object { 'localhost:' + $_ })
+  $patched = 0
+  foreach ($f in (Get-BundleJsFiles)) {
+    $txt = [System.IO.File]::ReadAllText($f.FullName)
+    $new = $txt
+    foreach ($ref in $oldRefs) { $new = $new.Replace($ref, $newRef) }
+    if ($new -cne $txt) {
+      [System.IO.File]::WriteAllText($f.FullName, $new, $script:Utf8NoBom)
+      $patched++
     }
+  }
+  if ($patched -gt 0) {
     Ok "API 閘道改用連接埠 $($script:KongPort)（前端已同步更新 $patched 個檔案）"
   }
   Set-DotenvVar 'LIVO_KONG_PORT_PATCHED' $script:KongPort
@@ -399,10 +465,33 @@ function Invoke-S3KeyRotation {
   Ok '已產生本安裝專屬的檔案儲存 S3 金鑰'
 }
 
+# 前端 bundle 內嵌的 anon key 一律對齊 docker\.env。升級時換上新版 app\ 後，
+# 新檔案又是出廠值（舊檔可能還留著），不同步就登入不了。逐檔檢查；冪等：
+# 全部一致就什麼都不做。
+function Sync-FrontendAnonKey {
+  $cur = Get-DotenvValue 'ANON_KEY'
+  if (-not $cur) { return }
+  $replacement = $cur.Replace('$', '$$')
+  $patched = 0
+  foreach ($f in (Get-BundleJsFiles)) {
+    $txt = [System.IO.File]::ReadAllText($f.FullName)
+    $new = [regex]::Replace($txt, $AnonJwtRe, $replacement)
+    if ($new -cne $txt) {
+      [System.IO.File]::WriteAllText($f.FullName, $new, $script:Utf8NoBom)
+      $patched++
+    }
+  }
+  if ($patched -gt 0) {
+    Ok ("前端檔案已換成本安裝的金鑰（" + $patched + " 個檔案；升級換上新版前端後的自動同步）")
+  }
+}
+
 Say ''
 Say '[2/7] 產生本安裝專屬金鑰...'
 Invoke-KeyRotation
 Invoke-S3KeyRotation
+Sync-FrontendAnonKey
+Backup-EnvFile
 
 # ============================================================
 # [3/7] 啟動服務
@@ -420,6 +509,15 @@ if ($LASTEXITCODE -ne 0) {
   docker compose -f docker-compose.yml -f compose.frontend.yml logs --tail=50
 排除後重新執行 install.bat。
 '@
+}
+# 重跑（例如升級換上新版檔案）時：API 閘道與後端函式只在啟動時讀設定檔
+# （kong.yml、functions\），重新啟動才會載入新版。
+if ($runningNames -contains 'supabase-kong') {
+  Say '  重新載入 API 閘道與後端函式（載入新版設定）...'
+  Invoke-Compose restart kong functions *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Warn '重新載入失敗，可稍後在 docker\ 目錄執行：docker compose restart kong functions'
+  }
 }
 Ok '服務已啟動'
 
@@ -503,6 +601,7 @@ function Install-Schema {
 '@
   }
   Write-InstallMarker
+  $script:SchemaJustApplied = $true
   Ok '資料庫結構建立完成'
 }
 
@@ -538,7 +637,7 @@ elseif ($tbls -match '^false,(true|false),false$') { $state = 'fresh' }
 
 switch ($state) {
   'applied' {
-    Say '  資料庫已初始化，略過。'
+    Say '  資料庫已初始化，略過建立（接著檢查資料庫更新）。'
   }
   'legacy' {
     Say '  偵測到既有的 LIVO 資料庫（先前手動安裝完成），略過建立。'
@@ -564,6 +663,81 @@ switch ($state) {
 '@
   }
 }
+
+# ---- 資料庫更新（既有安裝：套用新版新增的資料表 / 欄位）----
+# schema\upgrades\ 每個檔案是一個 migration、一個交易；套用成功就記在
+# public.livo_schema_migrations，所以每個更新只會套用一次，可安全重跑。
+# 全新安裝的 livo-schema.sql 已記錄它包含的 migration，這裡不會重複套用。
+# 這些更新都是冪等、不刪資料的（打包時 scripts/release-upgrades.mjs 檢查過）。
+function Backup-Database {
+  # 成功回傳備份檔路徑，失敗回傳 $null
+  if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
+  $file = Join-Path $BackupDir ('livo-db-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
+  Invoke-Compose exec -T db pg_dump -U supabase_admin -h localhost -d postgres -Fc -f /tmp/livo-backup.dump | Out-Host
+  if ($LASTEXITCODE -ne 0) { return $null }
+  & docker cp 'supabase-db:/tmp/livo-backup.dump' $file *> $null
+  $copied = ($LASTEXITCODE -eq 0)
+  Invoke-Compose exec -T db rm -f /tmp/livo-backup.dump *> $null
+  if (-not $copied -or -not (Test-Path $file) -or (Get-Item $file).Length -eq 0) { return $null }
+  return $file
+}
+
+function Install-Upgrades {
+  if (-not (Test-Path $UpgradesDir)) { return }
+  [string[]]$names = @(Get-ChildItem -Path $UpgradesDir -File | Where-Object { $_.Name -like '*.sql' } | ForEach-Object { $_.Name })
+  if ($names.Count -eq 0) { return }
+  [Array]::Sort($names, [System.StringComparer]::Ordinal)   # 檔名順序 = migration 順序
+  $applied = @()
+  if ((Invoke-PsqlQuery "SELECT to_regclass('public.livo_schema_migrations') IS NOT NULL") -eq 't') {
+    $out = Invoke-PsqlQuery 'SELECT name FROM public.livo_schema_migrations'
+    if ($out) { $applied = @($out -split "\r?\n" | ForEach-Object { $_.Trim() }) }
+  }
+  $pending = @($names | Where-Object { $applied -cnotcontains $_ })
+  if ($pending.Count -eq 0) {
+    if (-not $script:SchemaJustApplied) { Ok '資料庫結構已是最新版本' }
+    return
+  }
+
+  Say ''
+  Say ('  有 ' + $pending.Count + ' 個資料庫更新還沒套用（新版新增的資料表 / 欄位）：')
+  foreach ($n in $pending) { Say ('    - ' + $n) }
+  Say '  更新只會新增或調整結構，不會刪除任何資料；套用前會先把整個資料庫備份到 backups\。'
+  $ans = Read-Host '  要現在備份並套用嗎？[Y/n]'
+  if ($ans -match '^(n|N|no|NO)$') {
+    Say '  已略過。之後重新執行 install.bat 即可套用（套用前新版功能可能無法使用）。'
+    return
+  }
+
+  Say '  備份資料庫...'
+  $backup = Backup-Database
+  if ($backup) {
+    Ok ('已備份：backups\' + (Split-Path -Leaf $backup))
+  } else {
+    Warn '資料庫備份失敗（請看上方訊息）。'
+    $ans = Read-Host '  不備份、直接套用更新嗎？建議先排除問題再重跑。[y/N]'
+    if ($ans -notmatch '^(y|Y|yes|YES)$') {
+      Say '  已略過資料庫更新。排除問題後重新執行 install.bat 即可。'
+      return
+    }
+  }
+
+  foreach ($n in $pending) {
+    Write-Host ('  套用 ' + $n + ' ...') -NoNewline
+    $res = Invoke-PsqlFile (Join-Path $UpgradesDir $n)
+    if ($res.ExitCode -eq 0) {
+      Say ' OK'
+    } else {
+      Say ''
+      Say $res.Output
+      $where = if ($backup) { $backup } else { '（這次沒有備份）' }
+      Fail ('資料庫更新 ' + $n + ' 套用失敗。') ("這個更新沒有完成，它在交易內的變更已自動復原；先前的更新與所有資料都不受影響。`n備份檔：" + $where + "`n請截圖上方錯誤訊息。排除後重新執行 install.bat，會從這個更新繼續。")
+    }
+  }
+  # 讓 PostgREST 立刻看到新的資料表（不必等它自己重新載入）
+  $null = Invoke-PsqlQuery "NOTIFY pgrst, 'reload schema'"
+  Ok ('資料庫更新完成（' + $pending.Count + ' 個）')
+}
+Install-Upgrades
 
 # ---- first-run.sql（預設狀態、移除示範資料；冪等）----
 if (Test-Path $FirstRun) {

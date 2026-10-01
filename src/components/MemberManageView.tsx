@@ -6,6 +6,8 @@ import MemberTableDesktop from './member-manage/MemberTableDesktop';
 import MemberCardsMobile from './member-manage/MemberCardsMobile';
 import AddMemberModal from './member-manage/AddMemberModal';
 import ResetPasswordModal from './member-manage/ResetPasswordModal';
+import CreateLoginModal from './member-manage/CreateLoginModal';
+import AccountCredentialsDialog from './AccountCredentialsDialog';
 
 const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
   const { t } = useTranslation();
@@ -28,6 +30,11 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
     handleTouchStart, handleTouchMove, handleTouchEnd,
     handleRoleChange, handleAddMember, handleToggleActive, handleDeleteMember,
     openResetPassword, handleResetPassword,
+    loginTarget, setLoginTarget,
+    loginEmail, setLoginEmail,
+    loginError, loginLoading,
+    loginCredentials, setLoginCredentials,
+    openCreateLogin, handleCreateLogin,
     ConfirmDialog,
   } = useMemberManage();
 
@@ -37,6 +44,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
     onDragStart: handleDragStart, onDragOver: handleDragOver, onDragEnd: handleDragEnd,
     onRoleChange: handleRoleChange, onToggleActive: handleToggleActive, onDelete: handleDeleteMember,
     onResetPassword: openResetPassword,
+    onCreateLogin: openCreateLogin,
   };
 
   return (
@@ -110,6 +118,16 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
         onSubmit={handleResetPassword}
         loading={resetLoading}
       />
+      <CreateLoginModal
+        target={loginTarget}
+        email={loginEmail}
+        setEmail={setLoginEmail}
+        error={loginError}
+        onClose={() => setLoginTarget(null)}
+        onSubmit={handleCreateLogin}
+        loading={loginLoading}
+      />
+      <AccountCredentialsDialog credentials={loginCredentials} onClose={() => setLoginCredentials([])} />
       {ConfirmDialog}
       </div>
     </div>

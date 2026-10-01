@@ -15,14 +15,14 @@ interface AdminUsageSectionProps {
 }
 
 const DB_LIMIT = 500 * 1024 * 1024;
-const DEFAULT_STORAGE_LIMIT = 1 * 1024 * 1024 * 1024;
 
 const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
   const { t } = useTranslation();
   const [dbUsed, setDbUsed] = useState<number | null>(null);
   const [storageUsed, setStorageUsed] = useState<number | null>(null);
-  // Cloud-beta workspaces report a real quota (500MB) via check_license.
-  const [STORAGE_LIMIT, setStorageLimit] = useState(DEFAULT_STORAGE_LIMIT);
+  // Cloud-beta workspaces report a real quota (500MB) via check_license. Without
+  // one (self-host, default workspace) there is no cap, so no meter is drawn.
+  const [STORAGE_LIMIT, setStorageLimit] = useState<number | null>(null);
   useEffect(() => {
     getWorkspaceStorageLimitBytes().then((v) => { if (v) setStorageLimit(v); });
   }, []);
@@ -135,7 +135,7 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
                     : t('common.loading')}
                 </span>
               </div>
-              {storageUsed !== null && (
+              {storageUsed !== null && STORAGE_LIMIT !== null && (
                 <div className="h-2.5 rounded-full bg-muted overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${(storageUsed / STORAGE_LIMIT) > 0.8 ? 'bg-destructive' : 'bg-primary'}`}

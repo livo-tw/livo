@@ -12,6 +12,7 @@ import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { logActivity } from '@/lib/activityLog';
 import { supabase } from '@/integrations/supabase/client';
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { Task, Priority, TaskDeployment } from '@/types';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -140,14 +141,25 @@ export function useCreateTaskForm() {
   const addTodo = () => { if (!newTodoText.trim()) return; setTodoItems(prev => [...prev, newTodoText.trim()]); setNewTodoText(''); };
   const removeTodo = (idx: number) => setTodoItems(prev => prev.filter((_, i) => i !== idx));
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const newFiles: PendingFile[] = Array.from(files).map(f => ({
+  // Reject oversized files as soon as they're picked, instead of after the task
+  // has been created and the whole file has been sent to the server.
+  const addPendingFiles = (files: FileList) => {
+    const all = Array.from(files);
+    const oversized = all.filter(f => f.size > MAX_UPLOAD_BYTES);
+    if (oversized.length > 0) {
+      toast.error(t('taskDetail.attachments.fileSizeExceeded', { files: oversized.map(f => f.name).join(', '), size: MAX_UPLOAD_MB }));
+    }
+    const newFiles: PendingFile[] = all.filter(f => f.size <= MAX_UPLOAD_BYTES).map(f => ({
       file: f, id: `pf_${crypto.randomUUID()}`,
       preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
     }));
-    setPendingFiles(prev => [...prev, ...newFiles]);
+    if (newFiles.length > 0) setPendingFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    addPendingFiles(files);
     e.target.value = '';
   };
 
@@ -163,11 +175,7 @@ export function useCreateTaskForm() {
     e.preventDefault();
     const files = e.dataTransfer.files;
     if (!files.length) return;
-    const newFiles: PendingFile[] = Array.from(files).map(f => ({
-      file: f, id: `pf_${crypto.randomUUID()}`,
-      preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
-    }));
-    setPendingFiles(prev => [...prev, ...newFiles]);
+    addPendingFiles(files);
   };
 
   const uploadFiles = async (taskId: string) => {

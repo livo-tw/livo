@@ -12,6 +12,8 @@
 //                                      notifications rows (db.ts post-mutation hook)
 //   runDueReminders(env)             — hourly cron entrypoint, self-gated to
 //                                      01:00 UTC (09:00 台灣) once a day
+//   sendResendEmail / escapeHtml     — reused by memberLogin.ts (set-password
+//                                      invitations)
 
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
@@ -86,7 +88,7 @@ export async function resolveEmailConfig(env: Env, ws: string = DEFAULT_WORKSPAC
 
 // ─── Small helpers ──────────────────────────────────────────────────────────
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -96,7 +98,7 @@ function escapeHtml(s: string): string {
 
 const asStr = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-async function sendResendEmail(
+export async function sendResendEmail(
   cfg: EmailConfig,
   to: string,
   subject: string,

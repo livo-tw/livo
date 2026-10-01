@@ -18,6 +18,7 @@ import {
 import i18n from '@/i18n';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import type { User } from '@/types';
 import type { Editor } from '@tiptap/core';
 
@@ -245,6 +246,10 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
 
   const handleImageUpload = useCallback(async (file: File) => {
     if (!editor) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      toast.error(i18n.t('taskDetail.attachments.fileSizeExceeded', { files: file.name, size: MAX_UPLOAD_MB }));
+      return;
+    }
     const ext = file.name.split('.').pop() || 'png';
     const path = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
     // Build the URL from the SERVER's effective path (cloud ws/ prefix).

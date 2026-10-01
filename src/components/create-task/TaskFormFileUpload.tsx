@@ -1,5 +1,6 @@
 import { Plus, Paperclip, FileText, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 
 interface PendingFile {
   file: File;
@@ -50,6 +51,7 @@ const TaskFormFileUpload = ({ pendingFiles, fileInputRef, onFileSelect, onRemove
       >
         <Paperclip size={18} className="mx-auto mb-1 text-muted-foreground" />
         <p className="text-xs md:text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: t('taskCreate.dragDropFiles') }} />
+        <p className="text-[10px] text-muted-foreground mt-1">{t('taskDetail.spec.fileSizeNote', { size: MAX_UPLOAD_MB })}</p>
       </div>
       {pendingFiles.length > 0 && (
         <div className="mt-2 space-y-1.5">

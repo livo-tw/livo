@@ -1,10 +1,15 @@
-// API tokens admin card (系統管理 → 整合) — Cloudflare backend only.
+// API tokens admin card (系統管理 → 整合) — both backends.
 //
-// Rendered from IntegrationsView only when USE_CF_BACKEND is true (the
-// legacy Supabase gateway has no fn 'api-tokens'). Backend contract:
-//   GET  → { tokens: [{ id, name, member_id, created_at, last_used_at, revoked_at }] }
-//   POST { action:'create', name } → { ok, token }  (token shown ONCE)
-//   POST { action:'revoke', id }   → { ok }
+// Backend fn 'api-tokens': worker/src/functions/apiTokens.ts (Cloudflare) and
+// docker/volumes/functions/api-tokens (self-host). Contract:
+//   GET  → { tokens: [{ id, name, memberId, createdAt, lastUsedAt, revokedAt }] }
+//          (older builds sent snake_case — normalizeToken accepts both)
+//   POST { action:'create', name, memberId? } → { ok, token }  (token shown ONCE)
+//   POST { action:'revoke', id }              → { ok }
+// A token acts as the bound member (default: the caller). Binding to another
+// admin / super_admin needs super_admin — the server enforces the same rule.
+// Self-host scripts trade the token for a short-lived JWT first
+// (POST /functions/v1/api-tokens/exchange); the hint below says so.
 //
 // Structure mirrors SlackCard; admin-only via IntegrationsView + server checks.
 
@@ -14,21 +19,19 @@ import { useTranslation } from 'react-i18next';
 import { KeyRound, Loader2, Plus, Copy, AlertTriangle, Ban } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLicense } from '@/context/LicenseContext';
+import { useAuthContext } from '@/context/AuthContext';
+import { useMemberContext } from '@/context/MemberContext';
+import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { authGetJson, authPostJson } from './fnFetch';
 import { Field, inputCls } from './shared';
-
-export interface ApiToken {
-  id: string;
-  name: string;
-  member_id: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
-}
+import { type ApiToken, bindableMembers, normalizeToken } from './apiTokenUtils';
 
 const ApiTokensCard = () => {
   const { t } = useTranslation();
   const { isDemoMode } = useLicense();
+  const { realMember } = useAuthContext();
+  const { users } = useMemberContext();
+  const bindable = bindableMembers(users, realMember);
 
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +40,7 @@ const ApiTokensCard = () => {
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newMemberId, setNewMemberId] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   // Token reveal (shown ONCE right after create)
@@ -48,8 +52,8 @@ const ApiTokensCard = () => {
   const load = useCallback(async () => {
     setLoadError(false);
     try {
-      const { resp, body } = await authGetJson<{ tokens?: ApiToken[]; error?: string }>('api-tokens');
-      if (resp.ok && Array.isArray(body.tokens)) setTokens(body.tokens);
+      const { resp, body } = await authGetJson<{ tokens?: Record<string, unknown>[]; error?: string }>('api-tokens');
+      if (resp.ok && Array.isArray(body.tokens)) setTokens(body.tokens.map(normalizeToken));
       else setLoadError(true);
     } catch {
       setLoadError(true);
@@ -78,8 +82,9 @@ const ApiTokensCard = () => {
     setCreateError(null);
     setCreating(true);
     try {
+      const memberId = newMemberId && newMemberId !== realMember?.id ? newMemberId : undefined;
       const { resp, body } = await authPostJson<{ ok?: boolean; token?: string; error?: string; message?: string }>(
-        'api-tokens', { action: 'create', name },
+        'api-tokens', { action: 'create', name, ...(memberId ? { memberId } : {}) },
       );
       if (resp.ok && body.ok && body.token) {
         setShowCreate(false);
@@ -134,10 +139,13 @@ const ApiTokensCard = () => {
         <div className="flex-1 min-w-0">
           <span className="font-semibold text-sm text-foreground">{t('integrations.apiTokens.title')}</span>
           <p className="text-xs text-muted-foreground mt-0.5">{t('integrations.apiTokens.desc')}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {t(USE_CF_BACKEND ? 'apiTokenAccess.usageCloud' : 'apiTokenAccess.usageSelfHost')}
+          </p>
         </div>
         <button
           type="button"
-          onClick={() => { setNewName(''); setCreateError(null); setShowCreate(true); }}
+          onClick={() => { setNewName(''); setNewMemberId(realMember?.id ?? ''); setCreateError(null); setShowCreate(true); }}
           disabled={isDemoMode}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0"
         >
@@ -163,7 +171,8 @@ const ApiTokensCard = () => {
           ) : (
             <div className="space-y-2">
               {tokens.map(tok => {
-                const revoked = !!tok.revoked_at;
+                const revoked = !!tok.revokedAt;
+                const bound = users.find(u => u.id === tok.memberId);
                 return (
                   <div key={tok.id} className={`rounded-md border border-border px-3 py-2.5 ${revoked ? 'opacity-60' : ''}`}>
                     <div className="flex items-center justify-between gap-3">
@@ -177,10 +186,16 @@ const ApiTokensCard = () => {
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          {t('integrations.apiTokens.createdAt', { date: new Date(tok.created_at).toLocaleDateString() })}
+                          {t('apiTokenAccess.boundTo', { name: bound ? bound.name : t('apiTokenAccess.unknownMember') })}
+                          {tok.createdAt && (
+                            <>
+                              {' · '}
+                              {t('integrations.apiTokens.createdAt', { date: new Date(tok.createdAt).toLocaleDateString() })}
+                            </>
+                          )}
                           {' · '}
-                          {tok.last_used_at
-                            ? t('integrations.apiTokens.lastUsedAt', { date: new Date(tok.last_used_at).toLocaleString() })
+                          {tok.lastUsedAt
+                            ? t('integrations.apiTokens.lastUsedAt', { date: new Date(tok.lastUsedAt).toLocaleString() })
                             : t('integrations.apiTokens.neverUsed')}
                         </div>
                       </div>
@@ -239,6 +254,23 @@ const ApiTokensCard = () => {
                 spellCheck={false}
               />
             </Field>
+            {bindable.length > 0 && <div className="mt-3">
+              <Field label={t('apiTokenAccess.memberLabel')}>
+                <select
+                  className={inputCls}
+                  value={newMemberId}
+                  onChange={e => setNewMemberId(e.target.value)}
+                  disabled={creating}
+                >
+                  {bindable.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.id === realMember?.id ? t('apiTokenAccess.memberSelf', { name: u.name }) : u.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="text-xs text-muted-foreground mt-1">{t('apiTokenAccess.memberHint')}</p>
+            </div>}
             {createError && <p className="text-xs text-destructive mt-2">{createError}</p>}
             <div className="flex gap-2 justify-end mt-4">
               <button

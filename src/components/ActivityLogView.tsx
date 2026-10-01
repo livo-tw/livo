@@ -45,6 +45,7 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
   change_role: 'activityLog.changeRole',
   toggle_member: 'activityLog.toggleMember',
   reset_password: 'activityLog.resetPassword',
+  create_login: 'activityLog.createLogin',
   add_status: 'activityLog.addStatus',
   update_status_name: 'activityLog.updateStatusName',
   delete_status: 'activityLog.deleteStatus',

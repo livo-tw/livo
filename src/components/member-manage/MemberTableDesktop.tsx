@@ -1,6 +1,7 @@
-import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound } from 'lucide-react';
+import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
+import { isPlaceholderEmail } from '@/lib/memberEmail';
 
 interface StatusNode { id: string; name: string; }
 
@@ -32,6 +33,8 @@ interface MemberTableDesktopProps {
   onToggleActive: (memberId: string, currentActive: boolean) => void;
   onDelete: (memberId: string, name: string) => void;
   onResetPassword: (memberId: string, name: string) => void;
+  /** 「啟用帳號」 for a member that only has a name (Jira import). */
+  onCreateLogin: (memberId: string, name: string) => void;
 }
 
 const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
@@ -39,7 +42,7 @@ const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
 const MemberTableDesktop = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
   dragIndex, dragOverIndex, actionLoading, isLockedBy, formatDate,
-  onDragStart, onDragOver, onDragEnd, onRoleChange, onToggleActive, onDelete, onResetPassword,
+  onDragStart, onDragOver, onDragEnd, onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin,
 }: MemberTableDesktopProps) => {
   const { t } = useTranslation();
   return (
@@ -93,7 +96,11 @@ const MemberTableDesktop = ({
                   </div>
                 </div>
               </td>
-              <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{user.email || '—'}</td>
+              <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">
+                {isPlaceholderEmail(user.email)
+                  ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground" title={t('memberList.noLoginHint')}>{t('memberList.noLogin')}</span>
+                  : user.email}
+              </td>
               <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{user.jobTitle || '—'}</td>
               <td className="px-4 py-3 whitespace-nowrap">
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
@@ -134,14 +141,26 @@ const MemberTableDesktop = ({
                           >
                             {isActive ? <UserMinus size={14} /> : <UserCheck size={14} />}
                           </button>
-                          <button
-                            onClick={() => onResetPassword(user.id, user.name)}
-                            disabled={actionLoading === user.id}
-                            title={t('member.resetPassword')}
-                            className="p-1.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 transition-colors"
-                          >
-                            <KeyRound size={14} />
-                          </button>
+                          {isPlaceholderEmail(user.email) ? (
+                            <button
+                              onClick={() => onCreateLogin(user.id, user.name)}
+                              disabled={actionLoading === user.id}
+                              title={t('member.createLogin')}
+                              aria-label={t('member.createLogin')}
+                              className="p-1.5 rounded hover:bg-teal-100 dark:hover:bg-teal-900/30 text-teal-600 transition-colors"
+                            >
+                              <LogIn size={14} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => onResetPassword(user.id, user.name)}
+                              disabled={actionLoading === user.id}
+                              title={t('member.resetPassword')}
+                              className="p-1.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 transition-colors"
+                            >
+                              <KeyRound size={14} />
+                            </button>
+                          )}
                           <button
                             onClick={() => onDelete(user.id, user.name)}
                             disabled={actionLoading === user.id}

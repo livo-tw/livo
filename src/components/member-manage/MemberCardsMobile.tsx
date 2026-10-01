@@ -1,6 +1,7 @@
-import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound } from 'lucide-react';
+import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
+import { isPlaceholderEmail } from '@/lib/memberEmail';
 
 interface MemberStat {
   user: {
@@ -33,6 +34,8 @@ interface MemberCardsMobileProps {
   onToggleActive: (memberId: string, currentActive: boolean) => void;
   onDelete: (memberId: string, name: string) => void;
   onResetPassword: (memberId: string, name: string) => void;
+  /** 「啟用帳號」 for a member that only has a name (Jira import). */
+  onCreateLogin: (memberId: string, name: string) => void;
 }
 
 const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
@@ -41,7 +44,7 @@ const MemberCardsMobile = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
   dragIndex, dragOverIndex, actionLoading, isLockedBy, formatDate,
   onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd,
-  onRoleChange, onToggleActive, onDelete, onResetPassword,
+  onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin,
 }: MemberCardsMobileProps) => {
   const { t } = useTranslation();
   return (
@@ -70,7 +73,7 @@ const MemberCardsMobile = ({
                 {user.id === currentMemberId && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{t('memberList.youBadge')}</span>}
                 {(() => { const locker = isLockedBy(`member-${user.id}`); return locker ? <span className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded animate-pulse flex items-center gap-1"><Lock size={12} /> {locker.name} {t('memberList.operating')}</span> : null; })()}
               </div>
-              <div className="text-[10px] text-muted-foreground truncate">{user.jobTitle || '—'} · {user.email || '—'}</div>
+              <div className="text-[10px] text-muted-foreground truncate">{user.jobTitle || '—'} · {isPlaceholderEmail(user.email) ? t('memberList.noLogin') : user.email}</div>
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
               {getRoleLabel(user.role as MemberRole)}
@@ -106,14 +109,26 @@ const MemberCardsMobile = ({
                   >
                     {isActive ? <UserMinus size={14} /> : <UserCheck size={14} />}
                   </button>
-                  <button
-                    onClick={() => onResetPassword(user.id, user.name)}
-                    disabled={actionLoading === user.id}
-                    title={t('member.resetPassword')}
-                    className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
-                  >
-                    <KeyRound size={14} />
-                  </button>
+                  {isPlaceholderEmail(user.email) ? (
+                    <button
+                      onClick={() => onCreateLogin(user.id, user.name)}
+                      disabled={actionLoading === user.id}
+                      title={t('member.createLogin')}
+                      aria-label={t('member.createLogin')}
+                      className="p-1.5 rounded hover:bg-teal-100 text-teal-600 transition-colors"
+                    >
+                      <LogIn size={14} />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onResetPassword(user.id, user.name)}
+                      disabled={actionLoading === user.id}
+                      title={t('member.resetPassword')}
+                      className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
+                    >
+                      <KeyRound size={14} />
+                    </button>
+                  )}
                   <button
                     onClick={() => onDelete(user.id, user.name)}
                     disabled={actionLoading === user.id}

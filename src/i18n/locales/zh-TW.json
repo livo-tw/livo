@@ -183,7 +183,8 @@
     "addMember": "新增成員「{{name}}」（{{email}}，{{role}}）",
     "toggleMember": "{{action}}成員「{{name}}」（{{transition}}）",
     "deleteMember": "刪除成員「{{name}}」",
-    "resetPassword": "重設成員「{{name}}」的密碼"
+    "resetPassword": "重設成員「{{name}}」的密碼",
+    "createLogin": "為成員「{{name}}」啟用帳號（{{email}}）"
   },
   "nav": {
     "dashboard": "數據統計",
@@ -648,7 +649,7 @@
       "checklistPlaceholder": "新增驗收項目...",
       "attachments": "附件",
       "dragDropMessage": "拖拽檔案到此處，或 <span class=\"text-primary font-medium\">點擊上傳</span>",
-      "fileSizeNote": "單檔上限 2 MB",
+      "fileSizeNote": "單檔上限 {{size}} MB",
       "saveFailed": "儲存失敗：",
       "saved": "已儲存"
     },
@@ -660,12 +661,12 @@
       "attachment": "附件",
       "newPlaceholder": "留言... 輸入 @ 標記成員",
       "fileSizeError": "檔案大小超過限制（最大 {{size}} MB）",
-      "attachFileTitle": "附加檔案（最大 2MB）",
+      "attachFileTitle": "附加檔案（最大 {{size}} MB）",
       "sendFailed": "留言發送失敗：",
       "mentionNotification": "你在留言中被提及",
       "deleted": "留言已刪除",
       "updated": "留言已更新",
-      "fileSizeExceeded": "檔案大小超過 2MB 限制",
+      "fileSizeExceeded": "檔案大小超過 {{size}} MB 限制",
       "attachmentUploadFailed": "附件上傳失敗："
     },
     "metrics": {
@@ -738,7 +739,7 @@
       "editActivity": "「{{oldText}}」→「{{newText}}」"
     },
     "attachments": {
-      "fileSizeExceeded": "以下檔案超過 2MB 限制：{{files}}",
+      "fileSizeExceeded": "以下檔案超過 {{size}} MB 限制：{{files}}",
       "uploadFailed": "以下檔案上傳失敗：{{files}}",
       "uploadSuccess": "{{count}} 個檔案上傳成功",
       "deleted": "已刪除附件"
@@ -1019,7 +1020,22 @@
     "confirmPasswordLabel": "確認新密碼",
     "resetPasswordButton": "重設",
     "resetPasswordFailed": "重設失敗：",
-    "passwordResetDone": "已重設「{{name}}」的密碼"
+    "passwordResetDone": "已重設「{{name}}」的密碼",
+    "createLogin": "啟用帳號",
+    "createLoginTitle": "為「{{name}}」啟用帳號",
+    "createLoginHint": "填入這位成員的 Email，系統會幫他建立登入帳號。成員資料不變，原本指派給他的任務和留言都會保留。有設定寄信時會寄出「設定密碼」邀請信；沒有的話會產生一組臨時密碼讓你轉交。",
+    "createLoginButton": "建立登入帳號",
+    "createLoginInvited": "已寄出設定密碼邀請信到 {{email}}",
+    "createLoginDone": "已為「{{name}}」建立登入帳號",
+    "createLoginFailed": "建立失敗：",
+    "createLoginInvalidEmail": "請輸入正確的 Email",
+    "createLoginEmailTaken": "這個 Email 已經有人使用了",
+    "createLoginEmailTakenBy": "這個 Email 已經是成員「{{name}}」的帳號",
+    "createLoginEmailOtherWorkspace": "這個 Email 已在其他 LIVO 團隊使用，請換一個 Email",
+    "createLoginAlreadyHasLogin": "這位成員已經有 Email 了，請改用「重設密碼」",
+    "createLoginInactive": "這位成員已停用，請先啟用成員再建立登入帳號",
+    "createLoginRequiresSuperAdmin": "只有超級管理員能為管理員建立登入帳號",
+    "createLoginDemoBlocked": "展示模式無法建立登入帳號"
   },
   "bulkAction": {
     "selectedCount": "已選 {{count}} 個任務",
@@ -1478,6 +1494,15 @@
       "lineBindInstruction": "在 LINE 官方帳號聊天室中傳送「/bind」，系統將自動完成帳號綁定。"
     }
   },
+  "apiTokenAccess": {
+    "boundTo": "綁定成員：{{name}}",
+    "unknownMember": "（成員已不存在）",
+    "memberLabel": "綁定成員",
+    "memberSelf": "{{name}}（你自己）",
+    "memberHint": "金鑰的權限等同這位成員。建議另外建立一個 AI 或腳本專用的帳號再綁定，不要直接用自己的帳號。",
+    "usageCloud": "呼叫 API 時在 Authorization 標頭帶上「Bearer 金鑰」，權限等同綁定的成員。",
+    "usageSelfHost": "自架版：先用金鑰向 /functions/v1/api-tokens/exchange 換取 15 分鐘有效的權杖，再用權杖呼叫 API，權限等同綁定的成員。詳見部署說明「用 API 金鑰操作 LIVO」。"
+  },
   "requiredFields": {
     "saveSuccess": "必填欄位設定已儲存",
     "saveError": "儲存失敗，請稍後重試",
@@ -1537,12 +1562,9 @@
     "importDesc": "從 Jira CSV 匯入任務資料，會覆蓋現有資料",
     "previewDesc": "上傳 Jira CSV 預覽匯入格式與筆數，不會寫入任何資料",
     "previewNote": "標準版可預覽匯入格式與筆數；完整匯入需專業版",
-    "previewCsvButton": "格式預覽（不會寫入）",
-    "previewComplete": "格式預覽完成（未寫入資料）",
     "previewResultTitle": "格式預覽（不會寫入資料）：",
     "previewTotalRows": "CSV 總筆數：",
     "importing": "匯入中...",
-    "selectCsvButton": "選擇 CSV 檔案匯入",
     "importWarning": "匯入會清除現有的任務、留言、衝刺等資料，建議先備份。",
     "resultTitle": "匯入結果：",
     "resultTasks": "任務：",
@@ -1555,7 +1577,6 @@
     "exporting": "匯出中...",
     "exportButton": "匯出完整 CSV",
     "readingCsv": "讀取 CSV 檔案中...",
-    "importComplete": "匯入完成！",
     "importFailed": "匯入失敗",
     "importError": "匯入錯誤:",
     "exportSuccess": "已匯出 {{count}} 個任務（含留言、規格、部署紀錄等）",
@@ -1585,7 +1606,124 @@
       "deployments": "部署紀錄",
       "statusLogs": "狀態變更紀錄",
       "comments": "留言"
-    }
+    },
+    "previewing": "正在分析 CSV…",
+    "previewFirstHint": "選好檔案後會先預覽，不會寫入任何資料；確認沒問題再按「開始匯入」。",
+    "chooseCsvButton": "選擇 Jira CSV 檔案",
+    "chooseAnotherCsv": "重新選擇檔案",
+    "demoBlocked": "展示模式無法匯入，請在正式環境操作。",
+    "noDataRows": "這個 CSV 只有標題列，沒有任何資料。",
+    "noTasks": "CSV 裡沒有可匯入的任務（每一列都要有 Issue key）。",
+    "accountErrorsTitle": "Email 對照表有問題，修正後才能匯入：",
+    "importConfirmTitle": "確定要開始匯入？",
+    "importConfirm": "匯入會先清除現有的任務、衝刺、留言等資料，再寫入 CSV 的內容，這個動作無法復原。建議先備份。",
+    "startImport": "開始匯入",
+    "importSuccessToast": "已匯入 {{count}} 個任務",
+    "activityImported": "匯入 Jira CSV，共 {{count}} 個任務",
+    "missingColumnsTitle": "這個 CSV 缺少必要欄位，無法匯入",
+    "fields": {
+      "title": "標題",
+      "key": "任務編號（Issue key）"
+    },
+    "acceptedNames": "欄位名稱可以是 {{names}}",
+    "detectedColumns": "CSV 裡偵測到的欄位（{{count}} 個）：",
+    "showAllColumns": "再顯示 {{count}} 個",
+    "noColumnsDetected": "沒有偵測到任何欄位名稱，請確認這是 Jira 匯出的 CSV。",
+    "missingColumnsHint": "請在 Jira 用「匯出 → CSV（所有欄位）」重新匯出。英文或簡體中文介面匯出的欄位名稱都認得。",
+    "unitRows": "{{count}} 筆",
+    "unitSprints": "{{count}} 個",
+    "resultNewProjects": "新專案：",
+    "peopleTitle": "CSV 裡的人（{{count}} 位）",
+    "peopleSummary": "既有成員 {{existing}} 位 · 將建立登入帳號 {{login}} 位 · 只建立名字 {{nameOnly}} 位",
+    "peopleName": "名字",
+    "peopleRoles": "出現在",
+    "peoplePlan": "匯入後",
+    "roles": {
+      "assignee": "經辦人",
+      "reporter": "報告人",
+      "creator": "建立者",
+      "commenter": "留言者"
+    },
+    "plan": {
+      "existing": "既有成員",
+      "existingNoLogin": "既有成員（尚未啟用登入）",
+      "matchedByEmail": "依 Email 對應到「{{name}}」",
+      "matchedMember": "對應到「{{name}}」",
+      "activate": "既有成員，將建立登入帳號",
+      "newAccount": "新成員，將建立登入帳號",
+      "newNameOnly": "新成員（只有名字，無法登入）",
+      "error": "對照表有誤，見下方說明"
+    },
+    "unresolvedCommenters": "另有 {{count}} 位留言者在 CSV 裡只有帳號 ID、沒有名字，他們的留言會記在你名下。",
+    "accounts": {
+      "title": "建立登入帳號（選填）",
+      "desc": "貼上「名字, Email」對照表，或上傳兩欄的 CSV。匯入時會幫表上的人建立可以登入的帳號，任務直接對應到他們；沒列到的人照舊只建立名字，之後也能在成員列表用「啟用帳號」補上 Email。",
+      "methodInvite": "已設定寄信：每個人會收到一封「設定密碼」邀請信。",
+      "methodTempPassword": "尚未設定寄信（系統管理 → 通知）：匯入後會為每個人產生一組隨機臨時密碼，只顯示一次，記得下載清單。",
+      "placeholder": "陳小華, hua@example.com\nAlex Lin, alex@example.com",
+      "upload": "上傳對照表",
+      "template": "下載對照表範本",
+      "templateName": "名字",
+      "apply": "套用對照表",
+      "lineCount": "已讀到 {{count}} 筆",
+      "skippedLines": "第 {{lines}} 行看不出 Email，已略過。",
+      "notApplied": "對照表改過了，請先按「套用對照表」更新預覽，才能匯入。",
+      "invited": "已寄出 {{count}} 封設定密碼邀請信：{{emails}}",
+      "tempIssued": "已產生 {{count}} 組臨時密碼（只顯示一次）",
+      "failedTaken": "「{{name}}」的登入帳號沒有建立：{{email}} 已被其他帳號使用。任務照常匯入，之後可在成員列表用「啟用帳號」重試。",
+      "failedOther": "「{{name}}」的登入帳號建立失敗（{{email}}）。任務照常匯入，之後可在成員列表用「啟用帳號」重試。",
+      "failedDelivery": "「{{name}}」的登入帳號已建立（{{email}}），但邀請信或臨時密碼沒有送出。請在成員列表用「重設密碼」設定密碼。"
+    },
+    "accountIssue": {
+      "invalid_email": "「{{name}}」的 Email「{{email}}」格式不正確",
+      "duplicate_email": "{{email}} 同時填給了「{{detail}}」和「{{name}}」，一個 Email 只能給一個人",
+      "conflicting_emails": "「{{name}}」填了兩個不同的 Email：{{detail}}、{{email}}",
+      "email_in_other_workspace": "「{{name}}」的 {{email}} 已在其他 LIVO 團隊使用，請換一個 Email",
+      "member_has_login": "「{{name}}」已經是有登入帳號的成員（{{detail}}），不會改成 {{email}}；請把這一行刪掉",
+      "requires_super_admin": "「{{name}}」對應的是管理員，只有超級管理員能幫他建立登入帳號",
+      "unknown_name": "對照表裡的「{{name}}」在 CSV 中找不到，這一行不會用到",
+      "member_inactive": "「{{name}}」對應的成員已停用，不能建立登入帳號；請先啟用該成員，或把這一行刪掉"
+    },
+    "timeZoneLabel": "CSV 時間的時區",
+    "timeZoneHint": "Jira 匯出的時間用的是匯出者在 Jira 個人設定裡的時區，請選同一個，留言和衝刺的時間才會正確。",
+    "resultSubtasks": "子任務關係：",
+    "epicChildrenNote": "另有 {{count}} 筆是 Epic 底下的任務。LIVO 沒有 Epic 欄位，這些關聯不會建立（Epic 本身會匯入成一般任務）。",
+    "attachmentsNote": "CSV 列了 {{count}} 個附件。附件檔案不在 CSV 裡，匯入完成後請用指令工具從 Jira 站台備份上傳：node scripts/jira-attachments.mjs（用法見 --help）。",
+    "listSeparator": "、",
+    "noStatuses": "這個團隊還沒有任何任務狀態，請先到「狀態管理」新增，再匯入。",
+    "statusMissing": "要對應的任務狀態已不存在（可能剛被刪除），請重新選擇 CSV 預覽後再匯入。",
+    "apiKeyForbidden": "API 金鑰不能用來設定密碼或開通帳號，請用網頁登入操作。",
+    "importIncomplete": "匯入沒有完成",
+    "importIncompleteDetail": "在「{{step}}」這一步失敗。原有的任務、Sprint、留言已清除，新資料只寫入一部分。",
+    "importIncompletePartial": "已寫入：任務 {{tasks}} 筆、留言 {{comments}} 筆、描述 {{specs}} 筆。",
+    "importIncompleteHint": "請依上面的錯誤訊息修正後，重新匯入同一份 CSV（會再清除一次後完整寫入）。",
+    "importWarnings": "資料已匯入，但這些步驟沒有完成：{{steps}}。可以重新匯入一次，或手動調整。",
+    "importStep": {
+      "projects": "建立專案",
+      "members": "建立成員",
+      "tasks": "寫入任務",
+      "comments": "寫入留言",
+      "specs": "寫入描述",
+      "subtasks": "建立子任務關聯",
+      "sprints": "建立 Sprint",
+      "departments": "設定部門",
+      "sprint_stats": "計算 Sprint 統計",
+      "active_sprint": "建立進行中的 Sprint",
+      "unknown": "未知步驟"
+    },
+    "statusMappingTitle": "狀態對應",
+    "statusMappingHint": "依這個團隊目前的狀態設定對應。想換對應的話，可以先到「狀態管理」新增或改名，再重新預覽。",
+    "statusMappingJira": "Jira 狀態（類別）",
+    "statusMappingLivo": "LIVO 狀態",
+    "statusMappingCount": "任務數",
+    "statusMappingEmpty": "（空白）",
+    "statusVia": {
+      "name": "同名狀態",
+      "alias": "依常見名稱",
+      "category": "依 Jira 狀態類別",
+      "default": "無法判斷，放到第一欄"
+    },
+    "statusSubstituted": "預設狀態已刪除或改過，改用同類狀態"
   },
   "adminLicense": {
     "sectionTitle": "授權管理",
@@ -2054,7 +2192,8 @@
     "notificationRuleToggled": "通知規則已{{action}}",
     "notificationTemplateCreated": "新增訊息範本「{{name}}」",
     "notificationTemplateUpdated": "編輯訊息範本「{{name}}」",
-    "notificationTemplateDeleted": "刪除訊息範本"
+    "notificationTemplateDeleted": "刪除訊息範本",
+    "createLogin": "啟用帳號"
   },
   "views": {
     "approvalsTitle": "待簽核"
@@ -2170,7 +2309,9 @@
     "roleLabel": "角色",
     "cancelButton": "取消",
     "addButton": "新增",
-    "processingButton": "處理中..."
+    "processingButton": "處理中...",
+    "noLogin": "未啟用登入",
+    "noLoginHint": "從 Jira 匯入、只有名字的成員。用「啟用帳號」填入 Email 後就能登入。"
   },
   "fieldRegistry": {
     "taskKey": "編號",
@@ -2330,5 +2471,36 @@
       "trialCta": "開源免費 · 到 GitHub 下載",
       "exit": "離開展示模式"
     }
+  },
+  "accountCredentials": {
+    "title": "臨時密碼",
+    "onceWarning": "這些密碼只會顯示這一次，關掉視窗後就看不到了。",
+    "handOver": "請轉交給本人，並提醒他們登入後到「個人設定」改成自己的密碼。",
+    "name": "名字",
+    "password": "臨時密碼",
+    "inviteFailed": "邀請信寄送失敗，改用臨時密碼",
+    "download": "下載清單（CSV）",
+    "copy": "複製",
+    "copied": "已複製",
+    "copyFailed": "複製失敗，請改用下載",
+    "done": "完成",
+    "closeConfirm": "還沒下載或複製臨時密碼，關掉後就看不到了。確定要關閉嗎？"
+  },
+  "setPassword": {
+    "title": "設定密碼",
+    "subtitle": "設定完成後就能登入 LIVO。",
+    "forEmail": "為 {{email}} 設定登入密碼",
+    "passwordLabel": "新密碼（至少 8 碼）",
+    "confirmLabel": "再輸入一次",
+    "submit": "設定密碼並登入",
+    "submitting": "設定中…",
+    "invalidTitle": "無法使用這個連結",
+    "invalidLink": "連結無效或已過期，請聯絡管理員幫你重設密碼。",
+    "tooShort": "密碼至少需要 8 碼",
+    "mismatch": "兩次輸入的密碼不一致",
+    "demoBlocked": "展示模式沒有登入帳號，無法設定密碼。",
+    "failed": "設定失敗：",
+    "done": "密碼設定好了，歡迎使用 LIVO",
+    "backToLogin": "前往登入頁"
   }
 }

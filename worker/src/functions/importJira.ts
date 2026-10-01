@@ -1,6 +1,26 @@
-// Port of supabase/functions/import-jira/index.ts — Jira CSV importer.
-// Destructively clears task data, then imports tasks/comments/specs/sprints
-// from a Chinese-header Jira CSV export. Professional-license gated.
+// Jira CSV importer (Cloudflare). Parsing, header aliases, status / priority /
+// date mapping and the people → members plan live in ./jiraCsv (shared
+// verbatim with the Docker importer); this file does the D1 side.
+//
+// Request: POST JSON { csv, dryRun?, accounts?: [{ name, email }], timeZone? }.
+// A raw CSV body (text/plain, older clients) is a real import without
+// accounts. timeZone is the IANA zone the export's times are in (Jira writes
+// the exporting user's local time); Asia/Taipei when omitted.
+//   - dryRun, or a non-professional caller (contract C2): preview only —
+//     stats, the people list with what will happen to each person, account
+//     errors; ZERO writes.
+//   - otherwise the real import: it first wipes the workspace's tasks,
+//     sprints, comments … (unchanged), then imports. People on the accounts
+//     list get a real login (set-password invitation, or a one-time temporary
+//     password when email sending is not configured); everyone else stays a
+//     name-only member, as before.
+// Jira statuses are resolved against the workspace's own statuses (which
+// the customer may have renamed, deleted or added; see planStatuses).
+// A CSV missing a required column, account errors, a CSV that yields no
+// task, or a target status that no longer exists are refused before
+// anything is written. Once the wipe has run, a failed write of projects,
+// members, tasks, comments, specs or subtask links stops the import and is
+// reported as a failure (import_failed), never as a success.
 
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
@@ -9,6 +29,41 @@ import { TABLES } from '../tables';
 import { valueToDb, nowIso } from '../meta';
 import { notifyChanges } from '../notify';
 import { checkProfessional } from '../license';
+import {
+  API_KEY_FORBIDDEN,
+  deliverLogin,
+  isApiKeyCaller,
+  LoginError,
+  prepareLogin,
+  resolveLoginChannel,
+  type LoginChannel,
+} from '../memberLogin';
+import {
+  DEFAULT_TIME_ZONE,
+  isValidEmail,
+  normalizeEmail,
+  parseJiraExport,
+  placeholderEmail,
+  planMemberId,
+  planMembers,
+  planStatuses,
+  summarizePeople,
+  textToHtml,
+  validTimeZone,
+  type AccountRequest,
+  type EmailOwner,
+  type ExistingMember,
+  type MentionResolver,
+  type PersonPlan,
+  type WorkspaceStatus,
+} from './jiraCsv';
+
+/** A write after the wipe failed: the import stops and reports this step. */
+class ImportStepError extends Error {
+  constructor(readonly step: string, readonly cause: unknown) {
+    super(`${step}: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
 
 // ── SQL identifier guard (all interpolated identifiers must pass) ──
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -17,339 +72,17 @@ function assertIdent(name: string): string {
   return name;
 }
 
-// ── License gate: professional tier required (shared canonical check) ──
-
-// ── Chinese date parsing ──
-const monthMap: Record<string, number> = {
-  '一月': 0, '二月': 1, '三月': 2, '四月': 3, '五月': 4, '六月': 5,
-  '七月': 6, '八月': 7, '九月': 8, '十月': 9, '十一月': 10, '十二月': 11,
-};
-
-function parseChineseDateTime(s: string): string | null {
-  if (!s?.trim()) return null;
-  const m = s.match(/(\d+)\/([一-鿿]+)\/(\d+)\s+(\d+):(\d+)\s*(上午|下午)/);
-  if (!m) return null;
-  const day = m[1] || '';
-  const mCh = m[2] || '';
-  const yr = m[3] || '';
-  const hr = m[4] || '';
-  const min = m[5] || '';
-  const ap = m[6] || '';
-  const month = monthMap[mCh];
-  if (month === undefined) return null;
-  let h = parseInt(hr);
-  if (ap === '下午' && h !== 12) h += 12;
-  if (ap === '上午' && h === 12) h = 0;
-  const d = new Date(2000 + parseInt(yr), month, parseInt(day), h, parseInt(min));
-  return d.toISOString().slice(0, 19) + 'Z';
-}
-
-function parseDateOnly(s: string): string | null {
-  if (!s?.trim()) return null;
-  const m = s.match(/(\d+)\/([一-鿿]+)\/(\d+)/);
-  if (!m) return null;
-  const day = m[1] || '';
-  const mCh = m[2] || '';
-  const yr = m[3] || '';
-  const month = monthMap[mCh];
-  if (month === undefined) return null;
-  return `${2000 + parseInt(yr)}-${String(month + 1).padStart(2, '0')}-${String(parseInt(day)).padStart(2, '0')}`;
-}
-
 /** "2026-04-01T..." → "2026-04-01"; strings without 'T' pass through unchanged. */
 function dateOnlyPart(s: string): string {
   const i = s.indexOf('T');
   return i >= 0 ? s.slice(0, i) : s;
 }
 
-// ── Simple CSV parser that handles quoted multi-line fields ──
-function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
-  let i = 0;
-  const len = text.length;
-
-  // Remove BOM
-  if (text.charCodeAt(0) === 0xfeff) i = 1;
-
-  while (i < len) {
-    const row: string[] = [];
-    while (i < len) {
-      if (text[i] === '"') {
-        // Quoted field
-        i++; // skip opening quote
-        let field = '';
-        while (i < len) {
-          if (text[i] === '"') {
-            if (i + 1 < len && text[i + 1] === '"') {
-              field += '"';
-              i += 2;
-            } else {
-              i++; // skip closing quote
-              break;
-            }
-          } else {
-            field += text[i];
-            i++;
-          }
-        }
-        row.push(field);
-      } else {
-        // Unquoted field
-        let field = '';
-        while (i < len && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') {
-          field += text[i];
-          i++;
-        }
-        row.push(field);
-      }
-
-      if (i < len && text[i] === ',') {
-        i++; // skip comma
-      } else {
-        break; // end of row
-      }
-    }
-    // Skip newline(s)
-    while (i < len && (text[i] === '\r' || text[i] === '\n')) i++;
-
-    if (row.length > 1 || (row.length === 1 && row[0] !== '')) {
-      rows.push(row);
-    }
-  }
-  return rows;
-}
-
-// ── Convert Jira wiki markup / markdown-ish to HTML ──
-function textToHtml(text: string, jiraIdToName?: Record<string, string>, memberMap?: Record<string, string>): string {
-  if (!text) return '';
-
-  // If content already contains HTML tags (like <p>, <h2>), return as-is
-  // but still process mentions
-  if (/<[a-z][\s\S]*>/i.test(text)) {
-    // Still resolve mentions in existing HTML
-    let html = text;
-    if (jiraIdToName && memberMap) {
-      html = html.replace(/\[~accountid:([^\]]+)\]/g, (_m: string, accId: string) => {
-        const name = jiraIdToName[accId.trim()];
-        if (name) {
-          const memberId = memberMap[name] || '';
-          return `<span class="mention" data-id="${memberId}">@${name}</span>`;
-        }
-        return '@unknown';
-      });
-    }
-    html = html.replace(/@user/g, '@成員');
-    return html;
-  }
-
-  // Process line by line for Jira wiki markup
-  const lines = text.split('\n');
-  const result: string[] = [];
-  let inList = false;
-  let listLevel = 0;
-  let inTable = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? '';
-
-    // Jira table header row: ||col1||col2||
-    if (/^\|\|.+\|\|/.test(line)) {
-      if (inList) { for (let d = listLevel; d > 0; d--) result.push('</ul>'); inList = false; listLevel = 0; }
-      if (!inTable) { result.push('<table>'); inTable = true; }
-      const cells = line.split('||').filter((c) => c !== '');
-      result.push('<tr>' + cells.map((c) => `<th>${processInline(c.trim(), jiraIdToName, memberMap)}</th>`).join('') + '</tr>');
-      continue;
-    }
-
-    // Jira table data row: |col1|col2|
-    if (/^\|[^|]/.test(line) && line.endsWith('|')) {
-      if (inList) { for (let d = listLevel; d > 0; d--) result.push('</ul>'); inList = false; listLevel = 0; }
-      if (!inTable) { result.push('<table>'); inTable = true; }
-      const cells = line.slice(1, -1).split('|');
-      result.push('<tr>' + cells.map((c) => `<td>${processInline(c.trim(), jiraIdToName, memberMap)}</td>`).join('') + '</tr>');
-      continue;
-    }
-
-    // Close table if we're no longer in table rows
-    if (inTable) { result.push('</table>'); inTable = false; }
-
-    // Jira headings: h1. h2. h3. h4. h5. h6.
-    const headingMatch = line.match(/^h([1-6])\.\s+(.+)$/);
-    if (headingMatch) {
-      if (inList) { result.push('</ul>'); inList = false; }
-      const level = headingMatch[1] || '1';
-      const content = processInline(headingMatch[2] || '', jiraIdToName, memberMap);
-      result.push(`<h${level}>${content}</h${level}>`);
-      continue;
-    }
-
-    // Jira bullet lists: * item, ** sub-item, *** sub-sub-item
-    const bulletMatch = line.match(/^(\*+)\s+(.+)$/);
-    if (bulletMatch) {
-      const depth = (bulletMatch[1] || '*').length;
-      const content = processInline(bulletMatch[2] || '', jiraIdToName, memberMap);
-      if (!inList) { result.push('<ul>'); inList = true; listLevel = depth; }
-      else if (depth > listLevel) { result.push('<ul>'); listLevel = depth; }
-      else if (depth < listLevel) {
-        for (let d = listLevel; d > depth; d--) result.push('</ul>');
-        listLevel = depth;
-      }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Jira numbered lists: # item, ## sub-item
-    const numberedMatch = line.match(/^(#+)\s+(.+)$/);
-    if (numberedMatch) {
-      const content = processInline(numberedMatch[2] || '', jiraIdToName, memberMap);
-      if (!inList) { result.push('<ol>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Markdown-style bullet: - item
-    const mdBulletMatch = line.match(/^-\s+(.+)$/);
-    if (mdBulletMatch) {
-      const content = processInline(mdBulletMatch[1] || '', jiraIdToName, memberMap);
-      if (!inList) { result.push('<ul>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Markdown-style numbered: 1. item
-    const mdNumMatch = line.match(/^\d+\.\s+(.+)$/);
-    if (mdNumMatch) {
-      const content = processInline(mdNumMatch[1] || '', jiraIdToName, memberMap);
-      if (!inList) { result.push('<ol>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Close list if we hit a non-list line
-    if (inList) {
-      for (let d = listLevel; d > 0; d--) result.push('</ul>');
-      inList = false;
-      listLevel = 0;
-    }
-
-    // Empty line → paragraph break
-    if (line.trim() === '') {
-      continue;
-    }
-
-    // Horizontal rule: ----
-    if (/^-{4,}$/.test(line.trim())) {
-      result.push('<hr/>');
-      continue;
-    }
-
-    // Regular paragraph line
-    result.push(`<p>${processInline(line, jiraIdToName, memberMap)}</p>`);
-  }
-
-  // Close any remaining structures
-  if (inTable) result.push('</table>');
-  if (inList) {
-    for (let d = listLevel; d > 0; d--) result.push('</ul>');
-  }
-
-  return result.join('\n');
-}
-
-// Process inline Jira wiki markup
-function processInline(text: string, jiraIdToName?: Record<string, string>, memberMap?: Record<string, string>): string {
-  // Escape HTML entities first
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // Jira bold: *text*  (but not ** which is sub-bullet)
-  html = html.replace(/\*([^\s*][^*]*[^\s*])\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*([^\s*])\*/g, '<strong>$1</strong>');
-
-  // Markdown bold: **text**
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Jira italic: _text_
-  html = html.replace(/_([^\s_][^_]*[^\s_])_/g, '<em>$1</em>');
-  html = html.replace(/_([^\s_])_/g, '<em>$1</em>');
-
-  // Jira strikethrough: -text- (strict + safe mode to avoid corrupting URLs / links / tech tokens)
-  html = html.replace(
-    /(^|[\s([{「『“‘"'`])-([^\n\r\-]{1,60}?)-(?=$|[\s)\]}」』”’"'`.,;!?])/g,
-    (full: string, prefix: string, inner: string) => {
-      const value = String(inner || '').trim();
-      if (!value) return full;
-      if (/(https?:\/\/|www\.|\.com|\.net|\.org|\.io|@|\/|\\|\|)/i.test(value)) return full;
-      return `${prefix}<s>${value}</s>`;
-    }
-  );
-
-  // Markdown strikethrough: ~~text~~
-  html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
-
-  // Jira inline code: {{text}}
-  html = html.replace(/\{\{(.+?)\}\}/g, '<code>$1</code>');
-
-  // Markdown inline code: `text`
-  html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-
-  // Jira color: {color:#hex}text{color}
-  html = html.replace(/\{color:(#[0-9a-fA-F]+)\}(.*?)\{color\}/g, '<span style="color:$1">$2</span>');
-
-  // Jira images: !image.png|width=X,height=Y! → [image]
-  html = html.replace(/!([^|!]+)\|[^!]*!/g, '[圖片: $1]');
-  html = html.replace(/!([^!]+)!/g, '[圖片: $1]');
-
-  // Jira links: [text|url] or [url]
-  html = html.replace(/\[([^|]+)\|([^\]]+)\]/g, '<a href="$2">$1</a>');
-  html = html.replace(/\[(https?:\/\/[^\]]+)\]/g, '<a href="$1">$1</a>');
-
-  // Jira user mentions: [~accountid:xxx] → resolve to actual name
-  if (jiraIdToName && memberMap) {
-    html = html.replace(/\[~accountid:([^\]]+)\]/g, (_m: string, accId: string) => {
-      const name = jiraIdToName[accId.trim()];
-      if (name) {
-        const memberId = memberMap[name] || '';
-        return `<span class="mention" data-id="${memberId}">@${name}</span>`;
-      }
-      return '@成員';
-    });
-  } else {
-    html = html.replace(/\[~accountid:[^\]]+\]/g, '@成員');
-  }
-  return html;
-}
-
-// ── Priority mapping ──
-function mapPriority(p: string): string {
-  const m: Record<string, string> = {
-    'Highest': 'highest', 'High': 'high', 'Medium': 'medium',
-    'Low': 'low', 'Lowest': 'lowest',
-  };
-  return m[p] || 'medium';
-}
-
-// ── Status mapping (Jira → DB status ID) ──
-function mapStatusId(s: string): string {
-  const m: Record<string, string> = {
-    '待办': 's1', '待辦': 's1',
-    '正在进行': 's2', '正在進行': 's2',
-    '待驗收': 's3', '待验收': 's3',
-    '待討論確認': 's4', '待讨论确认': 's4',
-    '等待部署': 's5',
-    '已完成': 's6', '完成': 's6',
-    '不做了': 's7',
-  };
-  return m[s] || 's1';
-}
-
 // ── D1 insert helper: registry-aware coercion + ≤80 bound params/statement ──
 const MAX_PARAMS = 80;
 
-async function insertRows(env: Env, table: string, rows: Record<string, unknown>[], workspaceId: string): Promise<void> {
-  if (rows.length === 0) return;
+function insertStatements(env: Env, table: string, rows: Record<string, unknown>[], workspaceId: string): D1PreparedStatement[] {
+  if (rows.length === 0) return [];
   const meta = TABLES[table];
   if (!meta) throw new Error(`Unknown table: ${table}`);
   assertIdent(table);
@@ -376,17 +109,20 @@ async function insertRows(env: Env, table: string, rows: Record<string, unknown>
     const params = chunk.flatMap((r) => cols.map((col) => valueToDb(col, r[col], meta)));
     stmts.push(env.DB.prepare(sql).bind(...params));
   }
-  if (stmts.length === 1) {
-    await stmts[0]!.run();
-  } else {
-    await env.DB.batch(stmts);
-  }
+  return stmts;
+}
+
+async function insertRows(env: Env, table: string, rows: Record<string, unknown>[], workspaceId: string): Promise<void> {
+  const stmts = insertStatements(env, table, rows, workspaceId);
+  if (stmts.length === 1) await stmts[0]!.run();
+  else if (stmts.length > 1) await env.DB.batch(stmts);
 }
 
 // Row shapes (type aliases — object literals stay assignable to Record<string, unknown>)
 type NewMemberRow = {
   id: string; name: string; avatar: string; role: string;
   email: string; color: string; job_title: string; is_active: boolean;
+  auth_id?: string;
 };
 
 type TaskRow = {
@@ -407,13 +143,108 @@ const CLEAR_TABLES = [
   'task_attachments', 'status_logs', 'notifications', 'tasks', 'sprints',
 ];
 
-// ── Handler (requireMember middleware already applied in index.ts) ──
+const newMemberRow = (id: string, name: string, email: string): NewMemberRow => ({
+  id, name, avatar: name[0]?.toUpperCase() || '?',
+  // email must be unique per member: members has a UNIQUE (nocase) index on
+  // email, so name-only members get a per-id placeholder.
+  role: 'member', email, color: '#6B778C', job_title: '', is_active: true,
+});
+
+interface ImportRequest {
+  csv: string;
+  dryRun: boolean;
+  accounts: AccountRequest[];
+  timeZone: string;
+}
+
+async function readImportRequest(c: Context<AppContext>): Promise<ImportRequest | null> {
+  const raw = await c.req.text();
+  if (!(c.req.header('Content-Type') || '').includes('application/json')) {
+    return { csv: raw, dryRun: false, accounts: [], timeZone: DEFAULT_TIME_ZONE }; // older clients post the bare CSV
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== 'object') return null;
+  const b = body as { csv?: unknown; dryRun?: unknown; accounts?: unknown; timeZone?: unknown };
+  if (typeof b.csv !== 'string') return null;
+  const accounts = Array.isArray(b.accounts)
+    ? b.accounts
+        .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+        .slice(0, 2000)
+        .map((a) => ({ name: String(a.name ?? ''), email: String(a.email ?? '') }))
+    : [];
+  const timeZone = validTimeZone(typeof b.timeZone === 'string' ? b.timeZone : null) || DEFAULT_TIME_ZONE;
+  return { csv: b.csv, dryRun: b.dryRun === true, accounts, timeZone };
+}
+
+/** Current owners of the requested emails. members.email is unique across
+ *  workspaces (requireMember heals logins by email), so the lookup is
+ *  deliberately global; another workspace's member is reported without a name. */
+async function loadEmailOwners(env: Env, ws: string, accounts: AccountRequest[]): Promise<Record<string, EmailOwner>> {
+  const emails = Array.from(new Set(accounts.map((a) => normalizeEmail(a.email)).filter(isValidEmail)));
+  const owners: Record<string, EmailOwner> = {};
+  for (let i = 0; i < emails.length; i += 50) {
+    const chunk = emails.slice(i, i + 50);
+    const res = await env.DB
+      .prepare(`SELECT id, name, email, workspace_id FROM members WHERE lower(email) IN (${chunk.map(() => '?').join(', ')})`)
+      .bind(...chunk)
+      .all<{ id: string; name: string; email: string; workspace_id: string | null }>();
+    for (const m of res.results || []) {
+      const sameWorkspace = (m.workspace_id || DEFAULT_WORKSPACE) === ws;
+      owners[normalizeEmail(m.email)] = {
+        memberId: sameWorkspace ? m.id : '',
+        name: sameWorkspace ? m.name : '',
+        sameWorkspace,
+        hasLogin: true,
+      };
+    }
+  }
+  return owners;
+}
+
+type AccountPlan = Extract<PersonPlan, { kind: 'new_account' } | { kind: 'activate' }>;
+
+interface AccountsResult {
+  method: LoginChannel['method'];
+  invited: { name: string; email: string }[];
+  credentials: { name: string; email: string; password: string; inviteFailed?: boolean }[];
+  failed: { name: string; email: string; reason: string }[];
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight (Resend calls). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+// ── Handler (requireMember + requireAdmin already applied in index.ts) ──
 export const handleImportJira = async (c: Context<AppContext>) => {
   const env = c.env;
+  // What the destructive path has written so far (reported if it fails midway).
+  const written = {
+    wiped: false,
+    tasksInserted: 0,
+    commentsInserted: 0,
+    specsInserted: 0,
+    accounts: null as AccountsResult | null,
+  };
   try {
     // Tenancy scope: every read/write below (license gate, wipe, inserts,
     // updates) is confined to the caller's workspace.
-    const ws = c.get('auth').member.workspaceId;
+    const auth = c.get('auth');
+    const ws = auth.member.workspaceId;
     const ws8 = ws.slice(0, 8);
     // Legacy hardcoded project ids (p1..p12) are remapped per tenant: non-default
     // workspaces get `<ws8>-p1..` so tenants can never collide with each other
@@ -426,167 +257,79 @@ export const handleImportJira = async (c: Context<AppContext>) => {
     // status ids line up with the provisioned <ws8>-s1..s7 rows.
     const scopedId = (id: string) => (ws === DEFAULT_WORKSPACE ? id : `${ws8}-${id}`);
 
-    // Tier behavior (contract C2): non-professional callers get a SAFE DRY-RUN
-    // (parse + stats, ZERO writes); professional callers get the real,
-    // destructive import. isPro is resolved up front but only *enforced* after
-    // the CSV is fully parsed into memory — the branch happens right before the
-    // first DELETE, so a non-pro caller never touches D1.
+    // Tier behavior (contract C2): non-professional callers get a SAFE DRY-RUN.
     const isPro = await checkProfessional(env, ws);
 
-    const csvText = await c.req.text();
-    console.log('CSV length:', csvText.length);
-
-    const rows = parseCSV(csvText);
-    console.log('Parsed rows:', rows.length);
-
-    if (rows.length < 2) {
-      return c.json({ error: 'No data rows' }, 400);
+    const request = await readImportRequest(c);
+    if (!request) return c.json({ error: 'invalid_request', message: '請求格式不正確' }, 400);
+    // Opening logins is refused to API keys (same rule as manage-member).
+    if (isApiKeyCaller(auth) && !request.dryRun && request.accounts.length > 0) {
+      return c.json(API_KEY_FORBIDDEN, 403);
     }
+    console.log('CSV length:', request.csv.length);
 
-    const headers = rows[0]!;
-
-    // Find column index by header name
-    const col = (name: string) => headers.findIndex((h) => h.trim() === name);
-
-    // Find ALL indices for a repeated column name
-    const colAll = (name: string) => {
-      const indices: number[] = [];
-      headers.forEach((h, i) => { if (h.trim() === name) indices.push(i); });
-      return indices;
-    };
-
-    // Sprint columns may be exported as English (Sprint) or Chinese (冲刺) and can repeat.
-    const sprintIndices = Array.from(new Set([
-      ...colAll('Sprint'),
-      ...colAll('冲刺'),
-    ]));
-
-    const extractSprintName = (raw: string): string | null => {
-      const s = (raw || '').trim();
-      if (!s) return null;
-
-      // Typical Jira export format contains: name=202603W1
-      const matches = Array.from(s.matchAll(/name=([^,\]]+)/g));
-      if (matches.length > 0) {
-        const last = matches[matches.length - 1];
-        if (last && last[1]) return String(last[1]).trim();
+    const parsed = parseJiraExport(request.csv, { timeZone: request.timeZone });
+    if (!parsed.ok) {
+      if (parsed.error === 'no_data_rows') {
+        return c.json({ error: 'no_data_rows', message: 'CSV 沒有任何資料列' }, 400);
       }
-
-      // JSON-ish payloads
-      const jsonMatch = s.match(/"name"\s*:\s*"([^"]+)"/);
-      if (jsonMatch && jsonMatch[1]) return jsonMatch[1].trim();
-
-      // Plain sprint name fallback
-      if (s.length <= 120 && !/com\.atlassian\.|\bid=\d+\b/i.test(s)) return s;
-
-      return null;
-    };
-
-    const getSprintNameFromRow = (row: string[]): string => {
-      if (sprintIndices.length === 0) return '';
-      // Prefer the last non-empty sprint cell (often the most recent)
-      for (let j = sprintIndices.length - 1; j >= 0; j--) {
-        const idx = sprintIndices[j]!;
-        const name = extractSprintName(row[idx] || '');
-        if (name) return name;
-      }
-      return '';
-    };
-
-    const iTitle = col('摘要');
-    const iKey = col('事务密钥');
-    const iStatus = col('状态');
-    const iProjKey = col('项目键');
-    const iProjName = col('项目名称');
-    const iPriority = col('优先级');
-    const iAssignee = col('经办人');
-    const iAssigneeId = col('经办人 ID');
-    const iReporter = col('报告人');
-    const iReporterId = col('报告人 ID');
-    const iCreator = col('创建者');
-    const iCreatorId = col('创建者 ID');
-    const iCreated = col('已创建');
-    const iResolved = col('已解决');
-    const iDueDate = col('截止日期');
-    const iStartDate = col('自定义字段 (Start date)');
-    const iDescription = col('描述');
-    const commentIndices = colAll('评论');
-
-    console.log('Column indices:', {
-      iTitle, iKey, iStatus, iProjKey, iPriority, iAssignee, iReporter, iCreated,
-      sprintColumns: sprintIndices.length,
-      commentColumns: commentIndices.length,
-    });
-
-    // Build jira account ID → name mapping from CSV data
-    const jiraIdToName: Record<string, string> = {};
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r]!;
-      const assignee = row[iAssignee]?.trim();
-      const assigneeId = row[iAssigneeId]?.trim();
-      const reporter = row[iReporter]?.trim();
-      const reporterId = row[iReporterId]?.trim();
-      const creator = row[iCreator]?.trim();
-      const creatorId = row[iCreatorId]?.trim();
-      if (assignee && assigneeId) jiraIdToName[assigneeId] = assignee;
-      if (reporter && reporterId) jiraIdToName[reporterId] = reporter;
-      if (creator && creatorId) jiraIdToName[creatorId] = creator;
+      return c.json(
+        {
+          error: 'missing_columns',
+          message: `CSV 缺少必要欄位：${parsed.missing.map((m) => m.accepted.join(' / ')).join('、')}`,
+          missingColumns: parsed.missing,
+          detectedColumns: parsed.detected.slice(0, 500),
+        },
+        400
+      );
     }
+    console.log('Parsed issues:', parsed.issues.length, 'people:', parsed.people.length);
 
-    // Create missing members. Existing members of this workspace are reused
-    // by exact name; everyone else becomes a new member (re-imports must not
-    // recycle already-taken uN ids).
-    const allNames = new Set(Object.values(jiraIdToName));
-    const existingMembersRes = await env.DB
-      .prepare('SELECT id, name FROM members WHERE workspace_id = ?')
+    // ── Statuses: this workspace's own list (renamed / deleted / added ones
+    //    included); every task gets the id of a status that exists. ──
+    const statusRes = await env.DB
+      .prepare('SELECT id, name, sort_order, is_done, auto_start FROM statuses WHERE workspace_id = ?')
       .bind(ws)
-      .all<{ id: string; name: string }>();
-    const existingMembers = existingMembersRes.results || [];
-    const memberMap: Record<string, string> = {};
+      .all<WorkspaceStatus>();
+    const statusPlan = planStatuses(parsed.issues, statusRes.results || [], {
+      idPrefix: ws === DEFAULT_WORKSPACE ? '' : `${ws8}-`,
+    });
+    if (statusPlan.ok !== true) {
+      return c.json({ error: 'no_statuses', message: '這個團隊還沒有任何任務狀態，請先到「狀態管理」新增' }, 400);
+    }
+
+    // ── People → members (plan only; nothing is written yet) ──
+    const existingRes = await env.DB
+      .prepare('SELECT id, name, email, role, is_active FROM members WHERE workspace_id = ? ORDER BY sort_order, id')
+      .bind(ws)
+      .all<{ id: string; name: string; email: string | null; role: string | null; is_active: number | null }>();
+    const existing: ExistingMember[] = (existingRes.results || []).map((m) => ({
+      id: m.id, name: m.name, email: m.email || '', role: m.role || 'member', isActive: m.is_active !== 0,
+    }));
+    // Re-imports must not recycle already-taken uN ids.
     let memberCounter = 10;
-    for (const m of existingMembers) {
-      if (!memberMap[m.name]) memberMap[m.name] = m.id;
+    for (const m of existing) {
       const um = /^(?:[0-9a-f]{8}-)?u(\d+)$/.exec(m.id); // tolerate the <ws8>- prefix
       if (um) memberCounter = Math.max(memberCounter, parseInt(um[1]!, 10) + 1);
     }
-    const newMembers: NewMemberRow[] = [];
-
-    for (const name of allNames) {
-      if (!memberMap[name]) {
-        const id = scopedId(`u${memberCounter++}`);
-        memberMap[name] = id;
-        newMembers.push({
-          id, name, avatar: name[0]?.toUpperCase() || '?',
-          // email must be unique per member: members has a UNIQUE (nocase)
-          // index on email, so two '' rows would fail the whole insert batch.
-          role: 'member', email: `${id}@import.invalid`, color: '#6B778C', job_title: '',
-          is_active: true,
-        });
-      }
-    }
-
+    const memberPlan = planMembers({
+      people: parsed.people,
+      existing,
+      accounts: request.accounts,
+      emailOwners: await loadEmailOwners(env, ws, request.accounts),
+      callerIsSuperAdmin: auth.member.role === 'super_admin',
+      newMemberId: () => scopedId(`u${memberCounter++}`),
+    });
+    const personName = new Map(parsed.people.map((p) => [p.key, p.name]));
     // Fallback identity for rows with no resolvable reporter/creator: the
     // importing admin (the legacy hardcoded 'u1' doesn't exist on fresh installs).
-    const authInfo = c.get('auth');
-    const fallbackMemberId = authInfo?.member?.id || 'u1';
-
-    // Build jiraId → memberId mapping
-    const jiraIdToMemberId: Record<string, string> = {};
-    for (const [jiraId, name] of Object.entries(jiraIdToName)) {
-      jiraIdToMemberId[jiraId] = memberMap[name] || fallbackMemberId;
-    }
-
-    // ── Build sprint mapping (ids generated here so tasks can reference them;
-    //    NO DB write yet — the actual insert happens only on the pro path). ──
-    const sprintNames = new Set<string>();
-    const sprintMap = new Map<string, string>(); // jira sprint name → db sprint id
-    for (let r = 1; r < rows.length; r++) {
-      const sprintName = getSprintNameFromRow(rows[r]!);
-      if (sprintName) sprintNames.add(sprintName);
-    }
-    for (const sprintName of sprintNames) {
-      sprintMap.set(sprintName, crypto.randomUUID());
-    }
+    const fallbackMemberId = auth.member.id;
+    const memberIdOf = (key: string | null): string | null => (key ? planMemberId(memberPlan.plans[key]) : null);
+    const mention: MentionResolver = (accountId) => {
+      const key = parsed.accountPeople[accountId];
+      const name = key ? personName.get(key) : undefined;
+      return name ? { name, memberId: memberIdOf(key!) || '' } : null;
+    };
 
     // ── Projects: one LIVO project per Jira project key. A project of this
     //    workspace with the same key is reused (projects are not cleared, so a
@@ -614,136 +357,96 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       return id;
     };
 
-    // ── Parse tasks + comments + specs into memory (still NO DB write) ──
+    // ── Tasks + comments + specs in memory (sprint ids are generated here so
+    //    tasks can reference them; still NO DB write) ──
+    const sprintMap = new Map<string, string>(); // jira sprint name → db sprint id
+    for (const name of parsed.sprintNames) sprintMap.set(name, crypto.randomUUID());
+    const today = dateOnlyPart(new Date().toISOString());
     const tasks: TaskRow[] = [];
     const comments: CommentRow[] = [];
     const taskSpecs: SpecRow[] = [];
     let commentId = 1;
     let specId = 1;
-    const seenTaskKeys = new Set<string>();
-
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r]!;
-      const taskKey = row[iKey]?.trim();
-      if (!taskKey || seenTaskKeys.has(taskKey)) continue;
-      seenTaskKeys.add(taskKey);
-
-      const projectKey = row[iProjKey]?.trim();
-      if (!projectKey) continue;
-
-      const title = row[iTitle]?.trim() || '';
-      const statusStr = row[iStatus]?.trim() || '待办';
-      const priorityStr = row[iPriority]?.trim() || 'Medium';
-      const assigneeName = row[iAssignee]?.trim() || '';
-      const reporterName = row[iReporter]?.trim() || '';
-      const creatorName = row[iCreator]?.trim() || '';
-      const createdStr = row[iCreated]?.trim() || '';
-      const resolvedStr = row[iResolved]?.trim() || '';
-      const dueDateStr = row[iDueDate]?.trim() || '';
-      const startDateStr = iStartDate >= 0 ? (row[iStartDate]?.trim() || '') : '';
-      const sprintName = getSprintNameFromRow(row);
-
-      const projectId = projectIdFor(projectKey, iProjName >= 0 ? row[iProjName] || '' : '');
-      const statusId = scopedId(mapStatusId(statusStr));
-      const priority = mapPriority(priorityStr);
-      const sprintId = sprintName ? (sprintMap.get(sprintName) || null) : null;
-
-      // Map assignee (经办人=指派人), reporter (报告人=验收人&开卡人)
-      const assigneeId = assigneeName ? (memberMap[assigneeName] || null) : null;
-      const reviewerId = reporterName ? (memberMap[reporterName] || null) : null;
-      const creatorId = reporterName
-        ? (memberMap[reporterName] || (creatorName ? memberMap[creatorName] : null) || fallbackMemberId)
-        : (creatorName ? memberMap[creatorName] : null) || fallbackMemberId;
-
-      const createdAt = parseDateOnly(createdStr) || dateOnlyPart(new Date().toISOString());
-      const completedAt = parseChineseDateTime(resolvedStr);
-      const dueDate = parseDateOnly(dueDateStr);
-      const startedAt = startDateStr
-        ? (/^\d{4}/.test(startDateStr) ? dateOnlyPart(startDateStr) : parseDateOnly(startDateStr))
-        : null;
-
-      // Extract comments from comment columns
-      let taskCommentCount = 0;
-      for (const ci of commentIndices) {
-        const cell = row[ci]?.trim();
-        if (!cell) continue;
-
-        // Parse comment: "date;jira_id;content"
-        const firstSemi = cell.indexOf(';');
-        if (firstSemi < 0) continue;
-        const secondSemi = cell.indexOf(';', firstSemi + 1);
-        if (secondSemi < 0) continue;
-
-        const commentDateStr = cell.substring(0, firstSemi).trim();
-        const commentJiraId = cell.substring(firstSemi + 1, secondSemi).trim();
-        const commentContent = cell.substring(secondSemi + 1).trim();
-
-        if (!commentContent) continue;
-
-        const commentDate = parseChineseDateTime(commentDateStr);
-        const commentUserId = jiraIdToMemberId[commentJiraId] || fallbackMemberId;
-
+    for (const issue of parsed.issues) {
+      const taskId = scopedId(issue.key); // display key stays raw; the id must be globally unique
+      const createdAt = issue.created || today;
+      for (const cm of issue.comments) {
         comments.push({
           id: scopedId(`c${String(commentId++).padStart(5, '0')}`),
-          task_id: scopedId(taskKey),
-          user_id: commentUserId,
-          content: textToHtml(commentContent, jiraIdToName, memberMap),
-          created_at: commentDate || createdAt,
+          task_id: taskId,
+          user_id: memberIdOf(cm.authorKey) || fallbackMemberId,
+          content: textToHtml(cm.content, mention),
+          created_at: cm.createdAt || createdAt,
         });
-        taskCommentCount++;
       }
-
-      // Extract description → task_specs
-      const description = iDescription >= 0 ? (row[iDescription]?.trim() || '') : '';
-      if (description) {
+      if (issue.description) {
         taskSpecs.push({
           id: scopedId(`ts${String(specId++).padStart(5, '0')}`),
-          task_id: scopedId(taskKey),
+          task_id: taskId,
           background: '',
-          requirement: textToHtml(description, jiraIdToName, memberMap),
+          requirement: textToHtml(issue.description, mention),
           notes: '',
         });
       }
-
-      // Department is back-filled from members.job_title after insert.
-      const department: string | null = null;
-
       tasks.push({
-        id: scopedId(taskKey), // display key stays raw; the id must be globally unique
-        task_key: taskKey,
-        project_id: projectId,
-        title,
-        status_id: statusId,
-        priority,
-        creator_id: creatorId,
-        assignee_id: assigneeId,
-        reviewer_id: reviewerId,
-        due_date: dueDate,
-        started_at: startedAt,
-        completed_at: completedAt ? dateOnlyPart(completedAt) : null,
-        sort_order: r,
+        id: taskId,
+        task_key: issue.key,
+        project_id: projectIdFor(issue.projectKey, issue.projectName),
+        title: issue.title,
+        status_id: statusPlan.statusIdOf(issue.key),
+        priority: issue.priority,
+        // Reporter (报告人) = reviewer & card creator; Jira's creator is the fallback.
+        creator_id: memberIdOf(issue.reporterKey) || memberIdOf(issue.creatorKey) || fallbackMemberId,
+        assignee_id: memberIdOf(issue.assigneeKey),
+        reviewer_id: memberIdOf(issue.reporterKey),
+        due_date: issue.due,
+        started_at: issue.start,
+        completed_at: issue.resolved,
+        sort_order: issue.row,
         created_at: createdAt,
-        comment_count: taskCommentCount,
-        sprint_id: sprintId,
-        department,
+        comment_count: issue.comments.length,
+        sprint_id: issue.sprint ? sprintMap.get(issue.sprint) || null : null,
+        // Department is back-filled from members.job_title after insert.
+        department: null,
       });
     }
+    // Done-ness follows the workspace status each task landed on.
+    const doneTaskIds = new Set(tasks.filter((t) => statusPlan.isDone(t.status_id)).map((t) => t.id));
+    // Exact (UTC) created / resolved instants for the sprint dates below.
+    const instants = new Map(parsed.issues.map((i) => [scopedId(i.key), { createdAt: i.createdAt, resolvedAt: i.resolvedAt }]));
+    // Subtask links, applied after every task row exists (parent_task_id is a FK).
+    const parentLinks = new Map<string, string[]>(); // parent task id → child task ids
+    for (const issue of parsed.issues) {
+      if (!issue.parentKey) continue;
+      const parentId = scopedId(issue.parentKey);
+      parentLinks.set(parentId, [...(parentLinks.get(parentId) || []), scopedId(issue.key)]);
+    }
+
+    const plans = Object.entries(memberPlan.plans);
+    const newMemberCount = plans.filter(([, p]) => p.kind === 'new_account' || p.kind === 'new_name_only').length;
+    const loginChannel = await resolveLoginChannel(env, ws);
 
     // ── Stats (identical shape for both dry-run and real import) ──
     const stats = {
-      totalRows: rows.length - 1,
+      totalRows: parsed.totalRows,
       tasksParsed: tasks.length,
       commentsParsed: comments.length,
       specsParsed: taskSpecs.length,
       sprintsParsed: sprintMap.size,
-      newMembers: newMembers.map((m) => m.name),
+      subtasksLinked: parsed.hierarchy.linked,
+      epicChildren: parsed.hierarchy.epicChildren,
+      attachmentsParsed: parsed.attachmentCount,
+      timeZone: request.timeZone,
+      newMembers: plans
+        .filter(([, p]) => p.kind === 'new_account' || p.kind === 'new_name_only')
+        .map(([key]) => personName.get(key) || key),
       newProjects: Array.from(newProjects.values()).map((p) => p.name),
     };
 
     // ── Beta member cap (same rule as manage-member create): the import
     //    would otherwise mint an active member row per distinct CSV name,
     //    blowing past workspaces.member_limit and then wedging 成員管理. ──
-    if (ws !== DEFAULT_WORKSPACE && newMembers.length > 0) {
+    if (ws !== DEFAULT_WORKSPACE && newMemberCount > 0) {
       const quota = await env.DB
         .prepare(
           `SELECT w.member_limit AS lim,
@@ -752,10 +455,10 @@ export const handleImportJira = async (c: Context<AppContext>) => {
         )
         .bind(ws)
         .first<{ lim: number; used: number }>();
-      if (quota && quota.used + newMembers.length > quota.lim) {
+      if (quota && quota.used + newMemberCount > quota.lim) {
         return c.json(
           {
-            error: `匯入將新增 ${newMembers.length} 位成員，超過 Beta 成員上限（${quota.lim} 人）。請先精簡 CSV 中的人員，或聯繫 service@livo-tw.com`,
+            error: `匯入將新增 ${newMemberCount} 位成員，超過 Beta 成員上限（${quota.lim} 人）。請先精簡 CSV 中的人員，或聯繫 service@livo-tw.com`,
             stats,
           },
           403
@@ -763,10 +466,55 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       }
     }
 
-    // ── Tier branch (contract C2): non-pro → SAFE DRY-RUN, nothing written. ──
-    if (!isPro) {
-      console.log('[import-jira] dry-run (non-professional):', JSON.stringify(stats));
-      return c.json({ success: true, dryRun: true, stats });
+    // ── Preview (dryRun, or contract C2 for non-pro): nothing written. ──
+    if (!isPro || request.dryRun) {
+      console.log('[import-jira] preview:', JSON.stringify({ ...stats, newMembers: stats.newMembers.length }));
+      return c.json({
+        success: true,
+        dryRun: true,
+        canImport: isPro,
+        stats,
+        people: summarizePeople(parsed.people, memberPlan, existing),
+        accountErrors: memberPlan.errors,
+        accountWarnings: memberPlan.warnings,
+        unresolvedCommenters: parsed.unresolvedCommenters,
+        loginMethod: loginChannel.method,
+        statusMapping: statusPlan.mapping,
+      });
+    }
+
+    // Refuse BEFORE the wipe: a half-right accounts list or an empty result
+    // would otherwise cost the workspace its data.
+    if (memberPlan.errors.length > 0) {
+      return c.json(
+        { error: 'account_errors', message: 'Email 對照表有問題，請修正後再匯入', accountErrors: memberPlan.errors },
+        400
+      );
+    }
+    if (tasks.length === 0) {
+      return c.json({ error: 'no_tasks', message: 'CSV 裡沒有可匯入的任務（每列都需要事務密鑰 / Issue key）', stats }, 400);
+    }
+    // Every target status must still exist right before the wipe (tasks.status_id is a FK).
+    const targetStatusIds = Array.from(new Set(tasks.map((t) => t.status_id)));
+    const presentStatuses = new Set<string>();
+    for (let i = 0; i < targetStatusIds.length; i += MAX_PARAMS - 1) {
+      const chunk = targetStatusIds.slice(i, i + MAX_PARAMS - 1);
+      const res = await env.DB
+        .prepare(`SELECT id FROM statuses WHERE workspace_id = ? AND id IN (${chunk.map(() => '?').join(', ')})`)
+        .bind(ws, ...chunk)
+        .all<{ id: string }>();
+      for (const r of res.results || []) presentStatuses.add(r.id);
+    }
+    const missingStatuses = targetStatusIds.filter((id) => !presentStatuses.has(id));
+    if (missingStatuses.length > 0) {
+      return c.json(
+        {
+          error: 'status_missing',
+          message: '要對應的任務狀態已不存在（可能剛被刪除），請重新預覽後再匯入',
+          missingStatuses,
+        },
+        409
+      );
     }
 
     // ═══ Professional path: the real, DESTRUCTIVE import (writes begin here) ═══
@@ -777,6 +525,9 @@ export const handleImportJira = async (c: Context<AppContext>) => {
     await env.DB.batch(
       CLEAR_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${assertIdent(t)} WHERE workspace_id = ?`).bind(ws))
     );
+    written.wiped = true;
+    // Steps after the wipe that may only warn (the data itself is in place).
+    const warnings: string[] = [];
 
     // ── Create the projects this CSV introduces. Without these rows the
     //    tasks.project_id FK rejects every task insert. ──
@@ -804,18 +555,77 @@ export const handleImportJira = async (c: Context<AppContext>) => {
         );
       }
     } catch (error) {
-      console.error('Ensure projects error:', error);
+      throw new ImportStepError('projects', error);
     }
 
-    // ── Insert new members ──
-    if (newMembers.length > 0) {
-      console.log('Creating new members:', newMembers.map((m) => m.name));
+    // ── Members. Name-only people first (as before) ──
+    const nameOnly = plans
+      .filter((e): e is [string, Extract<PersonPlan, { kind: 'new_name_only' }>] => e[1].kind === 'new_name_only')
+      .map(([key, p]) => newMemberRow(p.memberId, personName.get(key) || key, placeholderEmail(p.memberId)));
+    if (nameOnly.length > 0) {
+      console.log('Creating name-only members:', nameOnly.length);
       try {
-        await insertRows(env, 'members', newMembers, ws);
+        await insertRows(env, 'members', nameOnly, ws);
       } catch (error) {
-        console.error('Insert members error:', error);
+        throw new ImportStepError('members', error);
       }
     }
+
+    // ── …then the people on the accounts list: login + member in one batch
+    //    each, then the invitation / temporary password. A failure keeps the
+    //    person as a name-only member so their tasks still import. ──
+    const accountsResult: AccountsResult = { method: loginChannel.method, invited: [], credentials: [], failed: [] };
+    written.accounts = accountsResult;
+    let memberFallbackError: unknown = null;
+    const accountPlans = plans.filter((e): e is [string, AccountPlan] => e[1].kind === 'new_account' || e[1].kind === 'activate');
+    let membersTouched = nameOnly.length > 0;
+    await mapLimit(accountPlans, 4, async ([key, p]) => {
+      const name = personName.get(key) || key;
+      let memberWritten = false;
+      try {
+        const login = await prepareLogin(env, p.email, loginChannel.method);
+        const memberStmts =
+          p.kind === 'new_account'
+            ? insertStatements(env, 'members', [{ ...newMemberRow(p.memberId, name, p.email), auth_id: login.authUserId }], ws)
+            : [
+                env.DB
+                  .prepare('UPDATE members SET email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4')
+                  .bind(p.email, login.authUserId, p.memberId, ws),
+              ];
+        await env.DB.batch([...login.statements, ...memberStmts]);
+        memberWritten = true;
+        membersTouched = true;
+        const delivery = await deliverLogin(env, loginChannel, login, { name, email: p.email, invitedBy: auth.member.name });
+        if (delivery.method === 'invite') accountsResult.invited.push({ name, email: p.email });
+        else {
+          accountsResult.credentials.push({
+            name, email: p.email, password: delivery.tempPassword || '',
+            ...(delivery.inviteFailed ? { inviteFailed: true } : {}),
+          });
+        }
+      } catch (error) {
+        console.error('Create login error:', name, error);
+        if (memberWritten) {
+          // Member and login exist; only the invitation / password step failed.
+          accountsResult.failed.push({ name, email: p.email, reason: 'delivery_failed' });
+          return;
+        }
+        const taken = error instanceof LoginError || /UNIQUE/i.test(String(error));
+        accountsResult.failed.push({ name, email: p.email, reason: taken ? 'email_taken' : 'create_failed' });
+        if (p.kind === 'new_account') {
+          try {
+            await insertRows(env, 'members', [newMemberRow(p.memberId, name, placeholderEmail(p.memberId))], ws);
+            membersTouched = true;
+          } catch (fallbackError) {
+            console.error('Insert fallback member error:', fallbackError);
+            memberFallbackError = fallbackError;
+          }
+        }
+      }
+    });
+
+    // Without the member row every task that points at this person would fail.
+    if (memberFallbackError) throw new ImportStepError('members', memberFallbackError);
 
     // ── Insert sprints. On failure, drop the mapping AND detach the tasks that
     //    referenced the now-missing sprints (parity with the original, which
@@ -833,6 +643,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
         await insertRows(env, 'sprints', sprintRows, ws);
       } catch (error) {
         console.error('Insert sprint error:', error);
+        warnings.push('sprints');
         sprintMap.clear(); // failed sprints must not be referenced by tasks
         for (const t of tasks) t.sprint_id = null;
       }
@@ -841,42 +652,58 @@ export const handleImportJira = async (c: Context<AppContext>) => {
 
     console.log(`Inserting ${tasks.length} tasks, ${comments.length} comments, ${taskSpecs.length} specs`);
 
-    // Insert tasks in slices of 50 (each slice atomic; failures logged, import
-    // continues — original behavior). Inserted counts are tracked so the
-    // response stats reflect what actually landed in D1, not just what parsed.
-    let tasksInserted = 0;
+    // Insert tasks in slices of 50, then comments (100) and specs (50). Each
+    // slice is atomic; a failed slice stops the import (import_failed) instead
+    // of being skipped, so a half-written import is never reported as done.
     for (let i = 0; i < tasks.length; i += 50) {
       const batch = tasks.slice(i, i + 50);
       try {
         await insertRows(env, 'tasks', batch, ws);
-        tasksInserted += batch.length;
+        written.tasksInserted += batch.length;
       } catch (error) {
         console.error(`Insert tasks batch ${i} error:`, error, 'First task:', JSON.stringify(batch[0]));
+        throw new ImportStepError('tasks', error);
       }
     }
-
-    // Insert comments in slices of 100
-    let commentsInserted = 0;
     for (let i = 0; i < comments.length; i += 100) {
       const batch = comments.slice(i, i + 100);
       try {
         await insertRows(env, 'comments', batch, ws);
-        commentsInserted += batch.length;
+        written.commentsInserted += batch.length;
       } catch (error) {
-        console.error(`Insert comments batch ${i} error:`, error);
+        throw new ImportStepError('comments', error);
       }
     }
-
-    // Insert task_specs in slices of 50
-    let specsInserted = 0;
     for (let i = 0; i < taskSpecs.length; i += 50) {
       const batch = taskSpecs.slice(i, i + 50);
       try {
         await insertRows(env, 'task_specs', batch, ws);
-        specsInserted += batch.length;
+        written.specsInserted += batch.length;
       } catch (error) {
-        console.error(`Insert specs batch ${i} error:`, error);
+        throw new ImportStepError('specs', error);
       }
+    }
+
+    // ── Subtasks: parent_task_id, now that every task row exists ──
+    let subtasksLinked = 0;
+    try {
+      const linkStmts: D1PreparedStatement[] = [];
+      for (const [parentId, childIds] of parentLinks) {
+        for (let i = 0; i < childIds.length; i += MAX_PARAMS - 2) {
+          const chunk = childIds.slice(i, i + MAX_PARAMS - 2);
+          linkStmts.push(
+            env.DB
+              .prepare(`UPDATE tasks SET parent_task_id = ? WHERE id IN (${chunk.map(() => '?').join(', ')}) AND workspace_id = ?`)
+              .bind(parentId, ...chunk, ws)
+          );
+        }
+      }
+      for (let i = 0; i < linkStmts.length; i += 50) {
+        await env.DB.batch(linkStmts.slice(i, i + 50));
+      }
+      subtasksLinked = Array.from(parentLinks.values()).reduce((n, ids) => n + ids.length, 0);
+    } catch (error) {
+      throw new ImportStepError('subtasks', error);
     }
 
     // ── Post-insert: set department based on member job_titles ──
@@ -911,6 +738,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       console.log(`Set departments for ${memberDeptMap.size} members`);
     } catch (error) {
       console.error('Set departments error:', error);
+      warnings.push('departments');
     }
 
     // Update sprint dates and counts from task data
@@ -920,19 +748,20 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       const sprintStmts: D1PreparedStatement[] = [];
       for (const sprintId of sprintMap.values()) {
         const sprintTasks = tasks.filter((t) => t.sprint_id === sprintId);
-        const completedCount = sprintTasks.filter((t) => ['s6', 's7'].includes(t.status_id)).length;
+        const completedCount = sprintTasks.filter((t) => doneTaskIds.has(t.id)).length;
         const pendingCount = sprintTasks.length - completedCount;
 
-        // started_at: earliest created_at among tasks in this sprint
+        // started_at: earliest creation among tasks in this sprint (exact
+        // UTC instant when the export had a time, else the calendar date)
         const createdDates = sprintTasks
-          .map((t) => new Date(t.created_at).getTime())
+          .map((t) => new Date(instants.get(t.id)?.createdAt || t.created_at).getTime())
           .filter((ts) => !isNaN(ts));
         const minCreated = createdDates.length > 0 ? new Date(Math.min(...createdDates)) : null;
 
-        // completed_at: latest completed_at among tasks in this sprint
+        // completed_at: latest resolution among tasks in this sprint
         const completedDates = sprintTasks
           .filter((t) => t.completed_at)
-          .map((t) => new Date(t.completed_at as string).getTime())
+          .map((t) => new Date(instants.get(t.id)?.resolvedAt || (t.completed_at as string)).getTime())
           .filter((ts) => !isNaN(ts));
         const maxCompleted = completedDates.length > 0 ? new Date(Math.max(...completedDates)) : null;
 
@@ -948,6 +777,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       if (sprintStmts.length > 0) await env.DB.batch(sprintStmts);
     } catch (error) {
       console.error('Update sprint stats error:', error);
+      warnings.push('sprint_stats');
     }
 
     // ── Create active sprint and assign uncompleted tasks ──
@@ -961,9 +791,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       await insertRows(env, 'sprints', [{ id: activeSprintId, name: activeSprintName, is_active: true }], ws);
 
       // Move all uncompleted tasks to the active sprint
-      const uncompletedTaskIds = tasks
-        .filter((t) => !['s6', 's7'].includes(t.status_id))
-        .map((t) => t.id);
+      const uncompletedTaskIds = tasks.filter((t) => !doneTaskIds.has(t.id)).map((t) => t.id);
 
       if (uncompletedTaskIds.length > 0) {
         const idsPerStmt = MAX_PARAMS - 2; // 2 params used by sprint_id + workspace_id
@@ -982,6 +810,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       console.log(`Created active sprint "${activeSprintName}" with ${uncompletedTaskIds.length} uncompleted tasks`);
     } catch (error) {
       console.error('Create active sprint error:', error);
+      warnings.push('active_sprint');
     }
 
     // Synthetic refresh pings (DESIGN decision: no per-row flood; sprints/projects
@@ -992,8 +821,8 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       { table: 'sprints', eventType: 'UPDATE', new: null, old: null },
       { table: 'projects', eventType: 'UPDATE', new: null, old: null },
     ];
-    // Import-created members must propagate to other connected clients too.
-    if (newMembers.length > 0) {
+    // Import-created members and new logins must propagate to other clients too.
+    if (membersTouched) {
       pings.push({ table: 'members', eventType: 'UPDATE', new: null, old: null });
     }
     notifyChanges(env, execCtx, pings, ws);
@@ -1005,14 +834,36 @@ export const handleImportJira = async (c: Context<AppContext>) => {
         ...stats,
         // Actual insert results (sprintMap is cleared when its insert fails,
         // so its size is the real created count).
-        tasksInserted,
-        commentsInserted,
-        specsInserted,
+        tasksInserted: written.tasksInserted,
+        commentsInserted: written.commentsInserted,
+        specsInserted: written.specsInserted,
         sprintsCreated: sprintMap.size,
+        subtasksLinked,
       },
+      accounts: accountsResult,
+      warnings,
     });
   } catch (err) {
     console.error('Import error:', err);
+    if (written.wiped) {
+      // The wipe ran but the import did not finish: say so, with what landed
+      // and any logins already created (their temporary passwords included).
+      return c.json(
+        {
+          error: 'import_failed',
+          step: err instanceof ImportStepError ? err.step : 'unknown',
+          message: '匯入沒有完成：原有資料已清除，新資料只寫入一部分。請修正問題後重新匯入同一份 CSV。',
+          detail: err instanceof Error ? err.message : String(err),
+          partial: {
+            tasksInserted: written.tasksInserted,
+            commentsInserted: written.commentsInserted,
+            specsInserted: written.specsInserted,
+          },
+          accounts: written.accounts,
+        },
+        500
+      );
+    }
     return c.json({ error: String(err) }, 500);
   }
 };

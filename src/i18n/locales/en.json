@@ -183,7 +183,8 @@
     "addMember": "Added member \"{{name}}\" ({{email}}, {{role}})",
     "toggleMember": "{{action}} member \"{{name}}\" ({{transition}})",
     "deleteMember": "Deleted member \"{{name}}\"",
-    "resetPassword": "Reset password for member \"{{name}}\""
+    "resetPassword": "Reset password for member \"{{name}}\"",
+    "createLogin": "Enabled login for member \"{{name}}\" ({{email}})"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -648,7 +649,7 @@
       "checklistPlaceholder": "Add checklist item...",
       "attachments": "Attachments",
       "dragDropMessage": "Drag and drop files here, or <span class=\"text-primary font-medium\">click to upload</span>",
-      "fileSizeNote": "Max 2 MB per file",
+      "fileSizeNote": "Max {{size}} MB per file",
       "saveFailed": "Save failed: ",
       "saved": "Saved"
     },
@@ -660,12 +661,12 @@
       "attachment": "Attachment",
       "newPlaceholder": "Comment... Type @ to mention a member",
       "fileSizeError": "File size exceeds the limit (max {{size}} MB)",
-      "attachFileTitle": "Attach file (max 2MB)",
+      "attachFileTitle": "Attach file (max {{size}} MB)",
       "sendFailed": "Failed to send comment: ",
       "mentionNotification": "You were mentioned in a comment",
       "deleted": "Comment deleted",
       "updated": "Comment updated",
-      "fileSizeExceeded": "File size exceeds the 2MB limit",
+      "fileSizeExceeded": "File size exceeds the {{size}} MB limit",
       "attachmentUploadFailed": "Attachment upload failed: "
     },
     "metrics": {
@@ -738,7 +739,7 @@
       "editActivity": "\"{{oldText}}\" → \"{{newText}}\""
     },
     "attachments": {
-      "fileSizeExceeded": "The following files exceed the 2MB limit: {{files}}",
+      "fileSizeExceeded": "The following files exceed the {{size}} MB limit: {{files}}",
       "uploadFailed": "The following files failed to upload: {{files}}",
       "uploadSuccess": "{{count}} files uploaded successfully",
       "deleted": "Attachment deleted"
@@ -1081,7 +1082,22 @@
     "confirmPasswordLabel": "Confirm New Password",
     "resetPasswordButton": "Reset",
     "resetPasswordFailed": "Failed to reset: ",
-    "passwordResetDone": "Password for \"{{name}}\" has been reset"
+    "passwordResetDone": "Password for \"{{name}}\" has been reset",
+    "createLogin": "Enable login",
+    "createLoginTitle": "Enable login for \"{{name}}\"",
+    "createLoginHint": "Enter this member's email to create a login for them. The member stays the same, and the tasks and comments already assigned to them stay put. If email sending is set up they get a \"set your password\" invitation; otherwise you get a temporary password to pass on.",
+    "createLoginButton": "Create login",
+    "createLoginInvited": "Sent a set-password invitation to {{email}}",
+    "createLoginDone": "Created a login for \"{{name}}\"",
+    "createLoginFailed": "Could not create the login: ",
+    "createLoginInvalidEmail": "Enter a valid email",
+    "createLoginEmailTaken": "This email is already in use",
+    "createLoginEmailTakenBy": "This email already belongs to member \"{{name}}\"",
+    "createLoginEmailOtherWorkspace": "This email is already used by another LIVO team — use a different one",
+    "createLoginAlreadyHasLogin": "This member already has an email — use \"Reset Password\" instead",
+    "createLoginInactive": "This member is deactivated. Activate them before creating a login",
+    "createLoginRequiresSuperAdmin": "Only a super admin can create a login for an admin",
+    "createLoginDemoBlocked": "Logins cannot be created in demo mode"
   },
   "bulkAction": {
     "selectedCount": "{{count}} tasks selected",
@@ -1540,6 +1556,15 @@
       "lineBindInstruction": "Send \"/bind\" in the LINE official account chat and the system will automatically complete the account binding."
     }
   },
+  "apiTokenAccess": {
+    "boundTo": "Acts as: {{name}}",
+    "unknownMember": "(member no longer exists)",
+    "memberLabel": "Acts as member",
+    "memberSelf": "{{name}} (you)",
+    "memberHint": "The token has exactly this member's permissions. Create a dedicated account for the AI or script and bind the token to it instead of your own account.",
+    "usageCloud": "Send it as \"Authorization: Bearer <token>\"; it has the bound member's permissions.",
+    "usageSelfHost": "Self-hosted: exchange the token at /functions/v1/api-tokens/exchange for a 15-minute access token, then call the API with that. It has the bound member's permissions. See \"用 API 金鑰操作 LIVO\" in the deployment guide."
+  },
   "requiredFields": {
     "saveSuccess": "Required field settings saved",
     "saveError": "Save failed, please try again later",
@@ -1599,12 +1624,9 @@
     "importDesc": "Import task data from a Jira CSV file. This will overwrite existing data",
     "previewDesc": "Upload a Jira CSV to preview the import format and row counts. Nothing is written",
     "previewNote": "Standard tier can preview the import format and row counts; a full import requires Professional",
-    "previewCsvButton": "Preview format (no write)",
-    "previewComplete": "Format preview complete (no data written)",
     "previewResultTitle": "Format preview (nothing written):",
     "previewTotalRows": "Total CSV rows: ",
     "importing": "Importing...",
-    "selectCsvButton": "Select CSV File to Import",
     "importWarning": "Importing will clear existing tasks, comments, sprints, etc. We recommend backing up first.",
     "resultTitle": "Import Results:",
     "resultTasks": "Tasks: ",
@@ -1617,7 +1639,6 @@
     "exporting": "Exporting...",
     "exportButton": "Export Full CSV",
     "readingCsv": "Reading CSV file...",
-    "importComplete": "Import complete!",
     "importFailed": "Import failed",
     "importError": "Import error:",
     "exportSuccess": "Exported {{count}} tasks (including comments, specs, deployment records, etc.)",
@@ -1647,7 +1668,124 @@
       "deployments": "Deployment Records",
       "statusLogs": "Status Change Logs",
       "comments": "Comments"
-    }
+    },
+    "previewing": "Reading the CSV…",
+    "previewFirstHint": "Choosing a file only shows a preview — nothing is written until you click \"Start import\".",
+    "chooseCsvButton": "Choose a Jira CSV file",
+    "chooseAnotherCsv": "Choose another file",
+    "demoBlocked": "Importing is not available in demo mode.",
+    "noDataRows": "This CSV has a header row but no data.",
+    "noTasks": "There is nothing to import: every row needs an Issue key.",
+    "accountErrorsTitle": "Fix these problems in the email list before importing:",
+    "importConfirmTitle": "Start the import?",
+    "importConfirm": "The import first deletes the existing tasks, sprints, comments and so on, then writes the CSV. This cannot be undone, so take a backup first.",
+    "startImport": "Start import",
+    "importSuccessToast": "Imported {{count}} tasks",
+    "activityImported": "Imported a Jira CSV ({{count}} tasks)",
+    "missingColumnsTitle": "This CSV is missing a required column",
+    "fields": {
+      "title": "Title",
+      "key": "Issue key"
+    },
+    "acceptedNames": "accepted column names: {{names}}",
+    "detectedColumns": "Columns found in the CSV ({{count}}):",
+    "showAllColumns": "Show {{count}} more",
+    "noColumnsDetected": "No column names were found. Is this a CSV exported from Jira?",
+    "missingColumnsHint": "Export again from Jira with \"Export → CSV (all fields)\". Exports from the English or Simplified Chinese Jira UI both work.",
+    "unitRows": "{{count}}",
+    "unitSprints": "{{count}}",
+    "resultNewProjects": "New projects: ",
+    "peopleTitle": "People in this CSV ({{count}})",
+    "peopleSummary": "Existing members: {{existing}} · Getting a login: {{login}} · Name only: {{nameOnly}}",
+    "peopleName": "Name",
+    "peopleRoles": "Appears as",
+    "peoplePlan": "After the import",
+    "roles": {
+      "assignee": "assignee",
+      "reporter": "reporter",
+      "creator": "creator",
+      "commenter": "commenter"
+    },
+    "plan": {
+      "existing": "Existing member",
+      "existingNoLogin": "Existing member (no login yet)",
+      "matchedByEmail": "Matched to \"{{name}}\" by email",
+      "matchedMember": "Matched to \"{{name}}\"",
+      "activate": "Existing member, will get a login",
+      "newAccount": "New member, will get a login",
+      "newNameOnly": "New member (name only, cannot sign in)",
+      "error": "Problem in the email list, see below"
+    },
+    "unresolvedCommenters": "{{count}} more commenter(s) appear only as an account ID with no name; their comments will be attributed to you.",
+    "accounts": {
+      "title": "Create logins (optional)",
+      "desc": "Paste a \"name, email\" list or upload a two-column CSV. Everyone on the list gets an account they can sign in with, and their tasks point straight at them. People not on the list are created with just a name, as before — you can add their email later with \"Enable login\" in the member list.",
+      "methodInvite": "Email sending is set up: each person gets a \"set your password\" invitation.",
+      "methodTempPassword": "Email sending is not set up (System admin → Notifications): each person gets a random temporary password, shown only once after the import — download the list.",
+      "placeholder": "Hua Chen, hua@example.com\nAlex Lin, alex@example.com",
+      "upload": "Upload list",
+      "template": "Download template",
+      "templateName": "Name",
+      "apply": "Apply list",
+      "lineCount": "{{count}} read",
+      "skippedLines": "Skipped line(s) {{lines}}: no email found.",
+      "notApplied": "The list has changed — click \"Apply list\" to update the preview before importing.",
+      "invited": "Sent {{count}} set-password invitation(s): {{emails}}",
+      "tempIssued": "Created {{count}} temporary password(s) (shown once)",
+      "failedTaken": "No login for \"{{name}}\": {{email}} already belongs to another account. Their tasks were imported; retry later with \"Enable login\" in the member list.",
+      "failedOther": "Could not create the login for \"{{name}}\" ({{email}}). Their tasks were imported; retry later with \"Enable login\" in the member list.",
+      "failedDelivery": "A login was created for \"{{name}}\" ({{email}}), but the invitation or temporary password was not delivered. Use Reset password in the member list."
+    },
+    "accountIssue": {
+      "invalid_email": "\"{{name}}\": \"{{email}}\" is not a valid email",
+      "duplicate_email": "{{email}} is listed for both \"{{detail}}\" and \"{{name}}\" — one email per person",
+      "conflicting_emails": "\"{{name}}\" is listed with two emails: {{detail}} and {{email}}",
+      "email_in_other_workspace": "\"{{name}}\": {{email}} is already used by another LIVO team — use a different email",
+      "member_has_login": "\"{{name}}\" is already a member with a login ({{detail}}) and will not be changed to {{email}} — remove this line",
+      "requires_super_admin": "\"{{name}}\" is an admin; only a super admin can create their login",
+      "unknown_name": "\"{{name}}\" from the list is not in the CSV, so the line is ignored",
+      "member_inactive": "\"{{name}}\" matches a deactivated member, who cannot get a login. Reactivate the member first, or remove this line"
+    },
+    "timeZoneLabel": "Time zone of the CSV times",
+    "timeZoneHint": "Jira writes times in the exporting user's time zone (their Jira profile setting). Pick the same one so comment and sprint times come out right.",
+    "resultSubtasks": "Subtask links: ",
+    "epicChildrenNote": "{{count}} more issue(s) sit under an epic. LIVO has no epic field, so those links are not created (the epics themselves are imported as ordinary tasks).",
+    "attachmentsNote": "The CSV lists {{count}} attachment(s). The files are not in the CSV: after the import, upload them from the Jira site backup with the command-line tool node scripts/jira-attachments.mjs (see --help).",
+    "listSeparator": ", ",
+    "noStatuses": "This team has no task statuses yet. Add some in Status settings, then import.",
+    "statusMissing": "A status this import maps to no longer exists (it may have just been deleted). Choose the CSV again to refresh the preview, then import.",
+    "apiKeyForbidden": "API keys cannot set passwords or open accounts. Sign in on the web to do this.",
+    "importIncomplete": "The import did not finish",
+    "importIncompleteDetail": "It failed at \"{{step}}\". The existing tasks, sprints and comments were cleared and only part of the new data was written.",
+    "importIncompletePartial": "Written so far: {{tasks}} tasks, {{comments}} comments, {{specs}} descriptions.",
+    "importIncompleteHint": "Fix the problem shown above, then import the same CSV again (it clears and writes everything again).",
+    "importWarnings": "The data was imported, but these steps did not finish: {{steps}}. Import again or adjust them by hand.",
+    "importStep": {
+      "projects": "creating projects",
+      "members": "creating members",
+      "tasks": "writing tasks",
+      "comments": "writing comments",
+      "specs": "writing descriptions",
+      "subtasks": "linking subtasks",
+      "sprints": "creating sprints",
+      "departments": "setting departments",
+      "sprint_stats": "sprint statistics",
+      "active_sprint": "creating the active sprint",
+      "unknown": "unknown step"
+    },
+    "statusMappingTitle": "Status mapping",
+    "statusMappingHint": "Mapped to this team's current statuses. To change a mapping, add or rename statuses in Status settings, then preview again.",
+    "statusMappingJira": "Jira status (category)",
+    "statusMappingLivo": "LIVO status",
+    "statusMappingCount": "Tasks",
+    "statusMappingEmpty": "(blank)",
+    "statusVia": {
+      "name": "Same name",
+      "alias": "Common name",
+      "category": "Jira status category",
+      "default": "Unknown, first column"
+    },
+    "statusSubstituted": "default status deleted or changed, a similar one is used"
   },
   "adminLicense": {
     "sectionTitle": "License Management",
@@ -2116,7 +2254,8 @@
     "notificationRuleToggled": "Notification rule {{action}}",
     "notificationTemplateCreated": "Created notification template \"{{name}}\"",
     "notificationTemplateUpdated": "Updated notification template \"{{name}}\"",
-    "notificationTemplateDeleted": "Deleted notification template"
+    "notificationTemplateDeleted": "Deleted notification template",
+    "createLogin": "Enable login"
   },
   "views": {
     "approvalsTitle": "Pending Approvals"
@@ -2170,7 +2309,9 @@
     "roleLabel": "Role",
     "cancelButton": "Cancel",
     "addButton": "Add",
-    "processingButton": "Processing..."
+    "processingButton": "Processing...",
+    "noLogin": "No login",
+    "noLoginHint": "Imported from Jira with just a name. Use \"Enable login\" to add an email so they can sign in."
   },
   "fieldRegistry": {
     "taskKey": "Key",
@@ -2330,5 +2471,36 @@
       "trialCta": "Free & open source · Get it on GitHub",
       "exit": "Exit demo"
     }
+  },
+  "accountCredentials": {
+    "title": "Temporary passwords",
+    "onceWarning": "These passwords are shown only once. They are gone when you close this window.",
+    "handOver": "Pass them on to each person and ask them to change it under \"Personal settings\" after signing in.",
+    "name": "Name",
+    "password": "Temporary password",
+    "inviteFailed": "Invitation email failed, so a temporary password was created",
+    "download": "Download list (CSV)",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Could not copy — use the download instead",
+    "done": "Done",
+    "closeConfirm": "You haven't downloaded or copied the temporary passwords. Close anyway? They can't be shown again."
+  },
+  "setPassword": {
+    "title": "Set your password",
+    "subtitle": "Once it is set, you can sign in to LIVO.",
+    "forEmail": "Choose a password for {{email}}",
+    "passwordLabel": "New password (at least 8 characters)",
+    "confirmLabel": "Repeat the password",
+    "submit": "Set password and sign in",
+    "submitting": "Saving…",
+    "invalidTitle": "This link cannot be used",
+    "invalidLink": "The link is invalid or has expired. Ask your admin to reset your password.",
+    "tooShort": "The password must be at least 8 characters",
+    "mismatch": "The passwords don't match",
+    "demoBlocked": "Demo mode has no accounts, so passwords cannot be set.",
+    "failed": "Could not set the password:",
+    "done": "Your password is set. Welcome to LIVO!",
+    "backToLogin": "Go to the sign-in page"
   }
 }

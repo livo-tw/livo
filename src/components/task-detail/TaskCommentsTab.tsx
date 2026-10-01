@@ -131,17 +131,19 @@ const TaskCommentsTab = ({ detail }: Props) => {
                 e.target.value = '';
               }}
             />
-            <button onClick={() => commentFileRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title={t('taskDetail.comments.attachFileTitle')}>
+            <button onClick={() => commentFileRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title={t('taskDetail.comments.attachFileTitle', { size: MAX_FILE_SIZE / 1024 / 1024 })}>
               <Paperclip size={15} />
             </button>
             {storageUsed !== null && (
               <div className="flex items-center gap-1.5 ml-auto text-xs text-muted-foreground">
                 <HardDrive size={12} />
                 <div className="flex items-center gap-1">
-                  <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (storageUsed / STORAGE_LIMIT) * 100)}%`, backgroundColor: storageUsed / STORAGE_LIMIT > 0.9 ? '#FF5630' : storageUsed / STORAGE_LIMIT > 0.7 ? '#FF8B00' : '#36B37E' }} />
-                  </div>
-                  <span>{storageUsed >= 1024 * 1024 ? `${(storageUsed / 1024 / 1024).toFixed(1)} MB` : `${(storageUsed / 1024).toFixed(0)} KB`} / {STORAGE_LIMIT >= 1024 * 1024 * 1024 ? `${(STORAGE_LIMIT / 1024 / 1024 / 1024).toFixed(0)} GB` : `${(STORAGE_LIMIT / 1024 / 1024).toFixed(0)} MB`}</span>
+                  {STORAGE_LIMIT !== null && (
+                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (storageUsed / STORAGE_LIMIT) * 100)}%`, backgroundColor: storageUsed / STORAGE_LIMIT > 0.9 ? '#FF5630' : storageUsed / STORAGE_LIMIT > 0.7 ? '#FF8B00' : '#36B37E' }} />
+                    </div>
+                  )}
+                  <span>{storageUsed >= 1024 * 1024 ? `${(storageUsed / 1024 / 1024).toFixed(1)} MB` : `${(storageUsed / 1024).toFixed(0)} KB`}{STORAGE_LIMIT !== null && ` / ${STORAGE_LIMIT >= 1024 * 1024 * 1024 ? `${(STORAGE_LIMIT / 1024 / 1024 / 1024).toFixed(0)} GB` : `${(STORAGE_LIMIT / 1024 / 1024).toFixed(0)} MB`}`}</span>
                 </div>
               </div>
             )}

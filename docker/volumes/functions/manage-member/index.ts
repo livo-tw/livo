@@ -1,6 +1,6 @@
 // Member management (self-hosted edge function).
-// Actions: create / toggle_active / delete / reset_password — mirrors
-// worker/src/functions/manageMember.ts.
+// Actions: create / toggle_active / delete / reset_password / create_login —
+// mirrors worker/src/functions/manageMember.ts.
 // Fixes vs. the legacy version:
 //   - create accepts an optional body.password (self-hosted stacks ship with
 //     OAuth disabled — without a known password a new member could never log
@@ -10,6 +10,17 @@
 //     lookup now prefers members.auth_id and falls back to a FULL paged email
 //     scan, so toggle_active/delete no longer silently no-op past 50 users.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.98.0";
+import { isPlaceholderEmail, isValidEmail, normalizeEmail } from "./jiraCsv.ts";
+import {
+  API_KEY_FORBIDDEN,
+  deliverLogin,
+  discardLogin,
+  isApiKeyToken,
+  loadAuthUsersByEmail,
+  LoginError,
+  prepareLogin,
+  resolveLoginChannel,
+} from "./memberAccounts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,25 +96,39 @@ Deno.serve(async (req) => {
     // has a stricter per-action rule below).
     const { data: callerMember } = await supabaseAdmin
       .from("members")
-      .select("role")
+      .select("role, name")
       .eq("auth_id", callerAuth.id)
       .maybeSingle();
 
     let callerRole: string | null = callerMember ? callerMember.role : null;
+    let callerName: string = callerMember ? callerMember.name : "";
     if (!callerMember) {
       // Fallback: check by email
       const { data: callerByEmail } = await supabaseAdmin
         .from("members")
-        .select("role")
+        .select("role, name")
         .eq("email", callerAuth.email)
         .maybeSingle();
       callerRole = callerByEmail ? callerByEmail.role : null;
+      callerName = callerByEmail ? callerByEmail.name : "";
     }
     if (!callerRole || !["admin", "super_admin"].includes(callerRole)) {
       return json({ error: "Permission denied: admin role required" }, 403);
     }
 
     const { action, ...params } = await req.json();
+
+    // A login JWT minted from a personal API key may manage members, but never
+    // set a password or open a login: a leaked key must not become an account
+    // takeover. (create without a password only gets an unusable random one.)
+    if (
+      isApiKeyToken(token) &&
+      (action === "reset_password" ||
+        action === "create_login" ||
+        (action === "create" && typeof params.password === "string" && params.password.length > 0))
+    ) {
+      return json(API_KEY_FORBIDDEN, 403);
+    }
 
     if (action === "create") {
       const { email, name, role, jobTitle, avatar, color, password } = params;
@@ -279,9 +304,11 @@ Deno.serve(async (req) => {
       if (!member) {
         return json({ error: "Member not found" }, 404);
       }
-      if (!member.email) {
+      // Imported people carry a placeholder (uN@import.invalid): a password on
+      // that address would be a login nobody can use — 「啟用帳號」 sets the email.
+      if (isPlaceholderEmail(member.email)) {
         return json(
-          { error: "member_has_no_email", message: "此成員沒有 Email，無法設定登入密碼" },
+          { error: "member_has_no_email", message: "此成員還沒有 Email，請先用「啟用帳號」設定" },
           400
         );
       }
@@ -332,6 +359,99 @@ Deno.serve(async (req) => {
       }
 
       return json({ success: true });
+    }
+
+    if (action === "create_login") {
+      // 「啟用帳號」: give a member that only has a name (Jira import) a real
+      // email and a login. The member row keeps its id, so its tasks,
+      // comments and reviews stay as they are.
+      const memberIdStr = String(params.memberId ?? "");
+      const email = normalizeEmail(params.email);
+      if (!memberIdStr) {
+        return json({ error: "memberId is required" }, 400);
+      }
+      if (!isValidEmail(email)) {
+        return json({ error: "invalid_email", message: "Email 格式不正確" }, 400);
+      }
+
+      const { data: member } = await supabaseAdmin
+        .from("members")
+        .select("id, name, email, role, is_active")
+        .eq("id", memberIdStr)
+        .maybeSingle();
+      if (!member) {
+        return json({ error: "Member not found" }, 404);
+      }
+      if (member.is_active === false) {
+        return json(
+          { error: "member_inactive", message: "此成員已停用，請先啟用成員再建立登入帳號" },
+          400
+        );
+      }
+      if (!isPlaceholderEmail(member.email)) {
+        return json(
+          { error: "already_has_login", message: "此成員已有 Email，請改用「重設密碼」" },
+          409
+        );
+      }
+      // Same escalation rule as reset_password: whoever creates the login
+      // learns (or chooses) its password.
+      if (["admin", "super_admin"].includes(member.role || "") && callerRole !== "super_admin") {
+        return json(
+          { error: "requires_super_admin", message: "只有超級管理員可以為管理員建立登入帳號" },
+          403
+        );
+      }
+
+      // Email already used by another member? (case-insensitive)
+      const { data: allMembers, error: membersErr } = await supabaseAdmin
+        .from("members")
+        .select("id, name, email");
+      if (membersErr) {
+        return json({ error: membersErr.message }, 400);
+      }
+      const owner = (allMembers || []).find(
+        (m: { id: string; email: string | null }) => m.id !== member.id && normalizeEmail(m.email) === email,
+      );
+      if (owner) {
+        return json(
+          { error: "email_taken", message: `此 Email 已是成員「${owner.name}」的帳號`, memberName: owner.name },
+          409
+        );
+      }
+
+      const channel = await resolveLoginChannel(supabaseAdmin, req);
+      const authUsers = await loadAuthUsersByEmail(supabaseAdmin);
+      let login;
+      try {
+        login = await prepareLogin(supabaseAdmin, channel.method, { email, name: member.name }, authUsers);
+      } catch (err) {
+        if (err instanceof LoginError) return json({ error: err.code, message: err.message }, 409);
+        return json({ error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+
+      const { error: linkErr } = await supabaseAdmin
+        .from("members")
+        .update({ email, auth_id: login.authUserId })
+        .eq("id", member.id);
+      if (linkErr) {
+        await discardLogin(supabaseAdmin, login);
+        return json({ error: linkErr.message }, 400);
+      }
+
+      const delivery = await deliverLogin(supabaseAdmin, channel, login, {
+        name: member.name,
+        email,
+        invitedBy: callerName,
+      });
+      return json({
+        success: true,
+        memberId: member.id,
+        email,
+        method: delivery.method,
+        ...(delivery.tempPassword ? { tempPassword: delivery.tempPassword } : {}),
+        ...(delivery.inviteFailed ? { inviteFailed: true } : {}),
+      });
     }
 
     return json({ error: "Unknown action" }, 400);

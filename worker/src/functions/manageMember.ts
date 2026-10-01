@@ -1,8 +1,8 @@
 // Port of the manage-member Edge Function (supabase/functions/manage-member).
 // Route: POST /api/functions/manage-member (requireMember already ran).
-// Actions: create / toggle_active / delete — operate directly on D1
-// (auth_users replaces GoTrue). Response shapes and status codes mirror
-// the original function exactly.
+// Actions: create / toggle_active / delete / reset_password / create_login —
+// operate directly on D1 (auth_users replaces GoTrue). Response shapes and
+// status codes mirror the original function exactly.
 
 import type { Context } from 'hono';
 import type { AppContext } from '../env';
@@ -12,6 +12,8 @@ import { TABLES } from '../tables';
 import { rowToWire, valueToDb, nowIso, type TableMeta } from '../meta';
 import { notifyChanges } from '../notify';
 import { hashPassword, clearMemberCache } from '../auth';
+import { API_KEY_FORBIDDEN, deliverLogin, isApiKeyCaller, LoginError, prepareLogin, resolveLoginChannel } from '../memberLogin';
+import { isPlaceholderEmail, isValidEmail, normalizeEmail } from './jiraCsv';
 
 const ADMIN_ROLES = ['admin', 'super_admin'];
 
@@ -32,7 +34,7 @@ interface ManageMemberBody {
   avatar?: string;
   color?: string;
   password?: string;
-  // toggle_active / delete / reset_password
+  // toggle_active / delete / reset_password / create_login
   memberId?: string;
   isActive?: boolean;
   newPassword?: string;
@@ -48,10 +50,21 @@ export const handleManageMember = async (c: Context<AppContext>): Promise<Respon
     const body = (await c.req.json()) as ManageMemberBody;
     const action = body.action;
 
+    // An API key may manage members but never set a password or open a login:
+    // a leaked key must not become an account takeover. (create without a
+    // password only gets an unusable random one.)
+    if (
+      isApiKeyCaller(auth) &&
+      (action === 'reset_password' || action === 'create_login' || (action === 'create' && !!body.password))
+    ) {
+      return c.json(API_KEY_FORBIDDEN, 403);
+    }
+
     if (action === 'create') return await createMember(c, body);
     if (action === 'toggle_active') return await toggleActive(c, body);
     if (action === 'delete') return await deleteMember(c, body);
     if (action === 'reset_password') return await resetPassword(c, body);
+    if (action === 'create_login') return await createLogin(c, body);
 
     return c.json({ error: 'Unknown action' }, 400);
   } catch (err) {
@@ -79,7 +92,11 @@ async function resetPassword(c: Context<AppContext>, body: ManageMemberBody): Pr
     .bind(memberId, callerWs(c))
     .first<{ id: string; email: string | null; role: string | null; auth_id: string | null }>();
   if (!member) return c.json({ error: 'Member not found' }, 404);
-  if (!member.email) return c.json({ error: 'member_has_no_email', message: '此成員沒有 Email，無法設定登入密碼' }, 400);
+  // Imported people carry a placeholder (uN@import.invalid): a password on
+  // that address would be a login nobody can use — 「啟用帳號」 sets the email.
+  if (isPlaceholderEmail(member.email)) {
+    return c.json({ error: 'member_has_no_email', message: '此成員還沒有 Email，請先用「啟用帳號」設定' }, 400);
+  }
 
   if (ADMIN_ROLES.includes(member.role || '') && auth.member.role !== 'super_admin') {
     return c.json({ error: 'Permission denied: only super_admin can reset an admin password' }, 403);
@@ -112,15 +129,118 @@ async function resetPassword(c: Context<AppContext>, body: ManageMemberBody): Pr
     const authUserId = crypto.randomUUID();
     await env.DB
       .prepare('INSERT INTO auth_users (id, email, password_hash, banned, created_at) VALUES (?1, ?2, ?3, 0, ?4)')
-      .bind(authUserId, member.email.toLowerCase(), passwordHash, nowIso())
+      .bind(authUserId, (member.email || '').toLowerCase(), passwordHash, nowIso())
       .run();
     await env.DB
-      .prepare('UPDATE members SET auth_id = ?1 WHERE id = ?2')
-      .bind(authUserId, member.id)
+      .prepare('UPDATE members SET auth_id = ?1 WHERE id = ?2 AND workspace_id = ?3')
+      .bind(authUserId, member.id, callerWs(c))
       .run();
   }
 
   return c.json({ success: true });
+}
+
+// ── create_login (「啟用帳號」) ───────────────────────────────────────────
+// Gives a member that only has a name (Jira import) a real email and a login.
+// The member row keeps its id, so its tasks, comments and reviews stay as
+// they are. The person gets a set-password invitation when email sending is
+// configured, otherwise a one-time temporary password shown to the admin.
+
+async function createLogin(c: Context<AppContext>, body: ManageMemberBody): Promise<Response> {
+  const env = c.env;
+  const ws = callerWs(c);
+  const auth = c.get('auth');
+  const memberId = String(body.memberId ?? '');
+  const email = normalizeEmail(body.email);
+  if (!memberId) return c.json({ error: 'memberId is required' }, 400);
+  if (!isValidEmail(email)) return c.json({ error: 'invalid_email', message: 'Email 格式不正確' }, 400);
+
+  const member = await env.DB
+    .prepare('SELECT id, name, email, role, is_active FROM members WHERE id = ?1 AND workspace_id = ?2')
+    .bind(memberId, ws)
+    .first<{ id: string; name: string; email: string | null; role: string | null; is_active: number | null }>();
+  if (!member) return c.json({ error: 'Member not found' }, 404);
+  if (!member.is_active) {
+    return c.json({ error: 'member_inactive', message: '此成員已停用，請先啟用成員再建立登入帳號' }, 400);
+  }
+  if (!isPlaceholderEmail(member.email)) {
+    return c.json({ error: 'already_has_login', message: '此成員已有 Email，請改用「重設密碼」' }, 409);
+  }
+  // Same escalation rule as reset_password: whoever creates the login learns
+  // (or chooses) its password.
+  if (ADMIN_ROLES.includes(member.role || '') && auth.member.role !== 'super_admin') {
+    return c.json({ error: 'requires_super_admin', message: '只有超級管理員可以為管理員建立登入帳號' }, 403);
+  }
+
+  // members.email is unique across workspaces (requireMember heals logins by
+  // email), so this lookup is deliberately global; another workspace's member
+  // is reported without any detail.
+  const owner = await env.DB
+    .prepare('SELECT id, name, workspace_id FROM members WHERE email = ?1 COLLATE NOCASE LIMIT 1')
+    .bind(email)
+    .first<{ id: string; name: string; workspace_id: string | null }>();
+  if (owner) {
+    const sameWs = (owner.workspace_id || DEFAULT_WORKSPACE) === ws;
+    return c.json(
+      sameWs
+        ? { error: 'email_taken', message: `此 Email 已是成員「${owner.name}」的帳號`, memberName: owner.name }
+        : { error: 'email_in_other_workspace', message: '此 Email 已在其他 LIVO 團隊使用，請改用其他 Email' },
+      409
+    );
+  }
+
+  const channel = await resolveLoginChannel(env, ws);
+  let login;
+  try {
+    login = await prepareLogin(env, email, channel.method);
+  } catch (err) {
+    if (err instanceof LoginError) return c.json({ error: err.code, message: err.message }, 409);
+    throw err;
+  }
+
+  const meta = membersMeta();
+  let updated: Record<string, unknown> | null = null;
+  try {
+    const results = await env.DB.batch([
+      ...login.statements,
+      env.DB
+        .prepare('UPDATE members SET email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4 RETURNING *')
+        .bind(email, login.authUserId, member.id, ws),
+    ]);
+    const last = results[results.length - 1];
+    updated = ((last && (last.results as Record<string, unknown>[])[0]) || null);
+  } catch (err) {
+    // UNIQUE(email) lost a race with another request: same answer as above.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE/i.test(msg)) return c.json({ error: 'email_taken', message: '此 Email 已被使用' }, 409);
+    throw err;
+  }
+  clearMemberCache(login.authUserId);
+
+  const delivery = await deliverLogin(env, channel, login, {
+    name: member.name,
+    email,
+    invitedBy: auth.member.name,
+  });
+
+  if (updated) {
+    const event: ChangeEvent = {
+      table: 'members',
+      eventType: 'UPDATE',
+      new: rowToWire(updated, meta),
+      old: { id: member.id },
+    };
+    notifyChanges(env, c.executionCtx, [event], ws);
+  }
+
+  return c.json({
+    success: true,
+    memberId: member.id,
+    email,
+    method: delivery.method,
+    ...(delivery.tempPassword ? { tempPassword: delivery.tempPassword } : {}),
+    ...(delivery.inviteFailed ? { inviteFailed: true } : {}),
+  });
 }
 
 // ── create ────────────────────────────────────────────────────────────────

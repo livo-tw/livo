@@ -78,6 +78,47 @@ services:
     plugins:
       - name: cors
 
+  ## LIVO personal API keys: a key is exchanged for a short-lived login JWT
+  ## (functions/api-tokens). Those JWTs start with a fixed prefix (see
+  ## PAT_JWT_MARKER in functions/api-tokens/core.ts) and may only READ the
+  ## account here: GET /auth/v1/user, which the edge functions use to verify
+  ## callers. Every other auth endpoint (password / email change, MFA,
+  ## sign-out, reauthenticate) is refused by auth-v1-livo-pat-block below.
+  ## The path stays without a leading ~: with _format_version 2.1, Kong 3
+  ## turns this regex-looking path into ~/auth/v1/user$ by itself.
+  - name: auth-v1-livo-pat-user
+    _comment: 'Auth: GET /auth/v1/user with an API-key JWT -> http://auth:9999/user'
+    url: http://auth:9999/user
+    routes:
+      - name: auth-v1-livo-pat-user
+        strip_path: true
+        paths:
+          - '/auth/v1/user$'
+        methods:
+          - GET
+        headers:
+          authorization:
+            - '~*^bearer\s+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJsaXZvX3BhdCI6'
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+          replace:
+            headers:
+              - "Authorization: $LUA_AUTH_EXPR"
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
   ## Secure Auth routes
   - name: auth-v1
     _comment: 'Auth: /auth/v1/* -> http://auth:9999/*'
@@ -87,6 +128,20 @@ services:
         strip_path: true
         paths:
           - /auth/v1/
+      # API-key JWTs on any other auth endpoint (see auth-v1-livo-pat-user)
+      - name: auth-v1-livo-pat-block
+        strip_path: true
+        paths:
+          - /auth/v1/
+        headers:
+          authorization:
+            - '~*^bearer\s+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJsaXZvX3BhdCI6'
+        plugins:
+          - name: request-termination
+            config:
+              status_code: 403
+              content_type: application/json
+              body: '{"code":"livo_pat_readonly","message":"API key tokens cannot change the account (password, email, MFA, sign-out)."}'
     plugins:
       - name: cors
       - name: key-auth

@@ -1,12 +1,60 @@
-// Jira CSV importer (self-hosted edge function).
-// Contract C2 (mirrors worker/src/functions/importJira.ts):
-//   - non-professional callers get a SAFE DRY-RUN (parse + stats, ZERO writes)
-//   - professional callers get the real, destructive import
-// Fixes vs. the legacy version: members are loaded from the DB (no hardwired
-// demo ids), unknown members get unique placeholder emails, creator falls back
-// to the importing user, missing projects are auto-created, and stats reflect
-// ACTUAL inserts instead of parsed counts.
+// Jira CSV importer (self-hosted edge function). Mirrors
+// worker/src/functions/importJira.ts; parsing, header aliases, status /
+// priority / date mapping and the people → members plan come from
+// ./jiraCsv.ts, logins from ./memberAccounts.ts (copies shared with the
+// worker / manage-member — `npm run sync:shared`).
+//
+// Request: POST JSON { csv, dryRun?, accounts?: [{ name, email }], timeZone? }.
+// A raw CSV body (text/plain, older clients) is a real import without
+// accounts. timeZone is the IANA zone the export's times are in (Jira writes
+// the exporting user's local time); Asia/Taipei when omitted.
+//   - dryRun, or a non-professional caller (contract C2): preview only —
+//     stats, the people list with what will happen to each person, account
+//     errors; ZERO writes.
+//   - otherwise the real import: it first wipes tasks, sprints, comments …
+//     (unchanged), then imports. People on the accounts list get a real login
+//     (set-password invitation, or a one-time temporary password when no
+//     Resend key is bound); everyone else stays a name-only member, as before.
+// A CSV missing a required column, account errors, or a CSV that yields no
+// task are refused before anything is written.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  DEFAULT_TIME_ZONE,
+  isPlaceholderEmail,
+  normalizeEmail,
+  parseJiraExport,
+  placeholderEmail,
+  planMemberId,
+  planMembers,
+  planStatuses,
+  summarizePeople,
+  textToHtml,
+  validTimeZone,
+  type AccountRequest,
+  type EmailOwner,
+  type ExistingMember,
+  type MentionResolver,
+  type PersonPlan,
+  type WorkspaceStatus,
+} from "./jiraCsv.ts";
+import {
+  API_KEY_FORBIDDEN,
+  deliverLogin,
+  discardLogin,
+  isApiKeyToken,
+  loadAuthUsersByEmail,
+  LoginError,
+  prepareLogin,
+  resolveLoginChannel,
+  type LoginChannel,
+} from "./memberAccounts.ts";
+
+/** A write after the wipe failed: the import stops and reports this step. */
+class ImportStepError extends Error {
+  constructor(readonly step: string, detail: unknown) {
+    super(`${step}: ${detail instanceof Error ? detail.message : typeof detail === 'object' && detail && 'message' in detail ? String((detail as { message: unknown }).message) : String(detail)}`);
+  }
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,320 +78,10 @@ async function verifyLicense(supabase: any): Promise<{ tier: LicenseTier; isVali
   }
 }
 
-// ── Chinese date parsing ──
-const monthMap: Record<string, number> = {
-  '一月': 0, '二月': 1, '三月': 2, '四月': 3, '五月': 4, '六月': 5,
-  '七月': 6, '八月': 7, '九月': 8, '十月': 9, '十一月': 10, '十二月': 11,
-};
-
-function parseChineseDateTime(s: string): string | null {
-  if (!s?.trim()) return null;
-  const m = s.match(/(\d+)\/([一-鿿]+)\/(\d+)\s+(\d+):(\d+)\s*(上午|下午)/);
-  if (!m) return null;
-  const [, day, mCh, yr, hr, min, ap] = m;
-  const month = monthMap[mCh];
-  if (month === undefined) return null;
-  let h = parseInt(hr);
-  if (ap === '下午' && h !== 12) h += 12;
-  if (ap === '上午' && h === 12) h = 0;
-  const d = new Date(2000 + parseInt(yr), month, parseInt(day), h, parseInt(min));
-  return d.toISOString().split('.')[0] + 'Z';
-}
-
-function parseDateOnly(s: string): string | null {
-  if (!s?.trim()) return null;
-  const m = s.match(/(\d+)\/([一-鿿]+)\/(\d+)/);
-  if (!m) return null;
-  const [, day, mCh, yr] = m;
-  const month = monthMap[mCh];
-  if (month === undefined) return null;
-  return `${2000 + parseInt(yr)}-${String(month + 1).padStart(2, '0')}-${String(parseInt(day)).padStart(2, '0')}`;
-}
-
 /** "2026-04-01T..." → "2026-04-01"; strings without 'T' pass through unchanged. */
 function dateOnlyPart(s: string): string {
   const i = s.indexOf('T');
   return i >= 0 ? s.slice(0, i) : s;
-}
-
-// ── Simple CSV parser that handles quoted multi-line fields ──
-function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
-  let i = 0;
-  const len = text.length;
-
-  // Remove BOM
-  if (text.charCodeAt(0) === 0xFEFF) i = 1;
-
-  while (i < len) {
-    const row: string[] = [];
-    while (i < len) {
-      if (text[i] === '"') {
-        // Quoted field
-        i++; // skip opening quote
-        let field = '';
-        while (i < len) {
-          if (text[i] === '"') {
-            if (i + 1 < len && text[i + 1] === '"') {
-              field += '"';
-              i += 2;
-            } else {
-              i++; // skip closing quote
-              break;
-            }
-          } else {
-            field += text[i];
-            i++;
-          }
-        }
-        row.push(field);
-      } else {
-        // Unquoted field
-        let field = '';
-        while (i < len && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') {
-          field += text[i];
-          i++;
-        }
-        row.push(field);
-      }
-
-      if (i < len && text[i] === ',') {
-        i++; // skip comma
-      } else {
-        break; // end of row
-      }
-    }
-    // Skip newline(s)
-    while (i < len && (text[i] === '\r' || text[i] === '\n')) i++;
-
-    if (row.length > 1 || (row.length === 1 && row[0] !== '')) {
-      rows.push(row);
-    }
-  }
-  return rows;
-}
-
-// ── Convert Jira wiki markup / markdown-ish to HTML ──
-function textToHtml(text: string, jiraIdToName?: Record<string, string>, memberMap?: Record<string, string>): string {
-  if (!text) return '';
-
-  // If content already contains HTML tags (like <p>, <h2>), return as-is
-  // but still process mentions
-  if (/<[a-z][\s\S]*>/i.test(text)) {
-    // Still resolve mentions in existing HTML
-    let html = text;
-    if (jiraIdToName && memberMap) {
-      html = html.replace(/\[~accountid:([^\]]+)\]/g, (_m, accId) => {
-        const name = jiraIdToName[accId.trim()];
-        if (name) {
-          const memberId = memberMap[name] || '';
-          return `<span class="mention" data-id="${memberId}">@${name}</span>`;
-        }
-        return '@unknown';
-      });
-    }
-    html = html.replace(/@user/g, '@成員');
-    return html;
-  }
-
-  // Process line by line for Jira wiki markup
-  const lines = text.split('\n');
-  const result: string[] = [];
-  let inList = false;
-  let listLevel = 0;
-  let inTable = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Jira table header row: ||col1||col2||
-    if (/^\|\|.+\|\|/.test(line)) {
-      if (inList) { for (let d = listLevel; d > 0; d--) result.push('</ul>'); inList = false; listLevel = 0; }
-      if (!inTable) { result.push('<table>'); inTable = true; }
-      const cells = line.split('||').filter(c => c !== '');
-      result.push('<tr>' + cells.map(c => `<th>${processInline(c.trim(), jiraIdToName, memberMap)}</th>`).join('') + '</tr>');
-      continue;
-    }
-
-    // Jira table data row: |col1|col2|
-    if (/^\|[^|]/.test(line) && line.endsWith('|')) {
-      if (inList) { for (let d = listLevel; d > 0; d--) result.push('</ul>'); inList = false; listLevel = 0; }
-      if (!inTable) { result.push('<table>'); inTable = true; }
-      const cells = line.slice(1, -1).split('|');
-      result.push('<tr>' + cells.map(c => `<td>${processInline(c.trim(), jiraIdToName, memberMap)}</td>`).join('') + '</tr>');
-      continue;
-    }
-
-    // Close table if we're no longer in table rows
-    if (inTable) { result.push('</table>'); inTable = false; }
-
-    // Jira headings: h1. h2. h3. h4. h5. h6.
-    const headingMatch = line.match(/^h([1-6])\.\s+(.+)$/);
-    if (headingMatch) {
-      if (inList) { result.push('</ul>'); inList = false; }
-      const level = headingMatch[1];
-      const content = processInline(headingMatch[2], jiraIdToName, memberMap);
-      result.push(`<h${level}>${content}</h${level}>`);
-      continue;
-    }
-
-    // Jira bullet lists: * item, ** sub-item, *** sub-sub-item
-    const bulletMatch = line.match(/^(\*+)\s+(.+)$/);
-    if (bulletMatch) {
-      const depth = bulletMatch[1].length;
-      const content = processInline(bulletMatch[2], jiraIdToName, memberMap);
-      if (!inList) { result.push('<ul>'); inList = true; listLevel = depth; }
-      else if (depth > listLevel) { result.push('<ul>'); listLevel = depth; }
-      else if (depth < listLevel) {
-        for (let d = listLevel; d > depth; d--) result.push('</ul>');
-        listLevel = depth;
-      }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Jira numbered lists: # item, ## sub-item
-    const numberedMatch = line.match(/^(#+)\s+(.+)$/);
-    if (numberedMatch) {
-      const content = processInline(numberedMatch[2], jiraIdToName, memberMap);
-      if (!inList) { result.push('<ol>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Markdown-style bullet: - item
-    const mdBulletMatch = line.match(/^-\s+(.+)$/);
-    if (mdBulletMatch) {
-      const content = processInline(mdBulletMatch[1], jiraIdToName, memberMap);
-      if (!inList) { result.push('<ul>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Markdown-style numbered: 1. item
-    const mdNumMatch = line.match(/^\d+\.\s+(.+)$/);
-    if (mdNumMatch) {
-      const content = processInline(mdNumMatch[1], jiraIdToName, memberMap);
-      if (!inList) { result.push('<ol>'); inList = true; }
-      result.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    // Close list if we hit a non-list line
-    if (inList) {
-      for (let d = listLevel; d > 0; d--) result.push('</ul>');
-      inList = false;
-      listLevel = 0;
-    }
-
-    // Empty line → paragraph break
-    if (line.trim() === '') {
-      continue;
-    }
-
-    // Horizontal rule: ----
-    if (/^-{4,}$/.test(line.trim())) {
-      result.push('<hr/>');
-      continue;
-    }
-
-    // Regular paragraph line
-    result.push(`<p>${processInline(line, jiraIdToName, memberMap)}</p>`);
-  }
-
-  // Close any remaining structures
-  if (inTable) result.push('</table>');
-  if (inList) {
-    for (let d = listLevel; d > 0; d--) result.push('</ul>');
-  }
-
-  return result.join('\n');
-}
-
-// Process inline Jira wiki markup
-function processInline(text: string, jiraIdToName?: Record<string, string>, memberMap?: Record<string, string>): string {
-  // Escape HTML entities first
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // Jira bold: *text*  (but not ** which is sub-bullet)
-  html = html.replace(/\*([^\s*][^*]*[^\s*])\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*([^\s*])\*/g, '<strong>$1</strong>');
-
-  // Markdown bold: **text**
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Jira italic: _text_
-  html = html.replace(/_([^\s_][^_]*[^\s_])_/g, '<em>$1</em>');
-  html = html.replace(/_([^\s_])_/g, '<em>$1</em>');
-
-  // Jira strikethrough: -text- (strict + safe mode to avoid corrupting URLs / links / tech tokens)
-  html = html.replace(/(^|[\s([{「『“‘"'`])-([^\n\r\-]{1,60}?)-(?=$|[\s)\]}」』”’"'`.,;!?])/g, (full, prefix, inner) => {
-    const value = String(inner || '').trim();
-    if (!value) return full;
-    if (/(https?:\/\/|www\.|\.com|\.net|\.org|\.io|@|\/|\\|\|)/i.test(value)) return full;
-    return `${prefix}<s>${value}</s>`;
-  });
-
-  // Markdown strikethrough: ~~text~~
-  html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
-
-  // Jira inline code: {{text}}
-  html = html.replace(/\{\{(.+?)\}\}/g, '<code>$1</code>');
-
-  // Markdown inline code: `text`
-  html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-
-  // Jira color: {color:#hex}text{color}
-  html = html.replace(/\{color:(#[0-9a-fA-F]+)\}(.*?)\{color\}/g, '<span style="color:$1">$2</span>');
-
-  // Jira images: !image.png|width=X,height=Y! → [image]
-  html = html.replace(/!([^|!]+)\|[^!]*!/g, '[圖片: $1]');
-  html = html.replace(/!([^!]+)!/g, '[圖片: $1]');
-
-  // Jira links: [text|url] or [url]
-  html = html.replace(/\[([^|]+)\|([^\]]+)\]/g, '<a href="$2">$1</a>');
-  html = html.replace(/\[(https?:\/\/[^\]]+)\]/g, '<a href="$1">$1</a>');
-
-  // Jira user mentions: [~accountid:xxx] → resolve to actual name
-  if (jiraIdToName && memberMap) {
-    html = html.replace(/\[~accountid:([^\]]+)\]/g, (_m: string, accId: string) => {
-      const name = jiraIdToName[accId.trim()];
-      if (name) {
-        const memberId = memberMap[name] || '';
-        return `<span class="mention" data-id="${memberId}">@${name}</span>`;
-      }
-      return '@成員';
-    });
-  } else {
-    html = html.replace(/\[~accountid:[^\]]+\]/g, '@成員');
-  }
-  return html;
-}
-
-// ── Priority mapping ──
-function mapPriority(p: string): string {
-  const m: Record<string, string> = {
-    'Highest': 'highest', 'High': 'high', 'Medium': 'medium',
-    'Low': 'low', 'Lowest': 'lowest',
-  };
-  return m[p] || 'medium';
-}
-
-// ── Status mapping (Jira → DB status ID) ──
-function mapStatusId(s: string): string {
-  const m: Record<string, string> = {
-    '待办': 's1', '待辦': 's1',
-    '正在进行': 's2', '正在進行': 's2',
-    '待驗收': 's3', '待验收': 's3',
-    '待討論確認': 's4', '待讨论确认': 's4',
-    '等待部署': 's5',
-    '已完成': 's6', '完成': 's6',
-    '不做了': 's7',
-  };
-  return m[s] || 's1';
 }
 
 // Resolve the importing user's member id from the Authorization header.
@@ -387,6 +125,7 @@ async function resolveImporterMemberId(supabase: any, req: Request): Promise<str
 type NewMemberRow = {
   id: string; name: string; avatar: string; role: string;
   email: string; color: string; job_title: string; is_active: boolean;
+  auth_id?: string;
 };
 
 type TaskRow = {
@@ -401,7 +140,67 @@ type TaskRow = {
 type CommentRow = { id: string; task_id: string; user_id: string; content: string; created_at: string };
 type SpecRow = { id: string; task_id: string; background: string; requirement: string; notes: string };
 
+const newMemberRow = (id: string, name: string, email: string): NewMemberRow => ({
+  id, name, avatar: name[0]?.toUpperCase() || '?',
+  // email must be unique per member — name-only members get a per-id placeholder.
+  role: 'member', email, color: '#6B778C', job_title: '', is_active: true,
+});
+
+interface ImportRequest {
+  csv: string;
+  dryRun: boolean;
+  accounts: AccountRequest[];
+  timeZone: string;
+}
+
+async function readImportRequest(req: Request): Promise<ImportRequest | null> {
+  const raw = await req.text();
+  if (!(req.headers.get('Content-Type') || '').includes('application/json')) {
+    return { csv: raw, dryRun: false, accounts: [], timeZone: DEFAULT_TIME_ZONE }; // older clients post the bare CSV
+  }
+  let body: any;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== 'object' || typeof body.csv !== 'string') return null;
+  const accounts = Array.isArray(body.accounts)
+    ? body.accounts
+        .filter((a: unknown) => !!a && typeof a === 'object')
+        .slice(0, 2000)
+        .map((a: any) => ({ name: String(a.name ?? ''), email: String(a.email ?? '') }))
+    : [];
+  const timeZone = validTimeZone(typeof body.timeZone === 'string' ? body.timeZone : null) || DEFAULT_TIME_ZONE;
+  return { csv: body.csv, dryRun: body.dryRun === true, accounts, timeZone };
+}
+
+type AccountPlan = Extract<PersonPlan, { kind: 'new_account' } | { kind: 'activate' }>;
+
+interface AccountsResult {
+  method: LoginChannel['method'];
+  invited: { name: string; email: string }[];
+  credentials: { name: string; email: string; password: string; inviteFailed?: boolean }[];
+  failed: { name: string; email: string; reason: string }[];
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight (the function has a 60 s budget). */
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]);
+  }));
+}
+
 Deno.serve(async (req) => {
+  // What the destructive path has written so far (reported if it fails midway).
+  const written = {
+    wiped: false,
+    tasksInserted: 0,
+    commentsInserted: 0,
+    specsInserted: 0,
+    accounts: null as AccountsResult | null,
+  };
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -415,6 +214,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
     // ── Permission floor: caller must be an admin/super_admin member ────────
@@ -422,6 +222,9 @@ Deno.serve(async (req) => {
     // JWT must never reach it. Same caller-role pattern as manage-member
     // (members.auth_id first, email fallback). A caller presenting the
     // service-role key itself (server-side scripting) is allowed through.
+    let callerRole = 'super_admin';
+    let callerName = '';
+    let callerViaApiKey = false;
     {
       const authHeader = req.headers.get('Authorization') || '';
       const callerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
@@ -431,178 +234,104 @@ Deno.serve(async (req) => {
         const { data: { user: callerAuth }, error: callerErr } =
           await supabase.auth.getUser(callerToken);
         if (callerErr || !callerAuth) return json({ error: 'Invalid token' }, 401);
-        let callerRole: string | null = null;
+        type CallerRow = { role?: string; name?: string } | null;
         const { data: byAuth } = await supabase
-          .from('members').select('role').eq('auth_id', callerAuth.id).maybeSingle();
-        callerRole = (byAuth as { role?: string } | null)?.role ?? null;
-        if (!callerRole && callerAuth.email) {
+          .from('members').select('role, name').eq('auth_id', callerAuth.id).maybeSingle();
+        let caller = byAuth as CallerRow;
+        if (!caller && callerAuth.email) {
           const { data: byEmail } = await supabase
-            .from('members').select('role').eq('email', callerAuth.email).maybeSingle();
-          callerRole = (byEmail as { role?: string } | null)?.role ?? null;
+            .from('members').select('role, name').eq('email', callerAuth.email).maybeSingle();
+          caller = byEmail as CallerRow;
         }
-        if (!callerRole || !['admin', 'super_admin'].includes(callerRole)) {
+        if (!caller?.role || !['admin', 'super_admin'].includes(caller.role)) {
           return json({ error: 'Permission denied: admin role required' }, 403);
         }
+        callerRole = caller.role;
+        callerName = caller.name || '';
+        callerViaApiKey = isApiKeyToken(callerToken);
       }
     }
 
-    // Tier behavior (contract C2): non-professional callers get a SAFE DRY-RUN
-    // (parse + stats, ZERO writes); professional callers get the real,
-    // destructive import. isPro is resolved up front but only *enforced* after
-    // the CSV is fully parsed into memory — the branch happens right before the
-    // first DELETE, so a non-pro caller never writes to the DB.
+    // Tier behavior (contract C2): non-professional callers get a SAFE DRY-RUN.
     const license = await verifyLicense(supabase);
     const isPro = license.tier === 'professional';
 
-    const csvText = await req.text();
-    console.log('CSV length:', csvText.length);
-
-    const rows = parseCSV(csvText);
-    console.log('Parsed rows:', rows.length);
-
-    if (rows.length < 2) {
-      return json({ error: 'No data rows' }, 400);
+    const request = await readImportRequest(req);
+    if (!request) return json({ error: 'invalid_request', message: '請求格式不正確' }, 400);
+    // Opening logins is refused to API keys (same rule as manage-member).
+    if (callerViaApiKey && !request.dryRun && request.accounts.length > 0) {
+      return json(API_KEY_FORBIDDEN, 403);
     }
+    console.log('CSV length:', request.csv.length);
 
-    const headers = rows[0];
-
-    // Find column index by header name
-    const col = (name: string) => headers.findIndex(h => h.trim() === name);
-
-    // Find ALL indices for a repeated column name
-    const colAll = (name: string) => {
-      const indices: number[] = [];
-      headers.forEach((h, i) => { if (h.trim() === name) indices.push(i); });
-      return indices;
-    };
-
-    // Sprint columns may be exported as English (Sprint) or Chinese (冲刺) and can repeat.
-    const sprintIndices = Array.from(new Set([
-      ...colAll('Sprint'),
-      ...colAll('冲刺'),
-    ]));
-
-    const extractSprintName = (raw: string): string | null => {
-      const s = (raw || '').trim();
-      if (!s) return null;
-
-      // Typical Jira export format contains: name=202603W1
-      const matches = Array.from(s.matchAll(/name=([^,\]]+)/g));
-      if (matches.length > 0) return String(matches[matches.length - 1][1]).trim();
-
-      // JSON-ish payloads
-      const jsonMatch = s.match(/"name"\s*:\s*"([^"]+)"/);
-      if (jsonMatch) return jsonMatch[1].trim();
-
-      // Plain sprint name fallback
-      if (s.length <= 120 && !/com\.atlassian\.|\bid=\d+\b/i.test(s)) return s;
-
-      return null;
-    };
-
-    const getSprintNameFromRow = (row: string[]): string => {
-      if (sprintIndices.length === 0) return '';
-      // Prefer the last non-empty sprint cell (often the most recent)
-      for (let j = sprintIndices.length - 1; j >= 0; j--) {
-        const idx = sprintIndices[j];
-        const name = extractSprintName(row[idx] || '');
-        if (name) return name;
+    const parsed = parseJiraExport(request.csv, { timeZone: request.timeZone });
+    if (!parsed.ok) {
+      if (parsed.error === 'no_data_rows') {
+        return json({ error: 'no_data_rows', message: 'CSV 沒有任何資料列' }, 400);
       }
-      return '';
-    };
+      return json(
+        {
+          error: 'missing_columns',
+          message: `CSV 缺少必要欄位：${parsed.missing.map((m) => m.accepted.join(' / ')).join('、')}`,
+          missingColumns: parsed.missing,
+          detectedColumns: parsed.detected.slice(0, 500),
+        },
+        400,
+      );
+    }
+    console.log('Parsed issues:', parsed.issues.length, 'people:', parsed.people.length);
 
-    const iTitle = col('摘要');
-    const iKey = col('事务密钥');
-    const iStatus = col('状态');
-    const iProjKey = col('项目键');
-    const iProjName = col('项目名称');
-    const iPriority = col('优先级');
-    const iAssignee = col('经办人');
-    const iAssigneeId = col('经办人 ID');
-    const iReporter = col('报告人');
-    const iReporterId = col('报告人 ID');
-    const iCreator = col('创建者');
-    const iCreatorId = col('创建者 ID');
-    const iCreated = col('已创建');
-    const iResolved = col('已解决');
-    const iDueDate = col('截止日期');
-    const iStartDate = col('自定义字段 (Start date)');
-    const iDescription = col('描述');
-    const commentIndices = colAll('评论');
-
-    console.log('Column indices:', {
-      iTitle, iKey, iStatus, iProjKey, iPriority, iAssignee, iReporter, iCreated,
-      sprintColumns: sprintIndices.length,
-      commentColumns: commentIndices.length,
-    });
-
-    // Build jira account ID → name mapping from CSV data
-    const jiraIdToName: Record<string, string> = {};
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      const assignee = row[iAssignee]?.trim();
-      const assigneeId = row[iAssigneeId]?.trim();
-      const reporter = row[iReporter]?.trim();
-      const reporterId = row[iReporterId]?.trim();
-      const creator = row[iCreator]?.trim();
-      const creatorId = row[iCreatorId]?.trim();
-      if (assignee && assigneeId) jiraIdToName[assigneeId] = assignee;
-      if (reporter && reporterId) jiraIdToName[reporterId] = reporter;
-      if (creator && creatorId) jiraIdToName[creatorId] = creator;
+    // ── Statuses: this install's own list (renamed / deleted / added ones
+    //    included); every task gets the id of a status that exists. ──
+    const { data: statusRows, error: statusErr } = await supabase
+      .from('statuses').select('id, name, sort_order, is_done, auto_start');
+    if (statusErr) throw new Error(`Load statuses failed: ${statusErr.message}`);
+    const statusPlan = planStatuses(parsed.issues, (statusRows || []) as WorkspaceStatus[]);
+    if (statusPlan.ok !== true) {
+      return json({ error: 'no_statuses', message: '這個團隊還沒有任何任務狀態，請先到「狀態管理」新增' }, 400);
     }
 
-    // Create missing members. Existing members are reused by exact name;
-    // everyone else becomes a new member (re-imports must not recycle
-    // already-taken uN ids).
-    const allNames = new Set(Object.values(jiraIdToName));
+    // ── People → members (plan only; nothing is written yet) ──
     const { data: existingMembersData, error: existingMembersErr } = await supabase
-      .from('members').select('id, name');
+      .from('members')
+      .select('id, name, email, role, is_active')
+      .order('sort_order', { ascending: true })
+      .order('id', { ascending: true });
     if (existingMembersErr) throw new Error(`Load members failed: ${existingMembersErr.message}`);
-    const existingMembers: { id: string; name: string }[] = existingMembersData || [];
-    const memberMap: Record<string, string> = {};
+    const existing: ExistingMember[] = ((existingMembersData || []) as any[]).map((m) => ({
+      id: m.id, name: m.name, email: m.email || '', role: m.role || 'member', isActive: m.is_active !== false,
+    }));
+    // Re-imports must not recycle already-taken uN ids.
     let memberCounter = 10;
-    for (const m of existingMembers) {
-      if (!memberMap[m.name]) memberMap[m.name] = m.id;
+    for (const m of existing) {
       const um = /^u(\d+)$/.exec(m.id);
       if (um) memberCounter = Math.max(memberCounter, parseInt(um[1], 10) + 1);
     }
-    const newMembers: NewMemberRow[] = [];
-
-    for (const name of allNames) {
-      if (!memberMap[name]) {
-        const id = `u${memberCounter++}`;
-        memberMap[name] = id;
-        newMembers.push({
-          id, name, avatar: name[0]?.toUpperCase() || '?',
-          // email must be unique per member — two '' rows would collide on
-          // installs that enforce unique member emails.
-          role: 'member', email: `${id}@import.invalid`, color: '#6B778C', job_title: '',
-          is_active: true,
-        });
-      }
+    // Single-tenant install: every member is "this workspace".
+    const emailOwners: Record<string, EmailOwner> = {};
+    for (const m of existing) {
+      if (isPlaceholderEmail(m.email)) continue;
+      const key = normalizeEmail(m.email);
+      if (!emailOwners[key]) emailOwners[key] = { memberId: m.id, name: m.name, sameWorkspace: true, hasLogin: true };
     }
-
+    const memberPlan = planMembers({
+      people: parsed.people,
+      existing,
+      accounts: request.accounts,
+      emailOwners,
+      callerIsSuperAdmin: callerRole === 'super_admin',
+      newMemberId: () => `u${memberCounter++}`,
+    });
+    const personName = new Map(parsed.people.map((p) => [p.key, p.name]));
     // Fallback identity for rows with no resolvable reporter/creator: the
     // importing user (the legacy hardcoded 'u1' doesn't exist on fresh installs).
     const fallbackMemberId = await resolveImporterMemberId(supabase, req);
-
-    // Build jiraId → memberId mapping
-    const jiraIdToMemberId: Record<string, string> = {};
-    for (const [jiraId, name] of Object.entries(jiraIdToName)) {
-      jiraIdToMemberId[jiraId] = memberMap[name] || fallbackMemberId;
-    }
-
-    // ── Build sprint mapping (ids generated here so tasks can reference them;
-    //    NO DB write yet — the actual insert happens only on the pro path). ──
-    const sprintNames = new Set<string>();
-    const sprintMap = new Map<string, string>(); // jira sprint name → db sprint id
-    for (let r = 1; r < rows.length; r++) {
-      const sprintName = getSprintNameFromRow(rows[r]);
-      if (sprintName) sprintNames.add(sprintName);
-    }
-    for (const sprintName of sprintNames) {
-      sprintMap.set(sprintName, crypto.randomUUID());
-    }
+    const memberIdOf = (key: string | null): string | null => (key ? planMemberId(memberPlan.plans[key]) : null);
+    const mention: MentionResolver = (accountId) => {
+      const key = parsed.accountPeople[accountId];
+      const name = key ? personName.get(key) : undefined;
+      return name ? { name, memberId: memberIdOf(key) || '' } : null;
+    };
 
     // ── Projects: one LIVO project per Jira project key. A project with the
     //    same key is reused (projects are not cleared, so a re-import lands in
@@ -628,136 +357,129 @@ Deno.serve(async (req) => {
       return id;
     };
 
-    // ── Parse tasks + comments + specs into memory (still NO DB write) ──
+    // ── Tasks + comments + specs in memory (sprint ids are generated here so
+    //    tasks can reference them; still NO DB write) ──
+    const sprintMap = new Map<string, string>(); // jira sprint name → db sprint id
+    for (const name of parsed.sprintNames) sprintMap.set(name, crypto.randomUUID());
+    const today = dateOnlyPart(new Date().toISOString());
     const tasks: TaskRow[] = [];
     const comments: CommentRow[] = [];
     const taskSpecs: SpecRow[] = [];
     let commentId = 1;
     let specId = 1;
-    const seenTaskKeys = new Set<string>();
-
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      const taskKey = row[iKey]?.trim();
-      if (!taskKey || seenTaskKeys.has(taskKey)) continue;
-      seenTaskKeys.add(taskKey);
-
-      const projectKey = row[iProjKey]?.trim();
-      if (!projectKey) continue;
-
-      const title = row[iTitle]?.trim() || '';
-      const statusStr = row[iStatus]?.trim() || '待办';
-      const priorityStr = row[iPriority]?.trim() || 'Medium';
-      const assigneeName = row[iAssignee]?.trim() || '';
-      const reporterName = row[iReporter]?.trim() || '';
-      const creatorName = row[iCreator]?.trim() || '';
-      const createdStr = row[iCreated]?.trim() || '';
-      const resolvedStr = row[iResolved]?.trim() || '';
-      const dueDateStr = row[iDueDate]?.trim() || '';
-      const startDateStr = iStartDate >= 0 ? (row[iStartDate]?.trim() || '') : '';
-      const sprintName = getSprintNameFromRow(row);
-
-      const projectId = projectIdFor(projectKey, iProjName >= 0 ? row[iProjName] || '' : '');
-      const statusId = mapStatusId(statusStr);
-      const priority = mapPriority(priorityStr);
-      const sprintId = sprintName ? (sprintMap.get(sprintName) || null) : null;
-
-      // Map assignee (经办人=指派人), reporter (报告人=验收人&开卡人)
-      const assigneeId = assigneeName ? (memberMap[assigneeName] || null) : null;
-      const reviewerId = reporterName ? (memberMap[reporterName] || null) : null;
-      const creatorId = reporterName
-        ? (memberMap[reporterName] || (creatorName ? memberMap[creatorName] : null) || fallbackMemberId)
-        : (creatorName ? memberMap[creatorName] : null) || fallbackMemberId;
-
-      const createdAt = parseDateOnly(createdStr) || dateOnlyPart(new Date().toISOString());
-      const completedAt = parseChineseDateTime(resolvedStr);
-      const dueDate = parseDateOnly(dueDateStr);
-      const startedAt = startDateStr
-        ? (/^\d{4}/.test(startDateStr) ? dateOnlyPart(startDateStr) : parseDateOnly(startDateStr))
-        : null;
-
-      // Extract comments from comment columns
-      let taskCommentCount = 0;
-      for (const ci of commentIndices) {
-        const cell = row[ci]?.trim();
-        if (!cell) continue;
-
-        // Parse comment: "date;jira_id;content"
-        const firstSemi = cell.indexOf(';');
-        if (firstSemi < 0) continue;
-        const secondSemi = cell.indexOf(';', firstSemi + 1);
-        if (secondSemi < 0) continue;
-
-        const commentDateStr = cell.substring(0, firstSemi).trim();
-        const commentJiraId = cell.substring(firstSemi + 1, secondSemi).trim();
-        const commentContent = cell.substring(secondSemi + 1).trim();
-
-        if (!commentContent) continue;
-
-        const commentDate = parseChineseDateTime(commentDateStr);
-        const commentUserId = jiraIdToMemberId[commentJiraId] || fallbackMemberId;
-
+    for (const issue of parsed.issues) {
+      const createdAt = issue.created || today;
+      for (const cm of issue.comments) {
         comments.push({
           id: `c${String(commentId++).padStart(5, '0')}`,
-          task_id: taskKey,
-          user_id: commentUserId,
-          content: textToHtml(commentContent, jiraIdToName, memberMap),
-          created_at: commentDate || createdAt,
+          task_id: issue.key,
+          user_id: memberIdOf(cm.authorKey) || fallbackMemberId,
+          content: textToHtml(cm.content, mention),
+          created_at: cm.createdAt || createdAt,
         });
-        taskCommentCount++;
       }
-
-      // Extract description → task_specs
-      const description = iDescription >= 0 ? (row[iDescription]?.trim() || '') : '';
-      if (description) {
+      if (issue.description) {
         taskSpecs.push({
           id: `ts${String(specId++).padStart(5, '0')}`,
-          task_id: taskKey,
+          task_id: issue.key,
           background: '',
-          requirement: textToHtml(description, jiraIdToName, memberMap),
+          requirement: textToHtml(issue.description, mention),
           notes: '',
         });
       }
-
-      // Department is back-filled from members.job_title after insert.
-      const department: string | null = null;
-
       tasks.push({
-        id: taskKey,
-        task_key: taskKey,
-        project_id: projectId,
-        title,
-        status_id: statusId,
-        priority,
-        creator_id: creatorId,
-        assignee_id: assigneeId,
-        reviewer_id: reviewerId,
-        due_date: dueDate,
-        started_at: startedAt,
-        completed_at: completedAt ? dateOnlyPart(completedAt) : null,
-        sort_order: r,
+        id: issue.key,
+        task_key: issue.key,
+        project_id: projectIdFor(issue.projectKey, issue.projectName),
+        title: issue.title,
+        status_id: statusPlan.statusIdOf(issue.key),
+        priority: issue.priority,
+        // Reporter (报告人) = reviewer & card creator; Jira's creator is the fallback.
+        creator_id: memberIdOf(issue.reporterKey) || memberIdOf(issue.creatorKey) || fallbackMemberId,
+        assignee_id: memberIdOf(issue.assigneeKey),
+        reviewer_id: memberIdOf(issue.reporterKey),
+        due_date: issue.due,
+        started_at: issue.start,
+        completed_at: issue.resolved,
+        sort_order: issue.row,
         created_at: createdAt,
-        comment_count: taskCommentCount,
-        sprint_id: sprintId,
-        department,
+        comment_count: issue.comments.length,
+        sprint_id: issue.sprint ? sprintMap.get(issue.sprint) || null : null,
+        // Department is back-filled from members.job_title after insert.
+        department: null,
       });
     }
+    // Done-ness follows the status each task landed on.
+    const doneTaskIds = new Set(tasks.filter((t) => statusPlan.isDone(t.status_id)).map((t) => t.id));
+    // Exact (UTC) created / resolved instants for the sprint dates below.
+    const instants = new Map(parsed.issues.map((i) => [i.key, { createdAt: i.createdAt, resolvedAt: i.resolvedAt }]));
+    // Subtask links, applied after every task row exists (parent_task_id is a FK).
+    const parentLinks = new Map<string, string[]>(); // parent task id → child task ids
+    for (const issue of parsed.issues) {
+      if (issue.parentKey) parentLinks.set(issue.parentKey, [...(parentLinks.get(issue.parentKey) || []), issue.key]);
+    }
+
+    const plans = Object.entries(memberPlan.plans);
+    const loginChannel = await resolveLoginChannel(supabase, req);
 
     // ── Stats (identical shape for both dry-run and real import) ──
     const stats = {
-      totalRows: rows.length - 1,
+      totalRows: parsed.totalRows,
       tasksParsed: tasks.length,
       commentsParsed: comments.length,
       specsParsed: taskSpecs.length,
       sprintsParsed: sprintMap.size,
-      newMembers: newMembers.map(m => m.name),
-      newProjects: Array.from(newProjects.values()).map(p => p.name),
+      subtasksLinked: parsed.hierarchy.linked,
+      epicChildren: parsed.hierarchy.epicChildren,
+      attachmentsParsed: parsed.attachmentCount,
+      timeZone: request.timeZone,
+      newMembers: plans
+        .filter(([, p]) => p.kind === 'new_account' || p.kind === 'new_name_only')
+        .map(([key]) => personName.get(key) || key),
+      newProjects: Array.from(newProjects.values()).map((p) => p.name),
     };
 
-    // ── Tier branch (contract C2): non-pro → SAFE DRY-RUN, nothing written. ──
-    if (!isPro) {
-      console.log('[import-jira] dry-run (non-professional):', JSON.stringify(stats));
-      return json({ success: true, dryRun: true, stats });
+    // ── Preview (dryRun, or contract C2 for non-pro): nothing written. ──
+    if (!isPro || request.dryRun) {
+      console.log('[import-jira] preview:', JSON.stringify({ ...stats, newMembers: stats.newMembers.length }));
+      return json({
+        success: true,
+        dryRun: true,
+        canImport: isPro,
+        stats,
+        people: summarizePeople(parsed.people, memberPlan, existing),
+        accountErrors: memberPlan.errors,
+        accountWarnings: memberPlan.warnings,
+        unresolvedCommenters: parsed.unresolvedCommenters,
+        loginMethod: loginChannel.method,
+        statusMapping: statusPlan.mapping,
+      });
+    }
+
+    // Refuse BEFORE the wipe: a half-right accounts list or an empty result
+    // would otherwise cost the install its data.
+    if (memberPlan.errors.length > 0) {
+      return json(
+        { error: 'account_errors', message: 'Email 對照表有問題，請修正後再匯入', accountErrors: memberPlan.errors },
+        400,
+      );
+    }
+    if (tasks.length === 0) {
+      return json({ error: 'no_tasks', message: 'CSV 裡沒有可匯入的任務（每列都需要事務密鑰 / Issue key）', stats }, 400);
+    }
+    // Every target status must still exist right before the wipe (tasks.status_id is a FK).
+    {
+      const targetStatusIds = Array.from(new Set(tasks.map((t) => t.status_id)));
+      const { data: present, error: presentErr } = await supabase.from('statuses').select('id').in('id', targetStatusIds);
+      if (presentErr) throw new Error(`Check statuses failed: ${presentErr.message}`);
+      const presentIds = new Set(((present || []) as { id: string }[]).map((r) => r.id));
+      const missingStatuses = targetStatusIds.filter((id) => !presentIds.has(id));
+      if (missingStatuses.length > 0) {
+        return json(
+          { error: 'status_missing', message: '要對應的任務狀態已不存在（可能剛被刪除），請重新預覽後再匯入', missingStatuses },
+          409,
+        );
+      }
     }
 
     // ═══ Professional path: the real, DESTRUCTIVE import (writes begin here) ═══
@@ -774,6 +496,9 @@ Deno.serve(async (req) => {
     await supabase.from('notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('tasks').delete().neq('id', '___none___');
     await supabase.from('sprints').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    written.wiped = true;
+    // Steps after the wipe that may only warn (the data itself is in place).
+    const warnings: string[] = [];
 
     // ── Create the projects this CSV introduces. Without these rows the
     //    tasks.project_id FK rejects every task insert. ──
@@ -787,7 +512,7 @@ Deno.serve(async (req) => {
           const { error: lineErr } = await supabase
             .from('product_lines')
             .upsert({ id: lineId, name: '匯入' }, { onConflict: 'id', ignoreDuplicates: true });
-          if (lineErr) console.error('Ensure product line error:', lineErr);
+          if (lineErr) throw new ImportStepError('projects', lineErr);
         }
         const projectRows = Array.from(newProjects.values()).map(p => ({
           id: p.id, line_id: lineId, name: p.name, key: p.key,
@@ -795,18 +520,74 @@ Deno.serve(async (req) => {
         const { error: projErr } = await supabase
           .from('projects')
           .upsert(projectRows, { onConflict: 'id', ignoreDuplicates: true });
-        if (projErr) console.error('Ensure projects error:', projErr);
+        if (projErr) throw new ImportStepError('projects', projErr);
       }
     } catch (error) {
-      console.error('Ensure projects error:', error);
+      throw error instanceof ImportStepError ? error : new ImportStepError('projects', error);
     }
 
-    // ── Insert new members ──
-    if (newMembers.length > 0) {
-      console.log('Creating new members:', newMembers.map(m => m.name));
-      const { error } = await supabase.from('members').insert(newMembers);
-      if (error) console.error('Insert members error:', error);
+    // ── Members. Name-only people first (as before) ──
+    const nameOnly = plans
+      .filter((e): e is [string, Extract<PersonPlan, { kind: 'new_name_only' }>] => e[1].kind === 'new_name_only')
+      .map(([key, p]) => newMemberRow(p.memberId, personName.get(key) || key, placeholderEmail(p.memberId)));
+    if (nameOnly.length > 0) {
+      console.log('Creating name-only members:', nameOnly.length);
+      const { error } = await supabase.from('members').insert(nameOnly);
+      if (error) throw new ImportStepError('members', error);
     }
+
+    // ── …then the people on the accounts list: GoTrue user → member row →
+    //    invitation / temporary password. A failure keeps the person as a
+    //    name-only member so their tasks still import. ──
+    const accountsResult: AccountsResult = { method: loginChannel.method, invited: [], credentials: [], failed: [] };
+    written.accounts = accountsResult;
+    let memberFallbackError: unknown = null;
+    const accountPlans = plans.filter((e): e is [string, AccountPlan] => e[1].kind === 'new_account' || e[1].kind === 'activate');
+    if (accountPlans.length > 0) {
+      const authUsers = await loadAuthUsersByEmail(supabase);
+      await mapLimit(accountPlans, 4, async ([key, p]) => {
+        const name = personName.get(key) || key;
+        let login = null;
+        let memberWritten = false;
+        try {
+          login = await prepareLogin(supabase, loginChannel.method, { email: p.email, name }, authUsers);
+          const { error: memberErr } = p.kind === 'new_account'
+            ? await supabase.from('members').insert({ ...newMemberRow(p.memberId, name, p.email), auth_id: login.authUserId })
+            : await supabase.from('members').update({ email: p.email, auth_id: login.authUserId }).eq('id', p.memberId);
+          if (memberErr) throw new Error(memberErr.message);
+          memberWritten = true;
+          const delivery = await deliverLogin(supabase, loginChannel, login, { name, email: p.email, invitedBy: callerName });
+          if (delivery.method === 'invite') accountsResult.invited.push({ name, email: p.email });
+          else {
+            accountsResult.credentials.push({
+              name, email: p.email, password: delivery.tempPassword || '',
+              ...(delivery.inviteFailed ? { inviteFailed: true } : {}),
+            });
+          }
+        } catch (error) {
+          console.error('Create login error:', name, error);
+          if (memberWritten) {
+            // The member points at this login now (members.auth_id): keep both;
+            // only the invitation / password step failed.
+            accountsResult.failed.push({ name, email: p.email, reason: 'delivery_failed' });
+            return;
+          }
+          if (login) await discardLogin(supabase, login, authUsers);
+          accountsResult.failed.push({ name, email: p.email, reason: error instanceof LoginError ? 'email_taken' : 'create_failed' });
+          if (p.kind === 'new_account') {
+            const { error: fallbackErr } = await supabase
+              .from('members').insert(newMemberRow(p.memberId, name, placeholderEmail(p.memberId)));
+            if (fallbackErr) {
+              console.error('Insert fallback member error:', fallbackErr);
+              memberFallbackError = fallbackErr;
+            }
+          }
+        }
+      });
+    }
+
+    // Without the member row every task that points at this person would fail.
+    if (memberFallbackError) throw new ImportStepError('members', memberFallbackError);
 
     // ── Insert sprints. On failure, drop the mapping AND detach the tasks that
     //    referenced the now-missing sprints. ──
@@ -822,6 +603,7 @@ Deno.serve(async (req) => {
       const { error } = await supabase.from('sprints').insert(sprintRows);
       if (error) {
         console.error('Insert sprint error:', error);
+        warnings.push('sprints');
         sprintMap.clear(); // failed sprints must not be referenced by tasks
         for (const t of tasks) t.sprint_id = null;
       }
@@ -830,41 +612,39 @@ Deno.serve(async (req) => {
 
     console.log(`Inserting ${tasks.length} tasks, ${comments.length} comments, ${taskSpecs.length} specs`);
 
-    // Insert tasks in batches of 50 (failures logged, import continues).
-    // Inserted counts are tracked so the response stats reflect what actually
-    // landed in the DB, not just what parsed.
-    let tasksInserted = 0;
+    // Insert tasks in batches of 50, then comments (100) and specs (50). A
+    // failed batch stops the import (import_failed) instead of being skipped,
+    // so a half-written import is never reported as done.
     for (let i = 0; i < tasks.length; i += 50) {
       const batch = tasks.slice(i, i + 50);
       const { error } = await supabase.from('tasks').insert(batch);
       if (error) {
         console.error(`Insert tasks batch ${i} error:`, error, 'First task:', JSON.stringify(batch[0]));
-      } else {
-        tasksInserted += batch.length;
+        throw new ImportStepError('tasks', error);
       }
+      written.tasksInserted += batch.length;
     }
-
-    // Insert comments in batches of 100
-    let commentsInserted = 0;
     for (let i = 0; i < comments.length; i += 100) {
       const batch = comments.slice(i, i + 100);
       const { error } = await supabase.from('comments').insert(batch);
-      if (error) {
-        console.error(`Insert comments batch ${i} error:`, error);
-      } else {
-        commentsInserted += batch.length;
-      }
+      if (error) throw new ImportStepError('comments', error);
+      written.commentsInserted += batch.length;
     }
-
-    // Insert task_specs in batches of 50
-    let specsInserted = 0;
     for (let i = 0; i < taskSpecs.length; i += 50) {
       const batch = taskSpecs.slice(i, i + 50);
       const { error } = await supabase.from('task_specs').insert(batch);
-      if (error) {
-        console.error(`Insert specs batch ${i} error:`, error);
-      } else {
-        specsInserted += batch.length;
+      if (error) throw new ImportStepError('specs', error);
+      written.specsInserted += batch.length;
+    }
+
+    // ── Subtasks: parent_task_id, now that every task row exists ──
+    let subtasksLinked = 0;
+    for (const [parentId, childIds] of parentLinks) {
+      for (let i = 0; i < childIds.length; i += 100) {
+        const chunk = childIds.slice(i, i + 100);
+        const { error } = await supabase.from('tasks').update({ parent_task_id: parentId } as any).in('id', chunk);
+        if (error) throw new ImportStepError('subtasks', error);
+        subtasksLinked += chunk.length;
       }
     }
 
@@ -895,6 +675,7 @@ Deno.serve(async (req) => {
       }
     } catch (error) {
       console.error('Set departments error:', error);
+      warnings.push('departments');
     }
 
     // Update sprint dates and counts from task data
@@ -903,19 +684,20 @@ Deno.serve(async (req) => {
     try {
       for (const sprintId of sprintMap.values()) {
         const sprintTasks = tasks.filter(t => t.sprint_id === sprintId);
-        const completedCount = sprintTasks.filter(t => ['s6', 's7'].includes(t.status_id)).length;
+        const completedCount = sprintTasks.filter(t => doneTaskIds.has(t.id)).length;
         const pendingCount = sprintTasks.length - completedCount;
 
-        // started_at: earliest created_at among tasks in this sprint
+        // started_at: earliest creation among tasks in this sprint (exact
+        // UTC instant when the export had a time, else the calendar date)
         const createdDates = sprintTasks
-          .map(t => new Date(t.created_at).getTime())
+          .map(t => new Date(instants.get(t.id)?.createdAt || t.created_at).getTime())
           .filter(ts => !isNaN(ts));
         const minCreated = createdDates.length > 0 ? new Date(Math.min(...createdDates)) : null;
 
-        // completed_at: latest completed_at among tasks in this sprint
+        // completed_at: latest resolution among tasks in this sprint
         const completedDates = sprintTasks
           .filter(t => t.completed_at)
-          .map(t => new Date(t.completed_at as string).getTime())
+          .map(t => new Date(instants.get(t.id)?.resolvedAt || (t.completed_at as string)).getTime())
           .filter(ts => !isNaN(ts));
         const maxCompleted = completedDates.length > 0 ? new Date(Math.max(...completedDates)) : null;
 
@@ -928,6 +710,7 @@ Deno.serve(async (req) => {
       }
     } catch (error) {
       console.error('Update sprint stats error:', error);
+      warnings.push('sprint_stats');
     }
 
     // ── Create active sprint and assign uncompleted tasks ──
@@ -943,23 +726,26 @@ Deno.serve(async (req) => {
       });
       if (activeErr) {
         console.error('Create active sprint error:', activeErr);
+        warnings.push('active_sprint');
       } else {
         // Move all uncompleted tasks to the active sprint
-        const uncompletedTaskIds = tasks
-          .filter(t => !['s6', 's7'].includes(t.status_id))
-          .map(t => t.id);
+        const uncompletedTaskIds = tasks.filter(t => !doneTaskIds.has(t.id)).map(t => t.id);
 
         if (uncompletedTaskIds.length > 0) {
           for (let i = 0; i < uncompletedTaskIds.length; i += 100) {
             const chunk = uncompletedTaskIds.slice(i, i + 100);
             const { error } = await supabase.from('tasks').update({ sprint_id: activeSprintId } as any).in('id', chunk);
-            if (error) console.error('Move tasks to active sprint error:', error);
+            if (error) {
+              console.error('Move tasks to active sprint error:', error);
+              warnings.push('active_sprint');
+            }
           }
         }
         console.log(`Created active sprint "${activeSprintName}" with ${uncompletedTaskIds.length} uncompleted tasks`);
       }
     } catch (error) {
       console.error('Create active sprint error:', error);
+      warnings.push('active_sprint');
     }
 
     return json({
@@ -969,14 +755,33 @@ Deno.serve(async (req) => {
         ...stats,
         // Actual insert results (sprintMap is cleared when its insert fails,
         // so its size is the real created count).
-        tasksInserted,
-        commentsInserted,
-        specsInserted,
+        tasksInserted: written.tasksInserted,
+        commentsInserted: written.commentsInserted,
+        specsInserted: written.specsInserted,
         sprintsCreated: sprintMap.size,
+        subtasksLinked,
       },
+      accounts: accountsResult,
+      warnings: Array.from(new Set(warnings)),
     });
   } catch (err) {
     console.error('Import error:', err);
+    if (written.wiped) {
+      // The wipe ran but the import did not finish: say so, with what landed
+      // and any logins already created (their temporary passwords included).
+      return json({
+        error: 'import_failed',
+        step: err instanceof ImportStepError ? err.step : 'unknown',
+        message: '匯入沒有完成：原有資料已清除，新資料只寫入一部分。請修正問題後重新匯入同一份 CSV。',
+        detail: err instanceof Error ? err.message : String(err),
+        partial: {
+          tasksInserted: written.tasksInserted,
+          commentsInserted: written.commentsInserted,
+          specsInserted: written.specsInserted,
+        },
+        accounts: written.accounts,
+      }, 500);
+    }
     return json({ error: String(err) }, 500);
   }
 });

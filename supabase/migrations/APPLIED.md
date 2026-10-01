@@ -50,6 +50,7 @@
 | 20260404_fix_notifications_id_default.sql | ✅ | ⏳ | notifications.id 加 gen_random_uuid() 預設值，修復 INSERT null id |
 | 20260405_insert_required_custom_fields_default.sql | ✅ | ⏳ | system_settings 插入 required_custom_fields 預設值，修復 406 錯誤 |
 | 20260405_fix_notifications_task_id.sql | ✅ | ⏳ | 修復 notifications.task_id 為 NULL：從 content 解析任務編號反查 tasks.task_key 填入 |
+| 20261001_api_tokens.sql | ✅ | — | 個人 API 金鑰：補齊 api_tokens（表在 20260714_features_base 已建好）、收回 anon/authenticated 權限、加索引。第一個走「資料庫更新」（schema/upgrades/）的 migration：既有安裝重跑 install.sh 套用 |
 
 ---
 

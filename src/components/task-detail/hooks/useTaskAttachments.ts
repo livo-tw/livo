@@ -2,13 +2,13 @@ import { useState, useRef, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { logActivity } from '@/lib/activityLog';
 import { getWorkspaceStorageLimitBytes } from '@/lib/workspaceQuota';
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import type { Task } from '@/types';
 import type { Tables } from '@/integrations/supabase/types';
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
-const DEFAULT_STORAGE_LIMIT = 1 * 1024 * 1024 * 1024; // 1 GB (self-host display default)
+const MAX_FILE_SIZE = MAX_UPLOAD_BYTES;
 
 type Deps = {
   task: Task | null;
@@ -22,9 +22,9 @@ export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTask
   const [fileUploading, setFileUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [storageUsed, setStorageUsed] = useState<number | null>(null);
-  // Cloud-beta workspaces have a real quota (500MB) — show it instead of the
-  // legacy 1 GB constant so the meter can't imply free space at a hard cap.
-  const [storageLimit, setStorageLimit] = useState(DEFAULT_STORAGE_LIMIT);
+  // Cloud-beta workspaces have a real quota (500MB). Everywhere else there is no
+  // quota, so the limit stays null and the meter shows usage only.
+  const [storageLimit, setStorageLimit] = useState<number | null>(null);
   useEffect(() => {
     getWorkspaceStorageLimitBytes().then((v) => { if (v) setStorageLimit(v); });
   }, []);
@@ -67,7 +67,7 @@ export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTask
     if (!task || files.length === 0) return;
     const oversized = Array.from(files).filter(f => f.size > MAX_FILE_SIZE);
     if (oversized.length > 0) {
-      toast.error(i18n.t('taskDetail.attachments.fileSizeExceeded', { files: oversized.map(f => f.name).join(', ') }));
+      toast.error(i18n.t('taskDetail.attachments.fileSizeExceeded', { files: oversized.map(f => f.name).join(', '), size: MAX_UPLOAD_MB }));
       return;
     }
     setFileUploading(true);

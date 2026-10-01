@@ -22,6 +22,14 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  stripDemoSeeds,
+  makeIdempotent,
+  upgradeMigrationNames,
+  trackingSeedSql,
+  buildUpgradeFile,
+  lintUpgradeMigration,
+} from './release-upgrades.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, '..');            // LIVO-local-ready/
@@ -67,66 +75,6 @@ const SCHEMA_EXCLUDE = new Map([
   ['20260331_create_orders.sql',
    '賣家端 ECPay 訂單表（金流已移至雲端 worker）；客戶自架安裝不需要，且不該預載我方定價/金流結構'],
 ]);
-
-// 移除 migration 內的「示範成員種子」INSERT。客戶全新安裝不該預載 20 名
-// 虛構成員；第一個管理員改由 install.sh / install.bat 互動式建立。
-// 只移除 members 的 seed INSERT（migration 內唯一的虛構業務資料列），
-// 保留所有表格/enum/function DDL、RLS、以及 statuses 狀態種子。
-// members 的 INSERT 內沒有內嵌分號，故「到下一個分號」即為整句。
-function stripDemoSeeds(sql) {
-  return sql.replace(
-    /INSERT\s+INTO\s+(?:public\.)?members\b[\s\S]*?;[ \t]*\r?\n?/gi,
-    '-- [release] 已移除示範成員種子（管理員由 install.sh / install.bat 建立）\n'
-  );
-}
-
-// 合併 schema 的冪等化：多個 migration 定義過同名 policy（歷史開發時各檔
-// 在「不同時間點」各跑一次沒事；合併成單一 SQL 連續執行時，第二個裸
-// CREATE POLICY 會炸 already exists，整個安裝中斷）。這裡把「頂層」的
-// CREATE POLICY 前面補 DROP POLICY IF EXISTS、頂層 ALTER PUBLICATION ...
-// ADD TABLE 包 duplicate_object 防護。位於 $$ ... $$（函式/DO 區塊）內的
-// 語句一律不動——逐行掃描並追蹤 dollar-quote 狀態。
-function makeIdempotent(sql) {
-  const lines = sql.split('\n');
-  const out = [];
-  let inDollar = false;
-  let dollarTag = '';
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // 追蹤 dollar-quote（支援 $$ 與 $tag$；同一行開又關則狀態不變）
-    const tags = line.match(/\$[A-Za-z_]*\$/g) || [];
-    let willBeInDollar = inDollar;
-    for (const t of tags) {
-      if (!willBeInDollar) { willBeInDollar = true; dollarTag = t; }
-      else if (t === dollarTag) { willBeInDollar = false; dollarTag = ''; }
-    }
-    if (!inDollar) {
-      const polName = line.match(/^\s*CREATE\s+POLICY\s+"([^"]+)"/i);
-      if (polName) {
-        // 表名可能同行（... ON table ...）或在往後幾行（多行寫法）
-        let table = (line.match(/\bON\s+([A-Za-z0-9_."]+)/i) || [])[1];
-        for (let j = i + 1; !table && j < Math.min(i + 4, lines.length); j++) {
-          table = (lines[j].match(/^\s*ON\s+([A-Za-z0-9_."]+)/i) || [])[1];
-        }
-        if (table) {
-          out.push(`DROP POLICY IF EXISTS "${polName[1]}" ON ${table.replace(/;$/, '')};`);
-        }
-        out.push(line);
-        inDollar = willBeInDollar;
-        continue;
-      }
-      const pub = line.match(/^\s*ALTER\s+PUBLICATION\s+(\S+)\s+ADD\s+TABLE\s+([A-Za-z0-9_."]+);\s*$/i);
-      if (pub) {
-        out.push(`DO $livo$ BEGIN ALTER PUBLICATION ${pub[1]} ADD TABLE ${pub[2]}; EXCEPTION WHEN duplicate_object THEN NULL; END $livo$;`);
-        inDollar = willBeInDollar;
-        continue;
-      }
-    }
-    out.push(line);
-    inDollar = willBeInDollar;
-  }
-  return out.join('\n');
-}
 
 // 遞迴複製並套用 filter(relPosixPath, isDir) → true 保留 / false 略過。
 // 回傳 { files, dirs, bytes }。
@@ -241,6 +189,20 @@ for (const [label, p] of [
   if (!fs.existsSync(p)) die(`找不到必要來源：${label}（${p}）`);
 }
 
+// 打包會整個刪掉 release/。若有人直接在 release/livo-release 裡執行過安裝程式，
+// 那裡就有這套安裝的資料庫與專屬金鑰——先停下來，絕不連資料一起刪。
+const stagedEnv = path.join(STAGING, 'docker', '.env');
+const installedInStaging =
+  fs.existsSync(path.join(STAGING, 'docker', 'volumes', 'db', 'data')) ||
+  fs.existsSync(path.join(STAGING, 'backups')) ||
+  (fs.existsSync(stagedEnv) && /^LIVO_KEYS_ROTATED=1/m.test(fs.readFileSync(stagedEnv, 'utf8')));
+if (installedInStaging) {
+  die(
+    `${STAGING} 裡有一套已經安裝過的 LIVO（資料庫或專屬金鑰），重新打包會把它整個刪掉。\n` +
+    '請先把這個資料夾搬到 release/ 以外的地方再重跑打包；升級方式見 release-template/README.md「升級到新版」。'
+  );
+}
+
 // 換行/BOM 正規化：sh/sql 一律 LF 無 BOM（sh 帶 CRLF 或 BOM 會直接跑不動）；
 // bat 一律 CRLF；ps1 一律 CRLF + BOM（PowerShell 5.1 沒有 BOM 會把 UTF-8 中文
 // 當成 ANSI 讀，訊息全變亂碼）。
@@ -352,11 +314,14 @@ for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/v
 const storageDir = path.join(DOCKER_DEST, 'volumes', 'storage');
 fs.mkdirSync(storageDir, { recursive: true });
 fs.writeFileSync(path.join(storageDir, '.gitkeep'), '');
-// 出廠 docker/.env：一律來自 release-template/docker.env，絕不帶打包機本機的 .env
-fs.writeFileSync(path.join(DOCKER_DEST, '.env'), toLF(fs.readFileSync(FACTORY_ENV, 'utf8')));
-const shippedEnv = fs.existsSync(path.join(DOCKER_DEST, '.env'));
+// 出廠範本 docker/.env.factory：一律來自 release-template/docker.env，絕不帶打包機
+// 本機的 .env。交付包刻意不附 docker/.env：安裝程式第一次執行才把範本複製成
+// .env 並換上專屬金鑰；升級時把新版整包蓋過舊安裝，也不會蓋掉既有的 .env。
+fs.writeFileSync(path.join(DOCKER_DEST, '.env.factory'), toLF(fs.readFileSync(FACTORY_ENV, 'utf8')));
+const shippedEnv = fs.existsSync(path.join(DOCKER_DEST, '.env.factory'));
+if (fs.existsSync(path.join(DOCKER_DEST, '.env'))) die('交付包不應該含 docker/.env（只附 .env.factory）。');
 log(`  ✔ docker/ ← 設定檔（${dockerStats.files} 檔，${humanSize(dockerStats.bytes)}）` +
-    `${shippedEnv ? '，含 .env（出廠預設值；安裝時自動換成專屬金鑰）' : ''}`);
+    `${shippedEnv ? '，含 .env.factory（出廠範本；第一次安裝時複製成 .env 並換上專屬金鑰）' : ''}`);
 
 // docker/compose.frontend.yml — 前端容器 overlay（node:20-alpine 跑 server.cjs），
 // 客戶主機不需要安裝 Node.js。install.sh / install.bat 會用
@@ -432,8 +397,46 @@ INSERT INTO public.statuses (id, name, color, sort_order, is_done, auto_start, a
 ON CONFLICT (id) DO NOTHING;
 `;
 
+// 附加：資料庫更新記錄（規則見 scripts/release-upgrades.mjs）。全新安裝已經
+// 包含下列 migration，之後重跑安裝程式就不會再把它們當成待套用的更新。
+const mergedMigrations = migFiles.filter((f) => !SCHEMA_EXCLUDE.has(f));
+schemaOut +=
+`\n\n-- ============================================================
+-- [release] 資料庫更新記錄（由 build-release.mjs 附加）
+-- 記下本檔已包含的 migration；安裝程式重跑時只套用 schema/upgrades/ 裡
+-- 還沒記錄的更新。
+-- ============================================================
+` + trackingSeedSql(mergedMigrations);
+
 fs.writeFileSync(path.join(SCHEMA_DEST, 'livo-schema.sql'), schemaOut);
 const schemaBytes = Buffer.byteLength(schemaOut);
+
+// schema/upgrades/ — 既有安裝的資料庫更新：基準線之後新增的 migration，
+// 一檔一個交易、套用後記錄。install.sh / install.ps1 重跑時（先備份）套用。
+// 這些 migration 會在客戶的正式資料上重跑，所以先檢查能否安全重跑、不刪資料。
+const UPGRADES_DEST = path.join(SCHEMA_DEST, 'upgrades');
+fs.mkdirSync(UPGRADES_DEST, { recursive: true });
+const upgradeNames = upgradeMigrationNames(migFiles, SCHEMA_EXCLUDE);
+const upgradeProblems = [];
+let upgradeOut = '';
+for (const f of upgradeNames) {
+  const sql = makeIdempotent(stripDemoSeeds(fs.readFileSync(path.join(MIGRATIONS_SRC, f), 'utf8')));
+  const problems = lintUpgradeMigration(sql);
+  if (problems.length) {
+    upgradeProblems.push(`  ${f}\n    - ${problems.join('\n    - ')}`);
+    continue;
+  }
+  const file = toLF(buildUpgradeFile(f, sql));
+  fs.writeFileSync(path.join(UPGRADES_DEST, f), file);
+  upgradeOut += file;
+}
+if (upgradeProblems.length) {
+  die(
+    '以下 migration 會在既有安裝上當成「資料庫更新」重跑，但不能安全重跑或會刪資料：\n' +
+    upgradeProblems.join('\n') +
+    '\n請改成冪等寫法（規則見 scripts/release-upgrades.mjs 開頭）後再打包。'
+  );
+}
 
 // 驗證：合併後的 schema 不得殘留任何虛構成員資料（種子列）。
 // 只挑「僅出現在種子 INSERT」的標記；舊示範 id（u-xxx）這種只在註解出現的字串不列入。
@@ -441,10 +444,10 @@ const FAKE_MARKERS = [
   'livo.test', 'jianhong', 'yaqi', 'zhihao', 'jiarong', 'xinyi',
   '王建宏', '陳雅琪', '林佳蓉', 'm-001', 'm-002', 'm-020',
 ];
-const leaked = FAKE_MARKERS.filter((m) => schemaOut.includes(m));
+const leaked = FAKE_MARKERS.filter((m) => schemaOut.includes(m) || upgradeOut.includes(m));
 if (leaked.length) {
   die(
-    `schema/livo-schema.sql 仍殘留虛構成員資料：${leaked.join(', ')}\n` +
+    `schema/livo-schema.sql 或 schema/upgrades/ 仍殘留虛構成員資料：${leaked.join(', ')}\n` +
     `請檢查 stripDemoSeeds() / SCHEMA_EXCLUDE 是否漏掉新的種子 migration。`
   );
 }
@@ -459,6 +462,8 @@ const rawMigStats = copyFiltered(
 log(`  ✔ schema/livo-schema.sql ← 合併 ${migFiles.length - excludedMigrations}/${migFiles.length} 個 migration（${humanSize(schemaBytes)}）`);
 log(`      • 已移除 ${strippedMemberSeeds} 個 migration 的示範成員種子；排除 ${excludedMigrations} 個純改名 migration`);
 log(`      • 已附加完整狀態種子（s1–s7）；schema 驗證無虛構成員資料 ✔`);
+log(`  ✔ schema/upgrades/ ← ${upgradeNames.length} 個資料庫更新（既有安裝重跑安裝程式時套用）` +
+    (upgradeNames.length ? `：${upgradeNames.join(', ')}` : ''));
 log(`  ✔ schema/migrations/ ← 原始檔備份（${rawMigStats.files} 檔，含被排除者供參考；賣家專用 ${migFiles.filter((f) => RAW_EXCLUDE.has(f)).length} 檔不附）`);
 
 // 2d. 說明文件
@@ -627,8 +632,8 @@ if (zipMB > MAX_ZIP_MB) {
 }
 
 if (shippedEnv) {
-  log('\nℹ️  docker/.env 內的金鑰只是出廠預設值：install.sh / install.bat 會在');
-  log('    第一次安裝時自動產生每套安裝專屬的 JWT_SECRET / ANON_KEY /');
+  log('\nℹ️  docker/.env.factory 內的金鑰只是出廠預設值：install.sh / install.bat 會在');
+  log('    第一次安裝時複製成 docker/.env，並產生每套安裝專屬的 JWT_SECRET / ANON_KEY /');
   log('    SERVICE_ROLE_KEY / POSTGRES_PASSWORD / DASHBOARD_PASSWORD，並同步');
   log('    改寫前端 bundle 內嵌的 anon key（installer/generate-keys.js）。');
 }

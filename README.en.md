@@ -71,11 +71,15 @@ cd livo
 npm ci
 node scripts/build-release.mjs      # builds release/livo-release/ (Linux/macOS need the zip command)
 
-cd release/livo-release
-sh install.sh                       # on Windows, double-click install.bat
+cp -R release/livo-release ~/livo   # install outside the repo so rebuilding never touches it
+cd ~/livo
+sh install.sh                       # on Windows, copy the folder out and double-click install.bat
 ```
 
-The installer generates keys and passwords unique to your install, loads the database schema and asks you to create the first admin. Then open <http://localhost:3000/demo/>. Operations and troubleshooting are covered in [release-template/README.md](release-template/README.md) (in Chinese).
+The installer generates keys and passwords unique to your install, loads the database schema and asks you to create the first admin. Then open <http://localhost:3000/demo/>. Operations and troubleshooting are covered in [release-template/README.md](release-template/README.md) (in Chinese), including:
+
+- **Upgrading** (升級到新版): copy the new files over your install folder (keep `docker/.env`) and run the installer again. New database upgrades are applied after an automatic backup and never delete data.
+- **Personal API keys** (用 API 金鑰操作 LIVO): let an AI assistant or a script read and write LIVO data through the API with exactly the permissions of the member the key is bound to — no server or database access needed.
 
 ### 3. Deploy to Cloudflare
 

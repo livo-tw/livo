@@ -13,6 +13,7 @@ import DemoModeBanner, { DEMO_BANNER_HEIGHT } from "@/components/DemoModeBanner"
 const Index = lazy(() => import("./pages/Index"));
 const Auth = lazy(() => import("./pages/Auth"));
 const Signup = lazy(() => import("./pages/Signup"));
+const SetPassword = lazy(() => import("./pages/SetPassword"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const PageFallback = () => {
@@ -210,6 +211,9 @@ const App = () => {
             <Route path="/auth" element={session ? <Navigate to="/" replace /> : <Auth />} />
             {/* Cloud-beta invite signup (see SignupRoute above) */}
             <Route path="/signup" element={<SignupRoute session={session} />} />
+            {/* Invitation link for a login an admin created (Jira import / 啟用帳號);
+                renders with or without a session — the link decides whose password it sets. */}
+            <Route path="/set-password" element={<SetPassword />} />
             <Route path="/" element={
               <ProtectedRoute session={session}>
                 <Index />

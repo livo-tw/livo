@@ -11,6 +11,8 @@ import { getRoleLabel, type MemberRole } from '@/lib/permissions';
 import { sortUsersByDept } from '@/lib/department';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
+import type { AccountCredential } from '@/components/AccountCredentialsDialog';
+import { callFunction, DEMO_BLOCKED } from '@/lib/callFunction';
 
 const COLORS = ['#FF5630', '#FF8B00', '#36B37E', '#00B8D9', '#6554C0', '#0065FF', '#6B778C', '#172B4D'];
 
@@ -33,6 +35,12 @@ export function useMemberManage() {
   const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
   const [resetLoading, setResetLoading] = useState(false);
+  // 「啟用帳號」: login for a member that only has a name (Jira import)
+  const [loginTarget, setLoginTarget] = useState<{ id: string; name: string } | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginCredentials, setLoginCredentials] = useState<AccountCredential[]>([]);
   const [jobTitleOpen, setJobTitleOpen] = useState(false);
   const jobTitleRef = useRef<HTMLDivElement>(null);
 
@@ -246,6 +254,62 @@ export function useMemberManage() {
     setResetLoading(false);
   };
 
+  const openCreateLogin = (memberId: string, memberName: string) => {
+    setLoginEmail('');
+    setLoginError(null);
+    setLoginTarget({ id: memberId, name: memberName });
+  };
+
+  const createLoginErrorText = (data: { error?: string; message?: string; memberName?: string } | null): string => {
+    switch (data?.error) {
+      case DEMO_BLOCKED: return i18n.t('member.createLoginDemoBlocked');
+      case 'invalid_email': return i18n.t('member.createLoginInvalidEmail');
+      case 'email_taken':
+        return data.memberName
+          ? i18n.t('member.createLoginEmailTakenBy', { name: data.memberName })
+          : i18n.t('member.createLoginEmailTaken');
+      case 'email_in_other_workspace': return i18n.t('member.createLoginEmailOtherWorkspace');
+      case 'already_has_login': return i18n.t('member.createLoginAlreadyHasLogin');
+      case 'member_inactive': return i18n.t('member.createLoginInactive');
+      case 'requires_super_admin': return i18n.t('member.createLoginRequiresSuperAdmin');
+      default: return i18n.t('member.createLoginFailed') + (data?.message || data?.error || '');
+    }
+  };
+
+  const handleCreateLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginTarget) return;
+    const target = loginTarget;
+    const email = loginEmail.trim();
+    if (!email) { setLoginError(i18n.t('member.createLoginInvalidEmail')); return; }
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const res = await callFunction<{
+        success?: boolean; error?: string; message?: string; memberName?: string;
+        email?: string; method?: 'invite' | 'temp_password'; tempPassword?: string; inviteFailed?: boolean;
+      }>('manage-member', { action: 'create_login', memberId: target.id, email });
+      const data = res.data;
+      if (!res.ok || !data?.success) { setLoginError(createLoginErrorText(data)); return; }
+      const finalEmail = data.email || email;
+      setLoginTarget(null);
+      if (data.method === 'invite') {
+        toast.success(i18n.t('member.createLoginInvited', { email: finalEmail }));
+      } else {
+        toast.success(i18n.t('member.createLoginDone', { name: target.name }));
+        setLoginCredentials([{ name: target.name, email: finalEmail, password: data.tempPassword || '', inviteFailed: data.inviteFailed }]);
+      }
+      if (currentMemberId) {
+        await logActivity(currentMemberId, 'create_login', i18n.t('activity.createLogin', { name: target.name, email: finalEmail }), undefined, undefined, 'member');
+      }
+      await refreshUsers();
+    } catch (err) {
+      setLoginError(i18n.t('member.createLoginFailed') + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   const handleDeleteMember = async (memberId: string, memberName: string) => {
     if (memberId === currentMemberId) { toast.error(i18n.t('member.cannotDeleteSelf')); return; }
     if (!(await confirm({ description: i18n.t('member.deleteConfirm', { name: memberName }), title: i18n.t('confirm.defaultTitle'), destructive: true }))) return;
@@ -282,6 +346,11 @@ export function useMemberManage() {
     handleTouchStart, handleTouchMove, handleTouchEnd,
     handleRoleChange, handleAddMember, handleToggleActive, handleDeleteMember,
     openResetPassword, handleResetPassword,
+    loginTarget, setLoginTarget,
+    loginEmail, setLoginEmail,
+    loginError, loginLoading,
+    loginCredentials, setLoginCredentials,
+    openCreateLogin, handleCreateLogin,
     ConfirmDialog,
   };
 }

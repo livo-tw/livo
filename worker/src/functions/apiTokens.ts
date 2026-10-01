@@ -34,9 +34,21 @@ interface ApiTokenRow {
   revoked_at: string | null;
 }
 
+// A request authenticated with an API key (auth.userId 'pat:<token id>', see
+// authenticatePat in auth.ts) must not list, mint or revoke keys: a leaked key
+// could otherwise mint fresh keys and outlive its own revocation.
+function isPatRequest(c: Context<AppContext>): boolean {
+  return c.get('auth').userId.startsWith('pat:');
+}
+
+function patNotAllowed(c: Context<AppContext>): Response {
+  return c.json({ ok: false, error: 'api_key_not_allowed', message: 'API 金鑰不能用來管理金鑰，請登入網頁操作' }, 403);
+}
+
 /** GET /api/functions/api-tokens — list tokens (caller's workspace only).
  *  token_hash is NEVER included. */
 export async function handleApiTokensGet(c: Context<AppContext>): Promise<Response> {
+  if (isPatRequest(c)) return patNotAllowed(c);
   const ws = c.get('auth').member.workspaceId;
   try {
     const res = await c.env.DB.prepare(
@@ -63,6 +75,7 @@ export async function handleApiTokensGet(c: Context<AppContext>): Promise<Respon
 
 /** POST /api/functions/api-tokens — create / revoke (admin; demo-blocked). */
 export async function handleApiTokensPost(c: Context<AppContext>): Promise<Response> {
+  if (isPatRequest(c)) return patNotAllowed(c);
   const env = c.env;
   const auth = c.get('auth');
   const ws = auth.member.workspaceId;
@@ -99,11 +112,21 @@ export async function handleApiTokensPost(c: Context<AppContext>): Promise<Respo
     // Token acts AS this member (defaults to the caller) — must exist, be active,
     // and belong to the caller's workspace (no cross-tenant minting by id-guessing).
     const memberId = (body.memberId ?? '').toString().trim() || auth.member.id;
-    const member = await env.DB.prepare('SELECT id FROM members WHERE id = ? AND workspace_id = ? AND is_active = 1')
+    const member = await env.DB.prepare('SELECT id, role FROM members WHERE id = ? AND workspace_id = ? AND is_active = 1')
       .bind(memberId, ws)
-      .first<{ id: string }>();
+      .first<{ id: string; role: string | null }>();
     if (!member) {
       return c.json({ ok: false, error: 'invalid_member', message: '綁定的成員不存在或已停用' }, 400);
+    }
+    // A token carries the bound member's full permissions, so acting as ANOTHER
+    // admin / super_admin needs super_admin (same rule as manage-member
+    // reset_password) — otherwise an admin could mint a super_admin token.
+    if (
+      member.id !== auth.member.id &&
+      ['admin', 'super_admin'].includes(member.role || '') &&
+      auth.member.role !== 'super_admin'
+    ) {
+      return c.json({ ok: false, error: 'forbidden_member', message: '只有超級管理員可以把金鑰綁定到其他管理員' }, 403);
     }
 
     const id = crypto.randomUUID();

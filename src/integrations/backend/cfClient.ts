@@ -1115,6 +1115,63 @@ const auth = {
       return { data: { user: null, session: null }, error: { message: errMsg(e) } };
     }
   },
+
+  /**
+   * POST /api/auth/set-password/verify — checks a set-password invitation
+   * link (?token=, minted by the Jira import / 「啟用帳號」) and returns the
+   * email it sets the password for. Error code: invalid_token.
+   */
+  async verifySetPasswordToken(token: string): Promise<{ email: string | null; error: ApiError | null }> {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/set-password/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const body = (await res.json().catch((): null => null)) as { email?: unknown; error?: unknown; message?: unknown } | null;
+      if (!res.ok || !body || typeof body.email !== 'string') {
+        const code = body && typeof body.error === 'string' ? body.error : 'invalid_token';
+        const message = body && typeof body.message === 'string' ? body.message : `HTTP ${res.status}`;
+        return { email: null, error: { message, code } };
+      }
+      return { email: body.email, error: null };
+    } catch (e) {
+      return { email: null, error: { message: errMsg(e) } };
+    }
+  },
+
+  /**
+   * POST /api/auth/set-password — sets the password from an invitation link.
+   * The server revokes the user's other sessions and returns a new one, which
+   * is persisted (SIGNED_IN fires, like signInWithPassword). Error codes:
+   * invalid_token | password_too_short.
+   */
+  async setPasswordWithToken(
+    token: string,
+    password: string
+  ): Promise<{ data: { user: AuthUser | null; session: AuthSession | null }; error: ApiError | null }> {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/set-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      });
+      const body = (await res.json().catch((): null => null)) as AuthResponse | null;
+      if (!res.ok || !body || body.error || !body.session) {
+        const eb = body as unknown as { error?: unknown; message?: unknown } | null;
+        const message = eb && typeof eb.message === 'string' && eb.message ? eb.message : `HTTP ${res.status}`;
+        const code = eb && typeof eb.error === 'string' ? eb.error : undefined;
+        return { data: { user: null, session: null }, error: code ? { message, code } : { message } };
+      }
+      const session = body.session;
+      saveSession(session);
+      scheduleAutoRefresh(session);
+      setTimeout(() => emitAuth('SIGNED_IN', session), 0);
+      return { data: { user: session.user, session }, error: null };
+    } catch (e) {
+      return { data: { user: null, session: null }, error: { message: errMsg(e) } };
+    }
+  },
 };
 
 // ─── client factory ───────────────────────────────────────────────────────

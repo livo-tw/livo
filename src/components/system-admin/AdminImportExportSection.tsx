@@ -1,34 +1,13 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Upload, Download, FileText, AlertTriangle } from 'lucide-react';
+import { Upload, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
-import { fnUrl } from '@/lib/apiBase';
 import { logActivity } from '@/lib/activityLog';
 import { toast } from 'sonner';
-import UpgradePrompt from '@/components/UpgradePrompt';
 import type { FeatureName } from '@/lib/license';
-
-interface ImportResult {
-  success?: boolean;
-  // dryRun === true means the worker parsed the CSV but wrote NOTHING (non-professional caller).
-  dryRun?: boolean;
-  stats?: {
-    // real-import counts (professional)
-    tasksInserted?: number;
-    commentsInserted?: number;
-    specsInserted?: number;
-    sprintsCreated?: number;
-    // dry-run parsed counts (standard preview)
-    totalRows?: number;
-    tasksParsed?: number;
-    commentsParsed?: number;
-    specsParsed?: number;
-    sprintsParsed?: number;
-    newMembers?: string[];
-  };
-}
+import JiraImportCard from './JiraImportCard';
 
 interface AdminImportExportSectionProps {
   currentMemberId: string;
@@ -72,57 +51,7 @@ function groupBy<T extends Record<string, unknown>>(arr: T[], key: string): Reco
 
 const AdminImportExportSection = ({ currentMemberId, hasFeature, refreshAll }: AdminImportExportSectionProps) => {
   const { t } = useTranslation();
-  const [importing, setImporting] = useState(false);
-  const [importStatus, setImportStatus] = useState('');
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [exporting, setExporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleImportClick = () => fileInputRef.current?.click();
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setImporting(true);
-      setImportStatus(t('adminImportExport.readingCsv'));
-      setImportResult(null);
-      const csvText = await file.text();
-      setImportStatus(`CSV 已讀取 (${(csvText.length / 1024).toFixed(1)} KB)，正在匯入...`);
-      const url = fnUrl('import-jira');
-      const { data: { session } } = await supabase.auth.getSession();
-      const fnResp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain', 'Authorization': `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-        body: csvText,
-      });
-      const data = await fnResp.json() as ImportResult;
-      if (!fnResp.ok) {
-        setImportStatus(t('adminImportExport.importFailed'));
-        toast.error(t('adminImportExport.importFailed') + ': ' + JSON.stringify(data));
-      } else if (data.dryRun) {
-        // Standard-tier SAFE PREVIEW: nothing was written to the DB.
-        setImportStatus(t('adminImportExport.previewComplete'));
-        setImportResult(data);
-        // No success toast — this is a format preview, not an import.
-      } else {
-        setImportStatus(t('adminImportExport.importComplete'));
-        setImportResult(data);
-        toast.success(`成功匯入 ${data.stats?.tasksInserted || 0} 個任務`);
-        if (currentMemberId) {
-          await logActivity(currentMemberId, 'import_jira', `匯入 Jira CSV，共 ${data.stats?.tasksInserted || 0} 個任務`, undefined, undefined, 'system');
-        }
-        await refreshAll();
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setImportStatus(t('adminImportExport.importError') + ' ' + msg);
-      toast.error(t('adminImportExport.importError') + ' ' + msg);
-    } finally {
-      setImporting(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
 
   const handleExport = async () => {
     try {
@@ -248,73 +177,9 @@ const AdminImportExportSection = ({ currentMemberId, hasFeature, refreshAll }: A
         {t('adminImportExport.sectionTitle')}
       </h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Importer is always visible. Professional callers get the real (destructive) import;
-            non-professional callers get a SAFE DRY-RUN preview (worker writes nothing). */}
-        {(() => {
-          const isPro = hasFeature('jira-import');
-          const dryRunResult = importResult?.dryRun ? importResult : null;
-          return (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Download size={20} className="text-primary" />
-              {t('adminImportExport.importTitle')}
-            </CardTitle>
-            <CardDescription>{isPro ? t('adminImportExport.importDesc') : t('adminImportExport.previewDesc')}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!isPro && (
-              <p className="text-xs text-muted-foreground">{t('adminImportExport.previewNote')}</p>
-            )}
-            <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileSelect} className="hidden" />
-            <Button onClick={handleImportClick} disabled={importing} variant="default" className="gap-2">
-              <Download size={16} />
-              {importing
-                ? t('adminImportExport.importing')
-                : (isPro ? t('adminImportExport.selectCsvButton') : t('adminImportExport.previewCsvButton'))}
-            </Button>
-            {importStatus && (
-              <div className="p-3 rounded-md bg-muted text-sm text-muted-foreground">
-                <p className="flex items-center gap-2"><FileText size={14} />{importStatus}</p>
-              </div>
-            )}
-            {importResult && dryRunResult ? (
-              <div className="p-3 rounded-md bg-muted text-sm space-y-3">
-                <div>
-                  <p className="font-medium text-foreground mb-1">{t('adminImportExport.previewResultTitle')}</p>
-                  <ul className="space-y-0.5 text-muted-foreground">
-                    <li>• {t('adminImportExport.previewTotalRows')}{dryRunResult.stats?.totalRows || 0} 筆</li>
-                    <li>• {t('adminImportExport.resultTasks')}{dryRunResult.stats?.tasksParsed || 0} 筆</li>
-                    <li>• {t('adminImportExport.resultComments')}{dryRunResult.stats?.commentsParsed || 0} 筆</li>
-                    <li>• {t('adminImportExport.resultSpecs')}{dryRunResult.stats?.specsParsed || 0} 筆</li>
-                    <li>• {t('adminImportExport.resultSprints')}{dryRunResult.stats?.sprintsParsed || 0} 個</li>
-                    {(dryRunResult.stats?.newMembers?.length ?? 0) > 0 && <li>• {t('adminImportExport.resultNewMembers')}{dryRunResult.stats!.newMembers!.join(', ')}</li>}
-                  </ul>
-                </div>
-                <UpgradePrompt feature="jira-import" inline />
-              </div>
-            ) : importResult ? (
-              <div className="p-3 rounded-md bg-muted text-sm">
-                <p className="font-medium text-foreground mb-1">{t('adminImportExport.resultTitle')}</p>
-                <ul className="space-y-0.5 text-muted-foreground">
-                  <li>• {t('adminImportExport.resultTasks')}{importResult.stats?.tasksInserted || 0} 筆</li>
-                  <li>• {t('adminImportExport.resultComments')}{importResult.stats?.commentsInserted || 0} 筆</li>
-                  <li>• {t('adminImportExport.resultSpecs')}{importResult.stats?.specsInserted || 0} 筆</li>
-                  <li>• {t('adminImportExport.resultSprints')}{importResult.stats?.sprintsCreated || 0} 個</li>
-                  {(importResult.stats?.newMembers?.length ?? 0) > 0 && <li>• {t('adminImportExport.resultNewMembers')}{importResult.stats!.newMembers!.join(', ')}</li>}
-                </ul>
-              </div>
-            ) : null}
-            {isPro && (
-              <p className="text-xs text-destructive flex items-center gap-1.5">
-                <AlertTriangle size={12} className="flex-shrink-0" />
-                {t('adminImportExport.importWarning')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-          );
-        })()}
+        {/* Importer is always visible. Professional callers get the real (destructive) import
+            after a preview; non-professional callers get the preview only (worker writes nothing). */}
+        <JiraImportCard currentMemberId={currentMemberId} isPro={hasFeature('jira-import')} refreshAll={refreshAll} />
 
         <Card>
           <CardHeader className="pb-3">

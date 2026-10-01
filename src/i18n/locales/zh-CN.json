@@ -183,7 +183,8 @@
     "addMember": "新增成员「{{name}}」（{{email}}，{{role}}）",
     "toggleMember": "{{action}}成员「{{name}}」（{{transition}}）",
     "deleteMember": "删除成员「{{name}}」",
-    "resetPassword": "重设成员「{{name}}」的密码"
+    "resetPassword": "重设成员「{{name}}」的密码",
+    "createLogin": "为成员「{{name}}」启用账号（{{email}}）"
   },
   "nav": {
     "dashboard": "数据统计",
@@ -648,7 +649,7 @@
       "checklistPlaceholder": "新增验收项目...",
       "attachments": "附件",
       "dragDropMessage": "拖拽档案到此处，或 <span class=\"text-primary font-medium\">点击上传</span>",
-      "fileSizeNote": "单档上限 2 MB",
+      "fileSizeNote": "单档上限 {{size}} MB",
       "saveFailed": "储存失败：",
       "saved": "已储存"
     },
@@ -660,12 +661,12 @@
       "attachment": "附件",
       "newPlaceholder": "留言... 输入 @ 标记成员",
       "fileSizeError": "档案大小超过限制（最大 {{size}} MB）",
-      "attachFileTitle": "附加档案（最大 2MB）",
+      "attachFileTitle": "附加档案（最大 {{size}} MB）",
       "sendFailed": "留言发送失败：",
       "mentionNotification": "你在留言中被提及",
       "deleted": "留言已删除",
       "updated": "留言已更新",
-      "fileSizeExceeded": "档案大小超过 2MB 限制",
+      "fileSizeExceeded": "档案大小超过 {{size}} MB 限制",
       "attachmentUploadFailed": "附件上传失败："
     },
     "metrics": {
@@ -738,7 +739,7 @@
       "editActivity": "「{{oldText}}」→「{{newText}}」"
     },
     "attachments": {
-      "fileSizeExceeded": "以下档案超过 2MB 限制：{{files}}",
+      "fileSizeExceeded": "以下档案超过 {{size}} MB 限制：{{files}}",
       "uploadFailed": "以下档案上传失败：{{files}}",
       "uploadSuccess": "{{count}} 个档案上传成功",
       "deleted": "已删除附件"
@@ -1019,7 +1020,22 @@
     "confirmPasswordLabel": "确认新密码",
     "resetPasswordButton": "重设",
     "resetPasswordFailed": "重设失败：",
-    "passwordResetDone": "已重设「{{name}}」的密码"
+    "passwordResetDone": "已重设「{{name}}」的密码",
+    "createLogin": "启用账号",
+    "createLoginTitle": "为「{{name}}」启用账号",
+    "createLoginHint": "填入这位成员的 Email，系统会为他创建登录账号。成员资料不变，原本指派给他的任务和留言都会保留。已配置发信时会发出「设置密码」邀请邮件；没有的话会生成一组临时密码让你转交。",
+    "createLoginButton": "创建登录账号",
+    "createLoginInvited": "已发出设置密码邀请邮件到 {{email}}",
+    "createLoginDone": "已为「{{name}}」创建登录账号",
+    "createLoginFailed": "创建失败：",
+    "createLoginInvalidEmail": "请输入正确的 Email",
+    "createLoginEmailTaken": "这个 Email 已经有人使用了",
+    "createLoginEmailTakenBy": "这个 Email 已经是成员「{{name}}」的账号",
+    "createLoginEmailOtherWorkspace": "这个 Email 已在其他 LIVO 团队使用，请换一个 Email",
+    "createLoginAlreadyHasLogin": "这位成员已经有 Email 了，请改用「重设密码」",
+    "createLoginInactive": "这位成员已停用，请先启用成员再创建登录账号",
+    "createLoginRequiresSuperAdmin": "只有超级管理员能为管理员创建登录账号",
+    "createLoginDemoBlocked": "展示模式无法创建登录账号"
   },
   "bulkAction": {
     "selectedCount": "已选 {{count}} 个任务",
@@ -1478,6 +1494,15 @@
       "lineBindInstruction": "在 LINE 官方账号聊天室中传送「/bind」，系统将自动完成账号绑定。"
     }
   },
+  "apiTokenAccess": {
+    "boundTo": "绑定成员：{{name}}",
+    "unknownMember": "（成员已不存在）",
+    "memberLabel": "绑定成员",
+    "memberSelf": "{{name}}（你自己）",
+    "memberHint": "密钥的权限等同这位成员。建议另外建立一个 AI 或脚本专用的账号再绑定，不要直接用自己的账号。",
+    "usageCloud": "调用 API 时在 Authorization 标头带上「Bearer 密钥」，权限等同绑定的成员。",
+    "usageSelfHost": "自架版：先用密钥向 /functions/v1/api-tokens/exchange 换取 15 分钟有效的令牌，再用令牌调用 API，权限等同绑定的成员。详见部署说明「用 API 金鑰操作 LIVO」。"
+  },
   "requiredFields": {
     "saveSuccess": "必填栏位设定已储存",
     "saveError": "储存失败，请稍后重试",
@@ -1537,12 +1562,9 @@
     "importDesc": "从 Jira CSV 汇入任务资料，会覆盖现有资料",
     "previewDesc": "上传 Jira CSV 预览汇入格式与笔数，不会写入任何资料",
     "previewNote": "标准版可预览汇入格式与笔数；完整汇入需专业版",
-    "previewCsvButton": "格式预览（不会写入）",
-    "previewComplete": "格式预览完成（未写入资料）",
     "previewResultTitle": "格式预览（不会写入资料）：",
     "previewTotalRows": "CSV 总笔数：",
     "importing": "汇入中...",
-    "selectCsvButton": "选择 CSV 档案汇入",
     "importWarning": "汇入会清除现有的任务、留言、冲刺等资料，建议先备份。",
     "resultTitle": "汇入结果：",
     "resultTasks": "任务：",
@@ -1555,7 +1577,6 @@
     "exporting": "汇出中...",
     "exportButton": "汇出完整 CSV",
     "readingCsv": "读取 CSV 档案中...",
-    "importComplete": "汇入完成！",
     "importFailed": "汇入失败",
     "importError": "汇入错误:",
     "exportSuccess": "已汇出 {{count}} 个任务（含留言、规格、部署纪录等）",
@@ -1585,7 +1606,124 @@
       "deployments": "部署纪录",
       "statusLogs": "状态变更纪录",
       "comments": "留言"
-    }
+    },
+    "previewing": "正在分析 CSV…",
+    "previewFirstHint": "选好文件后会先预览，不会写入任何数据；确认没问题再点「开始汇入」。",
+    "chooseCsvButton": "选择 Jira CSV 文件",
+    "chooseAnotherCsv": "重新选择文件",
+    "demoBlocked": "展示模式无法汇入，请在正式环境操作。",
+    "noDataRows": "这个 CSV 只有标题行，没有任何数据。",
+    "noTasks": "CSV 里没有可汇入的任务（每一行都要有 Issue key / 事务密钥）。",
+    "accountErrorsTitle": "Email 对照表有问题，修正后才能汇入：",
+    "importConfirmTitle": "确定要开始汇入？",
+    "importConfirm": "汇入会先清除现有的任务、冲刺、留言等数据，再写入 CSV 的内容，此操作无法撤销。建议先备份。",
+    "startImport": "开始汇入",
+    "importSuccessToast": "已汇入 {{count}} 个任务",
+    "activityImported": "汇入 Jira CSV，共 {{count}} 个任务",
+    "missingColumnsTitle": "这个 CSV 缺少必要字段，无法汇入",
+    "fields": {
+      "title": "标题",
+      "key": "任务编号（Issue key / 事务密钥）"
+    },
+    "acceptedNames": "字段名可以是 {{names}}",
+    "detectedColumns": "CSV 里识别到的字段（{{count}} 个）：",
+    "showAllColumns": "再显示 {{count}} 个",
+    "noColumnsDetected": "没有识别到任何字段名，请确认这是 Jira 导出的 CSV。",
+    "missingColumnsHint": "请在 Jira 用「导出 → CSV（所有字段）」重新导出。英文或简体中文界面导出的字段名都能识别。",
+    "unitRows": "{{count}} 条",
+    "unitSprints": "{{count}} 个",
+    "resultNewProjects": "新项目：",
+    "peopleTitle": "CSV 里的人（{{count}} 位）",
+    "peopleSummary": "已有成员 {{existing}} 位 · 将创建登录账号 {{login}} 位 · 只创建名字 {{nameOnly}} 位",
+    "peopleName": "名字",
+    "peopleRoles": "出现在",
+    "peoplePlan": "汇入后",
+    "roles": {
+      "assignee": "经办人",
+      "reporter": "报告人",
+      "creator": "创建者",
+      "commenter": "留言者"
+    },
+    "plan": {
+      "existing": "已有成员",
+      "existingNoLogin": "已有成员（尚未启用登录）",
+      "matchedByEmail": "按 Email 对应到「{{name}}」",
+      "matchedMember": "对应到「{{name}}」",
+      "activate": "已有成员，将创建登录账号",
+      "newAccount": "新成员，将创建登录账号",
+      "newNameOnly": "新成员（只有名字，无法登录）",
+      "error": "对照表有误，见下方说明"
+    },
+    "unresolvedCommenters": "另有 {{count}} 位留言者在 CSV 里只有账号 ID、没有名字，他们的留言会记在你名下。",
+    "accounts": {
+      "title": "创建登录账号（选填）",
+      "desc": "粘贴「名字, Email」对照表，或上传两列的 CSV。汇入时会为表上的人创建可以登录的账号，任务直接对应到他们；没列出的人照旧只创建名字，之后也能在成员列表用「启用账号」补上 Email。",
+      "methodInvite": "已配置发信：每个人会收到一封「设置密码」邀请邮件。",
+      "methodTempPassword": "尚未配置发信（系统管理 → 通知）：汇入后会为每个人生成一组随机临时密码，只显示一次，记得下载清单。",
+      "placeholder": "陈小华, hua@example.com\nAlex Lin, alex@example.com",
+      "upload": "上传对照表",
+      "template": "下载对照表模板",
+      "templateName": "名字",
+      "apply": "应用对照表",
+      "lineCount": "已读取 {{count}} 条",
+      "skippedLines": "第 {{lines}} 行看不出 Email，已跳过。",
+      "notApplied": "对照表改过了，请先点「应用对照表」更新预览，才能汇入。",
+      "invited": "已发出 {{count}} 封设置密码邀请邮件：{{emails}}",
+      "tempIssued": "已生成 {{count}} 组临时密码（只显示一次）",
+      "failedTaken": "「{{name}}」的登录账号没有创建：{{email}} 已被其他账号使用。任务照常汇入，之后可在成员列表用「启用账号」重试。",
+      "failedOther": "「{{name}}」的登录账号创建失败（{{email}}）。任务照常汇入，之后可在成员列表用「启用账号」重试。",
+      "failedDelivery": "「{{name}}」的登录账号已创建（{{email}}），但邀请信或临时密码没有送出。请在成员列表用「重置密码」设置密码。"
+    },
+    "accountIssue": {
+      "invalid_email": "「{{name}}」的 Email「{{email}}」格式不正确",
+      "duplicate_email": "{{email}} 同时填给了「{{detail}}」和「{{name}}」，一个 Email 只能给一个人",
+      "conflicting_emails": "「{{name}}」填了两个不同的 Email：{{detail}}、{{email}}",
+      "email_in_other_workspace": "「{{name}}」的 {{email}} 已在其他 LIVO 团队使用，请换一个 Email",
+      "member_has_login": "「{{name}}」已经是有登录账号的成员（{{detail}}），不会改成 {{email}}；请删掉这一行",
+      "requires_super_admin": "「{{name}}」对应的是管理员，只有超级管理员能为他创建登录账号",
+      "unknown_name": "对照表里的「{{name}}」在 CSV 中找不到，这一行不会用到",
+      "member_inactive": "「{{name}}」对应的成员已停用，不能创建登录账号；请先启用该成员，或把这一行删掉"
+    },
+    "timeZoneLabel": "CSV 时间的时区",
+    "timeZoneHint": "Jira 导出的时间用的是导出者在 Jira 个人设置里的时区，请选同一个，留言和冲刺的时间才会正确。",
+    "resultSubtasks": "子任务关系：",
+    "epicChildrenNote": "另有 {{count}} 条是 Epic 下的任务。LIVO 没有 Epic 字段，这些关联不会建立（Epic 本身会汇入成普通任务）。",
+    "attachmentsNote": "CSV 列了 {{count}} 个附件。附件文件不在 CSV 里，汇入完成后请用命令行工具从 Jira 站点备份上传：node scripts/jira-attachments.mjs（用法见 --help）。",
+    "listSeparator": "、",
+    "noStatuses": "这个团队还没有任何任务状态，请先到「状态管理」新增，再导入。",
+    "statusMissing": "要对应的任务状态已不存在（可能刚被删除），请重新选择 CSV 预览后再导入。",
+    "apiKeyForbidden": "API 密钥不能用来设置密码或开通账号，请用网页登录操作。",
+    "importIncomplete": "导入没有完成",
+    "importIncompleteDetail": "在「{{step}}」这一步失败。原有的任务、Sprint、留言已清除，新数据只写入一部分。",
+    "importIncompletePartial": "已写入：任务 {{tasks}} 条、留言 {{comments}} 条、描述 {{specs}} 条。",
+    "importIncompleteHint": "请按上面的错误信息修正后，重新导入同一份 CSV（会再清除一次后完整写入）。",
+    "importWarnings": "数据已导入，但这些步骤没有完成：{{steps}}。可以重新导入一次，或手动调整。",
+    "importStep": {
+      "projects": "创建项目",
+      "members": "创建成员",
+      "tasks": "写入任务",
+      "comments": "写入留言",
+      "specs": "写入描述",
+      "subtasks": "建立子任务关联",
+      "sprints": "创建 Sprint",
+      "departments": "设置部门",
+      "sprint_stats": "计算 Sprint 统计",
+      "active_sprint": "创建进行中的 Sprint",
+      "unknown": "未知步骤"
+    },
+    "statusMappingTitle": "状态对应",
+    "statusMappingHint": "按这个团队当前的状态设置对应。想换对应的话，可以先到「状态管理」新增或改名，再重新预览。",
+    "statusMappingJira": "Jira 状态（类别）",
+    "statusMappingLivo": "LIVO 状态",
+    "statusMappingCount": "任务数",
+    "statusMappingEmpty": "（空白）",
+    "statusVia": {
+      "name": "同名状态",
+      "alias": "按常见名称",
+      "category": "按 Jira 状态类别",
+      "default": "无法判断，放到第一列"
+    },
+    "statusSubstituted": "默认状态已删除或改过，改用同类状态"
   },
   "adminLicense": {
     "sectionTitle": "授权管理",
@@ -2116,7 +2254,8 @@
     "notificationRuleToggled": "通知规则已{{action}}",
     "notificationTemplateCreated": "新增消息模板「{{name}}」",
     "notificationTemplateUpdated": "编辑消息模板「{{name}}」",
-    "notificationTemplateDeleted": "删除消息模板"
+    "notificationTemplateDeleted": "删除消息模板",
+    "createLogin": "启用账号"
   },
   "views": {
     "approvalsTitle": "待签核"
@@ -2170,7 +2309,9 @@
     "roleLabel": "角色",
     "cancelButton": "取消",
     "addButton": "新增",
-    "processingButton": "处理中..."
+    "processingButton": "处理中...",
+    "noLogin": "未启用登录",
+    "noLoginHint": "从 Jira 汇入、只有名字的成员。用「启用账号」填入 Email 后就能登录。"
   },
   "fieldRegistry": {
     "taskKey": "编号",
@@ -2330,5 +2471,36 @@
       "trialCta": "开源免费 · 到 GitHub 下载",
       "exit": "离开展示模式"
     }
+  },
+  "accountCredentials": {
+    "title": "临时密码",
+    "onceWarning": "这些密码只会显示这一次，关闭窗口后就看不到了。",
+    "handOver": "请转交给本人，并提醒他们登录后到「个人设置」改成自己的密码。",
+    "name": "名字",
+    "password": "临时密码",
+    "inviteFailed": "邀请邮件发送失败，改用临时密码",
+    "download": "下载清单（CSV）",
+    "copy": "复制",
+    "copied": "已复制",
+    "copyFailed": "复制失败，请改用下载",
+    "done": "完成",
+    "closeConfirm": "还没下载或复制临时密码，关闭后就看不到了。确定要关闭吗？"
+  },
+  "setPassword": {
+    "title": "设置密码",
+    "subtitle": "设置完成后就能登录 LIVO。",
+    "forEmail": "为 {{email}} 设置登录密码",
+    "passwordLabel": "新密码（至少 8 位）",
+    "confirmLabel": "再输入一次",
+    "submit": "设置密码并登录",
+    "submitting": "设置中…",
+    "invalidTitle": "无法使用这个链接",
+    "invalidLink": "链接无效或已过期，请联系管理员帮你重设密码。",
+    "tooShort": "密码至少需要 8 位",
+    "mismatch": "两次输入的密码不一致",
+    "demoBlocked": "展示模式没有登录账号，无法设置密码。",
+    "failed": "设置失败：",
+    "done": "密码设置好了，欢迎使用 LIVO",
+    "backToLogin": "前往登录页"
   }
 }

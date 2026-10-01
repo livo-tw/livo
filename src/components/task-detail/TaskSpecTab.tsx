@@ -273,15 +273,17 @@ const TaskSpecTab = ({ detail }: Props) => {
         >
           <Paperclip size={18} className="mx-auto mb-1 text-muted-foreground" />
           <p className="text-xs text-muted-foreground" dangerouslySetInnerHTML={{ __html: t('taskDetail.spec.dragDropMessage') }} />
-          <p className="text-[10px] text-muted-foreground mt-1">{t('taskDetail.spec.fileSizeNote')}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">{t('taskDetail.spec.fileSizeNote', { size: MAX_FILE_SIZE / 1024 / 1024 })}</p>
         </div>
         {storageUsed !== null && (
           <div className="mt-1.5 flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min((storageUsed / STORAGE_LIMIT) * 100, 100)}%` }} />
-            </div>
+            {STORAGE_LIMIT !== null && (
+              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min((storageUsed / STORAGE_LIMIT) * 100, 100)}%` }} />
+              </div>
+            )}
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-              {(storageUsed / 1024 / 1024).toFixed(1)} MB / {(STORAGE_LIMIT / 1024 / 1024 / 1024).toFixed(0)} GB
+              {(storageUsed / 1024 / 1024).toFixed(1)} MB{STORAGE_LIMIT !== null && ` / ${STORAGE_LIMIT >= 1024 * 1024 * 1024 ? `${(STORAGE_LIMIT / 1024 / 1024 / 1024).toFixed(0)} GB` : `${(STORAGE_LIMIT / 1024 / 1024).toFixed(0)} MB`}`}
             </span>
           </div>
         )}

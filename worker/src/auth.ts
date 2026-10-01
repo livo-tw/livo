@@ -1,7 +1,8 @@
 // Auth module — Worker-issued HS256 JWTs replacing Supabase GoTrue.
 //
 // Exports (consumed by index.ts and functions/manageMember.ts):
-//   registerAuthRoutes(app)  — /api/auth/login | refresh | logout | user
+//   registerAuthRoutes(app)  — /api/auth/login | refresh | logout | user |
+//                              set-password (invitation links, setPasswordToken.ts)
 //   requireMember            — middleware resolving JWT → active member (RLS parity)
 //   verifyAccessToken(env, token)
 //   hashPassword(pw)         — pbkdf2 format used for all newly stored passwords
@@ -25,6 +26,7 @@ import { DEFAULT_WORKSPACE, isCloudSignupEnabled, isDemoMember } from './env';
 import type { AuthResponse, AuthSession } from './protocol';
 import { verifyInviteToken, markWaitlistJoined } from './functions/cloudBeta';
 import { workspaceProvisionStatements } from './provision';
+import { readSetPasswordToken, setPasswordTokenValid } from './setPasswordToken';
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -390,6 +392,54 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
 
     const session = await createSession(c.env, user.id, user.email);
     return c.json({ error: null, session });
+  });
+
+  // Set-password invitation links (memberLogin.ts mints them for logins
+  // created by the Jira import / 「啟用帳號」). PUBLIC: the signed token is
+  // the credential, and it dies as soon as the password changes.
+  const setPasswordUser = async (env: Env, rawToken: unknown): Promise<AuthUserRow | null> => {
+    const token = readSetPasswordToken(rawToken);
+    if (!token) return null;
+    const user = await env.DB
+      .prepare('SELECT id, email, password_hash, banned FROM auth_users WHERE id = ?')
+      .bind(token.userId)
+      .first<AuthUserRow>();
+    if (!user || user.banned === 1) return null;
+    return (await setPasswordTokenValid(env.JWT_SECRET, token, user.password_hash)) ? user : null;
+  };
+  const INVALID_SET_PASSWORD_LINK = { error: 'invalid_token', message: '連結無效或已過期，請管理員重新寄送。' };
+
+  // POST /api/auth/set-password/verify {token} → {email} (the page shows whose password it sets)
+  app.post('/api/auth/set-password/verify', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { token?: unknown } | null;
+    const user = await setPasswordUser(c.env, body?.token);
+    if (!user) return c.json(INVALID_SET_PASSWORD_LINK, 400);
+    return c.json({ email: user.email, error: null });
+  });
+
+  // POST /api/auth/set-password {token, password} → sets the password, revokes
+  // every refresh token of the user, signs this device in.
+  app.post('/api/auth/set-password', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { token?: unknown; password?: unknown } | null;
+    const password = typeof body?.password === 'string' ? body.password : '';
+    if (password.length < 8) {
+      return c.json({ error: 'password_too_short', message: '密碼至少需要 8 碼' }, 400);
+    }
+    const user = await setPasswordUser(c.env, body?.token);
+    if (!user) return c.json(INVALID_SET_PASSWORD_LINK, 400);
+
+    // Compare-and-set on the hash the token was checked against: of two
+    // requests racing with the same link, only the first one changes it.
+    const updated = await c.env.DB
+      .prepare('UPDATE auth_users SET password_hash = ?1 WHERE id = ?2 AND password_hash IS ?3')
+      .bind(await hashPassword(password), user.id, user.password_hash)
+      .run();
+    if (!updated.meta.changes) return c.json(INVALID_SET_PASSWORD_LINK, 400);
+    await c.env.DB.prepare('DELETE FROM auth_refresh_tokens WHERE user_id = ?').bind(user.id).run();
+    clearMemberCache(user.id);
+
+    const session = await createSession(c.env, user.id, user.email);
+    return c.json<AuthResponse>({ user: session.user, session, error: null });
   });
 
   // POST /api/auth/signup — cloud-beta self-serve workspace creation.

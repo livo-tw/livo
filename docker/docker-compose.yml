@@ -117,7 +117,9 @@ services:
       SERVICE_ROLE_KEY_ASYMMETRIC: ${SERVICE_ROLE_KEY_ASYMMETRIC:-}
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
-    entrypoint: /home/kong/kong-entrypoint.sh
+    # Run through bash: the script loses its exec bit in git checkouts and
+    # zip extracts, and a non-executable entrypoint fails on Linux hosts.
+    entrypoint: ["bash", "/home/kong/kong-entrypoint.sh"]
 
   auth:
     container_name: supabase-auth
@@ -356,7 +358,8 @@ services:
       DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
       STORAGE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
       REQUEST_ALLOW_X_FORWARDED_PATH: "true"
-      FILE_SIZE_LIMIT: 52428800
+      # Per-file upload limit in bytes; set FILE_SIZE_LIMIT in .env to change it.
+      FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-209715200}
       STORAGE_BACKEND: file
       # S3 bucket when using S3 backend, directory name when using 'file'
       GLOBAL_S3_BUCKET: ${GLOBAL_S3_BUCKET}

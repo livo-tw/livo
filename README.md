@@ -71,11 +71,15 @@ cd livo
 npm ci
 node scripts/build-release.mjs      # 產生 release/livo-release/（Linux/macOS 需要 zip 指令）
 
-cd release/livo-release
-sh install.sh                       # Windows：對 install.bat 點兩下
+cp -R release/livo-release ~/livo   # 裝在 repo 外面，之後重新打包不會動到它
+cd ~/livo
+sh install.sh                       # Windows：把資料夾複製出來後，對 install.bat 點兩下
 ```
 
-安裝程式會為這套安裝產生專屬的金鑰與密碼、匯入資料庫結構，再請你建立第一位管理員。完成後打開 <http://localhost:3000/demo/>。詳細說明、日常維運與疑難排解在 [release-template/README.md](release-template/README.md)。
+安裝程式會為這套安裝產生專屬的金鑰與密碼、匯入資料庫結構，再請你建立第一位管理員。完成後打開 <http://localhost:3000/demo/>。詳細說明、日常維運與疑難排解在 [release-template/README.md](release-template/README.md)，其中也有：
+
+- **升級到新版**：把新版檔案蓋到原本的安裝資料夾（保留 `docker/.env`），重新執行安裝程式；新增的資料庫更新會先自動備份再套用，不會刪資料。
+- **用 API 金鑰操作 LIVO**：讓 AI 或腳本透過 API 讀寫資料，權限等同金鑰綁定的成員，不需要伺服器或資料庫權限。
 
 ### 3. 部署到 Cloudflare
 

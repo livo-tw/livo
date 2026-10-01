@@ -1,0 +1,10 @@
+Summary,Issue key,Issue id,Issue Type,Status,Project key,Project name,Priority,Resolution,Assignee,Assignee Id,Reporter,Reporter Id,Creator,Creator Id,Created,Updated,Resolved,Due Date,Labels,Description,Custom field (Start date),Sprint,Sprint,Attachment,Attachment,Comment,Comment,Parent,Parent summary,Status Category
+Onboarding flow redesign,NOVA-1,10001,Epic,In Progress,NOVA,Nova Mobile,High,,Avery Quinn,5f00000000000000000a0001,Jordan Blake,5f00000000000000000a0002,Jordan Blake,5f00000000000000000a0002,03/Mar/24 9:15 AM,,,,ux,Epic for the new onboarding.,,,,,,,,,,In Progress
+Sign-up form validation,NOVA-2,10002,Story,Done,NOVA,Nova Mobile,Highest,Done,Avery Quinn,5f00000000000000000a0001,Jordan Blake,5f00000000000000000a0002,Riley Park,5f00000000000000000a0003,15/Mar/24 10:30 AM,,18/Mar/24 4:05 PM,20/Mar/24 12:00 AM,,"h2. Goal
+Validate the *email* field.
+!form-error.png|width=400!
+* trim spaces
+* show inline errors",14/Mar/24 9:00 AM,NOVA Sprint 1,NOVA Sprint 2,15/Mar/24 10:40 AM;5f00000000000000000a0002;form-error.png;https://nova-demo.example/rest/api/3/attachment/content/20001,16/Mar/24 2:00 PM;5f00000000000000000a0001;spec;v2.pdf;https://nova-demo.example/rest/api/3/attachment/content/20002,"16/Mar/24 11:20 AM;5f00000000000000000a0001;Looks good, [~accountid:5f00000000000000000a0002] please review.","17/Mar/24 12:05 PM;5f00000000000000000a0002;Approved.
+Ship it.",10001,Onboarding flow redesign,Done
+Write unit tests,NOVA-3,10003,Sub-task,Ready for QA,NOVA,Nova Mobile,Low,,Riley Park,5f00000000000000000a0003,Avery Quinn,5f00000000000000000a0001,Avery Quinn,5f00000000000000000a0001,19/Mar/24 3:30 PM,,,,,,,,,,,,,10002,Sign-up form validation,In Progress
+Clean up legacy screens,NOVA-4,10004,Task,Won't Do,NOVA,Nova Mobile,Lowest,Won't Do,,,Jordan Blake,5f00000000000000000a0002,Jordan Blake,5f00000000000000000a0002,01/Apr/24 8:00 AM,,02/Apr/24 8:00 AM,,,,,,,,,,,,,Done

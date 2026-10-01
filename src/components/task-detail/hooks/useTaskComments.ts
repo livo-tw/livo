@@ -51,7 +51,7 @@ export const useTaskComments = ({
     let attachmentSize: number | undefined;
     if (commentFile) {
       if (commentFile.size > MAX_FILE_SIZE) {
-        toast.error(i18n.t('taskDetail.comments.fileSizeExceeded'));
+        toast.error(i18n.t('taskDetail.comments.fileSizeExceeded', { size: MAX_FILE_SIZE / 1024 / 1024 }));
         setCommentFileUploading(false);
         return;
       }

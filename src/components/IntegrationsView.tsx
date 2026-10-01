@@ -10,7 +10,6 @@ import WebhooksCard from './integrations/WebhooksCard';
 import ApiTokensCard from './integrations/ApiTokensCard';
 import GitLabCard from './integrations/GitLabCard';
 import CalendarCard from './integrations/CalendarCard';
-import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import NotificationPolicyView from './notifications/NotificationPolicyView';
 
@@ -82,7 +81,7 @@ const IntegrationsView = ({ embedded }: { embedded?: boolean }) => {
             <SlackCard />
             <EmailNotifyCard />
             <WebhooksCard />
-            {USE_CF_BACKEND && <ApiTokensCard />}
+            <ApiTokensCard />
             <WebhookCard
               webhook={webhook}
               onChange={setWebhook}
