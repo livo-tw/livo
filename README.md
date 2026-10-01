@@ -13,6 +13,8 @@
 
 ## 功能
 
+- **知識庫**：共用或專案頁面、最多三層目錄、富文字與圖片、附件、跨頁搜尋、最近 20 個舊版本與還原；協作鎖避免互相覆蓋。所有成員可建立與編輯，管理員可限制單頁編輯與封存。Docker 與 Cloudflare 均可用，不需額外設定或第三方服務，也沒有功能開關。
+
 - **看任務的方式**：看板、列表、待辦清單、甘特圖（可設任務依賴）、我的任務
 - **Sprint**：衝刺規劃與完成衝刺，開新衝刺時可以把沒做完的任務一起帶過去
 - **工作報告**：依任務狀態整理出日報、週報、月報，可以手動編修、存歷史，也能排程發到 Slack
@@ -147,3 +149,12 @@ LIVO 以 [GNU AGPL-3.0](LICENSE) 釋出。你可以免費使用、修改、商�
 ## 作者
 
 Lingye，台灣的個人開發者，做了十年 PM。LIVO 一開始是做給自己團隊用的工具。
+
+### Slack 互動（可選，Docker 自架）
+
+支援 `/livo` 建卡、`/livo comment ABC-123` 留言，以及訊息捷徑與可見卡片搜尋。
+Socket Mode 主動連線，內網無須提供公開 Request URL；不需新增 npm 依賴。
+預設關閉：管理員先啟用「功能開關 → Slack 互動（建卡、留言）」，再於「整合 → Slack」設定 Bot、Socket Mode、`commands` 權限及 App Token。
+在 `docker/.env` 設 `SLACK_APP_TOKEN`、`APP_BASE_URL` 後重跑安裝程式；內部密鑰自動產生並保留。
+依 Email 綁定啟用中的 LIVO 帳號；停用功能保留設定及歷史。Cloudflare 版隱藏此功能，展示模式不連線。
+完整設定與範例見 [Docker 安裝說明](release-template/README.md#從-slack-建卡與留言docker可選預設關閉)。

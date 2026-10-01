@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeClient';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useAuthContext } from '@/context/AuthContext';
 import { useMemberContext } from '@/context/MemberContext';
@@ -13,7 +14,7 @@ export interface PresenceViewer {
   editingField?: string;
 }
 
-const IS_LOCAL = import.meta.env.VITE_LOCAL_MODE === 'true';
+const IS_LOCAL = USING_MOCK_BACKEND;
 const LOCK_TTL = 15;        // seconds — max time a lock survives without heartbeat
 const HEARTBEAT_MS = 6_000;  // 6s — renew held locks (must be < LOCK_TTL)
 
@@ -81,7 +82,7 @@ export function usePresenceLock(channelName: string, disabled = false) {
       clearInterval(pollInterval);
       supabase.removeChannel(lockChannel);
     };
-  }, [channelName, currentMemberId]);
+  }, [channelName, currentMemberId, disabled]);
 
   // ── Presence channel (who is VIEWING — avatars only) ──────────────
   useEffect(() => {
@@ -181,10 +182,10 @@ export function usePresenceLock(channelName: string, disabled = false) {
     // Normal async release for React unmount (not page close)
     const releaseAllAsync = () => {
       for (const lockKey of heldLocksRef.current) {
-        supabase.rpc('release_field_lock', {
+        Promise.resolve(supabase.rpc('release_field_lock', {
           p_lock_key: lockKey,
           p_member_id: currentMemberId,
-        }).catch((_err: unknown) => { console.error('[LIVO] unmount lock release failed:', _err); });
+        })).catch((_err: unknown) => { console.error('[LIVO] unmount lock release failed:', _err); });
       }
       heldLocksRef.current.clear();
     };
@@ -194,7 +195,7 @@ export function usePresenceLock(channelName: string, disabled = false) {
       window.removeEventListener('beforeunload', releaseAllBeacon);
       releaseAllAsync();
     };
-  }, [currentMemberId]);
+  }, [currentMemberId, disabled]);
 
   // ── acquireLock ─────────────────────────────────────────────────
   const acquireLock = useCallback(async (fieldKey: string): Promise<{ acquired: boolean; lockerName?: string }> => {
@@ -222,14 +223,16 @@ export function usePresenceLock(channelName: string, disabled = false) {
 
       if (error) {
         console.error('[LIVO] acquire_field_lock error:', error);
-      } else if (data && !data.acquired) {
-        const locker = usersRef.current.find(u => u.id === data.locked_by);
-        return { acquired: false, lockerName: locker?.name || data.locked_by };
+        return { acquired: false };
+      } else if (!data?.acquired) {
+        const locker = usersRef.current.find(u => u.id === data?.locked_by);
+        return { acquired: false, lockerName: locker?.name };
       }
 
       heldLocksRef.current.add(fieldKey);
     } catch (err) {
       console.error('[LIVO] acquire_field_lock exception:', err);
+      return { acquired: false };
     }
 
     // Also update presence for viewing indicator
@@ -240,7 +243,7 @@ export function usePresenceLock(channelName: string, disabled = false) {
       await channel.track({ name: me?.name || '', avatar: me?.avatar || '', color: me?.color || '#6B778C', editingField: fieldKey });
     }
     return { acquired: true };
-  }, [currentMemberId, viewers]);
+  }, [currentMemberId, viewers, disabled]);
 
   // ── releaseLock ─────────────────────────────────────────────────
   const releaseLock = useCallback(async (fieldKey?: string) => {
@@ -248,10 +251,10 @@ export function usePresenceLock(channelName: string, disabled = false) {
 
     if (fieldKey && !IS_LOCAL) {
       heldLocksRef.current.delete(fieldKey);
-      supabase.rpc('release_field_lock', {
+      Promise.resolve(supabase.rpc('release_field_lock', {
         p_lock_key: fieldKey,
         p_member_id: currentMemberId,
-      }).catch(() => {
+      })).catch(() => {
         // Fallback: fetch+keepalive
         try {
           const url = rpcUrl('release_field_lock');

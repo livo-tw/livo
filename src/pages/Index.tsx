@@ -35,6 +35,7 @@ const AllListView = lazy(() => import('@/components/AllListView'));
 const SystemAdminView = lazy(() => import('@/components/SystemAdminView'));
 const WorkReportView = lazy(() => import('@/components/WorkReportView'));
 const TeamIntroView = lazy(() => import('@/components/TeamIntroView'));
+const KnowledgeBaseView = lazy(() => import('@/components/KnowledgeBaseView'));
 const BacklogView = lazy(() => import('@/components/BacklogView'));
 
 const ViewFallback = () => (
@@ -145,6 +146,7 @@ const AppContent = () => {
               {currentView === 'template-manage' && permissions.canViewMemberList && <TeamManageView initialTab="task-config" />}
               {currentView === 'system-admin' && permissions.canManageMembers && <Suspense fallback={<ViewFallback />}><SystemAdminView /></Suspense>}
               {currentView === 'team-intro' && <Suspense fallback={<ViewFallback />}><TeamIntroView /></Suspense>}
+              {currentView === 'knowledge-base' && <Suspense fallback={<ViewFallback />}><KnowledgeBaseView /></Suspense>}
               {currentView === 'activity-log' && (hasFeature('activity-log') ? <ActivityLogView /> : <UpgradePrompt feature="activity-log" />)}
               {currentView === 'my-settings' && <MySettingsView />}
               {currentView === 'my-tasks' && <MyTasksView />}

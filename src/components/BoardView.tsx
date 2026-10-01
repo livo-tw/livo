@@ -486,6 +486,9 @@ const BoardView = () => {
                   </span>
                 )}
                 <span className="text-sm md:text-[15px] font-bold text-foreground truncate">{project.name}</span>
+                <button className="text-xs text-primary hover:underline shrink-0" onClick={event => {
+                  event.stopPropagation(); setSelectedProjectId(project.id); setSelectedLineId(null); setCurrentView('knowledge-base');
+                }}>{t('kb.title')}</button>
                 {(otherSprintCounts.get(project.id) || 0) > 0 && (
                   <span className="ml-auto flex-shrink-0 text-[12px] text-muted-foreground/70" title={t('board.tasksInOtherSprints', { count: otherSprintCounts.get(project.id) })}>
                     {t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}

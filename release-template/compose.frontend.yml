@@ -40,3 +40,22 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  # Optional outbound-only Slack transport. An empty app token exits successfully.
+  livo-slack-socket:
+    image: node:22-alpine
+    restart: "on-failure:5"
+    init: true
+    read_only: true
+    command: ["node", "/relay/slack-socket.mjs"]
+    environment:
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_INTERNAL_SECRET: ${SLACK_INTERNAL_SECRET:-}
+      ANON_KEY: ${ANON_KEY}
+    volumes:
+      - ../app/slack-socket.mjs:/relay/slack-socket.mjs:ro
+    depends_on:
+      kong:
+        condition: service_healthy
+    networks:
+      - default

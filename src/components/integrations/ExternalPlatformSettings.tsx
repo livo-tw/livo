@@ -217,7 +217,7 @@ const ExternalPlatformSettings = () => {
           <div className="rounded-lg bg-muted/40 border border-border px-4 py-3 space-y-1.5">
             <p className="text-sm font-semibold text-foreground">{t('integrations.external.howToBind')}</p>
             <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside leading-relaxed">
-              <li>{t('integrations.external.slackInstruction')} <code className="bg-muted rounded px-1 py-0.5">/livo bind</code></li>
+              <li>{t('integrations.external.slackInstruction')}</li>
               <li>{t('integrations.external.teamsInstruction')} <code className="bg-muted rounded px-1 py-0.5">@LIVO bind</code> {t('integrations.external.toBot')}</li>
               <li>{t('integrations.external.lineInstruction')} <code className="bg-muted rounded px-1 py-0.5">/bind</code></li>
             </ul>

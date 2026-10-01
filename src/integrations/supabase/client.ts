@@ -15,9 +15,10 @@ import { SUPABASE_URL, supabaseAuthStorageKey } from '@/lib/gatewayUrl';
 import type { Database } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
+export const USING_MOCK_BACKEND = IS_DEMO_PRO || (!API_URL && !SUPABASE_URL);
 
 function selectClient(): unknown {
-  if (IS_DEMO_PRO || (!API_URL && !SUPABASE_URL)) return createMockClient();
+  if (USING_MOCK_BACKEND) return createMockClient();
   if (API_URL) return createCfClient();
   // SUPABASE_URL, not the raw env value: on a self-host install opened from
   // another machine it uses the page's origin and server.cjs proxies the API.

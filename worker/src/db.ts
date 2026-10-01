@@ -18,6 +18,7 @@ import type {
 } from './protocol';
 import { TABLES } from './tables';
 import { decideMembersUpdate } from './memberProfile';
+import { writeKnowledge } from './knowledge';
 import { rowToWire, valueToDb, nowIso } from './meta';
 import type { TableMeta, WriteRule } from './meta';
 import { notifyChanges } from './notify';
@@ -599,6 +600,7 @@ export async function runQuery(
     // Server-side permission floor (role-based write rules + own-row scoping).
     const denied = enforceWritePolicy(req, table, meta, auth);
     if (denied) return denied;
+    if (table.startsWith('kb_') && req.op !== 'select') return await writeKnowledge(env, ctx, auth, req);
 
     switch (req.op) {
       // ── SELECT ──────────────────────────────────────────────────────

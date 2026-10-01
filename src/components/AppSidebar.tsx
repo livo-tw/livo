@@ -136,6 +136,11 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           {t('sidebar.teamIntro')}
         </button>
 
+        <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('knowledge-base'); })}
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-all ${currentView === 'knowledge-base' ? 'text-sidebar-primary-foreground bg-sidebar-primary/90 shadow-sm' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}>
+          <FolderOpen size={16} />{t('kb.title')}
+        </button>
+
         {/* All Tasks */}
         <button
           onClick={() => nav(() => {
@@ -146,7 +151,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
             }
           })}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-            selectedProjectId === null && selectedLineId === null && !['status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
+            selectedProjectId === null && selectedLineId === null && !['knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
               ? 'text-sidebar-primary-foreground font-semibold bg-sidebar-primary/90 shadow-sm'
               : 'text-sidebar-foreground hover:bg-sidebar-hover'
           }`}

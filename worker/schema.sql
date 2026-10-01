@@ -17,6 +17,100 @@
 
 -- ── Auth (Worker-issued JWTs; replaces Supabase GoTrue) ─────────────────────
 
+-- Knowledge base: composite references keep pages/files inside their workspace.
+CREATE TABLE IF NOT EXISTS kb_pages (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  title TEXT NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 200),
+  body TEXT NOT NULL DEFAULT '' CHECK (length(body) <= 1000000),
+  project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+  parent_id TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0,1)),
+  admin_only INTEGER NOT NULL DEFAULT 0 CHECK (admin_only IN (0,1)),
+  created_by TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(workspace_id, id),
+  FOREIGN KEY (workspace_id, parent_id) REFERENCES kb_pages(workspace_id, id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_kb_pages_scope ON kb_pages(workspace_id, project_id, parent_id, sort_order);
+CREATE TABLE IF NOT EXISTS kb_revisions (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  page_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  UNIQUE(workspace_id, page_id, version),
+  FOREIGN KEY (workspace_id, page_id) REFERENCES kb_pages(workspace_id, id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS kb_attachments (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  page_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_size INTEGER NOT NULL CHECK (file_size >= 0 AND file_size <= 2097152),
+  file_type TEXT NOT NULL DEFAULT '',
+  storage_path TEXT NOT NULL UNIQUE,
+  uploaded_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (workspace_id, page_id) REFERENCES kb_pages(workspace_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_kb_attachments_page ON kb_attachments(workspace_id, page_id);
+
+CREATE TRIGGER IF NOT EXISTS kb_insert_tree BEFORE INSERT ON kb_pages BEGIN
+  SELECT CASE WHEN NEW.project_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM projects WHERE workspace_id = NEW.workspace_id AND id = NEW.project_id AND is_archived = 0
+  ) THEN RAISE(ABORT, 'kb_invalid_project') END;
+  SELECT CASE WHEN NEW.parent_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM kb_pages WHERE workspace_id = NEW.workspace_id AND id = NEW.parent_id
+      AND project_id IS NEW.project_id AND is_archived = 0
+  ) THEN RAISE(ABORT, 'kb_invalid_parent') END;
+  SELECT CASE WHEN (WITH RECURSIVE ancestors(id, parent_id, depth) AS (
+    SELECT id, parent_id, 1 FROM kb_pages WHERE workspace_id = NEW.workspace_id AND id = NEW.parent_id
+    UNION ALL SELECT p.id, p.parent_id, a.depth+1 FROM kb_pages p JOIN ancestors a ON p.id = a.parent_id
+      WHERE p.workspace_id = NEW.workspace_id AND a.depth < 3
+  ) SELECT COALESCE(MAX(depth),0) FROM ancestors) >= 3 THEN RAISE(ABORT, 'kb_depth') END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS kb_update_tree BEFORE UPDATE OF parent_id, project_id ON kb_pages BEGIN
+  SELECT CASE WHEN NEW.project_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM projects WHERE workspace_id = NEW.workspace_id AND id = NEW.project_id
+      AND (is_archived = 0 OR NEW.project_id IS OLD.project_id)
+  ) THEN RAISE(ABORT, 'kb_invalid_project') END;
+  SELECT CASE WHEN NEW.parent_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM kb_pages WHERE workspace_id = NEW.workspace_id AND id = NEW.parent_id
+      AND project_id IS NEW.project_id AND (is_archived = 0 OR NEW.parent_id IS OLD.parent_id)
+  ) THEN RAISE(ABORT, 'kb_invalid_parent') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM kb_pages WHERE workspace_id = NEW.workspace_id
+    AND parent_id = NEW.id AND project_id IS NOT NEW.project_id) THEN RAISE(ABORT, 'kb_invalid_parent') END;
+  SELECT CASE WHEN (WITH RECURSIVE ancestors(id, parent_id, depth) AS (
+    SELECT id, parent_id, 1 FROM kb_pages WHERE workspace_id = NEW.workspace_id AND id = NEW.parent_id
+    UNION ALL SELECT p.id, p.parent_id, a.depth+1 FROM kb_pages p JOIN ancestors a ON p.id = a.parent_id
+      WHERE p.workspace_id = NEW.workspace_id AND a.depth < 3
+  ), descendants(id, depth) AS (
+    SELECT NEW.id, 1 UNION ALL SELECT p.id, d.depth+1 FROM kb_pages p JOIN descendants d ON p.parent_id = d.id
+      WHERE p.workspace_id = NEW.workspace_id AND d.depth < 4
+  ) SELECT CASE WHEN EXISTS (SELECT 1 FROM ancestors WHERE id = NEW.id) THEN 4
+    ELSE (SELECT COALESCE(MAX(depth),0) FROM ancestors) + (SELECT MAX(depth) FROM descendants) END
+  ) > 3 THEN RAISE(ABORT, 'kb_depth') END;
+END;
+
+-- The previous body and pruning commit in the SAME statement as the edit.
+CREATE TRIGGER IF NOT EXISTS kb_save_revision AFTER UPDATE ON kb_pages
+WHEN NEW.version != OLD.version BEGIN
+  INSERT INTO kb_revisions(id, workspace_id, page_id, body, created_by, created_at, version)
+    VALUES (lower(hex(randomblob(16))), OLD.workspace_id, OLD.id, OLD.body, OLD.updated_by, OLD.updated_at, OLD.version);
+  DELETE FROM kb_revisions WHERE workspace_id = NEW.workspace_id AND page_id = NEW.id AND id IN (
+    SELECT id FROM kb_revisions WHERE workspace_id = NEW.workspace_id AND page_id = NEW.id
+      ORDER BY version DESC LIMIT -1 OFFSET 20
+  );
+END;
+
 CREATE TABLE IF NOT EXISTS auth_users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL COLLATE NOCASE UNIQUE,

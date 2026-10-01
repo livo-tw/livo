@@ -9,6 +9,11 @@ export const FEATURE_TOGGLES = [{
   label: 'featureToggles.approvalsLabel',
   description: 'featureToggles.approvalsDescription',
   resolveDefault: (history: FeatureHistory) => history.hasApprovalRules || history.hasApprovalRequests,
+}, {
+  key: 'slackActions',
+  label: 'featureToggles.slackActionsLabel',
+  description: 'featureToggles.slackActionsDescription',
+  resolveDefault: (_history: FeatureHistory) => false,
 }] as const;
 
 export type FeatureKey = typeof FEATURE_TOGGLES[number]['key'];

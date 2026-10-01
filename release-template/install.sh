@@ -417,8 +417,16 @@ sync_frontend_anon_key() {
 
 say ""
 say "[2/7] 產生本安裝專屬金鑰..."
+ensure_slack_secret() {
+  [ -n "$(env_var SLACK_INTERNAL_SECRET)" ] && return 0
+  _slack_secret=$(docker run --rm node:22-alpine node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")
+  echo "$_slack_secret" | grep -Eq '^[0-9a-f]{64}$' || die "Slack internal secret generation failed." "Please rerun the installer."
+  set_env_var SLACK_INTERNAL_SECRET "$_slack_secret"
+}
+
 rotate_keys
 rotate_s3_keys
+ensure_slack_secret
 sync_frontend_anon_key
 backup_env
 

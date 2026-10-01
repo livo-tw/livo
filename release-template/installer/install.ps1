@@ -489,8 +489,18 @@ function Sync-FrontendAnonKey {
 
 Say ''
 Say '[2/7] 產生本安裝專屬金鑰...'
+function Ensure-SlackSecret {
+  if (Get-DotenvValue 'SLACK_INTERNAL_SECRET') { return }
+  $slackBytes = New-Object byte[] 32
+  $slackRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $slackRng.GetBytes($slackBytes) } finally { $slackRng.Dispose() }
+  $slackSecret = -join ($slackBytes | ForEach-Object { $_.ToString('x2') })
+  Set-DotenvVar 'SLACK_INTERNAL_SECRET' $slackSecret
+}
+
 Invoke-KeyRotation
 Invoke-S3KeyRotation
+Ensure-SlackSecret
 Sync-FrontendAnonKey
 Backup-EnvFile
 

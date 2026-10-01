@@ -3,6 +3,7 @@
 
 import { seedAllDemoData } from './seedData';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
+import { seedKnowledgeMock, knowledgeMockDefaults, knowledgeMockUpdate } from './knowledgeMock';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ function initializeData() {
   // ── Populate all demo data via seedData ──
   seedAllDemoData(db);
   db['system_settings'] = [{ key: 'feature_toggles', value: { approvals: true }, updated_at: new Date().toISOString() }];
+  seedKnowledgeMock(db);
 
   // Restore auth session.
   // In ?demo=pro sales mode we auto-sign-in as a real seeded super_admin
@@ -206,7 +208,7 @@ function withInsertDefaults(t: string, row: DbRow): DbRow {
   if (!row.id) row.id = uuid();
   if (!row.created_at) row.created_at = new Date().toISOString();
   if (!row.started_at && t === 'sprints') row.started_at = new Date().toISOString();
-  return row;
+  return knowledgeMockDefaults(t, row);
 }
 
 // ─── MockQuery ───────────────────────────────────────────────────────────
@@ -352,7 +354,7 @@ class UpdateBuilder extends FilterBuilder {
     const updated: DbRow[] = [];
     arr.forEach((row, i) => {
       if (matches(row, this.filters)) {
-        arr[i] = { ...row, ...clone(this.vals) };
+        arr[i] = this.t === 'kb_pages' ? knowledgeMockUpdate(db, row, clone(this.vals)) : { ...row, ...clone(this.vals) };
         updated.push(arr[i]);
       }
     });
@@ -569,13 +571,28 @@ class MockFunctions {
 
 // ─── Storage ─────────────────────────────────────────────────────────────
 
+const mockFiles = new Map<string, { file: Blob; url: string }>();
 class MockBucket {
   private name: string;
   constructor(name: string) { this.name = name; }
-  async upload(path: string, _file: Blob | File) { return { data: { path }, error: null }; }
-  async download(_path: string) { return { data: new Blob(), error: null }; }
-  getPublicUrl(path: string) { return { data: { publicUrl: `/mock-storage/${this.name}/${path}` } }; }
-  async remove(_paths: string[]) { return { data: _paths, error: null }; }
+  async upload(path: string, file: Blob | File) {
+    const key = `${this.name}/${path}`;
+    const old = mockFiles.get(key);
+    if (old) URL.revokeObjectURL(old.url);
+    mockFiles.set(key, { file, url: URL.createObjectURL(file) });
+    return { data: { path }, error: null };
+  }
+  async download(path: string) { return { data: mockFiles.get(`${this.name}/${path}`)?.file || new Blob(), error: null }; }
+  getPublicUrl(path: string) { return { data: { publicUrl: mockFiles.get(`${this.name}/${path}`)?.url || '' } }; }
+  async remove(paths: string[]) {
+    for (const path of paths) {
+      const key = `${this.name}/${path}`;
+      const entry = mockFiles.get(key);
+      if (entry) URL.revokeObjectURL(entry.url);
+      mockFiles.delete(key);
+    }
+    return { data: paths, error: null };
+  }
   async list(_path?: string) { return { data: [] as DbRow[], error: null }; }
 }
 

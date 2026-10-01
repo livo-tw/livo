@@ -16,6 +16,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+import { shouldPostChannel } from '../slack-interact/core.ts';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -174,6 +176,7 @@ interface NotifyPayload {
   oldAssignee?: string;
   newAssignee?: string;
   commentPreview?: string;
+  sourceChannelId?: string;
   dmTargets?: { email: string; name?: string; reason: string }[];
   blocks?: any[];
   reportContent?: string;
@@ -425,10 +428,12 @@ Deno.serve(async (req) => {
     // Channel notification if this type is enabled and a channel is set.
     if (taskNotifyChannel && enabledTypes.includes(payload.type)) {
       const channelId = await resolveChannelId(sc, taskNotifyChannel);
+      if (shouldPostChannel(channelId, payload.sourceChannelId)) {
       const blocks = buildBlocks(payload);
       const fallbackText = `${payload.actorName ?? ''} - ${payload.taskKey || ''} ${payload.taskTitle || ''}`;
       const res = await postMessage(sc, channelId, fallbackText, blocks, 'PM 任務通知', ':clipboard:');
       if (!res.ok) console.error('[slack] channel error:', res.error);
+      }
     }
 
     // DMs if targets specified and DM notifications are enabled.

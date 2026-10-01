@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { useTranslation } from 'react-i18next';
 import { SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
@@ -70,7 +71,7 @@ export default function AdminFeatureToggles() {
         <SlidersHorizontal size={18} className="text-primary" />{t('featureToggles.title')}
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">{t('featureToggles.description')}</p>
-      {FEATURE_TOGGLES.map(feature => (
+      {FEATURE_TOGGLES.filter(feature => feature.key !== 'slackActions' || !USE_CF_BACKEND).map(feature => (
         <div key={feature.key} className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-background/70 p-4 shadow-sm">
           <div className="min-w-0">
             <label htmlFor={`feature-${feature.key}`} className="font-medium">{t(feature.label)}</label>

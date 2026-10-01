@@ -91,6 +91,14 @@ livo-release/
 
 ## 4. 日常維運
 
+### 知識庫
+
+升級安裝程式會自動套用知識庫資料表、權限與即時更新設定，不需新增環境變數或外部服務。側欄「知識庫」可管理共用文件；專案看板標題旁的入口會開啟該專案的文件。知識庫常駐，不需功能開關或授權設定。
+
+頁面最多三層，可以調整上層與排序。搜尋會跨所有範圍比對標題及內容。編輯時會取得協作鎖；若網路中斷或鎖失效，伺服器會拒絕過期保存，請保留草稿再重新開啟頁面。每次儲存與還原都會先保留原內容，最多 20 個舊版本。
+
+所有成員可讀取、建立與編輯未鎖定的頁面。管理員可設定「僅管理員可編輯」、封存與刪除任何頁面；作者可刪除自己的頁面。刪除上層頁面前，須先移動或刪除子頁面。附件沿用 `task-images` 儲存桶與既有檔案大小限制，路徑為 `kb/<pageId>/…`；雲端租戶會自動加入工作區前綴。檔案網址與既有任務附件一樣可由持有連結的人存取。刪除頁面會移除版本與附件清單；若需刪除附件實體檔案，請先使用附件的刪除按鈕。正文圖片可能被舊版本引用，因此不隨編輯自動刪除。
+
 以下指令都在 `docker/` 目錄執行：
 
 ```bash
@@ -414,3 +422,42 @@ VALUES (
 ## 需要協助？
 
 請到 <https://github.com/livo-tw/livo/issues> 回報問題。
+
+
+## 從 Slack 建卡與留言（Docker，可選，預設關閉）
+
+管理員先在「系統管理 → 功能開關」開啟「Slack 互動（建卡、留言）」，再到「整合 → Slack」設定。
+功能關閉時不顯示互動設定、不處理建卡或留言，已存設定、綁定及紀錄仍保留。Cloudflare 版不提供此功能；展示模式不連線。
+Socket Mode 由容器主動連到 Slack，公司內網不必提供公開 Request URL。Slack 仍須允許容器對外 HTTPS / WebSocket 連線。
+
+1. 在 Slack App 的 **Socket Mode** 開啟連線；於 **Basic Information → App-level tokens** 建立具有 `connections:write` 的 Token。
+2. 新增 `/livo` slash command；啟用 **Interactivity**，新增兩個 **message shortcuts**：
+   - 「建立 LIVO 卡片」，callback ID：`livo_create_task`。
+   - 「留言到 LIVO 卡片」，callback ID：`livo_comment_task`。
+3. Bot scopes 加入 `commands`，並保留通知功能所需的 `channels:read`、`groups:read`、`chat:write`、`chat:write.customize`、`im:write`、`users:read`、`users:read.email`；重新安裝 App。
+4. 在 LIVO Slack 卡片連接 Bot Token，將 Bot 邀請進預計操作的頻道。
+5. 在安裝目錄的 `docker/.env` 設定 `SLACK_APP_TOKEN=xapp-example`，以及同事可開啟的 `APP_BASE_URL=https://livo.example.com`（主機根網址，不含 /demo）。
+6. 重跑 `sh install.sh` 或 `install.bat`。安裝程式會備份既有 .env，只在缺少時產生 `SLACK_INTERNAL_SECRET`，重跑保留既有密鑰。進入 docker 目錄執行：
+
+```sh
+docker compose -f docker-compose.yml -f compose.frontend.yml up -d
+```
+
+「從 Slack 建卡與留言」區塊會顯示 relay 狀態（每 30 秒回報，超過 90 秒未回報視為離線）、綁定帳號及解除綁定按鈕。
+未設定 App Token 的 relay 會安靜退出，不影響原有服務。Bot Token 留在伺服器；App Token 只交給 relay，內部共享密鑰不會顯示在 UI。
+
+- `/livo` 或 `/livo new 標題`：開啟建卡表單；經辦人預設為本人。
+- `/livo comment ABC-123 留言內容`：在卡片留言；不附內容時開啟表單。
+- `/livo help`：查看操作方式。
+- 訊息捷徑帶入原訊息及 permalink；留言捷徑可搜尋有權限看到的卡片（最多 20 筆），已對應卡片的討論串會預選卡片。
+
+首次使用依 Slack Email（不分大小寫）綁定唯一、已啟用且具登入帳號的 LIVO 成員。若尚未建立登入帳號，請先由管理員啟用帳號並完成一次登入。
+找不到、重複 Email 或停用帳號不會建立卡片／留言。解除綁定保留操作歷史，下次使用重新驗證 Email。
+搜尋、建卡及留言使用該成員的 authenticated 身分與既有 RLS；提交時再次檢查功能開關、綁定及啟用狀態。
+卡號依專案編號，重送不重複建立；留言、計數、站內通知、活動紀錄與操作紀錄同一交易提交。
+若團隊另有這份表單未提供的必填欄位，會引導回 LIVO 網頁建卡。關閉功能不會取消已完成的操作。
+
+Slack 文字會安全轉為留言格式；已綁定的 @提及保留 LIVO 通知。Slack 來源留言不再向來源頻道發送「新留言」通知；其他頻道及個人通知仍依原設定發送。
+Email 與簽名 webhook 沿用資料庫通知觸發器。Slack 通知失敗不會撤銷已儲存的卡片／留言。
+此版不會自動同步每一則討論串回覆，不讀取頻道歷史，也不匯入 Slack 附件。
+Socket Mode 協定參考：[Slack 官方文件](https://docs.slack.dev/apis/events-api/using-socket-mode/)。

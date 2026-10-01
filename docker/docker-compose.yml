@@ -456,6 +456,7 @@ services:
       # notifications etc.). Set in docker/.env; defaults to empty so the
       # functions fall back to their built-in default.
       APP_BASE_URL: ${APP_BASE_URL:-}
+      SLACK_INTERNAL_SECRET: ${SLACK_INTERNAL_SECRET:-}
     entrypoint:
       - sh
       - -c

@@ -25,6 +25,7 @@ import { useLicense } from '@/context/LicenseContext';
 import { fnUrl } from '@/lib/apiBase';
 import UpgradePrompt from '@/components/UpgradePrompt';
 import { Field, inputCls } from './shared';
+import SlackActionsSection from './SlackActionsSection';
 
 // The 7 Bot Token Scopes needed for channel posts, DMs and user lookup.
 // These are literal Slack scope identifiers — not translated.
@@ -414,6 +415,7 @@ const SlackCard = () => {
           )}
         </div>
       </div>
+      <SlackActionsSection />
     </div>
   );
 };

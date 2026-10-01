@@ -1,0 +1,176 @@
+// @vitest-environment node
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
+  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, shouldPostChannel } from '../../docker/volumes/functions/slack-interact/core';
+import { constantTimeSecret, createActions, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
+import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
+import { resolveFeatureToggles } from '@/lib/featureToggles';
+const actor = { id: 'member-example', name: 'Example Member', email: 'member@example.com', is_active: true,
+  auth_id: '00000000-0000-4000-8000-000000000001', team: 'TEXAMPLE', jwt: 'member-session' };
+const task = { id: 'task-example', task_key: 'ABC-123', title: 'Example card', project_id: 'project-example',
+  assignee_id: 'member-assignee', reviewer_id: 'member-reviewer' };
+const environment: Record<string, string> = { SUPABASE_URL: 'https://example.com', SUPABASE_SERVICE_ROLE_KEY: 'example-service',
+  SUPABASE_ANON_KEY: 'example-anon', JWT_SECRET: 'example-only-secret-with-at-least-32-characters', APP_BASE_URL: 'https://example.com' };
+const env = { get: (name: string) => environment[name] };
+const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+function deps() {
+  const jobs: Promise<unknown>[] = [];
+  const d: Actions = { enabled: vi.fn(async () => true), heartbeat: vi.fn(async () => {}), actor: vi.fn(async () => actor),
+    catalog: vi.fn(async () => ({ projects: [{ id: 'project-example', name: 'Example' }], statuses: [{ id: 'todo', name: 'Todo' }] })),
+    search: vi.fn(async () => []), task: vi.fn(async () => task), mapped: vi.fn(async () => task),
+    slack: vi.fn(async () => ({ view: { id: 'VEXAMPLE' }, permalink: 'https://example.com/message' })),
+    reply: vi.fn(async () => {}), commit: vi.fn(async () => ({ task, kind: 'comment', duplicate: false })),
+    deliver: vi.fn(async () => {}), background: job => { jobs.push(job); }, link: () => 'https://example.com/demo/?task=ABC-123' };
+  return { d, jobs };
+}
+afterEach(() => vi.unstubAllGlobals());
+describe('Slack actions rules', () => {
+  it.each([undefined, null, {}, { slackActions: 'true' }, { slackActions: 1 }, { slackActions: false }])('defaults OFF for %j', value => {
+    expect(enabled(value)).toBe(false);
+    expect(resolveFeatureToggles(value, { hasApprovalRules: true, hasApprovalRequests: true }).slackActions).toBe(false);
+  });
+  it('only enables explicit true', () => expect(enabled({ slackActions: true })).toBe(true));
+  it('parses commands without losing multiline text', () => {
+    expect(parseCommand('comment abc-123 first\nsecond')).toEqual({ kind: 'comment', key: 'ABC-123', text: 'first\nsecond' });
+    expect(parseCommand('comment ABC-123')).toEqual({ kind: 'comment', key: 'ABC-123', text: '' });
+    expect(parseCommand('new Example')).toEqual({ kind: 'new', text: 'Example' });
+    expect(parseCommand('nonsense')).toEqual({ kind: 'help' });
+  });
+  it('extracts the first line and keeps the message permalink', () => {
+    expect(messageDraft({ text: '*Example*\nDetails' }, 'https://example.com/message')).toEqual({
+      title: 'Example', description: '*Example*\nDetails\n\nhttps://example.com/message' });
+    const long = messageDraft({ text: 'x'.repeat(4000) }, 'https://example.com/message');
+    expect(long.description).toHaveLength(3000); expect(long.description.endsWith('https://example.com/message')).toBe(true);
+  });
+  it('matches email case-insensitively, rejects ambiguity and disabled members', () => {
+    expect(matchEmail([actor], 'MEMBER@example.com')).toEqual(actor);
+    expect(matchEmail([actor], 'missing@example.com')).toBeUndefined();
+    expect(matchEmail([{ ...actor, is_active: false }], actor.email)).toBeUndefined();
+    expect(matchEmail([actor, { ...actor, id: 'duplicate' }], actor.email)).toBeUndefined();
+  });
+  it('escapes HTML and uses editor mentions only for bound members', () => {
+    const text = convertMrkdwn('*Hello* <@UBOUND> <@UOTHER> &lt;img src=x onerror=alert(1)&gt; <https://example.com|link> <!channel>', {
+      UBOUND: { id: 'member-bound', name: 'Bound "Member"' }, UOTHER: { name: 'Other' } });
+    expect(text.mentionedIds).toEqual(['member-bound']);
+    expect(text.html).toContain('data-type="mention" data-id="member-bound"');
+    expect(text.html).toContain('&lt;img'); expect(text.html).not.toContain('<img');
+    expect(text.plain).toContain('@Other'); expect(text.plain).toContain('link (https://example.com)');
+    expect(text.plain).not.toContain('<!channel>');
+  });
+  it('builds both modals with requester, status, task and message defaults', () => {
+    const modal = createModal({ projects: [{ id: 'project-example', name: 'Example' }], statuses: [{ id: 'todo', name: 'Todo' }] }, actor,
+      { title: 'Example', description: 'Details' });
+    expect(modal.blocks.map(b => b.block_id)).toEqual(['title', 'project', 'status', 'assignee', 'priority', 'due', 'description']);
+    expect(modal.blocks[3].element.initial_option.value).toBe(actor.id);
+    expect(modal.blocks[2].element.initial_option.value).toBe('todo');
+    expect(commentModal(task, 'Details').blocks[0].element.initial_option.value).toBe(task.id);
+    expect(createModal({ projects: [], statuses: [] }, { ...actor, locale: 'en-US' }).blocks[0].label.text).toBe('Title');
+    expect(createModal({ projects: [], statuses: [] }, { ...actor, locale: 'zh-CN' }).blocks[0].label.text).toBe('标题');
+  });
+  it('validates submissions, including impossible dates and missing text', () => {
+    const values: Record<string, any> = {};
+    for (const [key, value] of Object.entries({ title: 'Example', project: 'project-example', status: 'todo', assignee: actor.id, priority: 'medium', due: '2026-02-30' }))
+      values[key] = { [key]: { value } };
+    const parsed = parseSubmission({ callback_id: 'livo_create_task', state: { values } });
+    expect(parsed.fields).toMatchObject({ title: 'Example', project_id: 'project-example', assignee_id: actor.id });
+    expect(Object.keys(parsed.errors)).toEqual(['due']);
+    expect(parseSubmission({ callback_id: 'livo_comment_task', state: {} }).errors).toHaveProperty('comment');
+  });
+  it('deduplicates notifications, excludes self and suppresses only the origin channel', () => {
+    expect(commentRecipients(task, actor.id, [actor.id, 'member-assignee', 'member-mentioned'])).toEqual([
+      { id: 'member-assignee', type: 'mention' }, { id: 'member-reviewer', type: 'comment' }, { id: 'member-mentioned', type: 'mention' }]);
+    expect(shouldPostChannel('CEXAMPLE', 'CEXAMPLE')).toBe(false);
+    expect(shouldPostChannel('COTHER', 'CEXAMPLE')).toBe(true);
+    expect(shouldPostChannel('CEXAMPLE')).toBe(true);
+  });
+});
+describe('interaction handler', () => {
+  it.each([{ command: '/livo', text: 'new Example' }, { type: 'message_action', callback_id: 'livo_create_task' },
+    { type: 'message_action', callback_id: 'livo_comment_task' }])('does no work when OFF: %j', async payload => {
+    const { d } = deps(); vi.mocked(d.enabled).mockResolvedValue(false);
+    await handleInteraction(payload, 'envelope-example', d);
+    expect(d.reply).toHaveBeenCalledWith(payload, DISABLED);
+    expect(d.actor).not.toHaveBeenCalled(); expect(d.commit).not.toHaveBeenCalled();
+  });
+  it('does not update the heartbeat, bind accounts or search while OFF', async () => {
+    const { d } = deps(); vi.mocked(d.enabled).mockResolvedValue(false);
+    await handleInteraction({ type: 'heartbeat', connected: true }, 'heartbeat', d);
+    expect(await handleInteraction({ type: 'block_suggestion' }, 'suggestion', d)).toEqual({ options: [] });
+    expect(d.heartbeat).not.toHaveBeenCalled(); expect(d.search).not.toHaveBeenCalled();
+  });
+  it('refuses unavailable cards without creating comments', async () => {
+    const { d } = deps(); vi.mocked(d.task).mockResolvedValue(undefined);
+    await handleInteraction({ command: '/livo', text: 'comment ABC-123 Example' }, 'request-example', d);
+    expect(d.commit).not.toHaveBeenCalled(); expect(d.reply).toHaveBeenCalled();
+  });
+  it('opens a loading modal before binding and prefills a mapped thread', async () => {
+    const { d } = deps();
+    await handleInteraction({ type: 'message_action', callback_id: 'livo_comment_task', trigger_id: 'example-trigger',
+      channel: { id: 'CEXAMPLE' }, user: { id: 'UEXAMPLE' }, message: { text: 'Example', ts: '2.0', thread_ts: '1.0' } }, 'request', d);
+    expect(vi.mocked(d.slack).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(d.actor).mock.invocationCallOrder[0]);
+    expect(d.mapped).toHaveBeenCalledWith(actor, 'CEXAMPLE', '1.0');
+    const view = vi.mocked(d.slack).mock.calls.find(call => call[0] === 'views.update')![1].view;
+    expect(view.blocks[0].element.initial_option.value).toBe(task.id);
+    expect(view.blocks[1].element.initial_value).toContain('https://example.com/message');
+  });
+  it('ACKs a submission with a progress view and runs one transactional write', async () => {
+    const { d, jobs } = deps();
+    const result = await handleInteraction({ type: 'view_submission', user: { id: 'UEXAMPLE' }, team: { id: 'TEXAMPLE' },
+      view: { id: 'VEXAMPLE', callback_id: 'livo_comment_task', private_metadata: '{}', state: { values: {
+        task: { task: { selected_option: { value: task.id } } }, comment: { comment: { value: 'Example' } },
+      } } } }, 'request', d);
+    expect(result.response_action).toBe('update');
+    await Promise.all(jobs);
+    expect(d.commit).toHaveBeenCalledOnce(); expect(d.deliver).toHaveBeenCalledOnce();
+    expect(vi.mocked(d.commit).mock.calls[0][3]).toBe('TEXAMPLE:VEXAMPLE');
+  });
+  it('does not redeliver notifications for a replayed action', async () => {
+    const { d } = deps(); vi.mocked(d.commit).mockResolvedValue({ task, duplicate: true });
+    await handleInteraction({ command: '/livo', text: 'comment ABC-123 Example' }, 'request', d);
+    expect(d.deliver).not.toHaveBeenCalled();
+  });
+});
+describe('backend security and effects', () => {
+  it('checks the internal secret without accepting an empty configuration', async () => {
+    expect(await constantTimeSecret('x'.repeat(40), 'x'.repeat(40))).toBe(true);
+    expect(await constantTimeSecret('y'.repeat(40), 'x'.repeat(40))).toBe(false);
+    expect(await constantTimeSecret('', '')).toBe(false);
+  });
+  it('issues a short-lived authenticated member JWT, never a service role', async () => {
+    const jwt = await memberJwt(env.get('JWT_SECRET')!, actor, { id: 'binding-example' });
+    const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
+    expect(claims).toMatchObject({ role: 'authenticated', sub: actor.auth_id, livo_slack_binding: 'binding-example' });
+    expect(claims.exp - claims.iat).toBe(120);
+  });
+  it('searches with member RLS and limits results to twenty without filter injection', async () => {
+    const fetchMock = vi.fn(async () => response([task])); vi.stubGlobal('fetch', fetchMock);
+    const options = await createActions(env, () => {}).search(actor, 'task', 'ABC),id.not.is.null');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url).searchParams.get('limit')).toBe('20');
+    expect(new URL(url).searchParams.get('or')).not.toContain('id.not.is.null');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer member-session');
+    expect(options).toHaveLength(1);
+  });
+  it.each([{ members: [] }, { members: [{ ...actor, is_active: false }] }])('rejects unmatched or disabled accounts before binding', async ({ members }) => {
+    const writes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('slack_config')) return response([{ bot_token: 'example-bot' }]);
+      if (url.endsWith('auth.test')) return response({ ok: true, team_id: 'TEXAMPLE' });
+      if (new URL(url).pathname.endsWith('users.info')) return response({ ok: true, user: { team_id: 'TEXAMPLE', profile: { email: actor.email } } });
+      if (url.includes('/members')) return response(members);
+      if (init.method !== 'GET') writes.push(url);
+      return response([]);
+    }));
+    await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
+    expect(writes).toEqual([]);
+  });
+  it('leaves signed webhooks and email to the existing SQL triggers', () => {
+    const migration = readFileSync(new URL('../../supabase/migrations/20261002_slack_actions.sql', import.meta.url), 'utf8');
+    expect(migration).toContain('SECURITY INVOKER');
+    expect(migration).toContain('comment_count=comment_count+1');
+    expect(migration).toContain("'comment_add'"); expect(migration).toContain("'slack'");
+    const dispatch = readFileSync(new URL('../../supabase/migrations/20260714_notify_dispatch.sql', import.meta.url), 'utf8');
+    expect(dispatch).toContain('AFTER INSERT ON public.comments');
+  });
+});

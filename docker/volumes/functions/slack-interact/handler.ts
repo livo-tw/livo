@@ -1,0 +1,106 @@
+import { commentModal, createModal, DISABLED, localize, messageDraft, messageModal, parseCommand, parseSubmission, UNAVAILABLE, type Row } from './core.ts';
+
+export interface Actions {
+  enabled(): Promise<boolean>;
+  heartbeat(connected: boolean): Promise<void>;
+  actor(payload: Row): Promise<Row>;
+  catalog(actor: Row): Promise<Row>;
+  search(actor: Row, field: string, text: string): Promise<Row[]>;
+  task(actor: Row, id: string, byKey?: boolean): Promise<Row | undefined>;
+  mapped(actor: Row, channel: string, ts: string): Promise<Row | undefined>;
+  slack(method: string, body: Row): Promise<Row>;
+  reply(payload: Row, text: string, thread?: boolean): Promise<void>;
+  commit(actor: Row, kind: string, fields: Row, requestId: string, source: Row): Promise<Row>;
+  deliver(actor: Row, result: Row, source: Row): Promise<void>;
+  background(work: Promise<unknown>): void;
+  link(task: Row): string;
+}
+const sourceOf = (p: Row): Row => p.view ? JSON.parse(p.view.private_metadata || '{}') : ({
+  channel: p.channel_id || p.channel?.id || '',
+  thread: p.message?.thread_ts || p.message?.ts || '',
+  user: p.user_id || p.user?.id || '', team: p.team_id || p.team?.id || '',
+});
+const HELP = '/livo 或 /livo new 標題：建立卡片\n/livo comment ABC-123 留言：新增留言\n/livo comment ABC-123：開啟留言視窗\n訊息選單：建立 LIVO 卡片／留言到 LIVO 卡片';
+const safeError = (error: unknown) => error instanceof Error && error.name === 'ActionError'
+  ? error.message : '操作未完成，請重新開啟表單再試一次；若持續失敗，請洽管理員';
+
+/** The transport never interprets commands. All ACK response payloads originate here. */
+export async function handleInteraction(p: Row, envelopeId: string, d: Actions): Promise<Row> {
+  try {
+    if (!(await d.enabled())) {
+      if (p.type === 'heartbeat') return { disabled: true };
+      if (p.type === 'block_suggestion') return { options: [] };
+      if (p.type === 'view_submission') return { response_action: 'update', view: messageModal(DISABLED) };
+      await d.reply(p, DISABLED); return {};
+    }
+    if (p.type === 'heartbeat') { await d.heartbeat(p.connected === true); return {}; }
+    if (p.type === 'view_closed') return {};
+    if (p.type === 'view_submission') {
+      if (!['livo_create_task', 'livo_comment_task'].includes(p.view?.callback_id)) return {};
+      const parsed = parseSubmission(p.view);
+      if (Object.keys(parsed.errors).length) return { response_action: 'errors', errors: Object.fromEntries(
+        Object.entries(parsed.errors).map(([field, text]) => [field, localize(text, sourceOf(p).locale)])) };
+      const source = sourceOf(p);
+      // Return a progress view within the ACK budget; the durable database transaction
+      // and notifications run under EdgeRuntime.waitUntil and report via DM as well.
+      d.background((async () => {
+        let text: string;
+        try {
+          const actor = await d.actor(p);
+          const result = await d.commit(actor, parsed.kind, parsed.fields, `${actor.team}:${p.view.id}`, source);
+          if (!result.duplicate) await d.deliver(actor, result, source).catch(() => {});
+          text = `已${parsed.kind === 'create' ? '建立卡片' : '新增留言'}：${result.task.task_key}\n${d.link(result.task)}`;
+          await d.reply({ ...p, ...source, user_id: p.user.id, channel_id: source.channel }, text, parsed.kind === 'create' && !!source.thread);
+        } catch (error) {
+          text = safeError(error);
+          await d.reply({ ...p, user_id: p.user.id, channel_id: source.channel }, text).catch(() => {});
+        }
+        await d.slack('views.update', { view_id: p.view.id, view: messageModal(text) }).catch(() => {});
+      })());
+      return { response_action: 'update', view: messageModal('正在儲存，完成後會收到 LIVO 通知。') };
+    }
+    if (p.type === 'block_suggestion') {
+      const actor = await d.actor(p);
+      return { options: await d.search(actor, p.action_id, String(p.value || '')) };
+    }
+    const command = p.command ? parseCommand(String(p.text || '')) : undefined;
+    if (command?.kind === 'help') { await d.reply(p, HELP); return {}; }
+    if (command?.kind === 'comment' && !command.key) { await d.reply(p, HELP); return {}; }
+    if (!p.command && !['livo_create_task', 'livo_comment_task'].includes(p.callback_id)) return {};
+    if (command?.kind === 'comment' && command.text) {
+      const actor = await d.actor(p), task = await d.task(actor, command.key, true);
+      if (!task) { await d.reply(p, UNAVAILABLE); return {}; }
+      if (command.text.length > 3000) { await d.reply(p, '留言最多 3000 字'); return {}; }
+      const result = await d.commit(actor, 'comment', { task_id: task.id, text: command.text }, `${actor.team}:${envelopeId}`, sourceOf(p));
+      if (!result.duplicate) await d.deliver(actor, result, sourceOf(p)).catch(() => {});
+      await d.reply(p, `已新增留言：${task.task_key}\n${d.link(task)}`); return {};
+    }
+    // Consume the short-lived trigger first, before email lookup or catalog reads.
+    const opening = await d.slack('views.open', { trigger_id: p.trigger_id, view: messageModal('正在載入 LIVO…') });
+    let view: Row;
+    try {
+      const actor = await d.actor(p), source = sourceOf(p);
+      source.locale = actor.locale;
+      let draft: Row = {};
+      if (p.message) {
+        const permalink = await d.slack('chat.getPermalink', { channel: source.channel, message_ts: p.message.ts });
+        draft = messageDraft(p.message, permalink.permalink);
+      }
+      if (command?.kind === 'comment' || p.callback_id === 'livo_comment_task') {
+        const task = command?.kind === 'comment' ? await d.task(actor, command.key, true)
+          : await d.mapped(actor, source.channel, source.thread);
+        if (command && !task) throw Object.assign(new Error(UNAVAILABLE), { name: 'ActionError' });
+        view = commentModal(task, draft.description || '', source);
+      } else {
+        const catalog = await d.catalog(actor);
+        view = createModal(catalog, actor, { ...draft, ...(command?.kind === 'new' ? { title: command.text } : {}) }, source);
+      }
+    } catch (error) { view = messageModal(safeError(error)); }
+    await d.slack('views.update', { view_id: opening.view.id, view });
+    return {};
+  } catch (error) {
+    if (p.type === 'block_suggestion') return { options: [] };
+    await d.reply(p, safeError(error)).catch(() => {});
+    return {};
+  }
+}

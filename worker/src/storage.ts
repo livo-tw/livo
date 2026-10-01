@@ -17,6 +17,7 @@
 import type { Context } from 'hono';
 import type { AppContext, Env } from './env';
 import { DEFAULT_WORKSPACE } from './env';
+import { knowledgeStorageAllowed } from './knowledge';
 
 const VALID_BUCKETS = new Set(['task-images', 'backups']);
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB hard cap (frontend enforces 2 MB for attachments)
@@ -92,6 +93,9 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
     return c.json({ data: null, error: { message: 'Invalid path' } }, 403);
   }
   const contentType = c.req.header('content-type') || 'application/octet-stream';
+  if (bucket === 'task-images' && !await knowledgeStorageAllowed(c.env, c.get('auth'), effectivePath)) {
+    return c.json({ data: null, error: { message: 'kb_forbidden' } }, 403);
+  }
   await c.env.ATTACHMENTS.put(key(bucket, effectivePath), c.req.raw.body, {
     httpMetadata: { contentType },
   });
@@ -156,6 +160,13 @@ export async function handleRemove(c: Context<AppContext>, bucket: string): Prom
   // Silently drop out-of-namespace paths (same shape as deleting a
   // nonexistent object) — a tenant can never delete another tenant's files.
   const paths = requested.filter((p) => typeof p === 'string' && pathAllowed(ws, p));
+  if (bucket === 'task-images') {
+    for (const path of paths) {
+      if (!await knowledgeStorageAllowed(c.env, c.get('auth'), path)) {
+        return c.json({ data: null, error: { message: 'kb_forbidden' } }, 403);
+      }
+    }
+  }
 
   // Usage bookkeeping for tenants: size up objects before deleting.
   let freed = 0;

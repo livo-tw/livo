@@ -22,6 +22,7 @@ const navItemDefs = [
   { id: 'all-list' as const, labelKey: 'nav.list', icon: Table2 },
   { id: 'my-tasks' as const, labelKey: 'nav.myTasks', icon: User },
   { id: 'work-report' as const, labelKey: 'nav.workReport', icon: FileText },
+  { id: 'knowledge-base' as const, labelKey: 'kb.title', icon: FileText },
 ];
 
 interface TopBarProps {

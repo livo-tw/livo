@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMember: { role: mocks.role } }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({
-  featureToggles: { approvals: mocks.enabled }, featureTogglesReady: mocks.ready,
+  featureToggles: { approvals: mocks.enabled, slackActions: false }, featureTogglesReady: mocks.ready,
   featureTogglesError: null as string | null, refreshFeatureToggles: vi.fn(), saveFeatureToggle: mocks.save,
 }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ refreshTasks: mocks.refresh }) }));
@@ -33,18 +33,24 @@ describe('admin feature switches', () => {
   it('disables changes until the current setting is known', () => {
     mocks.ready = false;
     render(<AdminFeatureToggles />);
-    expect(screen.getByRole('switch')).toBeDisabled();
+    expect(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' })).toBeDisabled();
+  });
+  it('saves the Slack switch independently of approval withdrawals', async () => {
+    render(<AdminFeatureToggles />);
+    fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.slackActionsLabel' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('slackActions', true));
+    expect(mocks.pending).not.toHaveBeenCalled();
   });
   it('turns off immediately when there are no pending requests', async () => {
     render(<AdminFeatureToggles />);
-    fireEvent.click(screen.getByRole('switch'));
+    fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('approvals', false));
     expect(mocks.cancel).not.toHaveBeenCalled();
   });
   it('lists pending tasks and lets the admin cancel without changing data', async () => {
     mocks.pending.mockResolvedValue(pending);
     render(<AdminFeatureToggles />);
-    fireEvent.click(screen.getByRole('switch'));
+    fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' }));
     const taskLink = await screen.findByRole('link', { name: 'EX-1 · Example task' });
     expect(taskLink.getAttribute('href')).toContain('task/task-1');
     fireEvent.click(screen.getByRole('button', { name: 'button.cancel' }));
@@ -54,7 +60,7 @@ describe('admin feature switches', () => {
   it('uses the withdrawal path and rechecks pending requests before disabling', async () => {
     mocks.pending.mockResolvedValueOnce(pending).mockResolvedValue([]);
     render(<AdminFeatureToggles />);
-    fireEvent.click(screen.getByRole('switch'));
+    fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'featureToggles.withdrawAndDisable' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('approvals', false));
     expect(mocks.cancel).toHaveBeenCalledWith('request-1', { silent: true });
@@ -65,7 +71,7 @@ describe('admin feature switches', () => {
     mocks.pending.mockResolvedValue(pending); mocks.cancel.mockResolvedValue(false);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<AdminFeatureToggles />);
-    fireEvent.click(screen.getByRole('switch'));
+    fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'featureToggles.withdrawAndDisable' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('featureToggles.withdrawFailed');
     expect(mocks.save).not.toHaveBeenCalled();

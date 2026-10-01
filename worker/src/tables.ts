@@ -22,6 +22,20 @@
 import type { TableRegistry } from './meta';
 
 export const TABLES: TableRegistry = {
+  // Mutations additionally pass the knowledge-base row/column guards in db.ts.
+  kb_pages: {
+    pk: 'id', clientAccess: 'full', boolCols: ['is_archived', 'admin_only'],
+    autoId: true, autoNowCols: ['created_at', 'updated_at'],
+    write: { insert: 'all', update: 'all', delete: 'own', ownerCol: 'created_by' },
+  },
+  kb_revisions: {
+    pk: 'id', clientAccess: 'full',
+    write: { insert: 'none', update: 'none', delete: 'none' },
+  },
+  kb_attachments: {
+    pk: 'id', clientAccess: 'full', autoId: true, autoNowCols: ['created_at'],
+    write: { insert: 'all', update: 'none', delete: 'all' },
+  },
   // ── Auth (server-only) ───────────────────────────────────────────────────
   auth_users: {
     pk: 'id',

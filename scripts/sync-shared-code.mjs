@@ -16,6 +16,12 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source: 'docker/volumes/functions/slack-interact/core.ts', copies: ['supabase/functions/slack-interact/core.ts'] },
+  { source: 'docker/volumes/functions/slack-interact/handler.ts', copies: ['supabase/functions/slack-interact/handler.ts'] },
+  { source: 'docker/volumes/functions/slack-interact/backend.ts', copies: ['supabase/functions/slack-interact/backend.ts'] },
+  { source: 'docker/volumes/functions/slack-interact/index.ts', copies: ['supabase/functions/slack-interact/index.ts'] },
+  { source: 'docker/volumes/functions/slack-actions-config/index.ts', copies: ['supabase/functions/slack-actions-config/index.ts'] },
+  { source: 'docker/volumes/functions/slack-notify/index.ts', copies: ['supabase/functions/slack-notify/index.ts'] },
   {
     source: 'worker/src/functions/jiraCsv.ts',
     copies: [

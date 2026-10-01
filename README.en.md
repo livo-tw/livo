@@ -13,6 +13,8 @@ The live demo needs no sign-up. Everything you change stays in that browser tab 
 
 ## Features
 
+- **Knowledge base**: shared and project pages, a three-level tree, rich text and images, attachments, cross-page search, and the latest 20 previous versions with restore. Edit locks prevent concurrent overwrites. Members can create and edit; admins can restrict individual pages and archive them. Available on Docker and Cloudflare with no extra setup, third-party service or feature switch.
+
 - **Views**: board, list, backlog, Gantt chart with task dependencies, my tasks
 - **Sprints**: plan and complete sprints; unfinished tasks can move into the next one
 - **Work reports**: daily, weekly and monthly reports assembled from task status; edit them, keep a history, or send them to Slack on a schedule
@@ -147,3 +149,13 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Yo
 ## Author
 
 Lingye, an independent developer in Taiwan with ten years as a product manager. LIVO started as a tool for their own team.
+
+### Slack actions (optional, Docker self-hosting)
+
+Create cards with `/livo`, add comments with `/livo comment ABC-123`, or use message shortcuts and a permission-filtered card picker.
+Socket Mode connects outbound, so an internal installation needs no public Request URL. No new npm dependencies are required.
+Off by default: an administrator enables **Feature switches → Slack actions**, then configures the bot in **Integrations → Slack**.
+Enable Socket Mode and Interactivity in the Slack app. Create an app-level token with `connections:write`, add `/livo` and the `livo_create_task` / `livo_comment_task` message shortcuts, add the `commands` bot scope and reinstall the app.
+Set `SLACK_APP_TOKEN` and `APP_BASE_URL` in `docker/.env` and rerun the installer. It generates the internal secret once and preserves existing values.
+Accounts bind by email to active LIVO logins. Searches and writes use the member's normal permissions. Disabling the feature retains configuration and history.
+Cloudflare hides this feature; demo mode makes no backend calls. See the [Docker setup guide](release-template/README.md) for scopes, Compose commands, account binding and limits.

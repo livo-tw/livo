@@ -18,6 +18,7 @@ import { requireMember, resolveActiveMember, verifyAccessToken } from './auth';
 import { notifyChanges } from './notify';
 import { nowIso, rowToWire, type TableMeta } from './meta';
 import { TABLES } from './tables';
+import { knowledgeLockAllowed } from './knowledge';
 
 // ─── Small helpers ────────────────────────────────────────────────────────
 
@@ -247,6 +248,9 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
       }
 
       if (fn === 'acquire_field_lock') {
+        if (!await knowledgeLockAllowed(c.env, c.get('auth'), lockKey)) {
+          return c.json({ data: null, error: { message: 'kb_forbidden' } } satisfies RpcResponse, 403);
+        }
         const rawTtl = args['p_ttl_seconds'];
         const ttl =
           typeof rawTtl === 'number' && Number.isFinite(rawTtl) && rawTtl > 0 ? rawTtl : 30;

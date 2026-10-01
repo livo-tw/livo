@@ -49,6 +49,7 @@ interface RichTextEditorProps {
   minimal?: boolean;
   members?: User[];
   onMention?: (userId: string) => void;
+  imageUploadPrefix?: string;
 }
 
 // Mention suggestion list component
@@ -112,7 +113,7 @@ const MentionList = forwardRef<{ onKeyDown: (props: { event: KeyboardEvent }) =>
 );
 MentionList.displayName = 'MentionList';
 
-const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, minimal = false, members = [], onMention }: RichTextEditorProps) => {
+const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads' }: RichTextEditorProps) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
@@ -251,7 +252,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
       return;
     }
     const ext = file.name.split('.').pop() || 'png';
-    const path = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const path = `${imageUploadPrefix}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
     // Build the URL from the SERVER's effective path (cloud ws/ prefix).
     const { data: up, error } = await supabase.storage.from('task-images').upload(path, file);
     if (error) {
@@ -261,7 +262,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
     }
     const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(up?.path || path);
     editor.chain().focus().setImage({ src: publicUrl }).run();
-  }, [editor]);
+  }, [editor, imageUploadPrefix]);
 
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
