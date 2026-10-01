@@ -79,8 +79,9 @@ livo-release/
 - **LIVO 前端**：<http://localhost:3000/demo/>（登入頁 <http://localhost:3000/demo/auth>）
 - 用剛剛建立的管理員帳號登入
 - **同事從自己的電腦使用**：開 `http://<伺服器 IP 或主機名稱>:3000/demo/`。網頁會自動
-  連到同一台機器的 API 埠（預設 8000，安裝完成畫面會顯示實際的埠），所以防火牆要
-  讓同事連得到 **3000 和 API 埠這兩個埠**。
+  透過同一個網址與連接埠存取 API、上傳檔案及即時協作，所以防火牆只需讓同事連得到
+  **前端 3000 埠**（若有改前端埠，以安裝完成畫面為準）。API 埠（預設 8000）供
+  本機 API 與管理後台使用，**不要對同事網路或網際網路開放**。
 
 > 安裝程式**可以重複執行**：已完成的步驟會自動略過。安裝中斷（斷電、按到
 > Ctrl+C）也沒關係，重新執行一次即可。之後想再建管理員或重設管理員密碼，
@@ -111,9 +112,8 @@ docker compose logs -f
 還不存在，改 `docker/.env.factory` 也可以。
 
 **給團隊用的伺服器**：同事用 `http://<伺服器 IP>:3000/demo/` 開就能用，不必改設定
-（見上方「安裝完成後」）。只要記得把下一段的 `APP_BASE_URL` 改成同一個網址，
-Slack 通知裡的連結才點得開。要用 HTTPS 正式網域（反向代理）的話，網頁與 API 都要
-經過代理，請寫信給我們協助設定。
+（見上方「安裝完成後」），只需開放前端 3000 埠。把下一段的 `APP_BASE_URL` 改成
+同一個網址，Slack 通知裡的連結才點得開。8000 是本機 API 與管理後台，不能對外開放。
 
 **架在正式網域（Slack 通知、邀請信連結）**：Slack 通知裡的任務連結，以及
 匯入 Jira／「啟用帳號」寄出的「設定密碼」邀請信連結，都會用 `docker/.env` 的
@@ -121,6 +121,24 @@ Slack 通知裡的連結才點得開。要用 HTTPS 正式網域（反向代理�
 請把它改成實際網址（例如 `https://pm.example.com`，不含結尾斜線），再到
 `docker/` 執行 `docker compose up -d` 重新載入。還是 `localhost` 時，邀請信會
 改用管理員當下開著 LIVO 的網址。
+
+### 用 HTTPS 網域對外（Cloudflare Tunnel 等）
+
+1. 將 Tunnel 或反向代理的單一路由指向 `http://localhost:3000`（自訂前端埠時請替換），
+   並啟用 WebSocket 轉送。這個位址適用於代理與 LIVO 同機執行；代理若在另一個容器，
+   請在共用 Docker 網路上指向 `http://livo-frontend:3000`。
+2. 在 `docker/.env` 把下列三個值都設為公開 HTTPS 網址，例如 `https://livo.example.com`
+   （不含 `/demo/`、不含結尾斜線）：
+   - `APP_BASE_URL`：Slack 任務連結，以及 Jira 匯入／啟用帳號的設定密碼邀請連結。
+   - `SITE_URL`：GoTrue 的預設登入後返回網址；指定其他返回網址仍受 redirect allow-list 限制。
+   - `API_EXTERNAL_URL`：GoTrue 對外的 Auth API 基底網址，用於驗證信連結等。
+3. 在 `docker/` 執行 `docker compose -f docker-compose.yml -f compose.frontend.yml up -d`
+   重新載入設定，再從 `https://livo.example.com/demo/` 開啟 LIVO。
+
+前端會以同一個 HTTPS 網址呼叫 API，Realtime 自動使用 `wss://`。代理需保留 Host，
+並覆寫 `X-Forwarded-Proto` 為使用者實際連線的協定；LIVO 會採用此標頭。
+**不要將 Tunnel 指向 8000，也不要對外開放 8000**（若安裝時自動改了 API 埠，同樣適用）。
+前端只代理 Auth、REST、Storage、Functions、Realtime 與 GraphQL，管理後台仍須在本機使用。
 
 **自動備份**：內建排程服務（`livo-scheduler`）每小時檢查一次備份設定；
 在 LIVO 的 **系統管理 → 備份設定** 開啟自動備份並設定間隔/時間即可，

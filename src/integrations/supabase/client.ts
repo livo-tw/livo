@@ -11,7 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createMockClient } from './mockClient';
 import { createCfClient } from '../backend/cfClient';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
-import { SUPABASE_URL } from '@/lib/gatewayUrl';
+import { SUPABASE_URL, supabaseAuthStorageKey } from '@/lib/gatewayUrl';
 import type { Database } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -20,13 +20,14 @@ function selectClient(): unknown {
   if (IS_DEMO_PRO || (!API_URL && !SUPABASE_URL)) return createMockClient();
   if (API_URL) return createCfClient();
   // SUPABASE_URL, not the raw env value: on a self-host install opened from
-  // another machine it points at the server instead of the visitor's localhost.
+  // another machine it uses the page's origin and server.cjs proxies the API.
   return createClient<Database>(
     SUPABASE_URL,
     import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
     {
       auth: {
         storage: localStorage,
+        storageKey: supabaseAuthStorageKey(SUPABASE_URL),
         persistSession: true,
         autoRefreshToken: true,
       },

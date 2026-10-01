@@ -34,7 +34,7 @@ export function getAccessTokenSync(): string | null {
       return null;
     }
     // The same key supabase-js stores the session under (derived from the
-    // gateway host, so it also matches when the host was swapped for the page's).
+    // resolved gateway origin, including Docker's same-origin proxy).
     const s = localStorage.getItem(supabaseAuthStorageKey(SUPABASE_URL));
     if (s) return (JSON.parse(s)?.access_token as string) ?? null;
   } catch {

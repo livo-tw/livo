@@ -830,7 +830,8 @@ fi
 say "  管理後台：   http://localhost:${KONG_PORT}（Supabase Studio，帳密見 docker/.env）"
 say ""
 say "  同事從自己的電腦使用：http://<這台機器的 IP 或主機名稱>:${FRONTEND_PORT}/demo/"
-say "  （防火牆要開放 ${FRONTEND_PORT} 和 ${KONG_PORT} 兩個連接埠）"
+say "  （防火牆只需開放前端 ${FRONTEND_PORT} 連接埠，API 與即時協作也走此入口）"
+say "  ${KONG_PORT} 是本機 API 與管理後台連接埠，不要對外開放。"
 if [ "$KONG_PORT" != "8000" ]; then
   say ""
   say "  （註：LIVO API 閘道使用連接埠 $KONG_PORT——8000 在這台機器上無法使用，"

@@ -43,6 +43,7 @@ const FACTORY_ENV = path.join(TEMPLATE_DIR, 'docker.env');
 const DOCKER_SRC = path.join(APP_ROOT, 'docker');
 const MIGRATIONS_SRC = path.join(APP_ROOT, 'supabase', 'migrations');
 const SERVER_CJS_SRC = path.join(APP_ROOT, 'server.cjs');
+const PROXY_CJS_SRC = path.join(APP_ROOT, 'server-proxy.cjs');
 
 const MAX_ZIP_MB = 50; // 超過就代表有大檔漏進來（例如 db/data 467MB）
 
@@ -177,6 +178,7 @@ for (const [label, p] of [
   ['docker/', DOCKER_SRC],
   ['supabase/migrations/', MIGRATIONS_SRC],
   ['server.cjs', SERVER_CJS_SRC],
+  ['server-proxy.cjs', PROXY_CJS_SRC],
   ['release-template/', TEMPLATE_DIR],
   ['release-template/docker.env', FACTORY_ENV],
   ['release-template/install.sh', path.join(TEMPLATE_DIR, 'install.sh')],
@@ -250,6 +252,7 @@ serverSrc = serverSrc.replace(
   '// [release] 交付包裡前端就在本檔同層的 demo/ 下，故 ROOT 指向本目錄\nconst ROOT = __dirname;'
 );
 fs.writeFileSync(path.join(APP_DIR, 'server.cjs'), serverSrc);
+fs.copyFileSync(PROXY_CJS_SRC, path.join(APP_DIR, 'server-proxy.cjs'));
 log('  ✔ app/server.cjs ← server.cjs（ROOT 調整為本目錄）');
 
 // app/index.html — 首頁自動導向 /demo/

@@ -1,54 +1,68 @@
-// Self-host gateway URL: a bundle baked with http://localhost:<port> must reach
-// the server when it is opened from another machine. Hosts here are made up.
-
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
 import { isLoopbackHost, resolveGatewayUrl, supabaseAuthStorageKey } from '@/lib/gatewayUrl';
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('resolveGatewayUrl', () => {
-  it('points a loopback gateway at the page host, keeping scheme and port', () => {
-    expect(resolveGatewayUrl('http://localhost:8000', '192.168.1.20')).toBe('http://192.168.1.20:8000');
-    expect(resolveGatewayUrl('http://localhost:18000', 'livo-server')).toBe('http://livo-server:18000');
-    expect(resolveGatewayUrl('http://127.0.0.1:8000', 'pm.example.internal')).toBe('http://pm.example.internal:8000');
-    expect(resolveGatewayUrl('http://localhost:8000', '[fd00::5]')).toBe('http://[fd00::5]:8000');
+  it('uses the page origin, including HTTPS and custom frontend ports', () => {
+    expect(resolveGatewayUrl('http://localhost:8000', 'http://livo.example.com:3000')).toBe('http://livo.example.com:3000');
+    expect(resolveGatewayUrl('http://localhost:18000', 'https://livo.example.com')).toBe('https://livo.example.com');
+    expect(resolveGatewayUrl('http://127.0.0.1:8000', 'https://livo.example.com:8443')).toBe('https://livo.example.com:8443');
+    expect(resolveGatewayUrl('http://[::1]:8000', 'http://[2001:db8::5]:3001')).toBe('http://[2001:db8::5]:3001');
   });
 
-  it('leaves the URL alone when the page itself is on the server', () => {
-    expect(resolveGatewayUrl('http://localhost:8000', 'localhost')).toBe('http://localhost:8000');
-    expect(resolveGatewayUrl('http://localhost:8000', '127.0.0.1')).toBe('http://localhost:8000');
-    expect(resolveGatewayUrl('http://localhost:8000', '[::1]')).toBe('http://localhost:8000');
-    expect(resolveGatewayUrl('http://localhost:8000', '')).toBe('http://localhost:8000');
+  it('reads window.location.origin by default', () => {
+    vi.stubGlobal('window', { location: new URL('https://livo.example.com/demo/auth') });
+    expect(resolveGatewayUrl('http://localhost:8000')).toBe('https://livo.example.com');
+  });
+
+  it('keeps the baked gateway when the page is on loopback', () => {
+    for (const origin of ['http://localhost:3000', 'https://app.localhost', 'http://127.0.0.1:3000', 'http://[::1]:3000']) {
+      expect(resolveGatewayUrl('http://localhost:8000', origin)).toBe('http://localhost:8000');
+    }
   });
 
   it('never rewrites a real gateway host', () => {
-    expect(resolveGatewayUrl('https://api.example.com', '192.168.1.20')).toBe('https://api.example.com');
-    expect(resolveGatewayUrl('http://10.0.0.5:8000', 'livo-server')).toBe('http://10.0.0.5:8000');
+    expect(resolveGatewayUrl('https://api.example.com', 'https://livo.example.com')).toBe('https://api.example.com');
+    expect(resolveGatewayUrl('http://api.example.com:8000/', 'http://livo.example.com:3000')).toBe('http://api.example.com:8000/');
   });
 
-  it('keeps an empty or unparsable value as it is', () => {
-    expect(resolveGatewayUrl('', '192.168.1.20')).toBe('');
-    expect(resolveGatewayUrl('not a url', '192.168.1.20')).toBe('not a url');
+  it('keeps empty, malformed, absent-page and non-HTTP inputs unchanged', () => {
+    expect(resolveGatewayUrl('', 'https://livo.example.com')).toBe('');
+    expect(resolveGatewayUrl('not a url', 'https://livo.example.com')).toBe('not a url');
+    for (const page of ['', 'not a url', 'file:///demo/index.html']) {
+      expect(resolveGatewayUrl('http://localhost:8000', page)).toBe('http://localhost:8000');
+    }
+    vi.stubGlobal('window', undefined);
+    expect(resolveGatewayUrl('http://localhost:8000')).toBe('http://localhost:8000');
   });
 
-  it('keeps a trailing slash only when the build had one', () => {
-    expect(resolveGatewayUrl('http://localhost:8000/', '192.168.1.20')).toBe('http://192.168.1.20:8000/');
+  it('uses the bare origin without a trailing slash or page path', () => {
+    expect(resolveGatewayUrl('http://localhost:8000/', 'https://livo.example.com/demo/')).toBe('https://livo.example.com');
   });
 });
 
 describe('isLoopbackHost', () => {
   it('recognises loopback names and addresses', () => {
-    for (const h of ['localhost', 'LOCALHOST', 'app.localhost', '127.0.0.1', '127.1.2.3', '::1', '[::1]']) {
-      expect(isLoopbackHost(h)).toBe(true);
+    for (const host of ['localhost', 'LOCALHOST', 'app.localhost', '127.0.0.1', '127.1.2.3', '::1', '[::1]']) {
+      expect(isLoopbackHost(host)).toBe(true);
     }
-    for (const h of ['192.168.1.20', 'livo-server', '10.0.0.5', '[fd00::5]', 'localhost.example.com']) {
-      expect(isLoopbackHost(h)).toBe(false);
+    for (const host of ['livo.example.com', '[2001:db8::5]', 'localhost.example.com']) {
+      expect(isLoopbackHost(host)).toBe(false);
     }
   });
 });
 
 describe('supabaseAuthStorageKey', () => {
-  it('matches the key supabase-js derives from the gateway host', () => {
-    expect(supabaseAuthStorageKey('http://localhost:8000')).toBe('sb-localhost-auth-token');
-    expect(supabaseAuthStorageKey('http://192.168.1.20:8000')).toBe('sb-192-auth-token');
-    expect(supabaseAuthStorageKey('https://abcdefgh.supabase.co')).toBe('sb-abcdefgh-auth-token');
+  it.each(['http://localhost:8000', 'https://livo.example.com', 'https://livo.example.com:8443'])('matches the SDK session key for %s', (origin) => {
+    const gateway = resolveGatewayUrl('http://localhost:8000', origin);
+    const client = createClient(gateway, 'example-key', {
+      auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+    });
+    const auth = client.auth as unknown as { storageKey: string };
+    expect(supabaseAuthStorageKey(gateway)).toBe(auth.storageKey);
+    const realtime = client.realtime as unknown as { endPoint: string };
+    expect(realtime.endPoint).toBe(gateway.replace(/^http/, 'ws') + '/realtime/v1/websocket');
   });
 });
