@@ -179,7 +179,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       await admin.request('/functions/v1/slack-notify', 'POST', payload);
     },
     background,
-    link: task => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/demo/?task=${encodeURIComponent(task.task_key)}`,
+    link: task => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/?task=${encodeURIComponent(task.task_key)}`,
   };
   return actions;
 }

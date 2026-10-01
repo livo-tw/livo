@@ -77,7 +77,7 @@ export function buildNotificationContext(
 ): TemplateContext {
   return {
     task_name: task.title,
-    task_url: `${window.location.origin}/demo/task/${task.id}`,
+    task_url: `${window.location.origin}${import.meta.env.BASE_URL}task/${task.id}`,
     assignee: task.assigneeId ?? '',
     priority: task.priority,
     due_date: task.dueDate ?? '',

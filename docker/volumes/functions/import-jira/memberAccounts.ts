@@ -11,7 +11,7 @@
 // How the person gets in — never a shared default password:
 //   - a Resend key is bound in 系統管理 → 通知 (email_config): a set-password
 //     invitation. The link carries a GoTrue recovery token and opens the
-//     app's /demo/set-password page (no GoTrue redirect settings involved);
+//     app's /set-password page (no GoTrue redirect settings involved);
 //   - otherwise, or when the email cannot be sent: a random temporary
 //     password, returned once to the admin.
 
@@ -42,7 +42,7 @@ export function isLocalHostname(host: string): boolean {
 }
 
 /**
- * Base of the links in invitation emails; the app lives under /demo.
+ * Base of the links in invitation emails; the app is served at the host root.
  * APP_BASE_URL (host root) when it names a real host; the factory .env sets
  * it to http://localhost:3000, so a loopback value loses to the browser
  * origin of this request, and is used only when there is no origin at all.
@@ -51,9 +51,9 @@ export function resolveAppUrl(req: Request): string | null {
   const explicitRaw = (Deno.env.get('APP_BASE_URL') || '').trim().replace(/\/+$/, '');
   const explicit = httpUrl(explicitRaw);
   const origin = httpUrl(req.headers.get('origin') || '');
-  if (explicit && !isLocalHostname(explicit.hostname)) return `${explicitRaw}/demo`;
-  if (origin) return `${origin.origin}/demo`;
-  if (explicit) return `${explicitRaw}/demo`;
+  if (explicit && !isLocalHostname(explicit.hostname)) return explicitRaw;
+  if (origin) return origin.origin;
+  if (explicit) return explicitRaw;
   return null;
 }
 

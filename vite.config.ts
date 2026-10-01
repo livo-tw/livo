@@ -28,9 +28,14 @@ function cloudHeadPlugin(mode: string): Plugin {
   };
 }
 
+// The self-hosted Docker build (--mode customer) owns its whole origin, so the
+// app sits at the root. The cloud site and the local package keep the
+// website at / and the app under /demo/.
+const appBase = (mode: string) => (mode === "customer" ? "/" : "/demo/");
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  base: "/demo/",
+  base: appBase(mode),
   server: {
     host: "::",
     port: 8080,
@@ -54,8 +59,8 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "pwa-icon-192.png", "pwa-icon-512.png"],
       workbox: {
-        navigateFallback: "/demo/index.html",
-        navigateFallbackAllowlist: [/^\/demo\//],
+        navigateFallback: `${appBase(mode)}index.html`,
+        navigateFallbackAllowlist: [new RegExp(`^${appBase(mode)}`)],
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
       },
       manifest: {
@@ -66,21 +71,21 @@ export default defineConfig(({ mode }) => ({
         background_color: "#1a1a2e",
         display: "standalone",
         orientation: "any",
-        start_url: "/demo/",
-        scope: "/demo/",
+        start_url: appBase(mode),
+        scope: appBase(mode),
         icons: [
           {
-            src: "/demo/pwa-icon-192.png",
+            src: `${appBase(mode)}pwa-icon-192.png`,
             sizes: "192x192",
             type: "image/png",
           },
           {
-            src: "/demo/pwa-icon-512.png",
+            src: `${appBase(mode)}pwa-icon-512.png`,
             sizes: "512x512",
             type: "image/png",
           },
           {
-            src: "/demo/pwa-icon-512.png",
+            src: `${appBase(mode)}pwa-icon-512.png`,
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",

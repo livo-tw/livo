@@ -837,14 +837,14 @@ say "=============================================================="
 say "  LIVO 安裝完成！"
 say "=============================================================="
 say ""
-say "  前端網址：   http://localhost:${FRONTEND_PORT}/demo/"
-say "  登入頁：     http://localhost:${FRONTEND_PORT}/demo/auth"
+say "  前端網址：   http://localhost:${FRONTEND_PORT}/"
+say "  登入頁：     http://localhost:${FRONTEND_PORT}/auth"
 if [ "$ADMIN_DONE" = "created" ] || [ "$ADMIN_DONE" = "reset" ]; then
   say "  管理員帳號： $ADMIN_EMAIL"
 fi
 say "  管理後台：   http://localhost:${KONG_PORT}（Supabase Studio，帳密見 docker/.env）"
 say ""
-say "  同事從自己的電腦使用：http://<這台機器的 IP 或主機名稱>:${FRONTEND_PORT}/demo/"
+say "  同事從自己的電腦使用：http://<這台機器的 IP 或主機名稱>:${FRONTEND_PORT}/"
 say "  （防火牆只需開放前端 ${FRONTEND_PORT} 連接埠，API 與即時協作也走此入口）"
 say "  ${KONG_PORT} 是本機 API 與管理後台連接埠，不要對外開放。"
 if [ "$KONG_PORT" != "8000" ]; then

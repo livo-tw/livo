@@ -157,7 +157,7 @@ const Signup = () => {
             </form>
             <p className="mt-4 text-center text-[11px] text-muted-foreground leading-relaxed">
               建立即表示同意 <a href="/beta-terms" target="_blank" rel="noreferrer" className="underline hover:text-foreground">雲端版 Beta 條款</a>。
-              已經有帳號？<a href="/demo/auth" className="underline hover:text-foreground">直接登入</a>
+              已經有帳號？<a href={`${import.meta.env.BASE_URL}auth`} className="underline hover:text-foreground">直接登入</a>
             </p>
           </>
         )}

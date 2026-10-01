@@ -65,7 +65,7 @@ const PRIORITY_EMOJI: Record<string, string> = {
 };
 
 export function taskUrl(taskId: string): string {
-  return `${typeof window !== 'undefined' ? window.location.origin : 'https://livo-tw.com'}/demo/task/${taskId}`;
+  return `${typeof window !== 'undefined' ? window.location.origin : 'https://livo-tw.com'}${import.meta.env.BASE_URL}task/${taskId}`;
 }
 
 export function priorityLabel(priority: string): string {

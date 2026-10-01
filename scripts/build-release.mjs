@@ -242,38 +242,23 @@ fs.mkdirSync(APP_DEMO, { recursive: true });
 const appStats = copyDirPlain(BUILD_OUT, APP_DEMO);
 log(`  ✔ app/demo/ ← 前端（${appStats.files} 檔，${humanSize(appStats.bytes)}）`);
 
-// server.cjs：以既有 server.cjs 為基礎，只把 ROOT 指向自己所在目錄（app/），
-// 讓交付包裡 `cd app && node server.cjs` 能直接把 app/demo/ serve 在 /demo/ 下。
+// server.cjs：以既有 server.cjs 為基礎，把 ROOT 指向自己所在目錄（app/），並開啟
+// APP_AT_ROOT：前端（磁碟上仍在 app/demo/）直接 serve 在網站根目錄 /，舊的 /demo/
+// 連結會轉到新網址。server.cjs 等程式檔不在 app/demo/ 底下，所以不會被當成靜態檔送出。
 // （不改動專案內的原始 server.cjs；這是交付包專用的衍生檔。）
 let serverSrc = fs.readFileSync(SERVER_CJS_SRC, 'utf8');
 const ROOT_RE = /const ROOT = path\.join\(__dirname, "deploy-local"\);/;
-if (!ROOT_RE.test(serverSrc)) {
-  die('server.cjs 內容與預期不符（找不到 ROOT 定義），請確認來源檔是否被更動。');
+const APP_AT_ROOT_RE = /const APP_AT_ROOT = process\.env\.LIVO_APP_AT_ROOT === "1";/;
+if (!ROOT_RE.test(serverSrc) || !APP_AT_ROOT_RE.test(serverSrc)) {
+  die('server.cjs 內容與預期不符（找不到 ROOT 或 APP_AT_ROOT 定義），請確認來源檔是否被更動。');
 }
-serverSrc = serverSrc.replace(
-  ROOT_RE,
-  '// [release] 交付包裡前端就在本檔同層的 demo/ 下，故 ROOT 指向本目錄\nconst ROOT = __dirname;'
-);
+serverSrc = serverSrc
+  .replace(ROOT_RE, '// [release] 交付包裡前端就在本檔同層的 demo/ 下，故 ROOT 指向本目錄\nconst ROOT = __dirname;')
+  .replace(APP_AT_ROOT_RE, '// [release] 前端 serve 在網站根目錄，舊的 /demo/ 連結轉過去\nconst APP_AT_ROOT = true;');
 fs.writeFileSync(path.join(APP_DIR, 'server.cjs'), serverSrc);
 fs.copyFileSync(PROXY_CJS_SRC, path.join(APP_DIR, 'server-proxy.cjs'));
 fs.copyFileSync(SLACK_RELAY_SRC, path.join(APP_DIR, 'slack-socket.mjs'));
-log('  ✔ app/server.cjs ← server.cjs（ROOT 調整為本目錄）');
-
-// app/index.html — 首頁自動導向 /demo/
-fs.writeFileSync(path.join(APP_DIR, 'index.html'), `<!doctype html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="refresh" content="0; url=/demo/" />
-  <title>LIVO</title>
-</head>
-<body>
-  <p>正在前往 LIVO… 若沒有自動跳轉，<a href="/demo/">請點此進入</a>。</p>
-  <script>location.replace('/demo/');</script>
-</body>
-</html>
-`);
-log('  ✔ app/index.html ← 首頁導向 /demo/');
+log('  ✔ app/server.cjs ← server.cjs（ROOT 調整為本目錄，前端在根目錄 /）');
 
 // 2b. docker/ — 自架 Supabase 設定（排除資料 / 上傳檔 / log）
 // 只帶進版控的檔案：打包機本機的 docker/.env（自己那套 Supabase 的真實密鑰）、

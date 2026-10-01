@@ -2,9 +2,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 // App base URL. Prefer the explicit APP_BASE_URL env (host root, e.g.
 // https://pm.acme.com); otherwise derive from the incoming request (behind Kong
-// the real host is in x-forwarded-*). Falls back to the public site. The app is
-// served under /demo/ in every LIVO deployment. No more hard-coded
-// tw-pm.lovable.app.
+// the real host is in x-forwarded-*). Falls back to the public site. The
+// self-hosted app is served at the root of that host.
 function resolveAppUrl(req: Request): string {
   const explicit = Deno.env.get('APP_BASE_URL');
   let base: string;
@@ -16,7 +15,7 @@ function resolveAppUrl(req: Request): string {
     const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || url.host;
     base = host ? `${proto}://${host}` : 'https://livo-tw.com';
   }
-  return `${base}/demo`;
+  return base;
 }
 
 const priorityLabels: Record<string, string> = {

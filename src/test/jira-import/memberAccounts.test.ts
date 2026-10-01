@@ -17,21 +17,21 @@ afterEach(() => env.clear());
 describe('invitation link base', () => {
   it('prefers a real APP_BASE_URL', () => {
     env.set('APP_BASE_URL', 'https://pm.example.com/');
-    expect(resolveAppUrl(req('https://other.example.com'))).toBe('https://pm.example.com/demo');
+    expect(resolveAppUrl(req('https://other.example.com'))).toBe('https://pm.example.com');
   });
 
   it('ignores the factory localhost value when the browser origin is known', () => {
     for (const local of ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000']) {
       env.set('APP_BASE_URL', local);
-      expect(resolveAppUrl(req('https://pm.example.com'))).toBe('https://pm.example.com/demo');
+      expect(resolveAppUrl(req('https://pm.example.com'))).toBe('https://pm.example.com');
     }
   });
 
   it('falls back to APP_BASE_URL, then to nothing', () => {
     env.set('APP_BASE_URL', 'http://localhost:3000');
-    expect(resolveAppUrl(req())).toBe('http://localhost:3000/demo');
+    expect(resolveAppUrl(req())).toBe('http://localhost:3000');
     env.clear();
-    expect(resolveAppUrl(req('https://pm.example.com'))).toBe('https://pm.example.com/demo');
+    expect(resolveAppUrl(req('https://pm.example.com'))).toBe('https://pm.example.com');
     expect(resolveAppUrl(req())).toBeNull();
     expect(resolveAppUrl(req('null'))).toBeNull();
   });

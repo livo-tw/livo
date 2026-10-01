@@ -76,12 +76,14 @@ livo-release/
 
 安裝完成後：
 
-- **LIVO 前端**：<http://localhost:3000/demo/>（登入頁 <http://localhost:3000/demo/auth>）
+- **LIVO 前端**：<http://localhost:3000/>（登入頁 <http://localhost:3000/auth>）
 - 用剛剛建立的管理員帳號登入
-- **同事從自己的電腦使用**：開 `http://<伺服器 IP 或主機名稱>:3000/demo/`。網頁會自動
+- **同事從自己的電腦使用**：開 `http://<伺服器 IP 或主機名稱>:3000/`。網頁會自動
   透過同一個網址與連接埠存取 API、上傳檔案及即時協作，所以防火牆只需讓同事連得到
   **前端 3000 埠**（若有改前端埠，以安裝完成畫面為準）。API 埠（預設 8000）供
   本機 API 與管理後台使用，**不要對同事網路或網際網路開放**。
+- 舊版網址在 `/demo/` 底下；升級後舊網址（書籤、Slack 訊息、邀請信裡的連結）
+  會自動轉到新網址，不必另外處理。
 
 > 安裝程式**可以重複執行**：已完成的步驟會自動略過。安裝中斷（斷電、按到
 > Ctrl+C）也沒關係，重新執行一次即可。之後想再建管理員或重設管理員密碼，
@@ -119,7 +121,7 @@ docker compose logs -f
 然後重新執行安裝程式（或重新 `up -d`）。還沒執行過安裝程式的話，`docker/.env`
 還不存在，改 `docker/.env.factory` 也可以。
 
-**給團隊用的伺服器**：同事用 `http://<伺服器 IP>:3000/demo/` 開就能用，不必改設定
+**給團隊用的伺服器**：同事用 `http://<伺服器 IP>:3000/` 開就能用，不必改設定
 （見上方「安裝完成後」），只需開放前端 3000 埠。把下一段的 `APP_BASE_URL` 改成
 同一個網址，Slack 通知裡的連結才點得開。8000 是本機 API 與管理後台，不能對外開放。
 
@@ -136,12 +138,12 @@ docker compose logs -f
    並啟用 WebSocket 轉送。這個位址適用於代理與 LIVO 同機執行；代理若在另一個容器，
    請在共用 Docker 網路上指向 `http://livo-frontend:3000`。
 2. 在 `docker/.env` 把下列三個值都設為公開 HTTPS 網址，例如 `https://livo.example.com`
-   （不含 `/demo/`、不含結尾斜線）：
+   （不含結尾斜線）：
    - `APP_BASE_URL`：Slack 任務連結，以及 Jira 匯入／啟用帳號的設定密碼邀請連結。
    - `SITE_URL`：GoTrue 的預設登入後返回網址；指定其他返回網址仍受 redirect allow-list 限制。
    - `API_EXTERNAL_URL`：GoTrue 對外的 Auth API 基底網址，用於驗證信連結等。
 3. 在 `docker/` 執行 `docker compose -f docker-compose.yml -f compose.frontend.yml up -d`
-   重新載入設定，再從 `https://livo.example.com/demo/` 開啟 LIVO。
+   重新載入設定，再從 `https://livo.example.com/` 開啟 LIVO。
 
 前端會以同一個 HTTPS 網址呼叫 API，Realtime 自動使用 `wss://`。代理需保留 Host，
 並覆寫 `X-Forwarded-Proto` 為使用者實際連線的協定；LIVO 會採用此標頭。
@@ -309,12 +311,12 @@ curl -s -X POST "$API/rest/v1/tasks" \
 `netsh interface ipv4 show excludedportrange protocol=tcp`）。安裝程式對每個
 埠做**真實 bind 測試**，8000 無法使用時會自動改用 18000 / 28000 / 38000 /
 48000 中第一個可用的埠，並同步更新前端與設定檔（`docker/.env` 的
-`KONG_HTTP_PORT`）。使用網址 <http://localhost:3000/demo/> 不受影響；實際
+`KONG_HTTP_PORT`）。使用網址 <http://localhost:3000/> 不受影響；實際
 使用的 API 埠會顯示在安裝完成畫面。
 
 **Q：連接埠 3000 被占用**
 在 `docker/.env` 加一行 `LIVO_FRONTEND_PORT=3001`（或其他埠），重新執行
-安裝程式，之後就改用 <http://localhost:3001/demo/>。
+安裝程式，之後就改用 <http://localhost:3001/>。
 
 **Q：安裝程式在「等待資料庫就緒」逾時**
 - 確認 Docker 分配到至少 4GB RAM（Docker Desktop → Settings → Resources）
@@ -411,7 +413,7 @@ VALUES (
 
 ### D. 前端
 
-前端容器（`livo-frontend`）已隨 A 步驟啟動，網址 <http://localhost:3000/demo/>。
+前端容器（`livo-frontend`）已隨 A 步驟啟動，網址 <http://localhost:3000/>。
 若你偏好不用容器跑前端，也可以在 `app/` 目錄用 Node.js 18+ 執行
 `node server.cjs`（預設連接埠 4321，`PORT=8080 node server.cjs` 可改）。
 
@@ -436,7 +438,7 @@ Socket Mode 由容器主動連到 Slack，公司內網不必提供公開 Request
    - 「留言到 LIVO 卡片」，callback ID：`livo_comment_task`。
 3. Bot scopes 加入 `commands`，並保留通知功能所需的 `channels:read`、`groups:read`、`chat:write`、`chat:write.customize`、`im:write`、`users:read`、`users:read.email`；重新安裝 App。
 4. 在 LIVO Slack 卡片連接 Bot Token，將 Bot 邀請進預計操作的頻道。
-5. 在安裝目錄的 `docker/.env` 設定 `SLACK_APP_TOKEN=xapp-example`，以及同事可開啟的 `APP_BASE_URL=https://livo.example.com`（主機根網址，不含 /demo）。
+5. 在安裝目錄的 `docker/.env` 設定 `SLACK_APP_TOKEN=xapp-example`，以及同事可開啟的 `APP_BASE_URL=https://livo.example.com`（主機根網址，不含結尾斜線）。
 6. 重跑 `sh install.sh` 或 `install.bat`。安裝程式會備份既有 .env，只在缺少時產生 `SLACK_INTERNAL_SECRET`，重跑保留既有密鑰。進入 docker 目錄執行：
 
 ```sh

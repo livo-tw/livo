@@ -85,7 +85,7 @@ cd ~/livo
 sh install.sh                       # on Windows, copy the folder out and double-click install.bat
 ```
 
-The installer generates keys and passwords unique to your install, loads the database schema and asks you to create the first admin. Then open <http://localhost:3000/demo/>. Operations and troubleshooting are covered in [release-template/README.md](release-template/README.md) (in Chinese), including:
+The installer generates keys and passwords unique to your install, loads the database schema and asks you to create the first admin. Then open <http://localhost:3000/>. Operations and troubleshooting are covered in [release-template/README.md](release-template/README.md) (in Chinese), including:
 
 - **Upgrading** (升級到新版): copy the new files over your install folder (keep `docker/.env`) and run the installer again. New database upgrades are applied after an automatic backup and never delete data.
 - **Personal API keys** (用 API 金鑰操作 LIVO): let an AI assistant or a script read and write LIVO data through the API with exactly the permissions of the member the key is bound to — no server or database access needed.
@@ -132,7 +132,7 @@ scripts/build-release.mjs  builds the Docker package
 
 ## Known limitations
 
-- The app is served under the `/demo/` path (for example `http://localhost:3000/demo/`).
+- From source (`npm run dev`) or on Cloudflare the app is served under the `/demo/` path; the Docker install serves it at the site root (for example `http://localhost:3000/`).
 - Jira import only understands CSV column names from Jira's Simplified Chinese interface for now.
 - Traditional Chinese is the most complete language; some screens are not translated to Simplified Chinese or English yet.
 

@@ -23,8 +23,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// App base URL (host root); overridable via APP_BASE_URL. The app is served
-// under /demo/ (matches the worker's appBaseUrl(env) + '/demo').
+// App base URL (host root); overridable via APP_BASE_URL. The self-hosted app
+// is served at the root of that host (the cloud worker uses /demo/).
 const APP_URL = Deno.env.get('APP_BASE_URL') || 'https://livo-tw.com';
 
 const SLACK_API = 'https://slack.com/api';
@@ -210,7 +210,7 @@ const TASK_EVENT_TYPES = [
 ];
 
 const taskUrl = (taskKey: string): string =>
-  `${APP_URL}/demo/?task=${encodeURIComponent(taskKey)}`;
+  `${APP_URL}/?task=${encodeURIComponent(taskKey)}`;
 
 function buildBlocks(payload: NotifyPayload): any[] {
   const key = payload.taskKey || '';

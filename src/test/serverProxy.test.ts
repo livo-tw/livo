@@ -38,13 +38,14 @@ const sockets = new Set<net.Socket>();
 let upstream: http.Server;
 let proxy: RunningServer;
 let staticServer: RunningServer;
+let rootServer: RunningServer;
 let upstreamCalls = 0;
 let firstChunk: (() => void) | undefined;
 let pendingStarted: (() => void) | undefined;
 let pendingClosed: (() => void) | undefined;
 let websocketHeaders: http.IncomingHttpHeaders;
 
-async function startServer(name: string, upstreamOrigin?: string): Promise<RunningServer> {
+async function startServer(name: string, upstreamOrigin?: string, appAtRoot = false): Promise<RunningServer> {
   const dir = path.join(fixture, name);
   mkdirSync(path.join(dir, 'deploy-local', 'demo'), { recursive: true });
   copyFileSync(path.join(appRoot, 'server.cjs'), path.join(dir, 'server.cjs'));
@@ -54,7 +55,7 @@ async function startServer(name: string, upstreamOrigin?: string): Promise<Runni
   writeFileSync(path.join(dir, 'deploy-local', 'demo', 'app.js'), 'window.example = true;');
   writeFileSync(path.join(dir, 'deploy-local', 'demo', 'favicon.ico'), 'example-icon');
   const child = spawn(process.execPath, [path.join(dir, 'server.cjs')], {
-    env: { ...process.env, PORT: '0', LIVO_API_UPSTREAM: upstreamOrigin || '' },
+    env: { ...process.env, PORT: '0', LIVO_API_UPSTREAM: upstreamOrigin || '', LIVO_APP_AT_ROOT: appAtRoot ? '1' : '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let errors = '';
@@ -67,7 +68,7 @@ async function startServer(name: string, upstreamOrigin?: string): Promise<Runni
     child.once('exit', () => reject(new Error('Static server exited before listening')));
     child.stdout!.on('data', (data) => {
       output += data.toString();
-      const match = /Website:\s+http:\/\/localhost:(\d+)/.exec(output);
+      const match = /(?:Website|LIVO App):\s+http:\/\/localhost:(\d+)/.exec(output);
       if (match) resolve(Number(match[1]));
     });
   });
@@ -184,6 +185,7 @@ beforeAll(async () => {
   const port = (upstream.address() as net.AddressInfo).port;
   proxy = await startServer('proxy', `http://127.0.0.1:${port}`);
   staticServer = await startServer('static');
+  rootServer = await startServer('root', `http://127.0.0.1:${port}`, true);
 }, 15000);
 
 afterAll(async () => {
@@ -279,6 +281,52 @@ describe('server.cjs proxy integration', () => {
     }
     expect(upstreamCalls).toBe(before);
     expect((await request(staticServer.port, '/rest/v1/tasks')).body).toBe('<h1>Website</h1>');
+  });
+
+  describe('Docker package: app at the site root', () => {
+    const page = { headers: { accept: 'text/html,application/xhtml+xml' } };
+
+    it('serves the app, its files and client-side routes at /', async () => {
+      expect((await request(rootServer.port, '/')).body).toBe('<h1>App</h1>');
+      expect((await request(rootServer.port, '/auth', page)).body).toBe('<h1>App</h1>');
+      expect((await request(rootServer.port, '/set-password?token_hash=example', page)).body).toBe('<h1>App</h1>');
+      const script = await request(rootServer.port, '/app.js');
+      expect(script.headers['content-type']).toBe('application/javascript');
+      expect(script.body).toBe('window.example = true;');
+      expect((await request(rootServer.port, '/favicon.ico')).body).toBe('example-icon');
+    });
+
+    it('redirects old /demo/ links to the same page at the root', async () => {
+      for (const [from, to] of [
+        ['/demo', '/'], ['/demo/', '/'], ['/demo?task=ABC-1', '/?task=ABC-1'], ['/demo/?task=ABC-1', '/?task=ABC-1'],
+        ['/demo/auth', '/auth'], ['/demo/set-password?token_hash=a%2Fb&type=recovery', '/set-password?token_hash=a%2Fb&type=recovery'],
+        ['/demo//example.com', '/example.com'], ['/demo///example.com/x', '/example.com/x'],
+      ]) {
+        const result = await request(rootServer.port, from, page);
+        expect(result.status, from).toBe(302);
+        expect(result.headers.location, from).toBe(to);
+      }
+    });
+
+    it('returns 404 for missing files, non-page requests, traversal and other Kong routes', async () => {
+      const before = upstreamCalls;
+      for (const target of ['/missing.js', '/pg/meta', '/analytics/', '/demox', '/demo/%5Cexample.com', '/demo/%zz', '/../server.cjs']) {
+        expect((await request(rootServer.port, target)).status, target).toBe(404);
+      }
+      // Only the files under the app folder are served, never the server itself
+      // or the old website next to it.
+      expect((await request(rootServer.port, '/server.cjs')).status).toBe(404);
+      expect((await request(rootServer.port, '/server.cjs', page)).body).toBe('<h1>App</h1>');
+      expect((await request(rootServer.port, '/', page)).body).not.toContain('Website');
+      expect((await request(rootServer.port, '/auth', { method: 'POST', ...page })).status).toBe(404);
+      expect(upstreamCalls).toBe(before);
+    });
+
+    it('still proxies the API', async () => {
+      const result = await request(rootServer.port, '/rest/v1/tasks?select=id');
+      expect(result.status).toBe(200);
+      expect(JSON.parse(result.body)).toMatchObject({ method: 'GET', url: '/rest/v1/tasks?select=id' });
+    });
   });
 
   it('closes the upstream request when the client disconnects', async () => {

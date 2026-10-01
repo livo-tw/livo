@@ -205,7 +205,7 @@ const App = () => {
       <OfflineBanner visible={!isOnline} />
       <Sonner />
       <div className={IS_DEMO_PRO ? 'livo-demo-on' : undefined}>
-      <BrowserRouter basename="/demo">
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
         <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/auth" element={session ? <Navigate to="/" replace /> : <Auth />} />

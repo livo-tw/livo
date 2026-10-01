@@ -2,7 +2,7 @@
 //
 // The self-host bundle bakes the gateway as http://localhost:<port>
 // (.env.customer; install.sh / install.ps1 patch the port). That only works in a
-// browser on the server itself: a colleague opening http://<server>:3000/demo/
+// browser on the server itself: a colleague opening http://<server>:3000/
 // would make their own browser call its own localhost. So when the baked host is
 // a loopback address and the page is not, use the page's origin. server.cjs
 // proxies the API and WebSocket paths through that same port, including HTTPS

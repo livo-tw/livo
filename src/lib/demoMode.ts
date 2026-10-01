@@ -44,12 +44,12 @@ function detect(): boolean {
  */
 export const IS_DEMO_PRO: boolean = detect();
 
-/** Leave demo mode: clear the flag and reload into the plain /demo app. */
+/** Leave demo mode: clear the flag and reload into the plain app. */
 export function exitDemoMode(): void {
   try {
     sessionStorage.removeItem(DEMO_FLAG_KEY);
   } catch {
     /* ignore */
   }
-  window.location.href = '/demo/';
+  window.location.href = import.meta.env.BASE_URL;
 }
