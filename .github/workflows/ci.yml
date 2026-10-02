@@ -26,6 +26,10 @@ jobs:
       - name: Install app dependencies
         run: npm ci
 
+      - name: Install worker dependencies
+        working-directory: worker
+        run: npm ci
+
       - name: Type check (app)
         run: npx tsc --noEmit
 
@@ -37,10 +41,6 @@ jobs:
         env:
           VITE_API_URL: http://localhost:8787
           VITE_LOCAL_MODE: 'false'
-
-      - name: Install worker dependencies
-        working-directory: worker
-        run: npm ci
 
       - name: Type check (worker)
         working-directory: worker
