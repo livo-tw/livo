@@ -17,11 +17,12 @@ interface AddMemberModalProps {
   filteredJobTitles: string[];
   onSubmit: (e: React.FormEvent) => void;
   loading: boolean;
+  canEditJobTitle: boolean;
 }
 
 const AddMemberModal = ({
   show, onClose, form, setForm, jobTitleRef, jobTitleOpen, setJobTitleOpen,
-  filteredJobTitles, onSubmit, loading,
+  filteredJobTitles, onSubmit, loading, canEditJobTitle,
 }: AddMemberModalProps) => {
   const { t } = useTranslation();
   if (!show) return null;
@@ -69,12 +70,13 @@ const AddMemberModal = ({
             />
             <p className="text-xs text-muted-foreground mt-1">{t('memberList.passwordHint')}</p>
           </div>
-          <div>
+          {canEditJobTitle ? <div>
             <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.jobTitleLabel')}</label>
             <div className="relative" ref={jobTitleRef}>
               <input
                 type="text"
                 value={form.jobTitle}
+                maxLength={200}
                 onChange={e => { setForm(f => ({ ...f, jobTitle: e.target.value })); setJobTitleOpen(true); }}
                 onFocus={() => setJobTitleOpen(true)}
                 className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background text-foreground outline-none focus:ring-2 focus:ring-ring"
@@ -96,7 +98,7 @@ const AddMemberModal = ({
                 </div>
               )}
             </div>
-          </div>
+          </div> : <p className="text-xs text-muted-foreground">{t('memberJobTitle.superAdminOnly')}</p>}
           <div>
             <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.roleLabel')}</label>
             <select
@@ -104,7 +106,7 @@ const AddMemberModal = ({
               onChange={e => setForm(f => ({ ...f, role: e.target.value as MemberRole }))}
               className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background text-foreground outline-none focus:ring-2 focus:ring-ring"
             >
-              {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
+              {ROLES.filter(role => canEditJobTitle || role === 'member').map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
             </select>
           </div>
           <div className="flex gap-2 pt-2">

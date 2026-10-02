@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS kb_pages (
   sort_order INTEGER NOT NULL DEFAULT 0,
   is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0,1)),
   admin_only INTEGER NOT NULL DEFAULT 0 CHECK (admin_only IN (0,1)),
+  category TEXT NOT NULL DEFAULT 'general' CHECK (category IN ('general','meeting')),
+  access_policy TEXT NOT NULL DEFAULT '{"mode":"inherit"}' CHECK (json_valid(access_policy)),
   created_by TEXT NOT NULL,
   updated_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -56,11 +58,21 @@ CREATE TABLE IF NOT EXISTS kb_attachments (
   file_size INTEGER NOT NULL CHECK (file_size >= 0 AND file_size <= 2097152),
   file_type TEXT NOT NULL DEFAULT '',
   storage_path TEXT NOT NULL UNIQUE,
+  storage_bucket TEXT NOT NULL DEFAULT 'kb-files',
   uploaded_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (workspace_id, page_id) REFERENCES kb_pages(workspace_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_kb_attachments_page ON kb_attachments(workspace_id, page_id);
+
+CREATE TABLE IF NOT EXISTS kb_comments (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL DEFAULT 'default', page_id TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(trim(body)) BETWEEN 1 AND 10000), created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (workspace_id,page_id) REFERENCES kb_pages(workspace_id,id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_kb_comments_page ON kb_comments(workspace_id,page_id,created_at);
 
 CREATE TRIGGER IF NOT EXISTS kb_insert_tree BEFORE INSERT ON kb_pages BEGIN
   SELECT CASE WHEN NEW.project_id IS NOT NULL AND NOT EXISTS (

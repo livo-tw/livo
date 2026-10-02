@@ -117,6 +117,15 @@ Deno.serve(async (req) => {
     }
 
     const { action, ...params } = await req.json();
+    if (callerRole !== 'super_admin' && (action === 'reset_password' || action === 'create_login')) {
+      return json({ error: 'Permission denied: only super_admin can manage another member login' },403);
+    }
+    if (action === 'create') {
+      if (params.jobTitle !== undefined && (typeof params.jobTitle !== 'string' || params.jobTitle.length > 200)) return json({ error: 'job_title must be at most 200 characters' },400);
+      if (callerRole !== 'super_admin' && ((params.jobTitle || '').trim() || (params.role && params.role !== 'member'))) {
+        return json({ error: 'Permission denied: only super_admin can assign positions or administrative roles' },403);
+      }
+    }
 
     // A login JWT minted from a personal API key may manage members, but never
     // set a password or open a login: a leaked key must not become an account

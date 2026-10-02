@@ -6,6 +6,9 @@ import path from 'node:path';
 import { runQuery } from '../../worker/src/db';
 import { knowledgeStorageAllowed, knowledgeLockAllowed } from '../../worker/src/knowledge';
 import { TABLES } from '../../worker/src/tables';
+import { knowledgeCan, parseKnowledgePolicy } from '../../worker/src/knowledgeAccess';
+import { handleDownload, handleUpload } from '../../worker/src/storage';
+import { handleManageMember } from '../../worker/src/functions/manageMember';
 vi.mock('../../worker/src/notify', () => ({ notifyChanges: vi.fn() }));
 
 let db;
@@ -30,6 +33,8 @@ function update(p, values, auth = actor()) {
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE members(id TEXT, role TEXT, job_title TEXT, is_active INTEGER, workspace_id TEXT, PRIMARY KEY(workspace_id,id));
+    INSERT INTO members VALUES ('member-a','member','PM',1,'default'),('member-b','member','Engineer',1,'default'),('member-admin','admin','PM',1,'default'),('member-super','super_admin','Engineer',1,'default'),('other-admin','admin','Engineer',1,'default'),('member-b','admin','Engineer',1,'other');
     CREATE TABLE projects(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, is_archived INTEGER DEFAULT 0);
     CREATE TABLE field_locks(lock_key TEXT, locked_by TEXT, expires_at TEXT, workspace_id TEXT, PRIMARY KEY(workspace_id, lock_key));
     INSERT INTO projects VALUES ('project-a','default',0),('project-b','other',0);`);
@@ -44,7 +49,128 @@ beforeEach(() => {
       async run() { return db.prepare(sql).run(...params); } };
   } } };
 });
-afterEach(() => db.close());
+
+const rule = (patch = {}) => ({ roles: [], positions: [], member_ids: [], ...patch });
+const policy = (patch = {}) => ({ mode: 'custom', view: rule({ positions: ['PM'] }), edit: rule({ positions: ['PM'] }), comment: rule({ positions: ['PM'] }), ...patch });
+const adminActor = () => actor('member-admin','admin');
+
+describe('knowledge fine-grained ACL security', () => {
+  it('filters each row independently in a mixed public/private workspace',async()=>{
+    await create({access_policy:policy()},adminActor());
+    const ordinary=await create({title:'Public guide'});
+    const other=actor('member-b');
+    expect((await query({},other)).data.map(p=>p.id)).toEqual([ordinary.id]);
+    expect((await query({head:true,count:'exact'},other)).count).toBe(1);
+    lock(ordinary.id,'member-b');
+    expect((await update(ordinary,{body:'Allowed edit'},other)).error).toBeNull();
+  });
+  it('filters direct reads, projections, counts, history, attachments and comments for all unauthorized roles', async () => {
+    let p = await create({ access_policy: policy(), body: 'private' }, adminActor());
+    lock(p.id,'member-admin'); p = (await update(p,{body:'private revision'},adminActor())).data;
+    await query({ table:'kb_comments',op:'insert',values:{page_id:p.id,body:'private discussion'} });
+    await query({ table:'kb_attachments',op:'insert',values:{page_id:p.id,file_name:'private.pdf',file_size:10,storage_path:`kb/${p.id}/private.pdf`} },adminActor());
+    for (const auth of [actor('member-b'),actor('other-admin','admin'),actor('member-super','super_admin')]) {
+      for (const table of ['kb_pages','kb_revisions','kb_attachments','kb_comments']) {
+        expect((await query({table},auth)).data, table).toEqual([]);
+        expect((await query({table,head:true,count:'exact'},auth)).count, table).toBe(0);
+      }
+      expect((await query({cols:'title',filters:[{col:'id',op:'eq',val:p.id}]},auth)).data).toEqual([]);
+      expect(await knowledgeLockAllowed(env,auth,`kb:${p.id}`)).toBe(false);
+      expect(await knowledgeStorageAllowed(env,auth,`kb/${p.id}/private.pdf`,'view')).toBe(false);
+    }
+  });
+  it('intersects child rules with ancestors and denies inherited-parent escape', async () => {
+    const p=await create({access_policy:policy()},adminActor());
+    const child=await create({parent_id:p.id},adminActor());
+    expect((await query({},actor('member-b'))).data).toEqual([]);
+    lock(child.id);
+    expect((await update(child,{parent_id:null})).error).not.toBeNull();
+    expect((await query({op:'insert',values:{title:'Guess',parent_id:p.id}},actor('member-b'))).error).not.toBeNull();
+  });
+  it('allows exact role and member selectors without interpreting positions as roles', async () => {
+    const p=await create({access_policy:policy({view:rule({roles:['admin'],member_ids:['member-b']})})},adminActor());
+    expect((await query({},actor('other-admin','admin'))).data).toHaveLength(1);
+    expect((await query({},actor('member-b'))).data).toHaveLength(1);
+    expect((await query({},actor())).data).toEqual([]);
+    expect((await query({},actor('member-super','super_admin'))).data).toEqual([]);
+    expect(await knowledgeStorageAllowed(env,actor('member-b'),`kb/${p.id}/f`,'view')).toBe(true);
+    expect(await knowledgeStorageAllowed(env,actor('member-b'),`kb/${p.id}/f`,'edit')).toBe(false);
+  });
+  it('keeps view, edit and comment independent and forces comment authorship', async () => {
+    const p=await create({access_policy:policy({view:rule({roles:['member','admin']}),edit:rule({member_ids:['member-admin']}),comment:rule({member_ids:['member-b']})})},adminActor());
+    lock(p.id,'member-b');
+    expect((await update(p,{body:'illegal'},actor('member-b'))).error).not.toBeNull();
+    expect((await query({table:'kb_comments',op:'insert',values:{page_id:p.id,body:'no'}},adminActor())).error).not.toBeNull();
+    const c=await query({table:'kb_comments',op:'insert',single:true,values:{page_id:p.id,body:'yes',created_by:'forged'}},actor('member-b'));
+    expect(c.error).toBeNull(); expect(c.data.created_by).toBe('member-b');
+    expect((await query({table:'kb_comments',op:'update',filters:[{col:'id',op:'eq',val:c.data.id}],values:{body:'hijacked'}},adminActor())).error).not.toBeNull();
+    expect((await query({table:'kb_comments',op:'update',filters:[{col:'id',op:'eq',val:c.data.id}],values:{body:'own edit'}},actor('member-b'))).error).toBeNull();
+  });
+  it('resolves position and active membership live even when auth context is unchanged', async () => {
+    await create({access_policy:policy()},adminActor());
+    expect((await query({})).data).toHaveLength(1);
+    db.prepare("UPDATE members SET job_title='Engineer' WHERE workspace_id='default' AND id='member-a'").run();
+    expect((await query({})).data).toEqual([]);
+    db.prepare("UPDATE members SET job_title='PM',is_active=0 WHERE workspace_id='default' AND id='member-a'").run();
+    expect((await query({})).data).toEqual([]);
+  });
+  it('rejects malformed selectors, self lockout and ACL changes from regular editors', async () => {
+    expect(parseKnowledgePolicy({mode:'custom',view:rule()})).toBeNull();
+    expect((await query({op:'insert',values:{title:'invalid',access_policy:{mode:'custom'}}},adminActor())).error).not.toBeNull();
+    expect((await query({op:'insert',values:{title:'self lockout',access_policy:policy({view:rule({positions:['Other']})})}},adminActor())).error?.message).toBe('kb_self_lockout');
+    const p=await create(); lock(p.id);
+    expect((await update(p,{access_policy:policy()})).error).not.toBeNull();
+    expect((await update(p,{access_policy:policy()},actor('member-a','admin'))).error).not.toBeNull();
+    expect((await query({op:'insert',values:{title:'stale admin',access_policy:policy()}},actor('member-a','admin'))).error).not.toBeNull();
+    expect((await query({table:'members',op:'update',filters:[{col:'id',op:'eq',val:'member-a'}],values:{job_title:'PM'}},actor('member-a','super_admin'))).error).not.toBeNull();
+  });
+  it('blocks legacy public attachments from being presented as newly private', async () => {
+    const p=await create(); lock(p.id,'member-admin');
+    db.prepare('INSERT INTO kb_attachments(id,workspace_id,page_id,file_name,file_size,storage_path,storage_bucket,uploaded_by) VALUES (?,?,?,?,?,?,?,?)').run('legacy','default',p.id,'legacy.pdf',10,`kb/${p.id}/legacy.pdf`,'task-images','member-a');
+    expect((await update(p,{access_policy:policy()},adminActor())).error?.message).toBe('kb_legacy_public_attachments');
+    expect((await query({table:'kb_attachments',op:'insert',values:{page_id:p.id,file_name:'x',file_size:1,storage_path:`kb/${p.id}/x`,storage_bucket:'task-images'}},adminActor())).error).not.toBeNull();
+  });
+  it('pure evaluator agrees on view prerequisites, missing ancestry and exact positions', () => {
+    const pages=[{id:'p',parent_id:null,access_policy:policy({view:rule({positions:['PM']}),edit:rule({roles:['member']}),comment:rule()})}];
+    expect(knowledgeCan(pages,'p',{id:'a',role:'member',jobTitle:'PM'},'edit')).toBe(true);
+    expect(knowledgeCan(pages,'p',{id:'a',role:'member',jobTitle:'PM'},'comment')).toBe(false);
+    expect(knowledgeCan(pages,'p',{id:'a',role:'member',jobTitle:'PM Lead'},'edit')).toBe(false);
+    expect(knowledgeCan([{id:'c',parent_id:'missing'}],'c',{id:'a',role:'member'},'view')).toBe(false);
+  });
+});
+afterEach(() => { db.close(); vi.unstubAllGlobals(); });
+
+describe('knowledge storage and identity boundaries',()=>{
+  it('does not consult public caches or R2 for unauthorized private file reads', async () => {
+    const p=await create({access_policy:policy()},adminActor());
+    const cache={match:vi.fn(),put:vi.fn()}; vi.stubGlobal('caches',{default:cache});
+    env.ATTACHMENTS={get:vi.fn(async()=>({body:'PDF',httpEtag:'test',writeHttpMetadata(h){h.set('content-type','application/pdf');}}))};
+    const context=(auth)=>({env,get:()=>auth,json:(body,status=200)=>new Response(JSON.stringify(body),{status}),req:{raw:new Request('https://example.com/file')},executionCtx:ctx});
+    expect((await handleDownload(context(undefined),'kb-files',`kb/${p.id}/file.pdf`)).status).toBe(404);
+    expect((await handleDownload(context(actor('member-b')),'kb-files',`kb/${p.id}/file.pdf`)).status).toBe(404);
+    expect(env.ATTACHMENTS.get).not.toHaveBeenCalled();
+    const downloaded=await handleDownload(context(actor()),'kb-files',`kb/${p.id}/file.pdf`);
+    expect(downloaded.status).toBe(200); expect(downloaded.headers.get('cache-control')).toBe('private, no-store');
+    expect(cache.match).not.toHaveBeenCalled(); expect(cache.put).not.toHaveBeenCalled();
+    expect(await knowledgeStorageAllowed(env,actor(),`ws/other/kb/${p.id}/file.pdf`,'view')).toBe(false);
+  });
+  it('refuses new public knowledge uploads and allows only private KB paths', async () => {
+    const p=await create(); env.ATTACHMENTS={put:vi.fn()};
+    const c={env,get:()=>actor(),json:(body,status=200)=>new Response(JSON.stringify(body),{status}),req:{header:()=>'',raw:{body:null}}};
+    expect((await handleUpload(c,'task-images',`kb/${p.id}/file.pdf`)).status).toBe(403);
+    expect((await handleUpload(c,'kb-files','outside/file.pdf')).status).toBe(403);
+    expect(env.ATTACHMENTS.put).not.toHaveBeenCalled();
+  });
+  it('blocks administrator account-takeover paths before any account mutation', async () => {
+    for (const body of [{action:'create',jobTitle:'PM'},{action:'create',role:'super_admin'},{action:'reset_password',memberId:'member-a'},{action:'create_login',memberId:'member-a'}]) {
+      let auth=adminActor(); const c={env,get:()=>auth,set:(_key,v)=>{auth=v;},req:{json:async()=>body},json:(v,status=200)=>new Response(JSON.stringify(v),{status})};
+      expect((await handleManageMember(c)).status).toBe(403);
+    }
+    let auth=actor('member-a','super_admin');
+    const stale={env,get:()=>auth,set:(_key,v)=>{auth=v;},req:{json:async()=>({action:'reset_password'})},json:(v,status=200)=>new Response(JSON.stringify(v),{status})};
+    expect((await handleManageMember(stale)).status).toBe(403);
+  });
+});
 
 describe('knowledge backend policy and atomic history', () => {
   it('registers boolean columns and keeps revisions server-written only', () => {
@@ -108,7 +234,8 @@ describe('knowledge backend policy and atomic history', () => {
     const p = await create();
     const remove = { op: 'delete', filters: [{ col: 'id', op: 'eq', val: p.id }] };
     expect((await query(remove, actor('member-b'))).error).not.toBeNull();
-    expect((await query(remove, actor('member-b', 'admin'))).error).toBeNull();
+    expect((await query(remove, actor('member-b', 'admin'))).error).not.toBeNull(); // A stale role cannot elevate the live member.
+    expect((await query(remove, actor('member-admin', 'admin'))).error).toBeNull();
   });
   it('locks admin-only pages and files, supports admin unarchive, and rejects forged revisions', async () => {
     const admin = actor('member-admin', 'admin');

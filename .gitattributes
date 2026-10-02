@@ -1,0 +1,2 @@
+# This fixture exercises LF embedded newlines; preserve its committed bytes on Windows.
+src/test/jira-import/fixtures/en.csv text eol=lf

@@ -7,6 +7,7 @@ import MemberCardsMobile from './member-manage/MemberCardsMobile';
 import AddMemberModal from './member-manage/AddMemberModal';
 import ResetPasswordModal from './member-manage/ResetPasswordModal';
 import CreateLoginModal from './member-manage/CreateLoginModal';
+import EditJobTitleModal from './member-manage/EditJobTitleModal';
 import AccountCredentialsDialog from './AccountCredentialsDialog';
 
 const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
@@ -35,6 +36,8 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
     loginError, loginLoading,
     loginCredentials, setLoginCredentials,
     openCreateLogin, handleCreateLogin,
+    existingJobTitles, jobTitleTarget, editJobTitle, setEditJobTitle,
+    jobTitleSaving, jobTitleError, openEditJobTitle, closeEditJobTitle, handleSaveJobTitle,
     ConfirmDialog,
   } = useMemberManage();
 
@@ -45,6 +48,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
     onRoleChange: handleRoleChange, onToggleActive: handleToggleActive, onDelete: handleDeleteMember,
     onResetPassword: openResetPassword,
     onCreateLogin: openCreateLogin,
+    onEditJobTitle: openEditJobTitle,
   };
 
   return (
@@ -109,6 +113,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
         filteredJobTitles={filteredJobTitles}
         onSubmit={handleAddMember}
         loading={addLoading}
+        canEditJobTitle={isSuperAdmin}
       />
       <ResetPasswordModal
         target={resetTarget}
@@ -128,6 +133,16 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
         loading={loginLoading}
       />
       <AccountCredentialsDialog credentials={loginCredentials} onClose={() => setLoginCredentials([])} />
+      <EditJobTitleModal
+        target={isSuperAdmin ? jobTitleTarget : null}
+        value={editJobTitle}
+        onChange={setEditJobTitle}
+        existingTitles={existingJobTitles}
+        loading={jobTitleSaving}
+        error={jobTitleError}
+        onClose={closeEditJobTitle}
+        onSubmit={handleSaveJobTitle}
+      />
       {ConfirmDialog}
       </div>
     </div>

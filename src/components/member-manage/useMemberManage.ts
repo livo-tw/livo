@@ -43,6 +43,10 @@ export function useMemberManage() {
   const [loginCredentials, setLoginCredentials] = useState<AccountCredential[]>([]);
   const [jobTitleOpen, setJobTitleOpen] = useState(false);
   const jobTitleRef = useRef<HTMLDivElement>(null);
+  const [jobTitleTarget, setJobTitleTarget] = useState<{ id: string; name: string } | null>(null);
+  const [editJobTitle, setEditJobTitle] = useState('');
+  const [jobTitleSaving, setJobTitleSaving] = useState(false);
+  const [jobTitleError, setJobTitleError] = useState<string | null>(null);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -185,21 +189,70 @@ export function useMemberManage() {
     }
   };
 
+  const openEditJobTitle = (memberId: string) => {
+    if (!isSuperAdmin) return;
+    const target = users.find(user => user.id === memberId);
+    if (!target) return;
+    setJobTitleTarget({ id: target.id, name: target.name });
+    setEditJobTitle(target.jobTitle || '');
+    setJobTitleError(null);
+  };
+
+  const closeEditJobTitle = () => {
+    if (!jobTitleSaving) setJobTitleTarget(null);
+  };
+
+  const handleSaveJobTitle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperAdmin || !jobTitleTarget || jobTitleSaving) return;
+    const target = jobTitleTarget;
+    const jobTitle = editJobTitle.trim();
+    if (jobTitle.length > 200) { setJobTitleError(i18n.t('memberJobTitle.tooLong')); return; }
+    setJobTitleSaving(true);
+    setJobTitleError(null);
+    let acquired = false;
+    try {
+      const lock = await acquireLock(`member-${target.id}`);
+      acquired = lock.acquired;
+      if (!acquired) {
+        setJobTitleError(i18n.t('member.lockedByOther', { name: lock.lockerName || i18n.t('common.unknown') }));
+        return;
+      }
+      const { data, error } = await supabase.from('members').update({ job_title: jobTitle }).eq('id', target.id).select('id').maybeSingle();
+      if (error || !data) {
+        setJobTitleError(i18n.t('memberJobTitle.saveFailed') + (error?.message || ''));
+        return;
+      }
+      if (currentMemberId) {
+        await logActivity(currentMemberId, 'change_job_title', i18n.t('memberJobTitle.activity', { name: target.name, jobTitle: jobTitle || '—' }), undefined, undefined, 'member');
+      }
+      await refreshUsers();
+      setJobTitleTarget(null);
+      toast.success(i18n.t('memberJobTitle.saved'));
+    } catch (error) {
+      setJobTitleError(i18n.t('memberJobTitle.saveFailed') + (error instanceof Error ? error.message : ''));
+    } finally {
+      if (acquired) releaseLock(`member-${target.id}`);
+      setJobTitleSaving(false);
+    }
+  };
+
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addForm.email || !addForm.name) { toast.error(i18n.t('member.requiredFields')); return; }
     if (addForm.password && addForm.password.length < 8) { toast.error(i18n.t('member.passwordTooShort')); return; }
+    const newRole = isSuperAdmin ? addForm.role : 'member';
     setAddLoading(true);
     const { data, error } = await supabase.functions.invoke('manage-member', {
       // password: the member's initial login password. Empty → the backend
       // generates a random throwaway (member can't log in until reset).
-      body: { action: 'create', email: addForm.email, name: addForm.name, role: addForm.role, jobTitle: addForm.jobTitle, avatar: addForm.name.slice(0, 1).toUpperCase(), color: COLORS[Math.floor(Math.random() * COLORS.length)], ...(addForm.password ? { password: addForm.password } : {}) },
+      body: { action: 'create', email: addForm.email, name: addForm.name, role: newRole, jobTitle: isSuperAdmin ? addForm.jobTitle.trim() : '', avatar: addForm.name.slice(0, 1).toUpperCase(), color: COLORS[Math.floor(Math.random() * COLORS.length)], ...(addForm.password ? { password: addForm.password } : {}) },
     });
     if (error || data?.error) { toast.error(i18n.t('member.addFailed') + (data?.error || error?.message)); }
     else {
       toast.success(i18n.t('member.added'));
       if (currentMemberId) {
-        await logActivity(currentMemberId, 'add_member', i18n.t('activity.addMember', { name: addForm.name, email: addForm.email, role: getRoleLabel(addForm.role) }), undefined, undefined, 'member');
+        await logActivity(currentMemberId, 'add_member', i18n.t('activity.addMember', { name: addForm.name, email: addForm.email, role: getRoleLabel(newRole) }), undefined, undefined, 'member');
       }
       setShowAddModal(false);
       setAddForm({ email: '', name: '', role: 'member', jobTitle: '', password: '' });
@@ -339,6 +392,8 @@ export function useMemberManage() {
     jobTitleOpen, setJobTitleOpen,
     jobTitleRef,
     filteredJobTitles,
+    existingJobTitles, jobTitleTarget, editJobTitle, setEditJobTitle,
+    jobTitleSaving, jobTitleError, openEditJobTitle, closeEditJobTitle, handleSaveJobTitle,
     resetTarget, setResetTarget,
     resetForm, setResetForm,
     resetLoading,

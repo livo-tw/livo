@@ -41,7 +41,12 @@ interface ManageMemberBody {
 }
 
 export const handleManageMember = async (c: Context<AppContext>): Promise<Response> => {
-  const auth = c.get('auth');
+  let auth = c.get('auth');
+  const live = await c.env.DB.prepare('SELECT role,is_active FROM members WHERE workspace_id=? AND id=?')
+    .bind(callerWs(c),auth.member.id).first<{role:string;is_active:number}>();
+  if (!live?.is_active) return c.json({ error: 'Permission denied: active administrator required' }, 403);
+  auth = { ...auth, member: { ...auth.member, role: live.role } };
+  c.set('auth',auth);
   if (!ADMIN_ROLES.includes(auth.member.role)) {
     return c.json({ error: 'Permission denied: admin role required' }, 403);
   }
@@ -49,6 +54,15 @@ export const handleManageMember = async (c: Context<AppContext>): Promise<Respon
   try {
     const body = (await c.req.json()) as ManageMemberBody;
     const action = body.action;
+    if (auth.member.role !== 'super_admin' && (action === 'reset_password' || action === 'create_login')) {
+      return c.json({ error: 'Permission denied: only super_admin can manage another member login' }, 403);
+    }
+    if (action === 'create') {
+      if (body.jobTitle !== undefined && (typeof body.jobTitle !== 'string' || body.jobTitle.length > 200)) return c.json({ error: 'job_title must be at most 200 characters' },400);
+      if (auth.member.role !== 'super_admin' && ((body.jobTitle || '').trim() || (body.role && body.role !== 'member'))) {
+        return c.json({ error: 'Permission denied: only super_admin can assign positions or administrative roles' },403);
+      }
+    }
 
     // An API key may manage members but never set a password or open a login:
     // a leaked key must not become an account takeover. (create without a

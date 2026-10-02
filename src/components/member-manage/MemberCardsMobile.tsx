@@ -36,6 +36,7 @@ interface MemberCardsMobileProps {
   onResetPassword: (memberId: string, name: string) => void;
   /** 「啟用帳號」 for a member that only has a name (Jira import). */
   onCreateLogin: (memberId: string, name: string) => void;
+  onEditJobTitle: (memberId: string) => void;
 }
 
 const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
@@ -44,7 +45,7 @@ const MemberCardsMobile = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
   dragIndex, dragOverIndex, actionLoading, isLockedBy, formatDate,
   onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd,
-  onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin,
+  onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin, onEditJobTitle,
 }: MemberCardsMobileProps) => {
   const { t } = useTranslation();
   return (
@@ -74,6 +75,7 @@ const MemberCardsMobile = ({
                 {(() => { const locker = isLockedBy(`member-${user.id}`); return locker ? <span className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded animate-pulse flex items-center gap-1"><Lock size={12} /> {locker.name} {t('memberList.operating')}</span> : null; })()}
               </div>
               <div className="text-[10px] text-muted-foreground truncate">{user.jobTitle || '—'} · {isPlaceholderEmail(user.email) ? t('memberList.noLogin') : user.email}</div>
+              {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} className="mt-1 text-xs text-primary hover:underline disabled:opacity-50">{t('memberJobTitle.edit')}</button>}
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
               {getRoleLabel(user.role as MemberRole)}

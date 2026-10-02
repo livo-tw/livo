@@ -320,7 +320,8 @@ export class RealtimeHub {
 
     for (const raw of body) {
       if (!isChangeEvent(raw)) continue;
-      const ev: ChangeEvent = raw;
+      // Defense in depth: KB changes only invalidate queries. Never distribute row bodies.
+      const ev: ChangeEvent = raw.table.startsWith('kb_') ? { ...raw, new: {}, old: null } : raw;
       for (const [ws, st] of [...this.sockets]) {
         for (const [ch, sub] of [...st.channels]) {
           if (!this.sockets.has(ws)) break; // dropped mid-loop by a failed send

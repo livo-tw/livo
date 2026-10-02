@@ -1,4 +1,16 @@
 {
+  "memberJobTitle": {
+    "edit": "編輯職位",
+    "editMember": "編輯 {{name}} 的職位",
+    "permissionHint": "職位變更會影響依職位設定的知識庫存取權限。",
+    "customHint": "可自訂名稱或選用既有職位；留空可清除。",
+    "superAdminOnly": "職位由最高管理員設定。",
+    "tooLong": "職位名稱最多 200 個字元。",
+    "saved": "職位已更新",
+    "saveFailed": "職位更新失敗：",
+    "save": "儲存職位",
+    "activity": "將「{{name}}」的職位設為「{{jobTitle}}」"
+  },
   "slackActions": {
     "manual": {
       "title": "手動對應（Slack 與 LIVO 的 Email 不同時）",
@@ -2648,7 +2660,7 @@
     "deleteFile": "刪除附件「{{name}}」？",
     "retry": "重試",
     "errors": {
-      "kb_forbidden": "你沒有執行這個操作的權限。",
+      "kb_forbidden": "您沒有執行此操作的權限，請重新整理頁面。",
       "kb_conflict": "頁面已更新、被鎖定或編輯鎖已失效。請保留草稿，重新開啟頁面再編輯。",
       "kb_depth": "頁面最多只能有三層，請選擇其他上層頁面。",
       "kb_cycle": "不能將頁面移到自己或自己的子頁面底下。",
@@ -2662,7 +2674,55 @@
       "kb_invalid_attachment": "附件資料不正確或檔案超過大小限制。",
       "kb_invalid_request": "資料不正確，請檢查欄位後重試。",
       "kb_load_failed": "無法載入知識庫，請稍後重試。",
-      "kb_failed": "操作失敗，請稍後重試。"
+      "kb_failed": "操作失敗，請稍後重試。",
+      "kb_self_lockout": "請保留您自己的檢視權限，以便後續管理。",
+      "kb_policy_invalid": "權限設定無效，請重新選擇授權對象。",
+      "kb_legacy_public_attachments": "此頁或子頁仍有舊的公開附件。請先下載備份，刪除舊附件並重新上傳為受控附件，再限制檢視權限。正文中的公開圖片也需改用受控附件。",
+      "kb_comment_invalid": "評論需為 1 至 10,000 字的純文字。"
+    },
+    "category": "類別",
+    "allCategories": "全部類別",
+    "categories": {
+      "general": "一般知識",
+      "meeting": "會議記錄"
+    },
+    "privateFilesHint": "圖片與檔案請使用下方附件上傳，下載時會檢查此頁的檢視權限。",
+    "permissions": {
+      "title": "頁面權限",
+      "mode": "權限方式",
+      "inherit": "繼承權限",
+      "inheritParent": "沿用上層頁面的檢視、編輯與評論權限。",
+      "inheritRoot": "沒有上層時，所有啟用成員可檢視、編輯與評論；僅管理員編輯的限制仍有效。",
+      "custom": "自訂權限",
+      "matchAny": "每項權限可依系統角色、職位或指定成員授予，符合其中任一項即可。",
+      "hierarchy": "上層頁面的限制會繼續生效。子頁只能縮小可存取範圍，不能突破上層權限。",
+      "emptyDenied": "某項權限若沒有勾選任何對象，就不授予任何人。請保留自己的檢視權限。",
+      "moveHint": "移動頁面會改用新上層的權限限制，可能改變可存取範圍。只有管理員可以移動頁面。",
+      "viewRequired": "編輯與評論都必須先具備檢視權限。管理員也不會自動取得受限頁面的檢視權限。職位依團隊成員的目前職位名稱比對。",
+      "view": "可以檢視",
+      "edit": "可以編輯",
+      "comment": "可以評論",
+      "roles": "系統角色",
+      "positions": "職位",
+      "members": "指定成員",
+      "noPositions": "目前沒有已填寫的職位",
+      "inactiveMember": "未啟用，無法存取",
+      "restricted": "此頁設有自訂權限，上層限制仍然有效。",
+      "role": {
+        "member": "一般成員",
+        "admin": "管理員",
+        "super_admin": "最高管理員"
+      }
+    },
+    "comments": {
+      "title": "評論",
+      "empty": "目前沒有評論。",
+      "body": "留下評論",
+      "send": "送出評論",
+      "edit": "編輯評論",
+      "delete": "刪除評論",
+      "deleteConfirm": "確定刪除這則評論？",
+      "readOnly": "您可以閱讀評論，目前沒有發表或編輯評論的權限。"
     }
   },
   "qa": {
