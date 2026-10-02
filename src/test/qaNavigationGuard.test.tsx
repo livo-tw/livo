@@ -34,6 +34,13 @@ function Spa() {
   useEffect(() => { void ui.refreshFeatureToggles().then(() => ui.setCurrentView('qa')); }, []);
   return <UIContext.Provider value={ui}><nav><button onClick={() => ui.setCurrentView('my-qa')}>My QA navigation</button><button onClick={() => ui.setCurrentView('board')}>Task navigation</button><button onClick={() => void ui.refreshFeatureToggles()}>Reload capabilities</button></nav><output aria-label="Current view">{ui.currentView}</output>{ui.currentView === 'qa' || ui.currentView === 'my-qa' ? <QaWorkspace mine={ui.currentView === 'my-qa'} /> : <h1>Task board</h1>}</UIContext.Provider>;
 }
+const openCreate = async () => {
+  render(<Spa />);
+  // The heading can render before passive effects register the toolbar listener.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'qa.workflowTitle' })).toBeEnabled());
+  fireEvent(window, new Event('livo:qa-create'));
+  return screen.findByLabelText(/qa.titleField/);
+};
 const fill = () => {
   fireEvent.change(screen.getByLabelText(/qa.project/), { target: { value: input.projectId } });
   fireEvent.change(screen.getByLabelText(/qa.titleField/), { target: { value: input.title } });
@@ -121,13 +128,13 @@ describe('central QA navigation guard', () => {
 
 describe('real QA workspace across SPA views', () => {
   it('allows leaving a blank create form', async () => {
-    render(<Spa />); await screen.findByRole('heading', { name: 'qa.title' }); fireEvent(window, new Event('livo:qa-create'));
+    await openCreate();
     expect(screen.getByLabelText(/qa.titleField/)).toHaveValue(''); expect(hasQaNavigationGuard()).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Task navigation' })); expect(screen.getByRole('heading', { name: 'Task board' })).toBeTruthy(); expect(mocks.toast).not.toHaveBeenCalled();
   });
   it('preserves an unknown create result across attempted mine/all and task navigation, then retries the same IDs', async () => {
     mocks.create.mockRejectedValueOnce(new TypeError('connection lost'));
-    render(<Spa />); await screen.findByRole('heading', { name: 'qa.title' }); fireEvent(window, new Event('livo:qa-create')); fill();
+    await openCreate(); fill();
     const title = screen.getByLabelText(/qa.titleField/); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await screen.findByText('qa.createRetryHint');
     const original = mocks.create.mock.calls[0].slice(0, 3);
     fireEvent.click(screen.getByRole('button', { name: 'My QA navigation' })); fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
@@ -140,7 +147,7 @@ describe('real QA workspace across SPA views', () => {
   it('keeps a real upload alive across attempted view switches and allows navigation after completion', async () => {
     let resolveUpload!: (value: unknown) => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
-    render(<Spa />); await screen.findByRole('heading', { name: 'qa.title' }); fireEvent(window, new Event('livo:qa-create')); fill();
+    await openCreate(); fill();
     fireEvent.change(screen.getByLabelText('qa.attach'), { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
     const title = screen.getByLabelText(/qa.titleField/); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     const signal = mocks.upload.mock.calls[0][3] as AbortSignal;
@@ -168,7 +175,7 @@ describe('real QA workspace across SPA views', () => {
   it('immediately tears down and aborts a protected upload when QA capability is revoked', async () => {
     let resolveUpload!: (value: unknown) => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
-    render(<Spa />); await screen.findByRole('heading', { name: 'qa.title' }); fireEvent(window, new Event('livo:qa-create')); fill();
+    await openCreate(); fill();
     fireEvent.change(screen.getByLabelText('qa.attach'), { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
     fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     const signal = mocks.upload.mock.calls[0][3] as AbortSignal; expect(hasQaNavigationGuard()).toBe(true);
