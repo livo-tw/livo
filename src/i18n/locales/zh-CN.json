@@ -2807,6 +2807,16 @@
     "taskSearchEmpty": "没有符合的任务。",
     "anonymous": "未知成员",
     "latestVersion": "记录版本 {{version}}",
-    "unsent": "刷新会保留尚未提交的输入。"
+    "unsent": "刷新会保留尚未提交的输入。",
+    "problemArea": "问题功能／区域",
+    "problemAreaHint": "描述发生问题的功能或页面，例如登录、钱包、结算页。",
+    "fixComponent": "修复组件／服务",
+    "fixComponentHint": "填写本次修复及部署的组件，例如前端、API 或结算服务；可与问题功能不同。",
+    "versionHint": "可自行输入，或从同项目的 QA 历史版本选择；未知可留空。",
+    "versionLoading": "正在加载历史版本…",
+    "versionLoadFailed": "暂时无法加载版本建议，仍可自行输入。",
+    "versionEmpty": "此项目尚无版本记录，可直接输入。",
+    "versionChoose": "选择已有版本",
+    "fixVersionHint": "可自行输入，或从同项目的 QA 历史版本选择；请填写本次修复的 Build、版本或 Commit ID。"
   }
 }

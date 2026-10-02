@@ -40,7 +40,9 @@ beforeEach(() => {
       : [{ id: 'member-1' }, { id: 'member-2' }]);
     if (endpoint === '/rest/v1/projects') return json([{ id: 'project-1' }]);
     if (endpoint === '/rest/v1/qa_commands') return json(receipt ? [receipt] : []);
-    if (endpoint === '/rest/v1/qa_issues') return json([{ data: issue }], 200, { 'Content-Range': '0-0/1' });
+    if (endpoint === '/rest/v1/qa_issues') return json(call.url.searchParams.get('select')?.startsWith('workspaceId:')
+      ? [{ workspaceId: issue.workspaceId, projectId: issue.projectId, observedVersion: issue.observedVersion, targets: issue.targets, runs: issue.runs }]
+      : [{ data: issue }], 200, { 'Content-Range': '0-0/1' });
     if (endpoint === '/rest/v1/rpc/livo_qa_commit') return rpcError ? json(rpcError, 409) : json(call.body.p_data);
     if (endpoint === '/rest/v1/qa_uploads') return json([call.body]);
     if (endpoint.startsWith('/storage/v1/object/upload/sign/')) return json({ url: '/object/upload/sign/test?token=limited-capability' });
@@ -54,6 +56,26 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const service = () => createQaService(env, 'actual-session');
+
+describe('Docker QA version suggestions', () => {
+  it('reads only the selected default-workspace project and version-bearing fields', async () => {
+    issue.observedVersion = 'legacy-custom';
+    expect(await service().handle({ action: 'versions', projectId: 'project-1' })).toEqual(['legacy-custom']);
+    const query = calls.find(c => c.url.pathname === '/rest/v1/qa_issues')!.url.searchParams;
+    expect(query.get('project_id')).toBe('eq.project-1'); expect(query.get('workspace_id')).toBe('eq.default');
+    expect(query.get('select')).not.toContain('*'); expect(query.get('select')).not.toContain('version:');
+    expect(calls.some(c => c.method !== 'GET')).toBe(false);
+  });
+  it.each([{ enabled: false, active: true }, { enabled: true, active: false }])('requires active membership and the QA feature: %j', async state => {
+    enabled = state.enabled; active = state.active;
+    await expect(service().handle({ action: 'versions', projectId: 'project-1' })).rejects.toMatchObject({ status: 403 });
+    expect(calls.some(c => c.url.pathname === '/rest/v1/qa_issues')).toBe(false);
+  });
+  it('rejects missing project selection rather than returning every project', async () => {
+    await expect(service().handle({ action: 'versions', projectId: '' })).rejects.toMatchObject({ code: 'qa_invalid_id' });
+    expect(calls.some(c => c.url.pathname === '/rest/v1/qa_issues')).toBe(false);
+  });
+});
 
 describe('Docker company QA display workflow', () => {
   const workflow = () => ({ version: 1, order: ['closed', 'verification', 'in_progress', 'triaged', 'new'],

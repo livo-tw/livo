@@ -3,9 +3,10 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTML
 export const qaInput = 'w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60';
 export const qaButton = 'inline-flex items-center justify-center rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed';
 export const qaPrimary = `${qaButton} bg-primary text-primary-foreground hover:bg-primary/90`;
-export function QaField({ label, multiline, ...props }: { label: string; multiline?: boolean } & InputHTMLAttributes<HTMLInputElement> & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function QaField({ label, multiline, hint, ...props }: { label: string; multiline?: boolean; hint?: string } & InputHTMLAttributes<HTMLInputElement> & TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const id = useId();
-  return <label htmlFor={id} className="block min-w-0 space-y-1 text-sm"><span className="font-medium">{label}{props.required ? ' *' : ''}</span>{multiline ? <textarea {...props} id={id} rows={props.rows || 3} className={qaInput} /> : <input {...props} id={id} className={qaInput} />}</label>;
+  const describedBy = [props['aria-describedby'], hint ? `${id}-hint` : ''].filter(Boolean).join(' ') || undefined;
+  return <label htmlFor={id} className="block min-w-0 space-y-1 text-sm"><span className="font-medium">{label}{props.required ? ' *' : ''}</span>{multiline ? <textarea {...props} id={id} aria-describedby={describedBy} rows={props.rows || 3} className={qaInput} /> : <input {...props} id={id} aria-describedby={describedBy} className={qaInput} />}{hint && <span id={`${id}-hint`} className="block text-xs text-muted-foreground">{hint}</span>}</label>;
 }
 export function QaSelect({ label, children, ...props }: { label: string; children: ReactNode } & SelectHTMLAttributes<HTMLSelectElement>) {
   const id = useId();

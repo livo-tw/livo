@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), getWorkflow: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
+const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: mocks.enabled }, featureTogglesReady: mocks.ready, setSelectedTask: mocks.selected }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Admin', role: 'admin', isActive: true }] }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Project', isArchived: false }], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
+vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Project', isArchived: false }], productLines: [] as import('@/types').ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as import('@/types').Task[] }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { list: mocks.list, get: mocks.get, getWorkflow: mocks.getWorkflow, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
+  const client = { list: mocks.list, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
   return { useQa: () => { mocks.useQa(); return { client, actor: { id: 'admin', role: mocks.role }, enabled: mocks.enabled }; } };
 });
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
@@ -22,7 +22,22 @@ const issue = createQaIssue({ projectId: 'p1', title: 'Protected bug detail', ac
 const detail: QaDetail = { issue, comments: [], events: [], attachments: [] };
 beforeEach(() => { vi.clearAllMocks(); mocks.enabled = false; mocks.ready = true; mocks.role = 'admin'; window.history.replaceState({}, '', '/'); mocks.list.mockImplementation(async filters => ({ issues: !filters.state || filters.state === 'new' ? [issue] : [], total: !filters.state || filters.state === 'new' ? 1 : 0, hasMore: false })); mocks.get.mockResolvedValue(detail); mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.saveWorkflow.mockImplementation(async value => value); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+beforeEach(() => { mocks.versions.mockResolvedValue([]); });
 describe('QA feature gate and conflict recovery', () => {
+  it('shares project build suggestions across repair targets and keeps component optional', async () => {
+    mocks.versions.mockResolvedValue(['known-build']);
+    const client = { versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
+    const repairing = { ...issue, state: 'in_progress' as const, assigneeId: 'admin', qaOwnerId: 'admin', component: 'Wallet screen' };
+    render(<QaIssueDetail detail={{ ...detail, issue: repairing }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={vi.fn()} onBack={vi.fn()} />);
+    await screen.findByLabelText('qa.versionChoose');
+    const component = screen.getByLabelText(/qa.fixComponent/) as HTMLInputElement;
+    expect(component.value).toBe(''); expect(component.required).toBe(false);
+    fireEvent.change(screen.getByLabelText('qa.versionChoose'), { target: { value: 'known-build' } });
+    expect((screen.getByLabelText(/qa.build/) as HTMLInputElement).value).toBe('known-build');
+    fireEvent.click(screen.getByRole('button', { name: 'qa.addTarget' }));
+    expect(screen.getAllByLabelText('qa.versionChoose')).toHaveLength(2);
+    expect(mocks.versions).toHaveBeenCalledTimes(1);
+  });
   it.each([[false, true], [true, false]])('does not mount data hooks or call endpoints when enabled=%s ready=%s', (enabled, ready) => {
     Object.assign(mocks, { enabled, ready }); render(<QaWorkspace />);
     expect(screen.getByText('qa.disabled')).toBeTruthy(); expect(mocks.useQa).not.toHaveBeenCalled(); expect(mocks.list).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.getWorkflow).not.toHaveBeenCalled();

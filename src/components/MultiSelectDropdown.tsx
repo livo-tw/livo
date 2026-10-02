@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, ReactNode, memo } from 'react';
+import { useState, useRef, useEffect, ReactNode, memo, Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Search, X, CheckSquare, Square } from 'lucide-react';
 
 interface MultiSelectDropdownProps {
   label: string;
-  options: { id: string; label: string; color?: string; avatar?: string; avatarColor?: string; icon?: ReactNode; subtitle?: string }[];
+  options: { id: string; label: string; color?: string; avatar?: string; avatarColor?: string; icon?: ReactNode; subtitle?: string; group?: { id: string; label: string } }[];
   selected: string[];
   onToggle: (id: string) => void;
   onSelectAll?: () => void;
@@ -114,7 +114,9 @@ const MultiSelectDropdown = memo(({ label, options, selected, onToggle }: MultiS
             {filteredOptions.length === 0 ? (
               <div className="px-3 py-3 text-sm text-muted-foreground text-center">{t('common.noResults')}</div>
             ) : (
-              filteredOptions.map(opt => (
+              filteredOptions.map((opt, index) => (
+                <Fragment key={opt.id}>
+                {opt.group && (index === 0 || filteredOptions[index - 1].group?.id !== opt.group.id) && <div className="px-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground" role="presentation">{opt.group.label}</div>}
                 <button
                   key={opt.id}
                   onClick={() => onToggle(opt.id)}
@@ -136,6 +138,7 @@ const MultiSelectDropdown = memo(({ label, options, selected, onToggle }: MultiS
                   <span className="text-foreground flex-1 truncate">{opt.label}</span>
                   {opt.subtitle && <span className="text-xs text-muted-foreground/60 flex-shrink-0 ml-auto">{opt.subtitle}</span>}
                 </button>
+                </Fragment>
               ))
             )}
           </div>

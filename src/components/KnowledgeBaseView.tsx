@@ -1,3 +1,4 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, Search, FileText, History, Lock, Paperclip, Trash2, ArrowLeft } from 'lucide-react';
@@ -9,7 +10,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useKnowledgeBase, uploadKnowledgeFile } from '@/hooks/useKnowledgeBase';
 import { buildKnowledgeTree, knowledgeSnippet, searchKnowledge, validateKnowledgeTree, type KnowledgeNode } from '@/lib/knowledge';
-import { groupProjectsByLine, projectGroupLabel } from '@/lib/projectGroups';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeClient';
 import RichTextEditor from '@/components/RichTextEditorLazy';
@@ -52,11 +53,7 @@ export default function KnowledgeBaseView() {
   const projectGroups = useMemo(() => groupProjectsByLine(productLines, allProjects), [productLines, allProjects]);
   const scopeOptions = <>
     <option value="shared">{t('kb.shared')}</option>
-    {projectGroups.map(group => (
-      <optgroup key={group.line?.id ?? 'other'} label={projectGroupLabel(group.line, t('common.other'))}>
-        {group.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-      </optgroup>
-    ))}
+    <ProjectSelectOptions groups={projectGroups} />
   </>;
 
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);

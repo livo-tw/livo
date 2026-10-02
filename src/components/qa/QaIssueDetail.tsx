@@ -1,3 +1,4 @@
+import { QaText } from './QaText';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
@@ -12,6 +13,8 @@ import { qaId } from '@/lib/qa/client';
 import { QaField, QaSection, QaSelect, qaButton, qaPrimary } from './QaFields';
 import QaReportForm from './QaReportForm';
 import QaAttachments from './QaAttachments';
+import { QaVersionField } from './QaVersionField';
+import { useQaVersions } from '@/hooks/useQaVersions';
 
 type ActionType = QaCommand['type'];
 const actionLabels: Record<ActionType, string> = { edit: 'edit', triage: 'triage', start_fix: 'startFix', submit_fix: 'submitFix', record_deployment: 'deployment', record_verification: 'verification', close: 'close', reopen: 'reopen', hold: 'hold', link_tasks: 'taskLinks' };
@@ -25,7 +28,7 @@ export function QaFailure({ error }: { error: unknown }) {
 export default function QaIssueDetail({ detail, client, actor, workflow, initialAction, onRefresh, onBack }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; onRefresh: () => Promise<void>; onBack: () => void }) {
   const { t } = useTranslation();
   const { users } = useMemberContext();
-  const { allProjects } = useProjectContext();
+  const { allProjects, productLines } = useProjectContext();
   const { allTasks } = useTaskContext();
   const { setSelectedTask } = useUIContext();
   const issue = detail.issue;
@@ -37,7 +40,8 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
   const [resolution, setResolution] = useState<QaResolution>('fixed');
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
-  const [targets, setTargets] = useState<Array<Pick<QaTarget, 'environment' | 'component' | 'build' | 'required'>>>([{ environment: issue.observedEnvironment, component: issue.component, build: '', required: true }]);
+  const [targets, setTargets] = useState<Array<Pick<QaTarget, 'environment' | 'component' | 'build' | 'required'>>>([{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
+  const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string }>();
   const pendingComment = useRef<{ body: string; id: string }>();
   const can = (type: ActionType) => canQaCommand(issue, actor, type);
@@ -86,8 +90,8 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)]">
       <div className="min-w-0 space-y-4">
         <QaSection title={t('qa.details')}>
-          <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['component', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
-          {(['steps', 'expected', 'actual'] as const).map(key => <div key={key} className="mt-4"><h3 className="text-sm font-medium">{t(`qa.${key}`)}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{issue[key] || '—'}</p></div>)}
+          <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
+          {(['steps', 'expected', 'actual'] as const).map(key => <div key={key} className="mt-4"><h3 className="text-sm font-medium">{t(`qa.${key}`)}</h3><p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground"><QaText text={issue[key] || '—'} /></p></div>)}
           {issue.holdReason && <p className="mt-4 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{t('qa.hold')}: {issue.holdReason}</p>}
           {issue.resolution && <p className="mt-4 whitespace-pre-wrap rounded bg-muted p-3 text-sm">{t(`qa.resolution.${issue.resolution}`)} · {issue.resolutionReason}{issue.duplicateOfId && <> · <a className="underline" href={`?qa=${encodeURIComponent(issue.duplicateOfId)}`}>{issue.duplicateOfId}</a></>}</p>}
         </QaSection>
@@ -103,7 +107,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
         <QaSection title={t('qa.attachments')}><QaAttachments issueId={issue.id} attachments={detail.attachments} client={client} onChanged={onRefresh} onError={setError} /></QaSection>
         <QaSection title={t('qa.comments')}>
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
-          <ol className="mb-4 space-y-3">{detail.comments.map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words">{row.body}</p></li>)}</ol>
+          <ol className="mb-4 space-y-3">{detail.comments.map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p></li>)}</ol>
           <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><button className={qaPrimary} disabled={busy || !comment.trim()}>{t('qa.addComment')}</button></form>
         </QaSection>
       </div>
@@ -111,7 +115,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
         <QaSection title={t('qa.actions')}>
           <div className="flex flex-wrap gap-2">{(['edit', 'triage', 'start_fix', 'submit_fix', 'close', 'reopen', 'hold', 'link_tasks'] as ActionType[]).filter(can).map(type => <button key={type} className={action === type ? qaPrimary : qaButton} disabled={busy} onClick={() => { setAction(type); setError(null); }}>{t(`qa.${actionLabels[type]}`)}</button>)}</div>
           {!Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
-          {action === 'edit' && can('edit') && <div className="mt-4"><QaReportForm initial={issue} projects={allProjects} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '' })} /></div>}
+          {action === 'edit' && can('edit') && <div className="mt-4"><QaReportForm initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '' })} /></div>}
           {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 space-y-3" onSubmit={submitAction}><fieldset disabled={busy} className="space-y-3">
             <h3 className="font-medium">{t(`qa.${actionLabels[action]}`)}</h3>
             {action === 'triage' && <>
@@ -121,8 +125,8 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
               <QaField label={t('qa.priority')} name="priority" type="number" min={1} max={5} required defaultValue={issue.priority} /><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} />
             </>}
             {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline required maxLength={10000} />
-              {targets.map((target, index) => <div key={index} className="space-y-2 rounded border border-border p-2">{(['environment', 'component', 'build'] as const).map(key => <QaField key={key} label={t(`qa.${key}`)} required value={target[key]} onChange={event => setTargets(previous => previous.map((item, i) => i === index ? { ...item, [key]: event.target.value } : item))} />)}<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={target.required} onChange={event => setTargets(previous => previous.map((item, i) => i === index ? { ...item, required: event.target.checked } : item))} />{t('qa.required')}</label>{targets.length > 1 && <button type="button" className={qaButton} onClick={() => setTargets(previous => previous.filter((_, i) => i !== index))}>{t('qa.remove')}</button>}</div>)}
-              <button type="button" className={qaButton} onClick={() => setTargets(previous => [...previous, { environment: '', component: issue.component, build: '', required: true }])}>{t('qa.addTarget')}</button>
+              {targets.map((target, index) => <div key={index} className="space-y-2 rounded border border-border p-2">{(['environment', 'component'] as const).map(key => <QaField key={key} label={t(key === 'component' ? 'qa.fixComponent' : `qa.${key}`)} hint={key === 'component' ? t('qa.fixComponentHint') : undefined} required={key === 'environment'} value={target[key]} onChange={event => setTargets(previous => previous.map((item, i) => i === index ? { ...item, [key]: event.target.value } : item))} />)}<QaVersionField label={t('qa.build')} required value={target.build} suggestions={versions} onChange={build => setTargets(previous => previous.map((item, i) => i === index ? { ...item, build } : item))} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={target.required} onChange={event => setTargets(previous => previous.map((item, i) => i === index ? { ...item, required: event.target.checked } : item))} />{t('qa.required')}</label>{targets.length > 1 && <button type="button" className={qaButton} onClick={() => setTargets(previous => previous.filter((_, i) => i !== index))}>{t('qa.remove')}</button>}</div>)}
+              <button type="button" className={qaButton} onClick={() => setTargets(previous => [...previous, { environment: '', component: '', build: '', required: true }])}>{t('qa.addTarget')}</button>
             </>}
             {action === 'close' && <><QaSelect label={t('qa.resolutionField')} value={resolution} onChange={event => setResolution(event.target.value as QaResolution)}>{['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].map(value => <option key={value} value={value}>{t(`qa.resolution.${value}`)}</option>)}</QaSelect>{resolution === 'duplicate' && <QaField label={t('qa.duplicateId')} name="duplicateOfId" required />}</>}
             {(action === 'close' || action === 'reopen' || action === 'hold') && <QaField label={t('qa.reason')} name="reason" multiline required maxLength={10000} />}
@@ -132,7 +136,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
           </fieldset></form>}
         </QaSection>
         <QaSection title={t('qa.taskLinks')}><p className="mb-2 text-xs text-muted-foreground">{t('qa.taskLinksHint')}</p>{!issue.taskIds.length && <p className="text-sm text-muted-foreground">{t('qa.noTasks')}</p>}<ul className="space-y-2">{issue.taskIds.map(id => { const task = allTasks.find(row => row.id === id); return <li key={id}><button className="text-left text-sm text-primary underline disabled:text-muted-foreground" disabled={!task} onClick={() => task && setSelectedTask(task)}>{task ? `${task.taskKey} · ${task.title}` : id}</button></li>; })}</ul></QaSection>
-        <QaSection title={t('qa.history')}><ol className="space-y-3">{[...detail.events].reverse().map(event => <li key={event.id} className="text-sm"><p className="font-medium">{t(`qa.${actionLabels[event.type as ActionType] || 'report'}`)} · {member(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{event.detail && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{event.detail}</p>}</li>)}</ol></QaSection>
+        <QaSection title={t('qa.history')}><ol className="space-y-3">{[...detail.events].reverse().map(event => <li key={event.id} className="text-sm"><p className="font-medium">{t(`qa.${actionLabels[event.type as ActionType] || 'report'}`)} · {member(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{event.detail && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"><QaText text={event.detail} /></p>}</li>)}</ol></QaSection>
       </div>
     </div>
   </div>;

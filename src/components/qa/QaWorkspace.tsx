@@ -1,3 +1,5 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUIContext } from '@/context/UIContext';
@@ -25,7 +27,7 @@ export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
 function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { t } = useTranslation();
   const { client, actor } = useQa();
-  const { allProjects, selectedProjectId, setSelectedProjectId } = useProjectContext();
+  const { allProjects, productLines, selectedProjectId, setSelectedProjectId } = useProjectContext();
   const { users } = useMemberContext();
   const [issueId, setIssueId] = useState(() => new URLSearchParams(window.location.search).get('qa') || '');
   const [creating, setCreating] = useState(false);
@@ -113,11 +115,11 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       {workflowError !== null && <><QaFailure error={workflowError} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></>}
       {settingsOpen && canConfigure && workflow && !creating && !issueId && <QaWorkflowSettings workflow={workflow} client={client} onSaved={setWorkflow} onClose={() => setSettingsOpen(false)} />}
       {!issueId && <details className="rounded-lg border border-border bg-card p-3 text-sm"><summary className="cursor-pointer font-medium">{t('qa.slackTitle')}</summary><p className="mt-2 text-muted-foreground">{t('qa.slackUsage')}</p><p className="mt-2 text-xs text-muted-foreground">{t('qa.slackGate')}</p></details>}
-      {creating ? <div className="mx-auto max-w-2xl rounded-xl border border-border bg-card p-4 md:p-6"><QaReportForm projects={allProjects} projectId={selectedProjectId || undefined} busy={busy} onSubmit={input => void create(input)} onCancel={() => { setCreating(false); setError(null); }} /></div> : issueId ? (loading || !workflow) && !workflowError && <p role="status">{t('qa.loading')}</p> : !workflow ? !workflowError && <p role="status">{t('qa.loading')}</p> : <>
+      {creating ? <div className="mx-auto max-w-2xl rounded-xl border border-border bg-card p-4 md:p-6"><QaReportForm client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} busy={busy} onSubmit={input => void create(input)} onCancel={() => { setCreating(false); setError(null); }} /></div> : issueId ? (loading || !workflow) && !workflowError && <p role="status">{t('qa.loading')}</p> : !workflow ? !workflowError && <p role="status">{t('qa.loading')}</p> : <>
         <div className="flex gap-2" role="group" aria-label={t('qa.viewMode')}><button className={view === 'board' ? qaPrimary : qaButton} aria-pressed={view === 'board'} onClick={() => setView('board')}>{t('qa.board')}</button><button className={view === 'list' ? qaPrimary : qaButton} aria-pressed={view === 'list'} onClick={() => setView('list')}>{t('qa.list')}</button></div>
         <form className="grid items-end gap-3 rounded-xl border border-border bg-card p-3 sm:grid-cols-2 lg:grid-cols-5" onSubmit={event => { event.preventDefault(); setSearch(searchDraft); setOffset(0); }}>
           <QaField label={t('qa.search')} value={searchDraft} onChange={event => setSearchDraft(event.target.value)} />
-          <QaSelect label={t('qa.project')} value={selectedProjectId || ''} onChange={event => { setSelectedProjectId(event.target.value || null); setOffset(0); }}><option value="">{t('qa.allProjects')}</option>{allProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</QaSelect>
+          <QaSelect label={t('qa.project')} value={selectedProjectId || ''} onChange={event => { setSelectedProjectId(event.target.value || null); setOffset(0); }}><option value="">{t('qa.allProjects')}</option><ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, { archived: 'all' })} /></QaSelect>
           <QaSelect label={t('qa.allStates')} value={state} onChange={event => { setState(event.target.value as QaState | ''); setOffset(0); }}><option value="">{t('qa.allStates')}</option>{workflow.order.map(value => <option key={value} value={value}>{workflow.labels[value] || t(`qa.state.${value}`)}</option>)}</QaSelect>
           <QaSelect label={t('qa.myTitle')} value={owner} onChange={event => { setOwner(event.target.value as QaListInput['mine'] | ''); setOffset(0); }}><option value="">{t('qa.everyone')}</option>{['assigned', 'testing', 'reported'].map(value => <option key={value} value={value}>{t(`qa.${value}`)}</option>)}</QaSelect>
           <div className="flex gap-2"><button className={qaPrimary}>{t('qa.searchButton')}</button><button type="button" className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></div>

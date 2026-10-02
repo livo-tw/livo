@@ -78,6 +78,21 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
   }
   const auth:AuthCtx={userId:'auth-a',email:'a@test',member:{id:'member-a',role:'admin',email:'a@test',name:'A',workspaceId:'ws-a'}};
   const create={action:'create',id:'new-issue',commandId:'create-1',input:{projectId:'project-a',title:'QA bug',actual:'Broken',observedEnvironment:'Stage'}};
+  it('returns recorded builds only from the selected tenant and project, never CAS versions',async()=>{
+    putIssue();
+    db.prepare('UPDATE qa_issues SET data=? WHERE id=?').run(JSON.stringify({...issue(),observedVersion:' v2 ',targets:[{build:'v10'}],runs:[{build:'v1'},{build:'v2'}]}),'issue-a');
+    db.prepare("INSERT INTO projects(workspace_id,id,line_id,name,key) VALUES('ws-a','other-project','line-a','Other','OTHER')").run();
+    for(const [ws,project,reporter,id,value] of [['ws-a','other-project','member-a','other-issue','private-project-build'],['ws-b','project-b','member-b','tenant-issue','private-tenant-build']]) {
+      const data={...issue(),workspaceId:ws,projectId:project,reporterId:reporter,id,observedVersion:value};
+      db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(ws,id,project,'new',reporter,'Issue',1,'now',JSON.stringify(data));
+    }
+    expect(await executeQaAction(environment(),auth,{action:'versions',projectId:'project-a'})).toEqual(['v1','v2','v10']);
+    await expect(executeQaAction(environment(),auth,{action:'versions',projectId:'project-b'})).rejects.toMatchObject({code:'qa_project_unavailable'});
+    await expect(executeQaAction(environment(),auth,{action:'versions',projectId:''})).rejects.toMatchObject({code:'qa_invalid_id'});
+    db.exec("UPDATE system_settings SET value='{\"qa\":false}' WHERE workspace_id='ws-a' AND key='feature_toggles'");
+    await expect(executeQaAction(environment(),auth,{action:'versions',projectId:'project-a'})).rejects.toMatchObject({code:'qa_disabled'});
+  });
   const customWorkflow=():QaWorkflow=>({version:1,order:['verification','new','triaged','in_progress','closed'],labels:{new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',closed:'結案完成'}});
   it('returns workflow defaults without creating settings and falls back from invalid stored data',async()=>{
     const env=environment();expect(await executeQaAction(env,auth,{action:'get_workflow'})).toEqual(DEFAULT_QA_WORKFLOW);

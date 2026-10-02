@@ -1,3 +1,4 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import UserSelect from '@/components/UserSelect';
 import CustomFieldManager from '@/components/CustomFieldManager';
 import ApprovalProgress from '@/components/approval/ApprovalProgress';
@@ -8,7 +9,7 @@ import { useUIContext } from '@/context/UIContext';
 import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
 import { getPriorityOptions, envList } from './utils';
-import { groupProjectsByLine, projectGroupLabel } from '@/lib/projectGroups';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { Priority } from '@/types';
 import TaskDeploymentSection from './TaskDeploymentSection';
 import { CustomFieldInput } from './fields/CustomFieldInput';
@@ -118,11 +119,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.project', '專案')}</label>
       <select value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
-        {groupProjectsByLine(productLines, allProjects, [task.projectId]).map(g => (
-          <optgroup key={g.line?.id ?? 'other'} label={projectGroupLabel(g.line, t('common.other'))}>
-            {g.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </optgroup>
-        ))}
+        <ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, [task.projectId])} />
       </select>
     </div>
   );

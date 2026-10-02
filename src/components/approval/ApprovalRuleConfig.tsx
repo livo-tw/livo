@@ -1,3 +1,5 @@
+import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Trash2, Pencil, ChevronRight, ClipboardCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -21,7 +23,7 @@ export default function ApprovalRuleConfig() {
     { value: 'member', label: t('role.member') },
   ];
   const { permissions, currentMemberId } = useAuthContext();
-  const { allProjects } = useProjectContext();
+  const { allProjects, productLines } = useProjectContext();
   const { statuses } = useTaskContext();
   const { users } = useMemberContext();
   const { rules, stepsMap, loading, fetchRulesForProjects, createRule, updateRuleWithSteps, deleteRule } = useApprovalRules();
@@ -212,17 +214,7 @@ export default function ApprovalRuleConfig() {
                 />
                 <span className="font-medium text-foreground">{t('approval.ruleConfig.selectAll')}</span>
               </label>
-              {activeProjects.map(p => (
-                <label key={p.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent cursor-pointer transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={selectedProjectIds.includes(p.id)}
-                    onChange={() => toggleProject(p.id)}
-                    className="rounded border-border accent-primary"
-                  />
-                  <span className="text-foreground truncate">{p.name}</span>
-                </label>
-              ))}
+              <ProjectCheckboxList groups={groupProjectsByLine(productLines, activeProjects)} selected={selectedProjectIds} onToggle={toggleProject} />
             </div>
           )}
         </div>

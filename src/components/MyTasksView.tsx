@@ -1,3 +1,4 @@
+import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useMemo, useState, useCallback } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
@@ -151,7 +152,7 @@ const MyTasksView = () => {
         </div>
         <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleFilterStatus} />
-          <MultiSelectDropdown label={t('filter.project')} options={allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, label: p.name, color: p.color }))} selected={filterProjects} onToggle={toggleFilterProject} />
+          <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleFilterProject} />
           {(filterStatuses.length > 0 || filterProjects.length > 0) && (
             <button onClick={() => { setFilterStatuses([]); setFilterProjects([]); }} className="text-[13px] text-muted-foreground hover:text-foreground">{t('button.clear')}</button>
           )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupProjectsByLine, projectGroupLabel } from '@/lib/projectGroups';
+import { groupProjectsByLine, projectGroupLabel, slackProjectOptionGroups } from '@/lib/projectGroups';
 import type { ProductLine, Project } from '@/types';
 
 const line = (id: string, name: string, icon = ''): ProductLine => ({ id, name, icon, color: '#6B778C', sortOrder: 0 });
@@ -30,6 +30,28 @@ describe('groupProjectsByLine', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].line).toBeNull();
     expect(groups[0].projects.map(p => p.id)).toEqual(['p1', 'p2', 'p4', 'p5']);
+  });
+
+  it('preserves a history filter subset and includes archived rows only when requested', () => {
+    const subset = [projects[2], projects[4]];
+    expect(groupProjectsByLine(lines, subset, { archived: 'all' }).flatMap(group => group.projects.map(project => project.id))).toEqual(['p3', 'p5']);
+    expect(groupProjectsByLine(lines, subset).flatMap(group => group.projects.map(project => project.id))).toEqual(['p5']);
+    expect(groupProjectsByLine(lines, subset, { keepIds: ['p3', 'not-authorized'] }).flatMap(group => group.projects.map(project => project.id))).toEqual(['p3', 'p5']);
+  });
+
+  it('keeps legacy known-line-only picker sets without changing source order or input arrays', () => {
+    const before = JSON.stringify({ lines, projects });
+    const result = groupProjectsByLine(lines, projects, { includeUnclassified: false });
+    expect(result.flatMap(group => group.projects.map(project => project.id))).toEqual(['p2', 'p1', 'p5']);
+    expect(JSON.stringify({ lines, projects })).toBe(before);
+  });
+
+  it('renders identical grouped IDs for Slack including same names and missing-line fallback', () => {
+    const sameNames = projects.map(project => ({ ...project, name: 'Same name' }));
+    const groups = groupProjectsByLine(lines, sameNames);
+    expect(slackProjectOptionGroups(groups, 'Other').map(group => [group.label.text, group.options.map(option => option.value)])).toEqual([
+      ['🎮 Games', ['p2']], ['Platform', ['p1', 'p5']], ['Other', ['p4']],
+    ]);
   });
 });
 

@@ -16,7 +16,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source: 'src/lib/projectGroups.ts', copies: ['src/lib/qa/projectGroups.ts', 'worker/src/qa/projectGroups.ts', 'docker/volumes/functions/qa/projectGroups.ts', 'supabase/functions/qa/projectGroups.ts', 'docker/volumes/functions/slack-interact/projectGroups.ts', 'supabase/functions/slack-interact/projectGroups.ts'] },
   { source: 'src/lib/qa/workflow.ts', copies: ['worker/src/qa/workflow.ts', 'docker/volumes/functions/qa/workflow.ts', 'supabase/functions/qa/workflow.ts'] },
+  { source: 'src/lib/qa/versions.ts', copies: ['worker/src/qa/versions.ts', 'docker/volumes/functions/qa/versions.ts', 'supabase/functions/qa/versions.ts'] },
   { source: 'src/lib/qa/slack.ts', copies: ['worker/src/qa/slack.ts', 'docker/volumes/functions/qa/slack.ts', 'supabase/functions/qa/slack.ts'] },
   ...['index.ts', 'service.ts', 'restore.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => ({ source: `docker/volumes/functions/qa/${file}`, copies: [`supabase/functions/qa/${file}`] })),
   { source: 'src/lib/qa/domain.ts', copies: ['worker/src/qa/domain.ts', 'docker/volumes/functions/qa/domain.ts', 'supabase/functions/qa/domain.ts'] },

@@ -1,3 +1,4 @@
+import { groupProjectsByLine, slackProjectOptionGroups } from './projectGroups.ts';
 // Portable interaction rules: no tokens, network calls or runtime globals.
 export type Row = Record<string, any>;
 export function requiresWebCreate(required: Row = {}): boolean {
@@ -29,14 +30,10 @@ export const option = (id: string, name: string) => ({ text: { type: 'plain_text
 export const taskOption = (task: Row) => option(task.id, `${task.task_key} · ${task.title}`);
 export function projectOptionGroups(projects: Row[], lines: Row[], locale = 'zh-TW'): Row[] {
   const ordered = [...lines].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id));
-  const known = new Set(ordered.map(line => line.id));
-  const group = (name: string, items: Row[]) => ({ label: { type: 'plain_text', text: name.slice(0, 75) },
-    options: items.slice(0, 100).map(project => option(project.id, project.name)) });
-  const groups = ordered.map(line => group(line.name, projects.filter(project => project.line_id === line.id)))
-    .filter(item => item.options.length);
-  const unclassified = projects.filter(project => !known.has(project.line_id));
-  if (unclassified.length) groups.push(group(localize('未分類', locale), unclassified));
-  return groups.slice(0, 100);
+  return slackProjectOptionGroups(groupProjectsByLine(
+    ordered.map(line => ({ id: line.id, name: line.name })),
+    projects.map(project => ({ id: project.id, name: project.name, lineId: project.line_id })),
+  ), localize('未分類', locale));
 }
 export function taskReceipt(kind: string, task: Row, url: string): string {
   const label = `${task.task_key} - ${task.title}`.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

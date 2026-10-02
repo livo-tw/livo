@@ -1,3 +1,4 @@
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -101,10 +102,7 @@ export function useAutoReportSettings() {
   };
 
   const groupedProjects = useMemo(() =>
-    productLines.map(line => ({
-      line,
-      projects: allProjects.filter(p => p.lineId === line.id && !p.isArchived),
-    })).filter(g => g.projects.length > 0),
+    groupProjectsByLine(productLines, allProjects, { includeUnclassified: false }),
   [productLines, allProjects]);
 
   return {

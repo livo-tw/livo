@@ -12,7 +12,7 @@ function harness() {
   const api = vi.fn(async (_actor, body) => body.action === 'get' ? {issue:issue(),comments:[],events:[],attachments:[]} : body.action === 'create' ? {...issue(),id:body.id} : issue());
   const d: QaSlackActions = {
     enabled:vi.fn(async()=>true),actor:vi.fn(async()=>({id:'qa',role:'member',team:'T1',slack_user:'U1'})),api:api as QaSlackActions['api'],
-    projects:vi.fn(async()=>[{id:'p',name:'Project'}]),mapped:vi.fn(async()=> 'bug-a'),publish:vi.fn(async()=>{}),sync:vi.fn(async()=>{}),
+    projects:vi.fn(async()=>[{line:{id:'l',name:'Line'},projects:[{id:'p',name:'Project',lineId:'l'}]}]),mapped:vi.fn(async()=> 'bug-a'),publish:vi.fn(async()=>{}),sync:vi.fn(async()=>{}),
     claimNotice:vi.fn(async()=>true),slack:vi.fn(async()=>({view:{id:'V1'},permalink:'https://slack.example/message'})),reply:vi.fn(async()=>{}),background:p=>work.push(p),link:()=> 'https://livo.example/?qa=bug-a',
     enqueueEvent:vi.fn(async()=> 'event-1'),completeEvent:vi.fn(async()=>{}),pendingEvents:vi.fn(async()=>[]),
   };
@@ -20,6 +20,18 @@ function harness() {
 }
 const event = (text:string):QaSlackPayload => ({type:'event_callback',team_id:'T1',event:{type:'message',user:'U1',channel:'C1',thread_ts:'100.1',ts:'101.1',text}});
 describe('QA Slack automation',()=>{
+  it('uses the shared project groups for suggestions and preserves initial project IDs',async()=>{
+    const {d,flush}=harness();
+    expect(await handleQaSlack({type:'block_suggestion'},'suggestion',d)).toEqual({option_groups:[{
+      label:{type:'plain_text',text:'Line'},options:[{text:{type:'plain_text',text:'Project'},value:'p'}],
+    }]});
+    await handleQaSlack({command:'/livo',text:'bug new',trigger_id:'tr'},'new',d);await flush();
+    expect(d.slack).toHaveBeenCalledWith('views.update',expect.objectContaining({view:expect.objectContaining({blocks:expect.arrayContaining([
+      expect.objectContaining({block_id:'project',element:expect.objectContaining({initial_option:expect.objectContaining({value:'p'})})}),
+    ])})}));
+    vi.mocked(d.projects).mockResolvedValue([]);
+    expect(await handleQaSlack({type:'block_suggestion'},'empty',d)).toEqual({options:[]});
+  });
   it.each([
     {command:'/livo',text:'bug new Wallet',trigger_id:'tr'},
     event('Follow-up'),

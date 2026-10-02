@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { fnUrl } from '@/lib/apiBase';
 import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
+import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
 import { applyQaCommand, createQaIssue, QA_MAX_FILE_BYTES, QA_PART_BYTES, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload } from './domain';
@@ -53,6 +54,14 @@ export function createQaClient(options: QaClientOptions) {
     const value = work(); demoCommands.set(key, clone(value)); return clone(value);
   };
   const api = {
+    async versions(projectId: string, signal?: AbortSignal): Promise<string[]> {
+      ensureEnabled();
+      if (!projectId) return [];
+      if (!mock) return request('versions', { projectId }, signal);
+      const ctx = options.context();
+      if (!ctx.projectIds.has(projectId)) throw new QaClientError('qa_project_unavailable', 403);
+      return qaVersionSuggestions([...demoIssues.values()].map(value => value.issue), ctx.workspaceId, projectId);
+    },
     async getWorkflow(signal?: AbortSignal): Promise<QaWorkflow> {
       ensureEnabled();
       return mock ? parseQaWorkflow(demoWorkflows.get(options.context().workspaceId)) : request('get_workflow', {}, signal);

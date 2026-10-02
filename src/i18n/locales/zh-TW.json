@@ -2807,6 +2807,16 @@
     "taskSearchEmpty": "沒有符合的任務。",
     "anonymous": "未知成員",
     "latestVersion": "紀錄版本 {{version}}",
-    "unsent": "重新整理會保留尚未送出的輸入。"
+    "unsent": "重新整理會保留尚未送出的輸入。",
+    "problemArea": "問題功能／區域",
+    "problemAreaHint": "描述發生問題的功能或畫面，例如登入、錢包、結算頁。",
+    "fixComponent": "修復元件／服務",
+    "fixComponentHint": "填寫本次修復及部署的元件，例如前端、API 或結算服務；可與問題功能不同。",
+    "versionHint": "可自行輸入，或從同專案的 QA 歷史版本選取；未知可留空。",
+    "versionLoading": "正在載入歷史版本…",
+    "versionLoadFailed": "暫時無法載入版本建議，仍可自行輸入。",
+    "versionEmpty": "此專案尚無版本記錄，可直接輸入。",
+    "versionChoose": "選取已有版本",
+    "fixVersionHint": "可自行輸入，或從同專案的 QA 歷史版本選取；請填寫本次修復的 Build、版本或 Commit ID。"
   }
 }

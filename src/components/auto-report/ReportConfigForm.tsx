@@ -1,3 +1,5 @@
+import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
+import type { ProjectGroup } from '@/lib/projectGroups';
 import { useEffect, useRef } from 'react';
 import { Clock, Eye, Plus, PlusCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -10,10 +12,7 @@ import {
   reportToDisplay, reportToStorage,
 } from '@/lib/templateVariables';
 
-interface GroupedProject {
-  line: { id: string; name: string; icon?: string };
-  projects: { id: string; name: string }[];
-}
+type GroupedProject = ProjectGroup;
 
 interface ReportConfigFormProps {
   cfg: ReportConfig;
@@ -129,29 +128,7 @@ const ReportConfigForm = ({
           </div>
           {cfg.scope === 'specific_projects' && (
             <div className="mt-2 ml-6 max-h-40 overflow-y-auto border border-border rounded-lg p-2 space-y-1">
-              {groupedProjects.map(g => (
-                <div key={g.line.id}>
-                  <div className="text-xs font-medium text-muted-foreground mb-0.5">{g.line.icon} {g.line.name}</div>
-                  {g.projects.map(p => (
-                    <label key={p.id} className="flex items-center gap-2 py-0.5 pl-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={cfg.scopeProjectIds.includes(p.id)}
-                        onChange={() => {
-                          setCfg(prev => ({
-                            ...prev,
-                            scopeProjectIds: prev.scopeProjectIds.includes(p.id)
-                              ? prev.scopeProjectIds.filter(id => id !== p.id)
-                              : [...prev.scopeProjectIds, p.id],
-                          }));
-                        }}
-                        className="rounded border-border text-primary focus:ring-primary"
-                      />
-                      <span className="text-sm text-foreground">{p.name}</span>
-                    </label>
-                  ))}
-                </div>
-              ))}
+              <ProjectCheckboxList groups={groupedProjects} selected={cfg.scopeProjectIds} onToggle={id => setCfg(prev => ({ ...prev, scopeProjectIds: prev.scopeProjectIds.includes(id) ? prev.scopeProjectIds.filter(value => value !== id) : [...prev.scopeProjectIds, id] }))} />
             </div>
           )}
         </div>

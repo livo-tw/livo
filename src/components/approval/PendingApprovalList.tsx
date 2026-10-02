@@ -1,3 +1,5 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState, useEffect, useCallback } from 'react';
 import { Clock, CheckCheck, X, CornerUpLeft, Filter } from 'lucide-react';
 import { useApprovalWorkflow } from '@/hooks/useApprovalWorkflow';
@@ -28,7 +30,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
   const { pendingApprovals, loading, fetchPendingApprovals, performAction } = useApprovalWorkflow();
   const { statuses, allTasks, setAllTasks } = useTaskContext();
   const { users } = useMemberContext();
-  const { allProjects } = useProjectContext();
+  const { allProjects, productLines } = useProjectContext();
   const { setSelectedTask } = useUIContext();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -128,9 +130,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
               className="text-xs bg-muted border border-border rounded px-2 py-1 text-foreground"
             >
               <option value="">{t('pendingApproval.allProjects')}</option>
-              {projectOptions.map(pid => (
-                <option key={pid} value={pid}>{allProjects.find(p => p.id === pid)?.name ?? pid}</option>
-              ))}
+              <ProjectSelectOptions groups={groupProjectsByLine(productLines, projectOptions.map(id => allProjects.find(project => project.id === id) ?? { id, name: id }), { archived: 'all' })} />
             </select>
           </div>
         )}

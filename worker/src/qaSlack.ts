@@ -1,3 +1,4 @@
+import { groupProjectsByLine } from './qa/projectGroups';
 import type { Context } from 'hono';
 import { isDemoMember, type AppContext, type AuthCtx, type Ctx, type Env } from './env';
 import { executeQaAction } from './qa';
@@ -48,8 +49,11 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       return await executeQaAction(env, (actor as Actor).auth, body, ctx) as T;
     },
     projects: async (_actor, search) => {
-      const rows = await env.DB.prepare('SELECT id,name FROM projects WHERE workspace_id=? AND is_archived=0 AND instr(lower(name),lower(?))>0 ORDER BY name LIMIT 100').bind(ws, search).all<{id:string;name:string}>();
-      return rows.results;
+      const [rows, lines] = await Promise.all([
+        env.DB.prepare('SELECT id,name,line_id FROM projects WHERE workspace_id=? AND is_archived=0 AND instr(lower(name),lower(?))>0 ORDER BY name,id LIMIT 100').bind(ws, search).all<{id:string;name:string;line_id:string}>(),
+        env.DB.prepare('SELECT id,name,icon FROM product_lines WHERE workspace_id=? ORDER BY sort_order,id').bind(ws).all<{id:string;name:string;icon:string}>(),
+      ]);
+      return groupProjectsByLine(lines.results, rows.results.map(project => ({ ...project, lineId: project.line_id })));
     },
     mapped: async (actor, source) => {
       if (!source.thread || source.team !== actor.team) return undefined;

@@ -13,6 +13,22 @@ const context = (): QaContext => ({ actor: { id: 'admin', role: 'admin' }, works
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'public-test-key'); mocks.session.mockResolvedValue({ data: { session: { access_token: 'test-token' } } }); mocks.signedUpload.mockResolvedValue({ error: null }); mocks.createClient.mockReturnValue({ storage: { from: () => ({ uploadToSignedUrl: mocks.signedUpload }) } }); });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe('QA client capability and isolated demo', () => {
+  it('loads version suggestions through the QA endpoint with project and abort signal', async () => {
+    const fetchMock = vi.fn(async () => Response.json(['build-a'])); vi.stubGlobal('fetch', fetchMock);
+    const client = createQaClient({ enabled: () => true, context }), controller = new AbortController();
+    expect(await client.versions('p1', controller.signal)).toEqual(['build-a']);
+    expect(fetchMock).toHaveBeenCalledWith('https://example.test/qa', expect.objectContaining({ signal: controller.signal,
+      body: JSON.stringify({ action: 'versions', projectId: 'p1' }) }));
+  });
+  it('scopes demo versions by project and keeps free-text versions unchanged', async () => {
+    const ctx = context(); ctx.projectIds = new Set(['p1', 'p2']);
+    const client = createQaClient({ enabled: () => true, context: () => ctx, mock: true });
+    await client.create({ ...input, observedVersion: 'custom-build' });
+    await client.create({ ...input, projectId: 'p2', observedVersion: 'other-project' });
+    expect(await client.versions('p1')).toEqual(['custom-build']);
+    expect(await client.versions('')).toEqual([]);
+    await expect(client.versions('hidden')).rejects.toMatchObject({ status: 403 });
+  });
   it('creates QA UUIDs on HTTP without crypto.randomUUID', () => {
     const getRandomValues = vi.fn((bytes: Uint8Array) => { bytes.fill(42); return bytes; });
     vi.stubGlobal('crypto', { getRandomValues });
@@ -27,6 +43,7 @@ describe('QA client capability and isolated demo', () => {
     let enabled = true; const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
     const client = createQaClient({ enabled: () => enabled, context }); enabled = false;
     await expect(client.list({})).rejects.toMatchObject({ status: 403 });
+    await expect(client.versions('p1')).rejects.toMatchObject({ status: 403 });
     await expect(client.create(input)).rejects.toMatchObject({ status: 403 });
     expect(fetchMock).not.toHaveBeenCalled(); expect(mocks.session).not.toHaveBeenCalled();
   });

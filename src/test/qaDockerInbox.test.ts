@@ -5,9 +5,9 @@ import path from 'node:path';
 import { createQaSlackActions } from '../../docker/volumes/functions/qa/slackAdapter';
 import type { Actions } from '../../docker/volumes/functions/slack-interact/handler';
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), rows: vi.fn(), setting: vi.fn() }));
+const mocks = vi.hoisted(() => ({ request: vi.fn(), rows: vi.fn(), setting: vi.fn(), session: vi.fn() }));
 vi.mock('../../docker/volumes/functions/slack-interact/backend.ts', () => ({
-  Database: class { request = mocks.request; rows = mocks.rows; setting = mocks.setting; },
+  Database: class { constructor(_env: unknown, jwt?: string) { mocks.session(jwt); } request = mocks.request; rows = mocks.rows; setting = mocks.setting; },
 }));
 vi.mock('../../docker/volumes/functions/qa/service.ts', () => ({ createQaService: () => ({ handle: vi.fn() }) }));
 vi.mock('../../docker/volumes/functions/qa/slackSync.ts', () => ({ syncQaSlackIssue: vi.fn(), qaSlackLink: () => 'https://app.test/?qa=one' }));
@@ -24,9 +24,12 @@ beforeEach(() => {
 const adapter = () => createQaSlackActions(env, { slack, reply: vi.fn(), background: vi.fn() } as unknown as Actions);
 describe('Docker QA Slack durable inbox adapter', () => {
   it('filters project search at the server before applying the 100-option limit', async () => {
-    mocks.rows.mockResolvedValue([{id:'project-101',name:'Zebra'}]);
-    expect(await adapter().projects({id:'m',role:'member',team:'T-allowed',slack_user:'U1'},'Zebra')).toEqual([{id:'project-101',name:'Zebra'}]);
-    expect(mocks.rows).toHaveBeenCalledWith('projects',expect.objectContaining({name:'ilike.%Zebra%',limit:'100'}));
+    mocks.rows.mockImplementation(async (table: string) => table === 'product_lines' ? [{id:'l',name:'Product line',icon:'🐟'}] : [{id:'project-101',name:'Zebra',line_id:'l'}]);
+    const actor = {id:'m',role:'member' as const,team:'T-allowed',slack_user:'U1',jwt:'member-session'};
+    expect(await adapter().projects(actor,'Zebra')).toEqual([{line:{id:'l',name:'Product line',icon:'🐟'},projects:[{id:'project-101',name:'Zebra',lineId:'l'}]}]);
+    expect(mocks.rows).toHaveBeenCalledWith('projects',expect.objectContaining({select:'id,name,line_id',name:'ilike.%Zebra%',is_archived:'eq.false',limit:'100'}));
+    expect(mocks.rows).toHaveBeenCalledWith('product_lines',expect.objectContaining({order:'sort_order,id'}));
+    expect(mocks.session).toHaveBeenLastCalledWith('member-session');
   });
   it('rejects wrong Slack team before persisting the payload', async () => {
     await expect(adapter().enqueueEvent({ event_id: 'event-1', team_id: 'T-other' })).rejects.toThrow('workspace mismatch');

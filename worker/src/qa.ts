@@ -4,6 +4,7 @@ import { DEMO_BLOCKED_MESSAGE, isDemoMember } from './env';
 import { notifyChanges } from './notify';
 import { syncQaSlackIssue } from './qaSlackSync';
 import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
+import { qaVersionSuggestions } from './qa/versions';
 import {
   applyQaCommand, canQaCommand, createQaIssue, qaEventDetail, QaError, QA_STATES,
   type QaCommand, type QaContext, type QaIssue, type QaComment, type QaEvent,
@@ -207,7 +208,25 @@ export async function handleQa(c:C):Promise<Response> {
     let body:Body;try{body=JSON.parse(new TextDecoder().decode(await qaReadBody(c,10*1024*1024)));}catch(e){if(e instanceof QaError)throw e;throw new QaError('qa_invalid_json');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new QaError('qa_invalid_request');
     const action=String(body.action??'');
-    if(!['list','get','download','get_workflow'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(!['list','get','download','get_workflow','versions'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(action==='versions') {
+      const projectId=qaId(body.projectId);
+      const project=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=?').bind(ws,projectId).first();
+      if(!project)throw new QaError('qa_project_unavailable',403);
+      // Scope every source to the authenticated tenant and selected project.
+      const sources=[];
+      for(let offset=0;;offset+=500) {
+        const page=await c.env.DB.prepare(`SELECT workspace_id AS workspaceId,project_id AS projectId,
+          json_extract(data,'$.observedVersion') AS observedVersion,
+          json_extract(data,'$.targets') AS targets,json_extract(data,'$.runs') AS runs
+          FROM qa_issues WHERE workspace_id=? AND project_id=? ORDER BY id LIMIT 500 OFFSET ?`)
+          .bind(ws,projectId,offset).all<{workspaceId:string;projectId:string;observedVersion:string;targets:string|null;runs:string|null}>();
+        sources.push(...page.results.map(row=>({...row,targets:JSON.parse(row.targets||'[]'),runs:JSON.parse(row.runs||'[]')})));
+        if(page.results.length<500)break;
+        if(sources.length>100000)throw new QaError('qa_too_many_versions',413);
+      }
+      return c.json(qaVersionSuggestions(sources,ws,projectId));
+    }
     if(action==='get_workflow') {
       const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_workflow'").bind(ws).first<{value:string}>();
       return c.json(parseQaWorkflow(row?.value));

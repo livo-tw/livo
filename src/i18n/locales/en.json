@@ -2807,6 +2807,16 @@
     "taskSearchEmpty": "No matching tasks.",
     "anonymous": "Unknown member",
     "latestVersion": "Record version {{version}}",
-    "unsent": "Unsent changes are kept when refreshing."
+    "unsent": "Unsent changes are kept when refreshing.",
+    "problemArea": "Affected feature / area",
+    "problemAreaHint": "Describe the affected feature or screen, such as login, wallet, or checkout.",
+    "fixComponent": "Fix component / service",
+    "fixComponentHint": "Enter the component being fixed and deployed, such as frontend, API, or settlement service. It may differ from the affected feature.",
+    "versionHint": "Enter a version or choose from this project’s QA history. Leave blank if unknown.",
+    "versionLoading": "Loading previous versions…",
+    "versionLoadFailed": "Version suggestions are unavailable. You can still enter a version.",
+    "versionEmpty": "This project has no version history yet. Enter a version directly.",
+    "versionChoose": "Choose an existing version",
+    "fixVersionHint": "Type a build, version or commit ID for this fix, or choose a recorded version from this project."
   }
 }

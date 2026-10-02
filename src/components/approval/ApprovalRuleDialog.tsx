@@ -1,3 +1,6 @@
+import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
+import { groupProjectsByLine } from '@/lib/projectGroups';
+import { useProjectContext } from '@/context/ProjectContext';
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -68,6 +71,7 @@ export default function ApprovalRuleDialog({
   addDialogRef,
 }: ApprovalRuleDialogProps) {
   const { t } = useTranslation();
+  const { productLines } = useProjectContext();
 
   const ROLE_OPTIONS = [
     { value: 'admin', label: t('role.admin') },
@@ -118,21 +122,7 @@ export default function ApprovalRuleDialog({
               />
               <span className="font-medium text-foreground">{t('approval.ruleConfig.selectAll')}</span>
             </label>
-            {activeProjects.map(p => (
-              <label key={p.id} className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={addRuleProjectIds.includes(p.id)}
-                  onChange={() => {
-                    setAddRuleProjectIds(prev =>
-                      prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                    );
-                  }}
-                  className="rounded border-border accent-primary"
-                />
-                <span className="text-foreground truncate">{p.name}</span>
-              </label>
-            ))}
+            <ProjectCheckboxList groups={groupProjectsByLine(productLines, activeProjects)} selected={addRuleProjectIds} onToggle={id => setAddRuleProjectIds(prev => prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id])} />
           </div>
         </div>
 

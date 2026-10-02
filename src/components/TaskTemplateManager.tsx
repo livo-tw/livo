@@ -1,3 +1,4 @@
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState } from 'react';
 import { useTaskContext } from '@/context/TaskContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -126,10 +127,7 @@ const TaskTemplateManager = () => {
     await deleteTaskTemplate(tmpl.id);
   };
 
-  const groupedProjects = productLines.map(line => ({
-    line,
-    projects: allProjects.filter(p => p.lineId === line.id && !p.isArchived),
-  })).filter(g => g.projects.length > 0);
+  const groupedProjects = groupProjectsByLine(productLines, allProjects, { includeUnclassified: false });
 
   const handleCancel = () => {
     setCreating(false);

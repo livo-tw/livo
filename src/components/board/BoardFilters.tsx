@@ -1,3 +1,4 @@
+import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Settings2 } from 'lucide-react';
 import type { User, Status, Project, CustomField } from '@/types';
@@ -89,7 +90,7 @@ const BoardFilters = ({
       <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={priorityOptions} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
       <MultiSelectDropdown label={isMobile ? t('filter.reviewerMobile') : t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
       {!selectedProjectId && (
-        <MultiSelectDropdown label={t('filter.project')} options={allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, label: p.name, color: p.color }))} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />
+        <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />
       )}
       {hasFilters && (
         <button onClick={clearFilters} className="text-[13px] text-primary hover:text-primary/80 font-medium">{t('button.clearFilters')}</button>

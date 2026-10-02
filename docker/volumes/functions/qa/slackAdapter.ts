@@ -1,3 +1,4 @@
+import { groupProjectsByLine, type ProductLineOption } from './projectGroups.ts';
 import { Database, type Environment } from '../slack-interact/backend.ts';
 import type { Actions } from '../slack-interact/handler.ts';
 import { createQaService } from './service.ts';
@@ -18,9 +19,12 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
     projects: async (actor, search) => {
       const member = new Database(env, (actor as QaSlackActor & { jwt: string }).jwt);
       const pattern = search.replace(/[\\%_]/g, character => '\\' + character);
-      const rows = await member.rows('projects', { select: 'id,name', is_archived: 'eq.false', order: 'name', limit: '100',
-        ...(search ? { name: `ilike.%${pattern}%` } : {}) });
-      return rows as Array<{id:string;name:string}>;
+      const [rows, lines] = await Promise.all([
+        member.rows('projects', { select: 'id,name,line_id', is_archived: 'eq.false', order: 'name,id', limit: '100',
+          ...(search ? { name: `ilike.%${pattern}%` } : {}) }),
+        member.rows('product_lines', { select: 'id,name,icon', order: 'sort_order,id' }),
+      ]);
+      return groupProjectsByLine(lines as ProductLineOption[], rows.map(project => ({ id: String(project.id), name: String(project.name), lineId: project.line_id as string | null })));
     },
     mapped: async (actor, source) => {
       if (!source.thread || source.team !== actor.team) return undefined;

@@ -1,3 +1,5 @@
+import { ProjectGroupedList } from '@/components/project/ProjectOptions';
+import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileText, FolderKanban, User, Plus } from 'lucide-react';
@@ -60,7 +62,7 @@ export default function CommandPalette() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
 
   const { allTasks, taskSpecs } = useTaskContext();
-  const { allProjects, setSelectedProjectId, setSelectedLineId } = useProjectContext();
+  const { allProjects, productLines, setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { users } = useMemberContext();
   const { setSelectedTask, setTaskDisplayMode, setCurrentView, showCreateTask, setShowCreateTask } = useUIContext();
 
@@ -240,7 +242,7 @@ export default function CommandPalette() {
 
         {isSearching && results.projects.length > 0 && (
           <CommandGroup heading={t('search.projectsGroup')}>
-            {results.projects.map(({ project }) => (
+            <ProjectGroupedList groups={groupProjectsByLine(productLines, results.projects.map(result => result.project), { archived: 'all' })}>{project => (
               <CommandItem
                 key={project.id}
                 value={`project-${project.id}`}
@@ -253,7 +255,7 @@ export default function CommandPalette() {
                   {project.key}
                 </span>
               </CommandItem>
-            ))}
+            )}</ProjectGroupedList>
           </CommandGroup>
         )}
 

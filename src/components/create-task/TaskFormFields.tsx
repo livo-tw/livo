@@ -1,3 +1,4 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { generateId } from '@/lib/generateId';
@@ -9,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { Priority, Tag, TaskDeployment, Status } from '@/types';
-import { projectGroupLabel, type ProjectGroup } from '@/lib/projectGroups';
+import { type ProjectGroup } from '@/lib/projectGroups';
 
 const envList = ['Dev', 'QA', 'Stage', 'Live Staging', 'Prod'] as const;
 type EnvName = typeof envList[number];
@@ -93,13 +94,7 @@ const TaskFormFields = ({
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.projectLabel')}</label>
         <select value={projectId} onChange={e => setProjectId(e.target.value)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
-          {groupedProjects.map(g => (
-            <optgroup key={g.line?.id ?? 'other'} label={projectGroupLabel(g.line, t('common.other'))}>
-              {g.projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </optgroup>
-          ))}
+          <ProjectSelectOptions groups={groupedProjects} />
         </select>
       </div>
       <div>

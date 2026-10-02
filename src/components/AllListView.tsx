@@ -1,3 +1,4 @@
+import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import type { Task } from '@/types';
 import { useUIContext } from '@/context/UIContext';
@@ -317,7 +318,7 @@ const AllListView = () => {
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
           <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={Object.entries(priorityConfig).map(([k, v]) => ({ id: k, label: v.label, icon: v.icon }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
           {!isMobile && <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />}
-          {!selectedProjectId && <MultiSelectDropdown label={t('filter.project')} options={allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, label: p.name, color: p.color }))} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
+          {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
           {hasFilters && <button onClick={clearFilters} className="text-[13px] text-muted-foreground hover:text-foreground">{t('button.clear')}</button>}
         </div>
       </div>

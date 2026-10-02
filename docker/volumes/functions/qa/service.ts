@@ -4,6 +4,7 @@ import { applyQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients,
 import { validateQaBackup } from './restore.ts';
 import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
+import { qaVersionSuggestions } from './versions.ts';
 
 export interface QaEnvironment { get(name: string): string | undefined }
 type Row = Record<string, any>;
@@ -127,6 +128,15 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
   return { async handle(raw: unknown): Promise<any> {
     const request = object(raw), actor = await authenticate();
     switch (request.action) {
+      case 'versions': {
+        const projectId = id(request.projectId);
+        const project = (await db.rows('projects', { select: 'id', id: `eq.${projectId}`, limit: 1 }))[0];
+        if (!project) fail('qa_project_unavailable', 403);
+        // Read only version-bearing fields, with the same server-only QA scope.
+        const rows = await db.all('qa_issues', { project_id: `eq.${projectId}`,
+          select: 'workspaceId:workspace_id,projectId:project_id,observedVersion:data->>observedVersion,targets:data->targets,runs:data->runs' });
+        return qaVersionSuggestions(rows as Array<{workspaceId:string;projectId:string}>, WORKSPACE, projectId);
+      }
       case 'get_workflow': {
         const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_workflow', limit: 1 }))[0];
         return parseQaWorkflow(row?.value);

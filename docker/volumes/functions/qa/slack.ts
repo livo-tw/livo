@@ -1,6 +1,7 @@
 /** Slack QA UI and intent routing shared by Socket Mode and HTTP transports. */
 import { canQaCommand, type QaActor, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from './workflow.ts';
+import { slackProjectOptionGroups, type ProjectGroup } from './projectGroups.ts';
 export type SlackBlock = Record<string, unknown>;
 type Selection = { value?: string; selected_option?: { value: string }; };
 export interface QaSlackPayload {
@@ -17,7 +18,7 @@ export interface QaSlackActions {
   enabled(): Promise<boolean>;
   actor(payload: QaSlackPayload): Promise<QaSlackActor>;
   api<T>(actor: QaSlackActor, body: Record<string, unknown>): Promise<T>;
-  projects(actor: QaSlackActor, search: string): Promise<Array<{ id: string; name: string }>>;
+  projects(actor: QaSlackActor, search: string): Promise<ProjectGroup[]>;
   mapped(actor: QaSlackActor, source: QaSlackSource): Promise<string | undefined>;
   publish(actor: QaSlackActor, issue: QaIssue, source: QaSlackSource): Promise<void>;
   sync(actor: QaSlackActor, issue: QaIssue): Promise<void>;
@@ -101,7 +102,7 @@ async function openQaForm(p: QaSlackPayload, d: QaSlackActions, intent: string, 
     let view: SlackBlock;
     if (intent === 'new') {
       if (source.thread && await d.mapped(actor, source)) throw new Error('此訊息串已綁定 Bug，請使用該單操作按鈕，或以 /livo bug new 另開新單。');
-      const projects = await d.projects(actor, '');
+      const projects = (await d.projects(actor, '')).flatMap(group => group.projects);
       if (!projects.length) throw new Error('沒有可用的專案，請先在 LIVO 建立專案。');
       let actual = (p.actions ? '' : p.message?.text) || draft;
       if (!p.actions && p.message?.ts && source.channel) {
@@ -180,8 +181,8 @@ export async function handleQaSlack(p: QaSlackPayload, _envelopeId: string, d: Q
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const lookup = (async () => { const actor = await d.actor(p); return d.projects(actor, String((p as unknown as Record<string, unknown>).value || '')); })();
-        const projects = await Promise.race([lookup, new Promise<Array<{id:string;name:string}>>(resolve => { timer = setTimeout(() => resolve([]), 2200); })]);
-        return { options: projects.map(project => option(project.id, project.name)) };
+        const groups = await Promise.race([lookup, new Promise<ProjectGroup[]>(resolve => { timer = setTimeout(() => resolve([]), 2200); })]);
+        return groups.length ? { option_groups: slackProjectOptionGroups(groups, '未分類') } : { options: [] };
       } finally { if (timer) clearTimeout(timer); }
     }
     if (p.type === 'event_callback') {

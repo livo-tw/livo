@@ -1,3 +1,4 @@
+import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useMemo, useState, useCallback } from 'react';
 import type { Task } from '@/types';
 import { useUIContext } from '@/context/UIContext';
@@ -165,7 +166,7 @@ const ListView = () => {
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
           <MultiSelectDropdown label={t('filter.priority')} options={Object.entries(priorityConfig).map(([id, p]) => ({ id, label: p.label, icon: p.icon as React.ReactElement }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
           <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
-          {!selectedProjectId && <MultiSelectDropdown label={t('filter.project')} options={allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, label: p.name, color: p.color }))} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
+          {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
           <MultiSelectDropdown label={t('filter.tags')} options={tags.map(tg => ({ id: tg.id, label: tg.name, color: tg.color }))} selected={filterTags} onToggle={toggleArr(setFilterTags)} />
           {(filterDept.length > 0 || filterAssignees.length > 0 || filterStatuses.length > 0 || filterPriorities.length > 0 || filterReviewers.length > 0 || filterProjects.length > 0 || filterTags.length > 0) && (
             <button onClick={() => { setFilterDept([]); setFilterAssignees([]); setFilterStatuses([]); setFilterPriorities([]); setFilterReviewers([]); setFilterProjects([]); setFilterTags([]); }} className="text-sm text-muted-foreground hover:text-foreground">{t('button.clear')}</button>

@@ -1,7 +1,9 @@
+import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { X } from 'lucide-react';
 import RichTextEditor from '@/components/RichTextEditorLazy';
-import { TaskTemplate, Priority, Tag, User, ProductLine, Project } from '@/types';
+import { TaskTemplate, Priority, Tag, User } from '@/types';
 import { useTranslation } from 'react-i18next';
+import type { ProjectGroup } from '@/lib/projectGroups';
 
 export const priorities: { value: Priority; label: string }[] = [
   { value: 'highest', label: 'Highest' },
@@ -11,10 +13,7 @@ export const priorities: { value: Priority; label: string }[] = [
   { value: 'lowest', label: 'Lowest' },
 ];
 
-export interface GroupedProject {
-  line: ProductLine;
-  projects: Project[];
-}
+export type GroupedProject = ProjectGroup;
 
 interface TaskTemplateFormProps {
   editing: TaskTemplate | null;
@@ -98,13 +97,7 @@ const TaskTemplateForm = ({
           <select value={formProjectId} onChange={e => setFormProjectId(e.target.value)}
             className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
             <option value="">{t('taskTemplate.globalProject')}</option>
-            {groupedProjects.map(g => (
-              <optgroup key={g.line.id} label={`${g.line.icon} ${g.line.name}`}>
-                {g.projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </optgroup>
-            ))}
+            <ProjectSelectOptions groups={groupedProjects} />
           </select>
         </div>
         <div>
