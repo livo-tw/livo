@@ -35,6 +35,7 @@ interface MemberTableDesktopProps {
   onResetPassword: (memberId: string, name: string) => void;
   /** 「啟用帳號」 for a member that only has a name (Jira import). */
   onCreateLogin: (memberId: string, name: string) => void;
+  onEditJobTitle: (memberId: string) => void;
 }
 
 const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
@@ -42,7 +43,7 @@ const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
 const MemberTableDesktop = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
   dragIndex, dragOverIndex, actionLoading, isLockedBy, formatDate,
-  onDragStart, onDragOver, onDragEnd, onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin,
+  onDragStart, onDragOver, onDragEnd, onRoleChange, onToggleActive, onDelete, onResetPassword, onCreateLogin, onEditJobTitle,
 }: MemberTableDesktopProps) => {
   const { t } = useTranslation();
   return (
@@ -101,7 +102,12 @@ const MemberTableDesktop = ({
                   ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground" title={t('memberList.noLoginHint')}>{t('memberList.noLogin')}</span>
                   : user.email}
               </td>
-              <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{user.jobTitle || '—'}</td>
+              <td className="px-4 py-3 text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span className="max-w-48 break-words">{user.jobTitle || '—'}</span>
+                  {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} className="shrink-0 text-xs text-primary hover:underline disabled:opacity-50">{t('memberJobTitle.edit')}</button>}
+                </div>
+              </td>
               <td className="px-4 py-3 whitespace-nowrap">
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
                   {getRoleLabel(user.role as MemberRole)}

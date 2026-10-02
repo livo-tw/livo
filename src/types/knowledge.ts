@@ -1,4 +1,6 @@
 /** Shared wire models for both knowledge-base backends. */
+export type { KnowledgePolicy, KnowledgeRule, KnowledgeAction } from '../../worker/src/knowledgeAccess';
+import type { KnowledgePolicy } from '../../worker/src/knowledgeAccess';
 export type KnowledgePage = {
   id: string;
   title: string;
@@ -13,6 +15,8 @@ export type KnowledgePage = {
   created_at: string;
   updated_at: string;
   version: number;
+  category?: 'general' | 'meeting';
+  access_policy?: KnowledgePolicy;
 }
 
 export type KnowledgeRevision = {
@@ -31,9 +35,14 @@ export type KnowledgeAttachment = {
   file_size: number;
   file_type: string;
   storage_path: string;
+  storage_bucket?: string;
   uploaded_by: string;
   created_at: string;
 }
+
+export type KnowledgeComment = {
+  id: string; page_id: string; body: string; created_by: string; created_at: string; updated_at: string;
+};
 
 type Table<Row, Insert> = { Row: Row; Insert: Insert; Update: Partial<Row>; Relationships: [] };
 export type KnowledgeTables = {
@@ -41,6 +50,7 @@ export type KnowledgeTables = {
   kb_pages: Table<KnowledgePage, Pick<KnowledgePage, 'title' | 'created_by' | 'updated_by'> & Partial<KnowledgePage>>;
   kb_revisions: Table<KnowledgeRevision, KnowledgeRevision>;
   kb_attachments: Table<KnowledgeAttachment, Omit<KnowledgeAttachment, 'id' | 'created_at'> & Partial<KnowledgeAttachment>>;
+  kb_comments: Table<KnowledgeComment, Pick<KnowledgeComment, 'page_id' | 'body'> & Partial<KnowledgeComment>>;
 };
 
 export type FieldLockFunctions = {

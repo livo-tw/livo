@@ -20,6 +20,7 @@ import { TABLES } from './tables';
 import { decideMembersUpdate } from './memberProfile';
 import { protectTeamIntroTemplate } from './teamIntroTemplate';
 import { writeKnowledge } from './knowledge';
+import { knowledgePermissionSql } from './knowledgeSql';
 import { rowToWire, valueToDb, nowIso } from './meta';
 import type { TableMeta, WriteRule } from './meta';
 import { notifyChanges } from './notify';
@@ -103,8 +104,8 @@ function enforceWritePolicy(
   // ── members SPECIAL rule (checked before the generic rules) ──
   // insert/delete are server-only (manage-member function writes directly).
   // update: column rules in memberProfile.ts (super_admin unrestricted; admin
-  // {theme, auth_id, sort_order} on any row; member {theme, auth_id} on their
-  // OWN row; everyone {avatar, color} on their own row). Own-row goes through
+  // {theme, sort_order} on any row; member {theme, auth_id} on their
+  // OWN row; everyone {auth_id, avatar, color} on their own row). Own-row goes through
   // an injected id filter — ANDs with the client's id/auth_id filter and
   // still matches their row in the login-linking flows.
   if (table === 'members') {
@@ -118,8 +119,9 @@ function enforceWritePolicy(
     const decision = decideMembersUpdate(rank, patch);
     if (decision === 'deny') return permissionDenied(table);
     if (decision === 'invalid') {
-      return { data: null, error: { message: 'avatar must be 1-16 characters and color #RRGGBB', code: '22023' } };
+      return { data: null, error: { message: 'avatar must be 1-16 characters, color #RRGGBB, and job_title at most 200 characters', code: '22023' } };
     }
+    if (rank < 2 && patch.auth_id !== undefined && patch.auth_id !== null && patch.auth_id !== auth.userId) return permissionDenied(table);
     if (decision === 'own-row' && req.filters && req.filters.length) {
       req.filters = [...req.filters, { col: 'id', op: 'eq', val: memberId }];
     }
@@ -601,6 +603,13 @@ export async function runQuery(
     }
 
     // Server-side permission floor (role-based write rules + own-row scoping).
+    // A cached role must not let a demoted administrator grant themselves an ACL position or login identity.
+    if (table === 'members' && req.op !== 'select') {
+      const live = await env.DB.prepare('SELECT role,is_active FROM members WHERE workspace_id=? AND id=?')
+        .bind(ws,auth.member.id).first<{role:string;is_active:number}>();
+      if (!live?.is_active) return permissionDenied(table);
+      auth = { ...auth, member: { ...auth.member, role: live.role } };
+    }
     const denied = enforceWritePolicy(req, table, meta, auth);
     if (denied) return denied;
     if (table.startsWith('kb_') && req.op !== 'select') return await writeKnowledge(env, ctx, auth, req);
@@ -610,6 +619,16 @@ export async function runQuery(
       case 'select': {
         const cols = buildSelectCols(req.cols);
         const where = buildWhere(withWs(req.filters), meta);
+        if (table.startsWith('kb_')) {
+          const permission = knowledgePermissionSql(`${table}.${table === 'kb_pages' ? 'id' : 'page_id'}`, 'view', auth);
+          where.sql += `${where.sql ? ' AND ' : ' WHERE '}${permission.sql}`;
+          where.params.push(...permission.params);
+        }
+        if (table === 'field_locks') {
+          const permission = knowledgePermissionSql('substr(field_locks.lock_key,4)', 'view', auth);
+          where.sql += `${where.sql ? ' AND ' : ' WHERE '}(lock_key NOT LIKE 'kb:%' OR ${permission.sql})`;
+          where.params.push(...permission.params);
+        }
 
         if (req.count === 'exact' && req.head) {
           const c = await env.DB.prepare(`SELECT COUNT(*) AS cnt FROM ${table}${where.sql}`)

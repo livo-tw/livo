@@ -21,6 +21,8 @@ export function notifyChanges(
   workspaceId: string = DEFAULT_WORKSPACE
 ): void {
   if (!events.length) return;
+  // KB events are invalidations only. Never broadcast private page/revision/comment bodies.
+  events = events.map(e => e.table.startsWith('kb_') ? { ...e, new: {}, old: null } : e);
   const stub = env.REALTIME.get(env.REALTIME.idFromName(hubName(workspaceId)));
   ctx.waitUntil(
     stub

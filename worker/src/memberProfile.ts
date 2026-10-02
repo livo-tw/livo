@@ -2,7 +2,7 @@
 // write rule in db.ts. Mirrors public.livo_members_update_guard() on the
 // Docker build (supabase/migrations/20261001_member_avatar_self_edit.sql).
 //
-//   admin  → theme / auth_id / sort_order on any row
+//   admin  → theme / sort_order on any row; auth_id on their own row only
 //   member → theme / auth_id on their own row
 //   anyone → avatar / color (the round badge) on their own row only
 //
@@ -32,6 +32,7 @@ export function isValidMemberColor(v: unknown): boolean {
 export type MembersUpdateDecision = 'allow' | 'own-row' | 'deny' | 'invalid';
 
 export function decideMembersUpdate(rank: number, patch: Record<string, unknown>): MembersUpdateDecision {
+  if (patch.job_title !== undefined && (typeof patch.job_title !== 'string' || patch.job_title.length > 200)) return 'invalid';
   if (rank >= 2) return 'allow'; // super_admin
   const cols = Object.keys(patch).filter((k) => patch[k] !== undefined);
   const base = rank >= 1 ? MEMBERS_ADMIN_COLS : MEMBERS_SELF_COLS;
@@ -39,5 +40,5 @@ export function decideMembersUpdate(rank: number, patch: Record<string, unknown>
   if (cols.includes('avatar') && !isValidMemberAvatar(patch.avatar)) return 'invalid';
   if (cols.includes('color') && !isValidMemberColor(patch.color)) return 'invalid';
   const touchesProfile = cols.some((c) => MEMBER_PROFILE_COLS.has(c));
-  return rank === 0 || touchesProfile ? 'own-row' : 'allow';
+  return rank === 0 || touchesProfile || cols.includes('auth_id') ? 'own-row' : 'allow';
 }

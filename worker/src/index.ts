@@ -24,7 +24,7 @@ import { hubName } from './notify';
 import { handleCloudWaitlist, handleCloudWaitlistApprove } from './functions/cloudBeta';
 import { runQuery, roleRank } from './db';
 import { handleRpc } from './rpc';
-import { handleUpload, handleDownload, handleRemove } from './storage';
+import { handleUpload, handleDownload, handleRemove, isKnowledgeStoragePath } from './storage';
 import { handleQa } from './qa';
 import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
@@ -158,8 +158,15 @@ app.post('/functions/v1/scheduled-backup', requireMember, demoGuard, requireSupe
 app.get('/functions/v1/og-task', handleOgTask);
 
 // ── Storage ───────────────────────────────────────────────────────────────
-app.get('/api/storage/task-images/*', (c) =>
+app.get('/api/storage/task-images/*', async (c, next) => {
+  const path = decodeURIComponent(c.req.path.replace(/^\/api\/storage\/task-images\//, ''));
+  if (isKnowledgeStoragePath(path)) return requireMember(c, next);
+  return next();
+}, (c) =>
   handleDownload(c, 'task-images', c.req.path.replace(/^\/api\/storage\/task-images\//, ''))
+);
+app.get('/api/storage/kb-files/*', requireMember, (c) =>
+  handleDownload(c, 'kb-files', decodeURIComponent(c.req.path.replace(/^\/api\/storage\/kb-files\//, '')))
 );
 // Backups hold full-workspace dumps → super-admin only, and storage.ts
 // additionally enforces the per-workspace key prefix.

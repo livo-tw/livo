@@ -5,7 +5,7 @@ type Row = Record<string, unknown>;
 export function seedKnowledgeMock(db: Record<string, Row[]>) {
   const now = new Date().toISOString();
   const base: Row = { body: '<p>Keep useful team notes here. Add a page for each process and a child page for examples.</p>',
-    parent_id: null, project_id: null, sort_order: 0, is_archived: false, admin_only: false,
+    parent_id: null, project_id: null, sort_order: 0, is_archived: false, admin_only: false, category: 'general', access_policy: { mode: 'inherit' },
     created_by: 'm-001', updated_by: 'm-001', created_at: now, updated_at: now, version: 1 };
   db.kb_pages = [
     { ...base, id: 'kb-demo-guide', title: 'Team handbook' },
@@ -14,12 +14,15 @@ export function seedKnowledgeMock(db: Record<string, Row[]>) {
   ];
   db.kb_attachments = [];
   db.kb_revisions = [];
+  db.kb_comments = [];
 }
 
 export function knowledgeMockDefaults(table: string, row: Row): Row {
+  if (table === 'kb_comments') return { updated_at: row.created_at, ...row };
+  if (table === 'kb_attachments') return { storage_bucket: 'kb-files', ...row };
   if (table !== 'kb_pages') return row;
   return { body: '', project_id: null, parent_id: null, sort_order: 0, is_archived: false, admin_only: false,
-    updated_at: row.created_at, version: 1, ...row };
+    category: 'general', access_policy: { mode: 'inherit' }, updated_at: row.created_at, version: 1, ...row };
 }
 
 export function knowledgeMockUpdate(db: Record<string, Row[]>, previous: Row, patch: Row): Row {
