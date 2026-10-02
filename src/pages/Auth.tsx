@@ -72,7 +72,7 @@ const Auth = () => {
           ? t('auth.invalidCredentials')
           : msg.includes('email not confirmed')
           ? t('auth.confirmEmail')
-          : msg.includes('too many requests') || msg.includes('rate limit')
+          : msg.includes('too many requests') || msg.includes('rate limit') || error.code === 'over_request_rate_limit'
           ? t('auth.rateLimit')
           : msg.includes('user not found')
           ? t('auth.userNotFound')

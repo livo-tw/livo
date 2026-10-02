@@ -135,6 +135,27 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_user ON auth_refresh_tokens (
 -- The refresh handler purges expired tokens by expires_at (perf audit §3):
 CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_expires ON auth_refresh_tokens (expires_at);
 
+-- Login throttle is global auth plumbing: identity is not tenant-scoped before login.
+-- failures counts confirmed failures ONLY; in-flight work has expiring reservations.
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+  key TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0 CHECK(failures>=0),
+  window_start TEXT NOT NULL,
+  locked_until TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_window ON auth_login_attempts(window_start);
+CREATE TABLE IF NOT EXISTS auth_login_reservations (
+  id TEXT PRIMARY KEY,
+  email_key TEXT NOT NULL,
+  email_window TEXT NOT NULL,
+  ip_key TEXT,
+  ip_window TEXT,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_email ON auth_login_reservations(email_key,email_window,expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_ip ON auth_login_reservations(ip_key,ip_window,expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_expiry ON auth_login_reservations(expires_at);
+
 -- ── Core team / board tables ────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS members (

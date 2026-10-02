@@ -468,3 +468,79 @@ Slack 文字會安全轉為留言格式；已綁定的 @提及保留 LIVO 通知
 Email 與簽名 webhook 沿用資料庫通知觸發器。Slack 通知失敗不會撤銷已儲存的卡片／留言。
 此版不會自動同步每一則討論串回覆，不讀取頻道歷史，也不匯入 Slack 附件。
 Socket Mode 協定參考：[Slack 官方文件](https://docs.slack.dev/apis/events-api/using-socket-mode/)。
+
+### 日常任務面板（Docker）
+
+面板與新操作訊息提供繁體中文、簡體中文與英文，依操作者語系顯示；使用者填寫的卡片標題、名稱和留言保留原文。
+
+套用此更新後，`/livo` 改為開啟私人任務面板；建立卡片請使用 `/livo new 標題` 或面板的「建立卡片」。功能沿用原有 Slack 互動開關及帳號綁定，不需另外建立 Bot。
+
+| 指令／入口 | 操作 |
+| --- | --- |
+| `/livo`、`/livo home` | 開啟面板，從按鈕進入日常操作。 |
+| `/livo my` | 查看自己經辦的未完成任務。 |
+| `/livo review` | 查看自己擔任驗收人的未完成任務。 |
+| `/livo today` | 查看今天到期、由自己經辦或驗收的未完成任務。 |
+| `/livo due` | 查看台北今天起算 7 天內到期、由自己經辦或驗收的未完成任務；包含今天。 |
+| `/livo overdue` | 查看今天以前已逾期、由自己經辦或驗收的未完成任務。 |
+| `/livo search 關鍵字` | 依卡號或標題搜尋；省略關鍵字時開啟搜尋表單。 |
+| `/livo ABC-123`、`/livo show ABC-123` | 查看卡片資料、需求說明及留言，並開啟修改或留言表單。 |
+| `/livo edit ABC-123` | 修改狀態、經辦人、驗收人、到期日與優先級。 |
+| 通知中的「處理任務」 | 直接開啟該卡片的私人操作視窗。 |
+
+任務清單與留言每頁 8 筆；留言依新到舊排列，可用按鈕換頁。到期日期以 `Asia/Taipei` 判斷，完成、取消及已封存專案不列入個人到期清單。搜尋結果只包含目前有權限查看的未封存專案卡片，可能包含已完成任務。同一卡號若出現在多個專案，請從搜尋結果選擇。
+
+查詢與卡片操作視窗只有操作者看得到；成功回執預設為私人訊息。查詢、修改與留言都使用綁定成員的登入身分及既有 RLS，開啟視窗與送出時會重新檢查權限。修改表單會記住上述五個欄位的舊值（`expected`）；若別人已先修改其中任何一欄，本次修改不會覆蓋它，需重新開啟卡片確認。清除經辦人、驗收人或日期代表取消該設定；團隊必填規則仍會阻擋不允許的清空。需要前置步驟或簽核的狀態變更，會提示回 LIVO 依原流程完成。
+
+重送同一份操作不會重複寫入。已成功儲存的變更不因 Slack 回執失敗而撤銷；後續頻道與個人通知沿用任務通知佇列（outbox）、既有路由、去重與重試設定，不因使用面板而自動開啟通知或擴大收件範圍。
+
+「留言到 LIVO 卡片」訊息捷徑仍可匯入原訊息及連結；只有匯入既有 Slack 訊息時，才避免將相同留言再貼回來源頻道。由面板或 `/livo comment` 輸入的新留言仍依通知規則送出。本功能不會自動匯入每則 Slack 討論串回覆，也不讀取頻道歷史或匯入附件。
+
+**升級與 Slack App 設定**
+
+1. 使用新版安裝包先備份並套用 `20261005_slack_task_workspace.sql`；既有安裝由安裝器依 migration 紀錄套用，請勿只更新函式而漏掉資料庫升級。
+2. 同步並載入新版 `slack-interact`、`slack-deliver` 函式及共用模組，依既有安裝流程重新啟動 functions 與 Socket Mode relay。從原始碼打包前執行 `npm run sync:shared`，保持 `docker/volumes/functions/` 與 `supabase/functions/` 一致。
+3. 沿用現有 `/livo` command、Socket Mode、Bot Token 與 App Token；本次面板與通知按鈕不需新增 scopes 或建立新 Token。可將 slash command 說明更新為「查詢、建立及處理 LIVO 任務」。
+4. 可選擇在 Slack App 的 **Interactivity & Shortcuts → Shortcuts** 新增 **message shortcut**「開啟 LIVO 卡片」，callback ID 為 `livo_open_task`。在已對應卡片的討論串使用時開啟詳情；尚未對應時開啟搜尋。未加此捷徑仍可使用指令及通知按鈕。
+
+目前此擴充已完成程式端實作，尚未部署或完成線上驗收。上線後需用已綁定的測試帳號確認：私人清單與換頁、五欄修改與衝突提示、留言回寫、重送去重，以及既有通知路由；本說明不代表安裝環境已啟用或實測通過。
+
+Slack 互動需在時限內回應 ACK，表單提交先回應載入／儲存狀態，再於背景完成查詢或寫入；導覽更新使用 view `hash` 避免較舊回應覆蓋新畫面。相關限制與做法見 [Slack Modals 文件](https://docs.slack.dev/surfaces/modals/)及 [`views.update` 的 hash 與輸入狀態說明](https://docs.slack.dev/reference/methods/views.update/)。
+
+### 任務通知佇列與專案頻道（Docker，可選）
+
+套用資料庫升級後，可由管理員在 `system_settings` 的 `slack_delivery` 設定指定產線或專案的通知頻道。預設不啟用，不補發歷史資料。先連接 Bot Token、邀請 Bot 進入頻道，再儲存以下設定；範例 ID 必須換成自己的值：
+
+```sql
+INSERT INTO public.system_settings(key, value)
+VALUES ('slack_delivery', '{
+  "enabled": true,
+  "teamId": "TEXAMPLE",
+  "dmEnabled": false,
+  "routes": [
+    {"lineId": "example-line", "channelId": "CEXAMPLE"},
+    {"projectId": "example-project", "channelId": "CSECOND"}
+  ]
+}'::jsonb)
+ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+```
+
+同一條產線之後新增的專案會沿用該產線的設定；同一卡片與頻道只排入一次。發送前再次檢查專案、工作區與頻道，停用或移出範圍的卡片會略過。`backup_settings.task_notify_types` 控制 `task_created`、`status_changed`、`assignee_changed`、`priority_changed`、`comment_added`；標題、到期日及驗收人的變更需加入 `task_updated`。
+
+在 `docker/.env` 的 `COMPOSE_PROFILES` 加入 `slack-delivery`（保留其他已使用的 profile），確認已有 `SLACK_INTERNAL_SECRET`，再執行上述 Compose 啟動指令。`livo-slack-delivery` 每五秒呼叫內部發送服務，無須開放新的對外連接埠。若只用通知，不必啟用 Socket Mode；建卡及留言才需要 App Token 與 relay。
+
+每張卡在每個頻道使用 **60 分鐘固定時間窗**：從該串第一則訊息起算，未滿 60 分鐘回覆同串，滿 60 分鐘開新訊息；中間的回覆不延長時間。通知以多行顯示卡號、標題、操作者、變更或留言內容，附 LIVO 連結且不展開網頁預覽。啟用後，舊版前端的任務通知請求會由資料庫佇列接手；Slack 來源留言不回送到來源頻道。
+
+管理員可查詢 `slack_delivery_outbox` 的狀態：`pending` 等待或依 Retry-After 重試，`sending` 發送中，`sent` 已取得 Slack 訊息時間戳，`failed` 為確定失敗，`skipped` 為目前範圍不符。`review` 表示發送逾時、程序中斷等無法判斷 Slack 是否已收件的情況；同一卡片後續通知會暫停。**先核對 Slack 討論串再處理 `review`，不要直接批次重送**。資料庫狀態寫入失敗也不會自動再發一次。
+
+`dmEnabled` 預設為 false。開啟後，建立任務及新增指派人／驗收人都會產生個人通知，包含自己指派給自己；只移除角色或未變更角色不發指派通知。同一事件的同一人兼任兩個角色時合併原因，只發一則。網頁、Slack 建卡及 API 都由任務資料庫異動觸發，舊前端另外寫入的指派、驗收及狀態通知不會重複排入 Slack。到期提醒不再因 sender 與 recipient 相同而被略過。
+
+個人通知每次發送新訊息，含卡片標題、通知原因、操作者及期限，不使用頻道的討論串。只使用此工作區已驗證的 Slack 帳號綁定，不以姓名猜測收件人；發送前重查角色、到期提醒的任務狀態，以及接收者是否仍在對應的訂閱頻道。Bot 需具備 `channels:read`／`groups:read` 才能透過 Slack `conversations.members` 驗證公開／私人頻道成員。
+
+可在 `slack_delivery` 增加 `dmMemberIds`（LIVO 成員 ID 陣列）限制測試對象；省略代表允許所有已驗證且符合範圍的人，空陣列代表不允許任何人。`待驗收` 預設通知驗收人，`待討論確認`、`等待部署` 通知指派人；自訂狀態可用 `handoffRoles: {"status-id":"reviewer"}` 或 `"assignee"` 指定。明確設為 `null` 可停用該狀態的交接規則。沒有驗收人時不猜測替代人選。
+
+每週彙整另以 `weekly: {"enabled":true,"startDate":"2026-10-05"}` 明確啟用，`startDate` 請改為實際啟用週的週一。既有 delivery poller 會於 **Asia/Taipei 週一 09:00** 起排入每人一則私訊，當週週一稍晚啟動仍可補跑，同週不重複；不補以前週次。內容包含逾期與週一至週日到期的未完成任務，待驗收任務歸驗收人，其他任務歸指派人，排除完成、取消、封存專案及無期限的卡片。發送前重新查詢內容與頻道成員身分。未設定 `weekly` 或開始日期不會自行啟用。
+
+升級既有安裝時，先由安裝器套用 `20261004_slack_notification_parity.sql`，再載入新版 `slack-deliver` 函式；升級不會開啟私訊、不修改路由，也不補發歷史指派。報告手動發送仍使用原流程，但必須收到成功回覆才記為成功；啟用路由後僅能發到設定中的頻道。其他既有報告與個人摘要排程不會因啟用任務佇列而自動啟動。
+
+開發驗證：`node scripts/lib/slack-delivery-sql-check.mjs /path/to/@electric-sql/pglite/dist/index.js` 會在本機暫存 PostgreSQL 引擎執行真實 migration 與觸發器，涵蓋各入口、去重、角色交接及週報邊界。PGlite 僅為測試工具，不隨部署包交付。

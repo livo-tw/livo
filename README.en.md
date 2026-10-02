@@ -152,6 +152,8 @@ Lingye, an independent developer in Taiwan with ten years as a product manager. 
 
 ### Slack actions (optional, Docker self-hosting)
 
+Docker task notifications can route product lines or projects to specific channels, using a durable queue and one thread per card and channel. Rate limits retry automatically; uncertain delivery outcomes are held for review to avoid duplicate posts. This is off by default; see the [Docker setup guide](release-template/README.md).
+
 Create cards with `/livo`, add comments with `/livo comment ABC-123`, or use message shortcuts and a permission-filtered card picker.
 Socket Mode connects outbound, so an internal installation needs no public Request URL. No new npm dependencies are required.
 Off by default: an administrator enables **Feature switches → Slack actions**, then configures the bot in **Integrations → Slack**.

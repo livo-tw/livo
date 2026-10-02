@@ -1,5 +1,6 @@
-import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, taskOption, UNAVAILABLE, type Row } from './core.ts';
-import type { Actions } from './handler.ts';
+import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, taskOption, UNAVAILABLE, type Row } from './core.ts';
+import { sourceOf, type Actions } from './handler.ts';
+import { createWorkspaceData, WORKSPACE_ERRORS } from './workspace-backend.ts';
 export function fail(message: string): never { throw Object.assign(new Error(message), { name: 'ActionError' }); }
 export interface Environment { get(name: string): string | undefined }
 const encoder = new TextEncoder();
@@ -14,11 +15,11 @@ export async function sign(secret: string, data: string) {
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(data)));
 }
 const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-export async function memberJwt(secret: string, member: Row, binding: Row) {
+export async function memberJwt(secret: string, member: Row, binding: Row, source: Row = {}) {
   if (!secret || !member.auth_id) fail(NO_ACCOUNT);
   const now = Math.floor(Date.now() / 1000);
   const content = [{ alg: 'HS256', typ: 'JWT' }, { sub: member.auth_id, role: 'authenticated', aud: 'authenticated',
-    email: member.email, iat: now, exp: now + 120, livo_slack_binding: binding.id }]
+    email: member.email, iat: now, exp: now + 120, livo_slack_binding: binding.id, livo_slack_source: { channel: source.echoExistingMessage === false ? '' : source.channel || '', thread: source.thread || '' } }]
     .map(value => base64(encoder.encode(JSON.stringify(value)))).join('.');
   return `${content}.${base64(await sign(secret, content))}`;
 }
@@ -30,7 +31,14 @@ export class Database {
       headers: { apikey: this.env.get('SUPABASE_ANON_KEY') || '', Authorization: `Bearer ${this.jwt}`,
         'Content-Type': 'application/json', Prefer: prefer },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error('Database operation failed');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      // Only translate stable application error keys; never expose raw SQL,
+      // database details, or arbitrary upstream error messages to Slack.
+      if (path === '/rest/v1/rpc/livo_slack_update' && typeof error?.message === 'string' && Object.prototype.hasOwnProperty.call(WORKSPACE_ERRORS, error.message))
+        fail(WORKSPACE_ERRORS[error.message]);
+      throw new Error('Database operation failed');
+    }
     return res.status === 204 ? null : res.json();
   }
   rows(table: string, query: Row = {}) { return this.request(`/rest/v1/${table}`, 'GET', undefined, query) as Promise<Row[]>; }
@@ -57,10 +65,17 @@ export function slackClient(env: Environment, admin = new Database(env)) {
 export function createActions(env: Environment, background: (work: Promise<unknown>) => void): Actions {
   const admin = new Database(env);
   const slack = slackClient(env, admin);
-  const memberDb = (actor: Row) => new Database(env, actor.jwt);
-  const getTask = async (actor: Row, id: string, byKey = false) => (await memberDb(actor).rows('tasks', {
-    select: '*', [byKey ? 'task_key' : 'id']: `eq.${id}`, limit: '1',
-  }))[0];
+  const memberDb = (actor: Row) => {
+    if (!actor.jwt) fail(NO_ACCOUNT);
+    return new Database(env, actor.jwt);
+  };
+  const getTask = async (actor: Row, id: string, byKey = false) => {
+    const rows = await memberDb(actor).rows('tasks', {
+      select: '*', [byKey ? 'task_key' : 'id']: `eq.${id}`, limit: byKey ? '2' : '1',
+    });
+    if (rows.length > 1) fail('找到多張相同卡號的卡片，請從搜尋結果依專案選擇。');
+    return rows[0];
+  };
   const actions: Actions = {
     enabled: async () => enabled(await admin.setting('feature_toggles')),
     heartbeat: async connected => { await admin.write('system_settings', { key: 'slack_socket_status',
@@ -96,7 +111,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         platform_user_id: user, platform_team_id: team, display_name: info.profile?.display_name || info.real_name || member.name,
         is_verified: true, verified_by: 'email' }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];
       return { ...member, binding_id: binding.id, team, slack_user: user, locale: info.locale || 'zh-TW',
-        jwt: await memberJwt(env.get('JWT_SECRET') || '', member, binding) };
+        jwt: await memberJwt(env.get('JWT_SECRET') || '', member, binding, sourceOf(p)) };
     },
     catalog: async actor => {
       const db = memberDb(actor);
@@ -105,7 +120,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         db.rows('statuses', { select: 'id,name', order: 'sort_order,id', limit: '1' }), db.setting('required_fields'),
       ]);
       if (!projects.length || !statuses.length) fail('沒有可用的專案或狀態，請洽管理員');
-      if (Object.entries(required || {}).some(([key, value]) => value === true && !['dueDate', 'assignee', 'requirement'].includes(key)))
+      if (requiresWebCreate(required || {}))
         fail('團隊設有額外必填欄位，請在 LIVO 網頁建立卡片');
       return { projects, statuses, required };
     },
@@ -114,13 +129,21 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       const filter = query ? `*${query}*` : '*';
       if (field === 'task') return (await db.rows('tasks', { select: 'id,task_key,title',
         or: `(task_key.ilike.${filter},title.ilike.${filter})`, order: 'task_key', limit: '20' })).map(taskOption);
-      const tables: Record<string, string> = { project: 'projects', assignee: 'members', status: 'statuses' };
+      if (field === 'project') {
+        const [projects, lines] = await Promise.all([
+          db.rows('projects', { select: 'id,name,line_id', name: `ilike.${filter}`, is_archived: 'eq.false', order: 'name,id', limit: '100' }),
+          db.rows('product_lines', { select: 'id,name,sort_order', order: 'sort_order,id', limit: '100' }),
+        ]);
+        return projectOptionGroups(projects, lines, actor.locale);
+      }
+      const tables: Record<string, string> = { assignee: 'members', reviewer: 'members', status: 'statuses' };
       const table = tables[field];
       if (!table) return [];
       return (await db.rows(table, { select: 'id,name', name: `ilike.${filter}`, limit: '20',
-        order: field === 'status' ? 'sort_order,id' : 'name', ...(field === 'project' ? { is_archived: 'eq.false' } : {}),
-        ...(field === 'assignee' ? { is_active: 'eq.true' } : {}) })).map(r => option(r.id, r.name));
+        order: field === 'status' ? 'sort_order,id' : 'name',
+        ...(['assignee', 'reviewer'].includes(field) ? { is_active: 'eq.true' } : {}) })).map(r => option(r.id, r.name));
     },
+    workspace: createWorkspaceData(memberDb),
     task: getTask,
     mapped: async (actor, channel, ts) => {
       if (!channel || !ts) return;
@@ -172,7 +195,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         id: `in.(${targets.map(t => t.id).join(',')})` }) : [];
       const payload = { type: isComment ? 'comment_added' : 'task_created', taskId: task.id, taskKey: task.task_key,
         taskTitle: task.title, priority: task.priority, actorName: actor.name, commentPreview: result.preview,
-        sourceChannelId: isComment ? source.channel : undefined,
+        sourceChannelId: isComment && source.echoExistingMessage !== false ? source.channel : undefined,
         dmTargets: members.map(m => ({ email: m.email, name: m.name, reason: targets.find(t => t.id === m.id)?.type === 'mention' ? '你被 @提及' : '你的任務有新留言' })) };
       // 20260714_notify_dispatch.sql already sends signed webhooks on task/comment
       // writes and emails on notification inserts. Do not dispatch them twice.

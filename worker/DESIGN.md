@@ -74,7 +74,7 @@ Postgres → SQLite translation used by `schema.sql` and enforced by `db.ts`:
 Input: `QueryRequest` (protocol.ts). Output: `QueryResponse`.
 
 - Table allowlist from `tables.ts` — unknown table → error. `orders`,
-  `auth_users`, `auth_refresh_tokens` are NOT client-queryable.
+  `auth_users`, `auth_refresh_tokens`, `auth_login_attempts` are NOT client-queryable.
 - Filters map 1:1 to SQL (`eq→=`, `neq→!=`, `in→IN (...)`, `is null`, `not.is null→IS NOT NULL`,
   `gt/gte/lt/lte`, `like/ilike→LIKE` (NOCASE for ilike)). `or` receives the PostgREST
   string; ONLY the grammar `col.eq.V,col.is.null` (comma-joined simple conditions with
@@ -124,6 +124,26 @@ Input: `QueryRequest` (protocol.ts). Output: `QueryResponse`.
   credentials'}}` (the UI matches that substring). Sign access JWT
   `{sub:user.id, email, exp: now+3600}`; create rotating refresh token (random 32B,
   store SHA-256).
+- login throttle (`auth_login_attempts(key TEXT PK, failures, window_start,
+  locked_until)` plus expiring `auth_login_reservations`, both server-only, no
+  `workspace_id`): 5 confirmed failures per email or 20 per IP
+  (`CF-Connecting-IP`, canonical IPv6 per /64) within 15 min
+  → that key is locked for 15 min → `429` + `Retry-After`,
+  `{user:null, session:null, error:{message:'Too many requests; please retry later',
+  code:'over_request_rate_limit'}}`, even for the right password. Each attempt
+  reserves its slot atomically before the password check (no parallel-burst
+  bypass); in-flight slots do not count as failures. Temporary capacity returns
+  429 with Retry-After 1 second, without hard-locking the account or IP. Settlement
+  is exactly once and tied to the original counter window; success clears only
+  confirmed email failures, retaining other live reservations. Unknown emails
+  count like real ones; an already-blocked IP cannot create more email rows.
+  Reservations expire after 2 minutes; `scheduled()` prunes expired reservations
+  and counters in bounded batches of 500. Missing schema/store failure fails
+  closed; no session is issued without successful settlement. Missing/invalid
+  CF-Connecting-IP returns 503 in production; only explicit loopback development
+  URLs allow email-only throttling. X-Forwarded-For is never trusted. Configure
+  edge routes to retain visitor IP headers; avoid Pseudo IPv4 overwrite when
+  relying on IPv6 /64 limits. Worker subrequests can share an IP bucket.
 - refresh: validate + rotate (delete old, issue new). logout: delete refresh token.
 - Middleware `requireMember(c)`: verify JWT → find member by auth_id, else by email
   (and heal auth_id link), must be `is_active`; attaches `{authUser, member}`.

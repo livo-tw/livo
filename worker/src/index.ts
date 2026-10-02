@@ -13,7 +13,13 @@ import { cors } from 'hono/cors';
 import type { AppContext, Env } from './env';
 import { DEFAULT_WORKSPACE, DEMO_BLOCKED_MESSAGE, isCloudSignupEnabled, isDemoMember } from './env';
 import type { QueryRequest } from './protocol';
-import { registerAuthRoutes, requireMember, resolveActiveMember, verifyAccessToken } from './auth';
+import {
+  pruneLoginAttempts,
+  registerAuthRoutes,
+  requireMember,
+  resolveActiveMember,
+  verifyAccessToken,
+} from './auth';
 import { hubName } from './notify';
 import { handleCloudWaitlist, handleCloudWaitlistApprove } from './functions/cloudBeta';
 import { runQuery, roleRank } from './db';
@@ -214,6 +220,7 @@ export default {
         runSlackDigest(env, ctx),
         runDueReminders(env), // due-soon notifications+emails, daily 09:00 台灣 self-gate
         runDemoReset(env), // hourly demo wipe+reseed when DEMO_RESET==="1" (T2b)
+        pruneLoginAttempts(env), // login-throttle rows whose window and lock have lapsed
       ]).then(() => {})
     );
   },

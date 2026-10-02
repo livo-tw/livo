@@ -41,6 +41,29 @@ services:
       retries: 3
       start_period: 10s
 
+  # Optional durable notification poller. Enable with COMPOSE_PROFILES=slack-delivery.
+  livo-slack-delivery:
+    image: curlimages/curl:latest
+    profiles: [slack-delivery]
+    restart: unless-stopped
+    read_only: true
+    environment:
+      SLACK_INTERNAL_SECRET: ${SLACK_INTERNAL_SECRET:-}
+      ANON_KEY: ${ANON_KEY}
+    depends_on:
+      kong:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          curl --silent --max-time 55 --output /dev/null -X POST http://kong:8000/functions/v1/slack-deliver \
+            -H "Authorization: Bearer $${ANON_KEY}" \
+            -H "x-livo-slack-secret: $${SLACK_INTERNAL_SECRET}" || true
+          sleep 5
+        done
+
   # Optional outbound-only Slack transport. An empty app token exits successfully.
   livo-slack-socket:
     image: node:22-alpine

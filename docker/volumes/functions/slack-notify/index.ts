@@ -17,6 +17,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 import { shouldPostChannel } from '../slack-interact/core.ts';
+import { constantTimeSecret } from '../slack-interact/backend.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -144,7 +145,6 @@ async function postMessage(
   text: string,
   blocks: any[],
   username: string,
-  iconEmoji: string,
 ): Promise<any> {
   return slackPost(sc, 'chat.postMessage', {
     channel,
@@ -153,7 +153,6 @@ async function postMessage(
     unfurl_links: false,
     unfurl_media: false,
     username,
-    icon_emoji: iconEmoji,
   });
 }
 
@@ -310,15 +309,15 @@ async function sendTaskDm(
   reason: string,
   payload: NotifyPayload,
   memberName?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const slackUserId = await findSlackUserId(sc, email, memberName);
     if (!slackUserId) {
       console.log(`[slack] DM: user not found for email=${email}, name=${memberName}`);
-      return;
+      return false;
     }
     const dmChannelId = await openDm(sc, slackUserId);
-    if (!dmChannelId) return;
+    if (!dmChannelId) return false;
 
     const blocks = buildDmBlocks(payload, reason);
     const msgData = await postMessage(
@@ -326,12 +325,12 @@ async function sendTaskDm(
       dmChannelId,
       `${reason}: ${payload.taskKey || ''} ${payload.taskTitle || ''}`,
       blocks,
-      'PM 任務通知',
-      ':bell:',
+      'LIVO',
     );
-    if (!msgData.ok) console.error(`[slack] DM: failed to send message — ${msgData.error}`);
+    return msgData.ok === true;
   } catch (err) {
-    console.error(`[slack] DM error for ${email}:`, err);
+    console.error('[slack] DM delivery failed');
+    return false;
   }
 }
 
@@ -346,6 +345,16 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
+    if (req.method !== 'POST') return new Response(null, { status: 405 });
+    const jwt = (req.headers.get('authorization') || '').replace(/^Bearer /i, '');
+    if (!(await constantTimeSecret(jwt, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''))) {
+      const { data: auth, error } = await supabase.auth.getUser(jwt);
+      const { data: member } = auth?.user ? await supabase.from('members').select('id')
+        .eq('auth_id', auth.user.id).eq('is_active', true).maybeSingle() : { data: null };
+      if (error || !member) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: corsHeaders });
+    }
+    const { data: deliveryRow } = await supabase.from('system_settings').select('value').eq('key', 'slack_delivery').maybeSingle();
+    const delivery = deliveryRow?.value;
     const token = await resolveSlackToken(supabase);
     if (!token) {
       return new Response(JSON.stringify({ error: 'slack_not_configured' }), {
@@ -354,6 +363,13 @@ Deno.serve(async (req) => {
     }
 
     const payload: NotifyPayload = await req.json();
+    // The database trigger already committed the durable event. Old UI and Slack
+    // callers must not post it a second time or supply a different recipient.
+    if (delivery?.enabled === true && TASK_EVENT_TYPES.includes(payload.type)) {
+      return new Response(JSON.stringify({ accepted: true, managedBy: 'database' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     if (payload.type.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
       const { data: enabled, error } = await supabase.rpc('livo_approvals_enabled');
       if (error || enabled !== true) {
@@ -396,7 +412,9 @@ Deno.serve(async (req) => {
             ];
 
       const channelId = await resolveChannelId(sc, target);
-      const res = await postMessage(sc, channelId, title, blocks, 'PM 任務通知', ':clipboard:');
+      if (delivery?.enabled === true && !(Array.isArray(delivery.routes) && delivery.routes.some((r: any) => r.enabled !== false && r.channelId === channelId)))
+        return json({ error: 'channel_not_allowed' }, 403);
+      const res = await postMessage(sc, channelId, title, blocks, 'LIVO');
       if (!res.ok) {
         console.error('[slack] report post error:', res.error);
         return json({ error: res.error || 'slack_error' });
@@ -412,7 +430,7 @@ Deno.serve(async (req) => {
       const fallbackText = `${payload.taskKey || ''} ${payload.taskTitle || ''}`.trim() || '簽核通知';
 
       const channelId = await resolveChannelId(sc, taskNotifyChannel);
-      const res = await postMessage(sc, channelId, fallbackText, blocks, 'PM 任務通知', ':clipboard:');
+      const res = await postMessage(sc, channelId, fallbackText, blocks, 'LIVO');
       if (!res.ok) {
         console.error('[slack] approval post error:', res.error);
         return json({ error: res.error || 'slack_error' });
@@ -431,8 +449,8 @@ Deno.serve(async (req) => {
       if (shouldPostChannel(channelId, payload.sourceChannelId)) {
       const blocks = buildBlocks(payload);
       const fallbackText = `${payload.actorName ?? ''} - ${payload.taskKey || ''} ${payload.taskTitle || ''}`;
-      const res = await postMessage(sc, channelId, fallbackText, blocks, 'PM 任務通知', ':clipboard:');
-      if (!res.ok) console.error('[slack] channel error:', res.error);
+      const res = await postMessage(sc, channelId, fallbackText, blocks, 'LIVO');
+      if (!res.ok) return json({ error: res.error || 'slack_error' }, 502);
       }
     }
 
@@ -449,9 +467,10 @@ Deno.serve(async (req) => {
           : (currentHour >= startHour || currentHour < endHour);
 
         if (inWindow) {
-          await Promise.allSettled(
+          const results = await Promise.allSettled(
             payload.dmTargets.map((t) => sendTaskDm(sc, t.email, t.reason, payload, t.name)),
           );
+          if (results.some(r => r.status === 'rejected' || r.value !== true)) return json({ error: 'dm_delivery_failed' }, 502);
         } else {
           console.log(`[slack] DM skipped: current hour ${currentHour} outside window ${startHour}-${endHour}`);
         }

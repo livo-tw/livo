@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, Search, FileText, History, Lock, Paperclip, Trash2, ArrowLeft } from 'lucide-react';
-import DOMPurify from 'dompurify';
+import { renderKnowledgeHtml } from '@/lib/knowledgeHtml';
 import { toast } from 'sonner';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -241,7 +241,7 @@ export default function KnowledgeBaseView() {
             </div>
             {admin && <label className="flex items-center gap-2 text-sm"><input disabled={busy} type="checkbox" checked={draft.admin_only} onChange={e => setDraft({ ...draft, admin_only: e.target.checked })} />{t('kb.adminOnly')}</label>}
             <RichTextEditor content={draft.body} onChange={body => setDraft(d => d ? { ...d, body } : d)} editable={!busy && !lockedBy} imageUploadPrefix={`kb/${page.id}`} members={users} />
-          </div> : <article className="prose prose-sm dark:prose-invert max-w-none min-h-40 rounded-xl border bg-card p-5 shadow-sm break-words [&_img]:max-w-full" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(page.body || `<p>${t('kb.emptyBody')}</p>`) }} />}
+          </div> : <article className="prose prose-sm dark:prose-invert max-w-none min-h-40 rounded-xl border bg-card p-5 shadow-sm break-words [&_img]:max-w-full" dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(page.body || `<p>${t('kb.emptyBody')}</p>`) }} />}
           {showHistory && <section className="rounded-xl border bg-card shadow-sm p-4 space-y-3" aria-label={t('kb.history')}>
             <h3 className="font-semibold">{t('kb.history')}</h3><p className="text-xs text-muted-foreground">{t('kb.historyHint')}</p>
             {!revisions.length && <p className="text-sm text-muted-foreground">{t('kb.noHistory')}</p>}
@@ -249,7 +249,7 @@ export default function KnowledgeBaseView() {
               <button className="text-left hover:underline" onClick={() => setPreview(r)}>{t('kb.version', { version: r.version })} · {new Date(r.created_at).toLocaleString()} · {users.find(u => u.id === r.created_by)?.name || t('kb.member')}</button>
               {canEdit && !draft && <Button size="sm" variant="outline" disabled={busy} onClick={() => void restore(r)}>{t('kb.restore')}</Button>}
             </div>)}</div>
-            {preview && <article className="prose prose-sm dark:prose-invert max-w-none border-t pt-3 break-words" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(preview.body) }} />}
+            {preview && <article className="prose prose-sm dark:prose-invert max-w-none border-t pt-3 break-words" dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(preview.body) }} />}
           </section>}
           <section className="rounded-xl border bg-card p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Paperclip size={16} />{t('kb.attachments')}</h3>

@@ -152,6 +152,8 @@ Lingye，台灣的個人開發者，做了十年 PM。LIVO 一開始是做給自
 
 ### Slack 互動（可選，Docker 自架）
 
+Docker 任務通知可依產線／專案指定頻道，使用持久佇列及每張卡共用的討論串。支援限流重試；無法確認是否送達時保留待查紀錄，避免重複發送。設定預設關閉，見 [任務通知佇列與專案頻道](release-template/README.md#任務通知佇列與專案頻道docker可選)。
+
 支援 `/livo` 建卡、`/livo comment ABC-123` 留言，以及訊息捷徑與可見卡片搜尋。
 Socket Mode 主動連線，內網無須提供公開 Request URL；不需新增 npm 依賴。
 預設關閉：管理員先啟用「功能開關 → Slack 互動（建卡、留言）」，再於「整合 → Slack」設定 Bot、Socket Mode、`commands` 權限及 App Token。

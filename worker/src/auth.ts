@@ -6,11 +6,13 @@
 //   requireMember            — middleware resolving JWT → active member (RLS parity)
 //   verifyAccessToken(env, token)
 //   hashPassword(pw)         — pbkdf2 format used for all newly stored passwords
+//   pruneLoginAttempts(env)  — hourly cleanup of the login throttle (scheduled())
 //
 // D1 tables (schema.sql):
 //   auth_users(id TEXT PK, email TEXT UNIQUE COLLATE NOCASE, password_hash TEXT,
 //              banned INTEGER DEFAULT 0, created_at TEXT)
 //   auth_refresh_tokens(token_hash TEXT PK, user_id TEXT, expires_at TEXT, created_at TEXT)
+//   auth_login_attempts / auth_login_reservations (loginThrottle.ts)
 //
 // password_hash formats:
 //   pbkdf2$<iterations>$<saltB64>$<hashB64>   (new; WebCrypto PBKDF2-SHA256)
@@ -27,6 +29,8 @@ import type { AuthResponse, AuthSession } from './protocol';
 import { verifyInviteToken, markWaitlistJoined } from './functions/cloudBeta';
 import { workspaceProvisionStatements } from './provision';
 import { readSetPasswordToken, setPasswordTokenValid } from './setPasswordToken';
+import { reserveLoginAttempt, finishLoginAttempt, loginSourceIp, type LoginReservation } from './loginThrottle';
+export { pruneLoginAttempts } from './loginThrottle';
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -188,8 +192,8 @@ async function createSession(env: Env, userId: string, email: string): Promise<A
   };
 }
 
-function authFailure(message: string): AuthResponse {
-  return { user: null, session: null, error: { message } };
+function authFailure(message: string, code?: string): AuthResponse {
+  return { user: null, session: null, error: code ? { message, code } : { message } };
 }
 
 // ─── Row types ────────────────────────────────────────────────────────────
@@ -225,7 +229,24 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
     const body = (await c.req.json().catch(() => null)) as { email?: unknown; password?: unknown } | null;
     const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
     const password = typeof body?.password === 'string' ? body.password : '';
-    if (!email || !password) return c.json<AuthResponse>(authFailure(INVALID_CREDENTIALS));
+    if (!email || email.length > 320 || !password) return c.json<AuthResponse>(authFailure(INVALID_CREDENTIALS));
+
+    // Brute-force throttle — before the user lookup, so a locked-out attempt
+    // costs no KDF work.
+    let attempt: LoginReservation;
+    try {
+      attempt = await reserveLoginAttempt(c.env, email, loginSourceIp(c.req.url, c.req.header('CF-Connecting-IP')));
+    } catch {
+      console.error('[auth] login throttle unavailable');
+      return c.json<AuthResponse>(authFailure('Login temporarily unavailable', 'auth_unavailable'), 503);
+    }
+    if (attempt.locked) {
+      return c.json<AuthResponse>(
+        authFailure('Too many requests; please retry later', 'over_request_rate_limit'),
+        429,
+        { 'Retry-After': String(attempt.retryAfterS) }
+      );
+    }
 
     const user = await c.env.DB
       .prepare('SELECT id, email, password_hash, banned FROM auth_users WHERE email = ? COLLATE NOCASE')
@@ -238,6 +259,15 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
     const usable = user && user.banned !== 1 && user.password_hash ? user : null;
     const { ok, needsRehash } = await verifyPassword(password, usable ? usable.password_hash! : DECOY_PASSWORD_HASH);
 
+    // Settle exactly once before issuing a session. Expired/store-failed
+    // reservations cannot silently turn into unthrottled authentication.
+    try {
+      if (!await finishLoginAttempt(c.env, attempt.id, usable && ok ? 'success' : 'failure'))
+        return c.json<AuthResponse>(authFailure('Login temporarily unavailable', 'auth_unavailable'), 503);
+    } catch {
+      console.error('[auth] login throttle settlement unavailable');
+      return c.json<AuthResponse>(authFailure('Login temporarily unavailable', 'auth_unavailable'), 503);
+    }
     // Same message for every failure kind — no user enumeration.
     if (!usable || !ok) return c.json<AuthResponse>(authFailure(INVALID_CREDENTIALS));
 

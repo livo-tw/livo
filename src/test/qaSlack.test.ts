@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
 import { createQaIssue, type QaIssue } from '../lib/qa/domain';
 import { drainQaSlackInbox, handleQaSlack, isQaSlackPayload, parseQaSlackCommand, qaMessageIntent, qaRequestId, type QaSlackActions, type QaSlackPayload } from '../lib/qa/slack';
 
@@ -19,6 +20,17 @@ function harness() {
 }
 const event = (text:string):QaSlackPayload => ({type:'event_callback',team_id:'T1',event:{type:'message',user:'U1',channel:'C1',thread_ts:'100.1',ts:'101.1',text}});
 describe('QA Slack automation',()=>{
+  it.each([
+    {command:'/livo',text:'bug new Wallet',trigger_id:'tr'},
+    event('Follow-up'),
+  ])('keeps QA routing ahead of task workspace routing',async payload=>{
+    const {d,api,flush}=harness();const taskEnabled=vi.fn(async()=>true);
+    const actions={qa:d,enabled:taskEnabled} as unknown as Actions;
+    await handleInteraction(payload,'envelope',actions);await flush();
+    expect(taskEnabled).not.toHaveBeenCalled();
+    if ('command' in payload) expect(d.slack).toHaveBeenCalledWith('views.open',expect.anything());
+    else expect(api).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({action:'comment'}));
+  });
   it('records private Slack file permalinks without fetching or exposing the binary',async()=>{
     const {d,api,flush}=harness();const payload=event('');payload.event!.subtype='file_share';payload.event!.files=[{name:'bug.mp4',permalink:'https://files.slack.com/private/file'}];
     await handleQaSlack(payload,'e',d);await flush();expect(api).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({action:'comment',body:expect.stringContaining('https://files.slack.com/private/file')}));

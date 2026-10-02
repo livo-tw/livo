@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchComments } from '@/lib/commentQueries';
 import { applyTheme, type ThemeKey } from '@/lib/themes';
 import { setWebhookConfig, type WebhookConfig } from '@/lib/webhook';
 import type {
@@ -94,7 +95,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         supabase.from('task_specs').select('*'),
         supabase.from('task_checks').select('*').order('sort_order'),
         supabase.from('task_todos').select('*').order('sort_order'),
-        supabase.from('comments').select('*'),
+        fetchComments(supabase),
         supabase.from('status_logs').select('*'),
         supabase.from('tasks').select('*'),
         supabase.from('task_deployments').select('*'),

@@ -61,6 +61,12 @@ export const TABLES: TableRegistry = {
     clientAccess: 'none',
     autoNowCols: ['created_at'],
   },
+  // Login throttle (auth.ts). No workspace_id on purpose — see schema.sql.
+  auth_login_reservations: { pk: 'id', clientAccess: 'none' },
+  auth_login_attempts: {
+    pk: 'key',
+    clientAccess: 'none',
+  },
 
   // ── Core team / board ────────────────────────────────────────────────────
   members: {

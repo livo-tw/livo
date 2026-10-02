@@ -1,3 +1,4 @@
+import { requireSlackReceipt } from '@/lib/slackReceipt';
 import { loadFeatureToggles } from '@/lib/featureToggleQueries';
 import { isApprovalEvent } from '@/lib/featureToggles';
 import { supabase } from '@/integrations/supabase/client';
@@ -76,7 +77,7 @@ export async function sendSlackReportAsync(
 ): Promise<void> {
   try {
     if (eventType && isApprovalEvent(eventType) && !(await loadFeatureToggles()).approvals) return;
-    await supabase.functions.invoke('slack-notify', {
+    const result = await supabase.functions.invoke('slack-notify', {
       body: {
         type: 'report',
         reportContent: content,
@@ -86,8 +87,10 @@ export async function sendSlackReportAsync(
         eventType,
       },
     });
+    requireSlackReceipt(result);
   } catch (err) {
     console.error('[LIVO] Slack 報告發送失敗:', err);
+    throw err;
   }
 }
 

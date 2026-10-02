@@ -1,5 +1,9 @@
 // Portable interaction rules: no tokens, network calls or runtime globals.
 export type Row = Record<string, any>;
+export function requiresWebCreate(required: Row = {}): boolean {
+  const supported = ['title', 'project', 'status', 'priority', 'dueDate', 'assignee', 'requirement'];
+  return Object.entries(required).some(([key, value]) => value === true && !supported.includes(key));
+}
 export const DISABLED = 'LIVO 的 Slack 功能目前未啟用，請洽管理員';
 export const NO_ACCOUNT = '找不到對應的 LIVO 帳號：請管理員確認你的 Slack Email 與 LIVO 相同，或在 LIVO 的 Slack 設定手動對應你的帳號';
 export const UNAVAILABLE = '找不到卡片，或你沒有權限查看這張卡片';
@@ -8,6 +12,7 @@ const words: Record<string, [string, string]> = {
   '標題': ['标题', 'Title'], '專案': ['项目', 'Project'], '狀態': ['状态', 'Status'], '經辦人': ['经办人', 'Assignee'],
   '優先級': ['优先级', 'Priority'], '到期日': ['到期日', 'Due date'], '需求說明': ['需求说明', 'Description'],
   '卡片': ['卡片', 'Card'], '留言': ['留言', 'Comment'], '送出': ['提交', 'Submit'], '關閉': ['关闭', 'Close'],
+  '未分類': ['未分类', 'Uncategorized'],
   '最高': ['最高', 'Highest'], '高': ['高', 'High'], '中': ['中', 'Medium'], '低': ['低', 'Low'], '最低': ['最低', 'Lowest'],
   '請填寫此欄位': ['请填写此字段', 'Complete this field'], '標題最多 200 字': ['标题最多 200 字', 'Use at most 200 characters'],
   '請選擇優先級': ['请选择优先级', 'Choose a priority'], '說明最多 3000 字': ['说明最多 3000 字', 'Use at most 3000 characters'],
@@ -22,12 +27,28 @@ export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, c =>
 const decode = (text: string) => text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 export const option = (id: string, name: string) => ({ text: { type: 'plain_text', text: name.slice(0, 75) || id }, value: id });
 export const taskOption = (task: Row) => option(task.id, `${task.task_key} · ${task.title}`);
+export function projectOptionGroups(projects: Row[], lines: Row[], locale = 'zh-TW'): Row[] {
+  const ordered = [...lines].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id));
+  const known = new Set(ordered.map(line => line.id));
+  const group = (name: string, items: Row[]) => ({ label: { type: 'plain_text', text: name.slice(0, 75) },
+    options: items.slice(0, 100).map(project => option(project.id, project.name)) });
+  const groups = ordered.map(line => group(line.name, projects.filter(project => project.line_id === line.id)))
+    .filter(item => item.options.length);
+  const unclassified = projects.filter(project => !known.has(project.line_id));
+  if (unclassified.length) groups.push(group(localize('未分類', locale), unclassified));
+  return groups.slice(0, 100);
+}
+export function taskReceipt(kind: string, task: Row, url: string): string {
+  const label = `${task.task_key} - ${task.title}`.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\|/g, '｜').replace(/[\r\n]+/g, ' ');
+  return `已${kind === 'create' ? '建立卡片' : '新增留言'}：\n<${url}|${label}>`;
+}
 export function parseCommand(text: string) {
   const trimmed = text.trim();
   if (/^help(?:\s|$)/i.test(trimmed)) return { kind: 'help' as const };
   const comment = /^comment(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i.exec(trimmed);
   if (comment) return { kind: 'comment' as const, key: (comment[1] || '').toUpperCase(), text: (comment[2] || '').trim() };
-  if (!trimmed || /^new(?:\s|$)/i.test(trimmed)) return { kind: 'new' as const, text: trimmed.replace(/^new\s*/i, '') };
+  if (!trimmed || /^new(?:\s|$)/i.test(trimmed)) return { kind: 'new' as const, text: decode(trimmed.replace(/^new\s*/i, '')) };
   return { kind: 'help' as const };
 }
 /**
@@ -98,7 +119,8 @@ const modal = (callback: string, title: string, blocks: Row[], metadata: Row, su
     ...(block.block_id === 'priority' ? { element: { ...block.element,
       initial_option: option('medium', localize('中', metadata.locale)), options: block.element.options.map((o: Row) => option(o.value, localize(o.text.text, metadata.locale))) } } : {}) })),
 });
-export const messageModal = (text: string) => modal('livo_result', 'LIVO', [{ type: 'section', text: { type: 'plain_text', text } }], {}, false);
+export const messageModal = (text: string, markdown = false) => modal('livo_result', 'LIVO',
+  [{ type: 'section', text: { type: markdown ? 'mrkdwn' : 'plain_text', text } }], {}, false);
 export function createModal(catalog: Row, actor: Row, draft: Row = {}, metadata: Row = {}) {
   return modal('livo_create_task', '建立 LIVO 卡片', [
     input('title', '標題', textInput(draft.title || '', 200)),

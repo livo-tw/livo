@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { canAssignSlackMember, slackEmailBelongsToOther, commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
-  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, shouldPostChannel } from '../../docker/volumes/functions/slack-interact/core';
+  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, projectOptionGroups, requiresWebCreate, shouldPostChannel, taskReceipt } from '../../docker/volumes/functions/slack-interact/core';
 import { constantTimeSecret, createActions, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
 import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
 import { resolveFeatureToggles } from '@/lib/featureToggles';
@@ -13,6 +13,15 @@ const task = { id: 'task-example', task_key: 'ABC-123', title: 'Example card', p
 const environment: Record<string, string> = { SUPABASE_URL: 'https://example.com', SUPABASE_SERVICE_ROLE_KEY: 'example-service',
   SUPABASE_ANON_KEY: 'example-anon', JWT_SECRET: 'example-only-secret-with-at-least-32-characters', APP_BASE_URL: 'https://example.com' };
 const env = { get: (name: string) => environment[name] };
+describe('Slack create required fields', () => {
+  it('supports built-in title and project requirements alongside due date', () => {
+    expect(requiresWebCreate({ title: true, project: true, dueDate: true, tags: false })).toBe(false);
+    expect(requiresWebCreate({ title: true, project: true, status: true, priority: true, assignee: true, requirement: true })).toBe(false);
+  });
+  it.each(['reviewer', 'tags', 'startDate'])('still requires the web form for required %s', field => {
+    expect(requiresWebCreate({ title: true, [field]: true })).toBe(true);
+  });
+});
 const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
 function deps() {
   const jobs: Promise<unknown>[] = [];
@@ -25,6 +34,49 @@ function deps() {
   return { d, jobs };
 }
 afterEach(() => vi.unstubAllGlobals());
+describe('Slack project grouping and readable receipts', () => {
+  const lines = [{ id: 'fish', name: 'Fish Game', sort_order: 2 }, { id: 'fast', name: 'Fast Game', sort_order: 1 }];
+  const projects = [{ id: 'p-fish', name: 'Common', line_id: 'fish' }, { id: 'p-fast', name: 'Common', line_id: 'fast' },
+    { id: 'p-none', name: 'Legacy', line_id: null }];
+  it('keeps same-named projects distinct under the configured line order, with an unclassified fallback', () => {
+    const groups = projectOptionGroups(projects, lines);
+    expect(groups.map(g => g.label.text)).toEqual(['Fast Game', 'Fish Game', '未分類']);
+    expect(groups.map(g => g.options[0].value)).toEqual(['p-fast', 'p-fish', 'p-none']);
+    expect(projectOptionGroups([projects[0]], lines).map(g => g.label.text)).toEqual(['Fish Game']);
+  });
+  it('uses a grouped Slack response only for project suggestions', async () => {
+    const { d } = deps(); const groups = projectOptionGroups(projects, lines);
+    vi.mocked(d.search).mockResolvedValue(groups);
+    expect(await handleInteraction({ type: 'block_suggestion', action_id: 'project', value: '' }, 'q', d))
+      .toEqual({ option_groups: groups });
+    vi.mocked(d.search).mockResolvedValue([]);
+    expect(await handleInteraction({ type: 'block_suggestion', action_id: 'project', value: 'absent' }, 'q2', d))
+      .toEqual({ options: [] });
+  });
+  it('loads active projects and line labels through member RLS and retains groups after searching', async () => {
+    const fetchMock = vi.fn(async (url: string) => response(new URL(url).pathname.endsWith('/product_lines') ? lines : [projects[0]]));
+    vi.stubGlobal('fetch', fetchMock);
+    const groups = await createActions(env, () => {}).search(actor, 'project', 'Common');
+    expect(groups.map(g => g.label.text)).toEqual(['Fish Game']);
+    for (const [, init] of fetchMock.mock.calls as unknown as [string, RequestInit][]) {
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer member-session');
+    }
+    const projectUrl = new URL(fetchMock.mock.calls.find(([url]) => new URL(url).pathname.endsWith('/projects'))![0]);
+    expect(projectUrl.searchParams.get('is_archived')).toBe('eq.false');
+    expect(projectUrl.searchParams.get('name')).toBe('ilike.*Common*');
+  });
+  it('labels receipt links with the card key and title without allowing title text to inject links or mentions', () => {
+    const receipt = taskReceipt('create', { ...task, title: 'UI <@UOTHER> & API | check' }, 'https://example.com/?task=ABC-123');
+    expect(receipt).toBe('已建立卡片：\n<https://example.com/?task=ABC-123|ABC-123 - UI &lt;@UOTHER&gt; &amp; API ｜ check>');
+    expect(taskReceipt('comment', { ...task, title: `"UI" & user's feedback` }, 'https://example.com/?task=ABC-123'))
+      .toBe(`已新增留言：\n<https://example.com/?task=ABC-123|ABC-123 - "UI" &amp; user's feedback>`);
+  });
+  it('also uses a titled link for the direct comment command', async () => {
+    const { d } = deps(); const payload = { command: '/livo', text: 'comment ABC-123 Example' };
+    await handleInteraction(payload, 'request-receipt', d);
+    expect(d.reply).toHaveBeenCalledWith(payload, taskReceipt('comment', task, d.link(task)));
+  });
+});
 describe('Slack actions rules', () => {
   it.each([undefined, null, {}, { slackActions: 'true' }, { slackActions: 1 }, { slackActions: false }])('defaults OFF for %j', value => {
     expect(enabled(value)).toBe(false);
@@ -35,6 +87,8 @@ describe('Slack actions rules', () => {
     expect(parseCommand('comment abc-123 first\nsecond')).toEqual({ kind: 'comment', key: 'ABC-123', text: 'first\nsecond' });
     expect(parseCommand('comment ABC-123')).toEqual({ kind: 'comment', key: 'ABC-123', text: '' });
     expect(parseCommand('new Example')).toEqual({ kind: 'new', text: 'Example' });
+    expect(parseCommand('new API &lt;success&gt; &amp; latency')).toEqual({ kind: 'new', text: 'API <success> & latency' });
+    expect(parseCommand('new Literal &amp;lt;tag&amp;gt;')).toEqual({ kind: 'new', text: 'Literal &lt;tag&gt;' });
     expect(parseCommand('nonsense')).toEqual({ kind: 'help' });
   });
   it('extracts the first line and keeps the message permalink', () => {
@@ -124,6 +178,8 @@ describe('interaction handler', () => {
     await Promise.all(jobs);
     expect(d.commit).toHaveBeenCalledOnce(); expect(d.deliver).toHaveBeenCalledOnce();
     expect(vi.mocked(d.commit).mock.calls[0][3]).toBe('TEXAMPLE:VEXAMPLE');
+    expect(vi.mocked(d.slack).mock.calls.find(([method]) => method === 'views.update')![1].view.blocks[0].text)
+      .toEqual({ type: 'mrkdwn', text: taskReceipt('comment', task, d.link(task)) });
   });
   it('does not redeliver notifications for a replayed action', async () => {
     const { d } = deps(); vi.mocked(d.commit).mockResolvedValue({ task, duplicate: true });

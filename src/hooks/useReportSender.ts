@@ -32,11 +32,11 @@ async function dispatchToSlack(
   target: ReportSendTarget,
   content: string,
   reportTitle: string,
-  actorName: string,
+  reportType: string,
 ): Promise<void> {
   const cfg = target.channel_config as { channel_id?: string; channel_name?: string };
   const preview = content.length > 500 ? content.slice(0, 497) + '...' : content;
-  await sendSlackReportAsync(reportTitle, preview, actorName, cfg.channel_id);
+  await sendSlackReportAsync(preview, reportTitle, reportType, cfg.channel_id);
 }
 
 export function useReportSender(sentBy: string) {
@@ -93,7 +93,7 @@ export function useReportSender(sentBy: string) {
 
       try {
         if (target.channel_type === 'slack') {
-          await dispatchToSlack(target, content, reportTitle, sentBy);
+          await dispatchToSlack(target, content, reportTitle, reportType);
           updateState(target.id, { status: 'sent' });
           if (logId) await logQueries.updateStatus(supabase, logId, 'sent');
         } else {

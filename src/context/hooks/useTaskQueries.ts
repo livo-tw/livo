@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchComments } from '@/lib/commentQueries';
 import type {
   Task, Status, Tag, TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog,
   CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency, TaskDeployment,
@@ -60,7 +61,7 @@ export function useTaskQueries() {
   }, []);
 
   const refreshComments = useCallback(async () => {
-    const { data, error } = await supabase.from('comments').select('*');
+    const { data, error } = await fetchComments(supabase);
     if (error) { console.error('[LIVO] refreshComments failed:', error.message); return; }
     if (data) setComments(data.map(mapComment));
   }, []);
