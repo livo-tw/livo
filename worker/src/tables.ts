@@ -22,6 +22,18 @@
 import type { TableRegistry } from './meta';
 
 export const TABLES: TableRegistry = {
+  // QA's guarded command API owns these tables. Query cannot bypass workflow/feature gates.
+  qa_issues: { pk:'id', clientAccess:'none', jsonCols:['data'] },
+  qa_commands: { pk:'id', clientAccess:'none', jsonCols:['issue_data','result_json'] },
+  qa_comments: { pk:'id', clientAccess:'none' },
+  qa_events: { pk:'id', clientAccess:'none' },
+  qa_attachments: { pk:'id', clientAccess:'none' },
+  qa_upload_sessions: { pk:'id', clientAccess:'none' },
+  qa_upload_parts: { pk:'upload_id', clientAccess:'none' },
+  qa_slack_links: { pk:'id', clientAccess:'none' },
+  qa_slack_receipts: { pk:'id', clientAccess:'none' },
+  qa_slack_inbox: { pk:'id', clientAccess:'none' },
+  qa_restore_batches: { pk:'id', clientAccess:'none' },
   // Mutations additionally pass the knowledge-base row/column guards in db.ts.
   kb_pages: {
     pk: 'id', clientAccess: 'full', boolCols: ['is_archived', 'admin_only'],

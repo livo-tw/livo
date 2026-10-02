@@ -33,10 +33,11 @@ export function startRelay({ token, secret, anonKey = '', upstream = 'http://kon
       if (ws.readyState === 1) ws.send(JSON.stringify({ envelope_id: envelope.envelope_id,
         ...(envelope.accepts_response_payload && payload ? { payload } : {}) }));
     };
-    const deadline = setTimeout(() => ack(), ackMs);
-    if (!envelope.accepts_response_payload) ack();
+    const durableEvent = envelope.type === 'events_api';
+    const deadline = durableEvent ? undefined : setTimeout(() => ack(), ackMs);
+    if (!envelope.accepts_response_payload && !durableEvent) ack();
     try {
-      if (!['slash_commands', 'interactive'].includes(envelope.type)) { ack(); return; }
+      if (!['slash_commands', 'interactive', 'events_api'].includes(envelope.type)) { ack(); return; }
       const now = Date.now();
       for (const [key, entry] of pending) if (now - entry.at > 300000) pending.delete(key);
       let entry = pending.get(envelope.envelope_id);
@@ -46,7 +47,7 @@ export function startRelay({ token, secret, anonKey = '', upstream = 'http://kon
         pending.set(envelope.envelope_id, entry);
       }
       ack(await entry.work);
-    } catch { ack(); log('Slack relay upstream unavailable'); }
+    } catch { pending.delete(envelope.envelope_id); if (!durableEvent) ack(); log('Slack relay upstream unavailable'); }
     finally { clearTimeout(deadline); }
   }
   async function connect() {

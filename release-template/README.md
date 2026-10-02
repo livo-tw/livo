@@ -429,14 +429,16 @@ VALUES (
 ## 從 Slack 建卡與留言（Docker，可選，預設關閉）
 
 管理員先在「系統管理 → 功能開關」開啟「Slack 互動（建卡、留言）」，再到「整合 → Slack」設定。
-功能關閉時不顯示互動設定、不處理建卡或留言，已存設定、綁定及紀錄仍保留。Cloudflare 版不提供此功能；展示模式不連線。
+功能關閉時不顯示互動設定、不處理建卡或留言，已存設定、綁定及紀錄仍保留。一般任務互動使用 Docker Socket Mode；Cloudflare QA 另有簽名 HTTP 入口，詳見原始碼 `QA-WORKFLOW.md`。展示模式不連線。
 Socket Mode 由容器主動連到 Slack，公司內網不必提供公開 Request URL。Slack 仍須允許容器對外 HTTPS / WebSocket 連線。
 
 1. 在 Slack App 的 **Socket Mode** 開啟連線；於 **Basic Information → App-level tokens** 建立具有 `connections:write` 的 Token。
 2. 新增 `/livo` slash command；啟用 **Interactivity**，新增兩個 **message shortcuts**：
    - 「建立 LIVO 卡片」，callback ID：`livo_create_task`。
    - 「留言到 LIVO 卡片」，callback ID：`livo_comment_task`。
+   - 使用 QA 時加「建立 QA Bug」，callback ID：`livo_qa_new`；另開啟 QA 功能開關。
 3. Bot scopes 加入 `commands`，並保留通知功能所需的 `channels:read`、`groups:read`、`chat:write`、`chat:write.customize`、`im:write`、`users:read`、`users:read.email`；重新安裝 App。
+   QA 討論串自動同步另需 `channels:history`、`groups:history`，並訂閱 `message.channels`、`message.groups`。可參考 `slack-qa-manifest.json`，合併設定後重新安裝 App。
 4. 在 LIVO Slack 卡片連接 Bot Token，將 Bot 邀請進預計操作的頻道。
 5. 在安裝目錄的 `docker/.env` 設定 `SLACK_APP_TOKEN=xapp-example`，以及同事可開啟的 `APP_BASE_URL=https://livo.example.com`（主機根網址，不含結尾斜線）。
 6. 重跑 `sh install.sh` 或 `install.bat`。安裝程式會備份既有 .env，只在缺少時產生 `SLACK_INTERNAL_SECRET`，重跑保留既有密鑰。進入 docker 目錄執行：
@@ -451,6 +453,7 @@ docker compose -f docker-compose.yml -f compose.frontend.yml up -d
 - `/livo` 或 `/livo new 標題`：開啟建卡表單；經辦人預設為本人。
 - `/livo comment ABC-123 留言內容`：在卡片留言；不附內容時開啟表單。
 - `/livo help`：查看操作方式。
+- `/livo bug new 標題`：開 QA Bug；`/livo bug link BUG_ID` 將既有 Bug 綁定新討論串；操作卡可回報修復、部署、PASS／FAIL、結案與重開。
 - 訊息捷徑帶入原訊息及 permalink；留言捷徑可搜尋有權限看到的卡片（最多 20 筆），已對應卡片的討論串會預選卡片。
 
 首次使用依 Slack Email（不分大小寫）綁定唯一、已啟用且具登入帳號的 LIVO 成員。若尚未建立登入帳號，請先由管理員啟用帳號並完成一次登入。

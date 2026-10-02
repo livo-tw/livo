@@ -9,6 +9,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useUIContext } from '@/context/UIContext';
 import { useBrowserNotification } from '@/hooks/useBrowserNotification';
+import { parseQaNotification } from '@/lib/qa/notifications';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ const NOTIFICATION_TYPE_KEYS: Record<string, string> = {
   status_changed: 'notification.types.statusChanged',
   due_soon: 'notification.types.dueSoon',
   system: 'notification.types.system',
+  qa_update: 'qa.title',
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ interface Notification {
   recipientId: string;
   senderId: string;
   type: string;
-  taskId: string;
+  taskId: string | null;
   content: string;
   isRead: boolean;
   createdAt: string;
@@ -57,9 +59,11 @@ const NotificationPanel = () => {
   const { currentMemberId } = useAuthContext();
   const { users } = useMemberContext();
   const { allTasks } = useTaskContext();
-  const { approvalsEnabled, setSelectedTask, setTaskDisplayMode, currentView, setCurrentView } = useUIContext();
+  const { approvalsEnabled, featureToggles, featureTogglesReady, setSelectedTask, setTaskDisplayMode, currentView, setCurrentView } = useUIContext();
+  const qaEnabled = featureTogglesReady && featureToggles.qa;
   const [allNotifications, setNotifications] = useState<Notification[]>([]);
-  const notifications = allNotifications.filter(notification => isEventEnabled(notification.type, approvalsEnabled));
+  const notifications = allNotifications.filter(notification => isEventEnabled(notification.type, approvalsEnabled) && (notification.type !== 'qa_update' || qaEnabled));
+  const notificationText = (type: string, content: string) => type === 'qa_update' ? parseQaNotification(content)?.title || t('qa.title') : content;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { permission, requestPermission, sendNotification } = useBrowserNotification();
@@ -115,7 +119,7 @@ const NotificationPanel = () => {
       .channel('notifications-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
         const r = payload.new as { id: string; recipient_id: string; sender_id: string; type: string; task_id: string; content: string; is_read: boolean; created_at: string };
-        if (r.recipient_id === currentMemberId && isEventEnabled(r.type, approvalsEnabled)) {
+        if (r.recipient_id === currentMemberId && isEventEnabled(r.type, approvalsEnabled) && (r.type !== 'qa_update' || qaEnabled)) {
           const newNotif: Notification = {
             id: r.id, recipientId: r.recipient_id, senderId: r.sender_id,
             type: r.type, taskId: r.task_id, content: r.content,
@@ -125,12 +129,12 @@ const NotificationPanel = () => {
 
           const senderName = userMap.get(r.sender_id)?.name || t('notification.systemSender');
           const action = NOTIFICATION_TYPE_KEYS[r.type] ? t(NOTIFICATION_TYPE_KEYS[r.type]) : t('notification.types.system');
-          sendNotification(`${senderName} ${action}`, { body: r.content || '', tag: r.id });
+          sendNotification(`${senderName} ${action}`, { body: notificationText(r.type, r.content || ''), tag: r.id });
         }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [approvalsEnabled, currentMemberId, userMap, sendNotification]);
+  }, [approvalsEnabled, qaEnabled, currentMemberId, userMap, sendNotification]);
 
   // ── Close on click outside ────────────────────────────────────────────────
 
@@ -160,8 +164,10 @@ const NotificationPanel = () => {
   };
 
   const handleClick = (n: Notification) => {
+    const qa = n.type === 'qa_update' ? parseQaNotification(n.content) : null;
+    if (n.type === 'qa_update' && (!qaEnabled || !qa)) return;
     if (!n.isRead) {
-      supabase.from('notifications').update({ is_read: true }).eq('id', n.id).then(({ error }) => {
+      Promise.resolve(supabase.from('notifications').update({ is_read: true }).eq('id', n.id)).then(({ error }) => {
         if (error) { console.error('[NotificationPanel] markRead failed:', error.message); return; }
         setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, isRead: true } : x));
       }).catch((err: any) => {
@@ -169,7 +175,13 @@ const NotificationPanel = () => {
         console.error(err);
       });
     }
-    const task = taskMap.get(n.taskId);
+    if (qa) {
+      const url = new URL(window.location.href); url.searchParams.set('qa', qa.issueId);
+      window.history.replaceState({}, '', url.toString());
+      setSelectedTask(null); setCurrentView('qa'); setOpen(false);
+      window.dispatchEvent(new Event('livo:qa-navigation')); return;
+    }
+    const task = n.taskId ? taskMap.get(n.taskId) : undefined;
     if (task) {
       if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog', 'dashboard'].includes(currentView)) {
         setCurrentView('board');
@@ -245,7 +257,7 @@ const NotificationPanel = () => {
             ) : (
               notifications.map(n => {
                 const sender = userMap.get(n.senderId);
-                const task = taskMap.get(n.taskId);
+                const task = n.taskId ? taskMap.get(n.taskId) : undefined;
                 const isDueSoon = n.type === 'due_soon' || n.type === 'system';
                 return (
                   <button
@@ -281,7 +293,7 @@ const NotificationPanel = () => {
                           </p>
                         )}
                         {n.content && n.type !== 'assign' && n.type !== 'review' && (
-                          <p className="text-[12px] text-muted-foreground/70 line-clamp-2 mt-0.5">{n.content}</p>
+                          <p className="text-[12px] text-muted-foreground/70 line-clamp-2 mt-0.5">{notificationText(n.type, n.content)}</p>
                         )}
                         <p className="text-xs text-muted-foreground/50 mt-0.5">{timeAgo(n.createdAt)}</p>
                       </div>

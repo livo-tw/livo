@@ -24,7 +24,7 @@ type RoleFilter = 'all' | 'assignee' | 'reviewer';
 const MyTasksView = () => {
   const { t } = useTranslation();
   const { currentMemberId } = useAuthContext();
-  const { setSelectedTask } = useUIContext();
+  const { setSelectedTask, setCurrentView, featureToggles, featureTogglesReady } = useUIContext();
   const { allTasks, statuses } = useTaskContext();
   const { users } = useMemberContext();
   const { allProjects } = useProjectContext();
@@ -135,6 +135,7 @@ const MyTasksView = () => {
             {currentUser && <span className="text-[13px] md:text-sm text-muted-foreground">— {currentUser.name}</span>}
           </div>
           <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+            {featureTogglesReady && featureToggles.qa && <button className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent" onClick={() => { const url = new URL(window.location.href); url.searchParams.delete('qa'); window.history.replaceState({}, '', url.toString()); setSelectedTask(null); setCurrentView('my-qa'); }}>{t('qa.myTitle')}</button>}
             <div className="flex items-center border border-border rounded-md overflow-hidden">
               {([['all', t('myTasks.all')], ['assignee', t('myTasks.assignedToMe')], ['reviewer', t('myTasks.reviewByMe')]] as [RoleFilter, string][]).map(([val, label]) => (
                 <button key={val} onClick={() => setRoleFilter(val)} className={`px-2.5 md:px-3 py-1.5 text-[13px] font-medium transition-colors ${roleFilter === val ? 'bg-accent text-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>{label}</button>

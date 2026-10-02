@@ -8,6 +8,7 @@ export interface Env {
   // secrets
   JWT_SECRET: string;
   SLACK_BOT_TOKEN?: string;
+  SLACK_SIGNING_SECRET?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   /** Where hosted sign-up FYI emails go (waitlist requests, with the one-click

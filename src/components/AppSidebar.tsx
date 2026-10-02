@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -19,7 +19,7 @@ interface AppSidebarProps {
 const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const { t } = useTranslation();
   const { permissions, currentMember, currentMemberId } = useAuthContext();
-  const { approvalsEnabled, setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
+  const { approvalsEnabled, featureToggles, featureTogglesReady, setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
   const { selectedProjectId, setSelectedProjectId, selectedLineId, setSelectedLineId, allProjects, productLines, deleteProjectInDb } = useProjectContext();
   const { allTasks } = useTaskContext();
   const { hasFeature } = useLicense();
@@ -103,6 +103,10 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
 
   const nav = (action: () => void) => {
     setSelectedTask(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('qa');
+    window.history.replaceState({}, '', url.toString());
+    window.dispatchEvent(new Event('livo:qa-navigation'));
     action();
     onNavigate?.();
   };
@@ -142,6 +146,11 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         </button>
 
         {/* All Tasks */}
+        {featureTogglesReady && featureToggles.qa && <>
+          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Bug size={16} />{t('qa.title')}</button>
+          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('my-qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'my-qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><ClipboardCheck size={16} />{t('qa.myTitle')}</button>
+          {selectedProjectId && <button onClick={() => nav(() => setCurrentView('qa'))} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-hover"><Bug size={16} />{t('qa.projectEntry')} · {allProjects.find(p => p.id === selectedProjectId)?.name}</button>}
+        </>}
         <button
           onClick={() => nav(() => {
             setSelectedProjectId(null);
@@ -151,7 +160,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
             }
           })}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-            selectedProjectId === null && selectedLineId === null && !['knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
+            selectedProjectId === null && selectedLineId === null && !['qa', 'my-qa', 'knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
               ? 'text-sidebar-primary-foreground font-semibold bg-sidebar-primary/90 shadow-sm'
               : 'text-sidebar-foreground hover:bg-sidebar-hover'
           }`}

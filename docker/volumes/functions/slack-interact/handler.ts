@@ -1,6 +1,8 @@
 import { commentModal, createModal, DISABLED, localize, messageDraft, messageModal, parseCommand, parseSubmission, UNAVAILABLE, type Row } from './core.ts';
+import { handleQaSlack, isQaSlackPayload, type QaSlackActions } from '../qa/slack.ts';
 
 export interface Actions {
+  qa?: QaSlackActions;
   enabled(): Promise<boolean>;
   heartbeat(connected: boolean): Promise<void>;
   actor(payload: Row): Promise<Row>;
@@ -20,12 +22,13 @@ const sourceOf = (p: Row): Row => p.view ? JSON.parse(p.view.private_metadata ||
   thread: p.message?.thread_ts || p.message?.ts || '',
   user: p.user_id || p.user?.id || '', team: p.team_id || p.team?.id || '',
 });
-const HELP = '/livo 或 /livo new 標題：建立卡片\n/livo comment ABC-123 留言：新增留言\n/livo comment ABC-123：開啟留言視窗\n訊息選單：建立 LIVO 卡片／留言到 LIVO 卡片';
+const HELP = '/livo bug new 標題：建立 QA Bug\n/livo bug link BUG_ID：綁定 Bug 討論串\n/livo bug fix / deploy / pass / fail / close / reopen BUG_ID：開啟操作表單\n/livo 或 /livo new 標題：建立卡片\n/livo comment ABC-123 留言：新增留言\n/livo comment ABC-123：開啟留言視窗\n訊息選單：建立 LIVO 卡片／留言到 LIVO 卡片';
 const safeError = (error: unknown) => error instanceof Error && error.name === 'ActionError'
   ? error.message : '操作未完成，請重新開啟表單再試一次；若持續失敗，請洽管理員';
 
 /** The transport never interprets commands. All ACK response payloads originate here. */
 export async function handleInteraction(p: Row, envelopeId: string, d: Actions): Promise<Row> {
+  if (d.qa && isQaSlackPayload(p)) return handleQaSlack(p, envelopeId, d.qa);
   try {
     if (!(await d.enabled())) {
       if (p.type === 'heartbeat') return { disabled: true };

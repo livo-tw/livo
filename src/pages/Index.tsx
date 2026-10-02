@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { AppProvider } from '@/context/AppContext';
 import { useAuthContext } from '@/context/AuthContext';
-import { resolveApprovalView } from '@/lib/featureToggles';
+import { resolveApprovalView, resolveQaView } from '@/lib/featureToggles';
 import { useUIContext } from '@/context/UIContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { LicenseProvider, useLicense } from '@/context/LicenseContext';
@@ -37,6 +37,7 @@ const WorkReportView = lazy(() => import('@/components/WorkReportView'));
 const TeamIntroView = lazy(() => import('@/components/TeamIntroView'));
 const KnowledgeBaseView = lazy(() => import('@/components/KnowledgeBaseView'));
 const BacklogView = lazy(() => import('@/components/BacklogView'));
+const QaWorkspace = lazy(() => import('@/components/qa/QaWorkspace'));
 
 const ViewFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground text-sm">
@@ -50,8 +51,9 @@ const ViewFallback = () => (
 
 const AppContent = () => {
   const { permissions } = useAuthContext();
-  const { currentView: requestedView, setCurrentView, approvalsEnabled, standupMode, selectedTask, setSelectedTask, taskDisplayMode, setTaskDisplayMode } = useUIContext();
-  const currentView = resolveApprovalView(requestedView, approvalsEnabled);
+  const { currentView: requestedView, setCurrentView, approvalsEnabled, featureToggles, featureTogglesReady, standupMode, selectedTask, setSelectedTask, taskDisplayMode, setTaskDisplayMode } = useUIContext();
+  const qaEnabled = featureTogglesReady && featureToggles.qa;
+  const currentView = resolveQaView(resolveApprovalView(requestedView, approvalsEnabled), qaEnabled);
   useEffect(() => {
     if (requestedView !== currentView) setCurrentView(currentView);
   }, [requestedView, currentView, setCurrentView]);
@@ -60,6 +62,10 @@ const AppContent = () => {
   const [sidePanelWidth, setSidePanelWidth] = useState(580);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useIsMobile();
+
+  useEffect(() => {
+    if (qaEnabled && new URLSearchParams(window.location.search).has('qa')) { setSelectedTask(null); setCurrentView('qa'); }
+  }, [qaEnabled, setCurrentView, setSelectedTask]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -150,6 +156,7 @@ const AppContent = () => {
               {currentView === 'activity-log' && (hasFeature('activity-log') ? <ActivityLogView /> : <UpgradePrompt feature="activity-log" />)}
               {currentView === 'my-settings' && <MySettingsView />}
               {currentView === 'my-tasks' && <MyTasksView />}
+              {qaEnabled && (currentView === 'qa' || currentView === 'my-qa') && <Suspense fallback={<ViewFallback />}><QaWorkspace mine={currentView === 'my-qa'} /></Suspense>}
               {currentView === 'work-report' && (hasFeature('work-report') ? <Suspense fallback={<ViewFallback />}><WorkReportView /></Suspense> : <UpgradePrompt feature="work-report" />)}
               {currentView === 'approvals' && (
                 <div className="flex-1 overflow-auto p-6">

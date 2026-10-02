@@ -148,10 +148,23 @@ Deno.serve(async (req) => {
       'task_todos', 'status_logs', 'task_deployments',
       'member_manuals', 'notifications', 'backup_settings',
       'activity_logs', 'task_attachments', 'user_column_configs', 'profiles',
+      'qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links',
     ];
 
     const backup: Record<string, any[]> = {};
     for (const table of tables) {
+      if (table.startsWith('qa_')) {
+        // QA tables are service-only. Include every metadata page; storage
+        // objects remain in the separately backed-up Docker storage volume.
+        backup[table] = [];
+        for (let offset = 0; ; offset += 500) {
+          const { data, error } = await supabase.from(table).select('*').eq('workspace_id', 'default').order('id').range(offset, offset + 499);
+          if (error) throw new Error(`QA backup failed: ${table}`);
+          backup[table].push(...(data || []));
+          if (!data || data.length < 500) break;
+        }
+        continue;
+      }
       const { data } = await supabase.from(table).select('*');
       backup[table] = data || [];
     }

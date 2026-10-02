@@ -24,11 +24,16 @@ describe('built-in Socket Mode relay', () => {
   it('ACKs within 3 seconds, forwards the secret, returns options, deduplicates and reconnects', async () => {
     const sockets: Duplex[] = [], acks: { data: any; at: number }[] = [], forwarded: any[] = [], logs: string[] = [];
     let base = '', seenSecret = '', opens = 0;
+    let persistEvent: (() => void) | undefined;
     const server = createServer(async (req, res) => {
       if (req.url === '/open') { opens++; res.end(JSON.stringify({ ok: true, url: base.replace('http:', 'ws:') + '/socket' })); return; }
       let raw = ''; for await (const part of req) raw += part;
       const envelope = JSON.parse(raw); seenSecret = String(req.headers['x-livo-slack-secret']);
       if (envelope.payload.type !== 'heartbeat') forwarded.push(envelope);
+      if (envelope.envelope_id === 'durable') {
+        if (forwarded.filter(e => e.envelope_id === 'durable').length === 1) { res.statusCode = 503; res.end('{}'); return; }
+        await new Promise<void>(resolve => { persistEvent = resolve; });
+      }
       if (envelope.envelope_id === 'slow') await new Promise(resolve => setTimeout(resolve, 2800));
       res.end(JSON.stringify(envelope.envelope_id === 'disabled' ? { disabled: true } : { options: [] }));
     });
@@ -68,6 +73,15 @@ describe('built-in Socket Mode relay', () => {
       send('disabled'); await until(() => acks.some(a => a.data.envelope_id === 'disabled'));
       send('disabled'); await until(() => acks.filter(a => a.data.envelope_id === 'disabled').length === 2);
       expect(forwarded.filter(e => e.envelope_id === 'disabled')).toHaveLength(1);
+      const sendEvent = () => sockets[sockets.length - 1].write(frame({ envelope_id: 'durable', type: 'events_api', accepts_response_payload: false,
+        payload: { type: 'event_callback', event_id: 'event-a', event: { type: 'message', text: 'private-example-content' } } }));
+      sendEvent(); await until(() => forwarded.some(e => e.envelope_id === 'durable'));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(acks.some(a => a.data.envelope_id === 'durable')).toBe(false);
+      sendEvent(); await until(() => !!persistEvent);
+      expect(forwarded.filter(e => e.envelope_id === 'durable')).toHaveLength(2);
+      expect(acks.some(a => a.data.envelope_id === 'durable')).toBe(false);
+      persistEvent!(); await until(() => acks.some(a => a.data.envelope_id === 'durable'));
       expect(opens).toBe(2);
       expect(logs.join('\n')).not.toMatch(/private-example-content|example-app-token|example-secret/);
     } finally {

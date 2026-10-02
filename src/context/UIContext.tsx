@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 import type { Task, Project } from '@/types';
 import type { FeatureKey, FeatureToggles } from '@/lib/featureToggles';
 
-export type ViewType = 'knowledge-base' | 'board' | 'backlog' | 'dashboard' | 'gantt' | 'all-list' | 'my-tasks' | 'work-report' | 'status-manage' | 'member-manage' | 'team-manage' | 'team-intro' | 'system-admin' | 'activity-log' | 'my-settings' | 'team-settings' | 'template-manage' | 'integrations' | 'approvals';
+export type ViewType = 'qa' | 'my-qa' | 'knowledge-base' | 'board' | 'backlog' | 'dashboard' | 'gantt' | 'all-list' | 'my-tasks' | 'work-report' | 'status-manage' | 'member-manage' | 'team-manage' | 'team-intro' | 'system-admin' | 'activity-log' | 'my-settings' | 'team-settings' | 'template-manage' | 'integrations' | 'approvals';
 export type TaskDisplayMode = 'modal' | 'side' | 'page';
 
 export interface RequiredFieldsConfig {

@@ -137,6 +137,23 @@ const AdminBackupSection = ({
         return;
       }
 
+      const hasQa = Object.entries(backup).some(([table, rows]) => table.startsWith('qa_') && (!Array.isArray(rows) || rows.length > 0));
+      const restoreQa = async (validateOnly: boolean) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error('請重新登入後還原 QA 資料');
+        const response = await fetch(fnUrl('qa'), { method: 'POST', headers: {
+          'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`,
+        }, body: JSON.stringify({ action: 'restore', tables: backup, validateOnly }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error?.message || result.error?.code || 'QA 還原失敗');
+        if (result.conflicts?.length || result.missingAssets?.length) throw new Error(
+          `QA 備份有 ${result.conflicts?.length || 0} 筆衝突、${result.missingAssets?.length || 0} 個附件缺失，請先排除再還原。`);
+        return result;
+      };
+      // Validate QA references/version conflicts before the existing restore
+      // starts changing any ordinary table. QA itself is merged atomically.
+      if (hasQa) await restoreQa(true);
+
       const deleteOrder = [
         'comments', 'task_checks', 'task_todos', 'task_specs',
         'task_deployments', 'status_logs', 'notifications',
@@ -164,10 +181,16 @@ const AdminBackupSection = ({
           const batch = rows.slice(i, i + 50);
           const { error } = await supabase.from(table as 'tasks').upsert(batch as Record<string, unknown>[]);
           if (error) {
-            console.error(`Restore ${table} batch ${i} error:`, error);
+            throw new Error(`Restore ${table} failed: ${error.message}`);
           }
         }
         totalInserted += rows.length;
+      }
+
+      if (hasQa) {
+        const qaResult = await restoreQa(false);
+        totalInserted += qaResult.inserted || 0;
+        toast.info('QA 記錄已還原；JSON 僅含附件資訊，媒體檔案需保留或另行還原儲存空間。');
       }
 
       toast.success(t('adminBackup.restoreSuccess') + totalInserted + t('adminBackup.recordsSuffix'));

@@ -17,7 +17,7 @@ export default function SlackActionsSection() {
   const { featureToggles, featureTogglesReady } = useUIContext();
   const { currentMember } = useAuthContext();
   const { users } = useMemberContext();
-  const visible = featureTogglesReady && featureToggles.slackActions && !USE_CF_BACKEND && canManageFeatureToggles(currentMember?.role);
+  const visible = featureTogglesReady && featureToggles.slackActions && canManageFeatureToggles(currentMember?.role);
   const [status, setStatus] = useState<Status | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -26,7 +26,7 @@ export default function SlackActionsSection() {
   const [slackUserId, setSlackUserId] = useState('');
   const [bindError, setBindError] = useState('');
   const request = useCallback(async (body?: Record<string, unknown>, query = '') => {
-    if (IS_DEMO_PRO) return;
+    if (IS_DEMO_PRO || USE_CF_BACKEND) return;
     const { data } = await supabase.auth.getSession();
     const response = await fetch(fnUrl('slack-actions-config') + query, { method: body ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${data.session?.access_token || ''}`, 'Content-Type': 'application/json' },
@@ -39,11 +39,18 @@ export default function SlackActionsSection() {
     try { setStatus(await request()); } catch { setFailed(true); }
   }, [request]);
   useEffect(() => {
-    if (!visible || IS_DEMO_PRO) return;
+    if (!visible || IS_DEMO_PRO || USE_CF_BACKEND) return;
     void refresh(); const timer = setInterval(() => void refresh(), 30000);
     return () => clearInterval(timer);
   }, [visible, refresh]);
   if (!visible) return null;
+  if (USE_CF_BACKEND) return <section className="mx-4 mb-4 space-y-3 rounded-lg border border-border bg-background p-4" aria-labelledby="slack-actions-title">
+    <h3 id="slack-actions-title" className="text-sm font-semibold">{t('slackActions.title')}</h3>
+    <p className="text-sm text-muted-foreground">{t('qa.slackCloud')}</p>
+    <p className="text-sm text-muted-foreground">{t('qa.slackGate')}</p>
+    <p className="text-sm text-muted-foreground">{t('qa.slackUsage')}</p>
+    {IS_DEMO_PRO && <p className="text-sm text-muted-foreground">{t('slackActions.demo')}</p>}
+  </section>;
   const unbind = async (id: string) => {
     setBusy(true); setFailed(false);
     try { await request({ action: 'unbind', id }); await refresh(); } catch { setFailed(true); }

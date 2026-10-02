@@ -20,6 +20,7 @@ const BACKUP_TABLES = [
   'task_todos', 'status_logs', 'task_deployments',
   'member_manuals', 'notifications', 'backup_settings',
   'activity_logs', 'task_attachments', 'user_column_configs', 'profiles',
+  'qa_issues', 'qa_commands', 'qa_comments', 'qa_events', 'qa_attachments', 'qa_slack_links', 'qa_restore_batches',
 ] as const;
 
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -55,6 +56,13 @@ async function performBackup(env: Env, ws: string, isManual: boolean): Promise<B
       .all<Record<string, unknown>>();
     backup[table] = (res.results || []).map((r) => rowToWire(r, meta));
   }
+
+  // Private evidence is represented by an explicit manifest, never by public URLs or upload tokens.
+  // Pending multipart sessions/parts are operational reservations, not restorable business records.
+  backup.qa_asset_manifest = (backup.qa_attachments || []).map((row) => ({
+    workspace_id: ws, attachment_id: row.id, issue_id: row.issue_id,
+    storage_key: row.storage_key, size: row.size, mime_type: row.mime_type,
+  }));
 
   const jsonContent = JSON.stringify(backup, null, 2);
   const now = new Date();

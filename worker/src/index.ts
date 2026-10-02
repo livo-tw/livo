@@ -19,6 +19,8 @@ import { handleCloudWaitlist, handleCloudWaitlistApprove } from './functions/clo
 import { runQuery, roleRank } from './db';
 import { handleRpc } from './rpc';
 import { handleUpload, handleDownload, handleRemove } from './storage';
+import { handleQa } from './qa';
+import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
 import {
   handleSlackNotify,
@@ -52,7 +54,8 @@ app.use('*', (c, next) => {
     // Bearer-token API (no cookies) — allowing localhost origins for dev tools
     // carries no CSRF risk; production origins come from ALLOWED_ORIGINS.
     origin: (origin) => (allowed.includes(origin) || LOCALHOST_RE.test(origin) ? origin : null),
-    allowHeaders: ['Authorization', 'Content-Type', 'x-file-name', 'apikey', 'x-client-info'],
+    allowHeaders: ['Authorization', 'Content-Type', 'Range', 'x-file-name', 'apikey', 'x-client-info'],
+    exposeHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     maxAge: 86400,
   })(c, next);
@@ -114,6 +117,8 @@ app.post('/api/rpc/:fn', (c) => handleRpc(c, c.req.param('fn')));
 app.post('/rest/v1/rpc/:fn', (c) => handleRpc(c, c.req.param('fn'))); // legacy keepalive beacons
 
 // ── Functions (Edge Function ports) ───────────────────────────────────────
+app.post('/api/functions/qa', requireMember, handleQa); // read/write demo and opt-in guards are action-aware
+app.post('/api/functions/qa-slack/:workspaceId', handleQaSlackHttp); // Slack HMAC + timestamp; actor/workspace checked by adapter
 app.post('/api/functions/manage-member', requireMember, demoGuard, handleManageMember);
 app.post('/api/functions/slack-notify', requireMember, handleSlackNotify);
 app.post('/api/functions/slack-channels', requireMember, handleSlackChannels);
@@ -205,6 +210,7 @@ export default {
     ctx.waitUntil(
       Promise.allSettled([
         runScheduledBackup(env, ctx),
+        runQaSlackInbox(env, ctx),
         runSlackDigest(env, ctx),
         runDueReminders(env), // due-soon notifications+emails, daily 09:00 台灣 self-gate
         runDemoReset(env), // hourly demo wipe+reseed when DEMO_RESET==="1" (T2b)

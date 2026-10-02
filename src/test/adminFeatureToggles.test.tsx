@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMember: { role: mocks.role } }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({
-  featureToggles: { approvals: mocks.enabled, slackActions: false }, featureTogglesReady: mocks.ready,
+  featureToggles: { approvals: mocks.enabled, slackActions: false, qa: false }, featureTogglesReady: mocks.ready,
   featureTogglesError: null as string | null, refreshFeatureToggles: vi.fn(), saveFeatureToggle: mocks.save,
 }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ refreshTasks: mocks.refresh }) }));
@@ -46,6 +46,12 @@ describe('admin feature switches', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'featureToggles.approvalsLabel' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('approvals', false));
     expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it('enables QA independently without withdrawing approvals or deleting history', async () => {
+    render(<AdminFeatureToggles />);
+    fireEvent.click(screen.getByRole('switch', { name: 'qa.featureLabel' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith('qa', true));
+    expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
   });
   it('lists pending tasks and lets the admin cancel without changing data', async () => {
     mocks.pending.mockResolvedValue(pending);

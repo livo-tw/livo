@@ -78,7 +78,10 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
     )
       .bind(ws)
       .first<WorkspaceQuotaRow>();
-    if (quota && quota.storage_used_bytes + len > quota.storage_limit_mb * 1024 * 1024) {
+    // QA multipart uploads reserve their full expected size before accepting parts.
+    const reserved = await c.env.DB.prepare("SELECT COALESCE(SUM(expected_size),0) AS bytes FROM qa_upload_sessions WHERE workspace_id=? AND state IN ('initializing','uploading','finalizing','aborting')")
+      .bind(ws).first<{bytes:number}>();
+    if (quota && quota.storage_used_bytes + (reserved?.bytes ?? 0) + len > quota.storage_limit_mb * 1024 * 1024) {
       return c.json(
         { data: null, error: { message: `附件空間已滿（Beta 上限 ${quota.storage_limit_mb}MB），請刪除舊附件或聯繫 service@livo-tw.com` } },
         413

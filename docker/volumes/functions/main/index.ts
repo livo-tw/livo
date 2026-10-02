@@ -77,7 +77,9 @@ Deno.serve(async (req: Request) => {
     const worker = await (globalThis as any).EdgeRuntime.userWorkers.create({
       servicePath,
       memoryLimitMb: 150,
-      workerTimeoutMs: 60_000,
+      // QA streams private evidence (up to 200 MB) without buffering it in
+      // the user worker. Allow a slow download to finish before terminating it.
+      workerTimeoutMs: serviceName === 'qa' ? 300_000 : 60_000,
       noModuleCache: false,
       importMapPath: null,
       envVars: Object.entries(Deno.env.toObject()),

@@ -24,11 +24,11 @@ export async function memberJwt(secret: string, member: Row, binding: Row) {
 }
 export class Database {
   constructor(public env: Environment, public jwt = env.get('SUPABASE_SERVICE_ROLE_KEY') || '') {}
-  async request(path: string, method = 'GET', body?: unknown, query: Row = {}): Promise<any> {
+  async request(path: string, method = 'GET', body?: unknown, query: Row = {}, prefer = 'return=representation,resolution=merge-duplicates'): Promise<any> {
     const base = this.env.get('SUPABASE_URL');
     const res = await fetch(`${base}${path}?${new URLSearchParams(query)}`, { method,
       headers: { apikey: this.env.get('SUPABASE_ANON_KEY') || '', Authorization: `Bearer ${this.jwt}`,
-        'Content-Type': 'application/json', Prefer: 'return=representation,resolution=merge-duplicates' },
+        'Content-Type': 'application/json', Prefer: prefer },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error('Database operation failed');
     return res.status === 204 ? null : res.json();

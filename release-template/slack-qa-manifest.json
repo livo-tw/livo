@@ -1,0 +1,18 @@
+{
+  "display_information": { "name": "LIVO", "description": "LIVO 任務與 QA Bug", "background_color": "#172B4D" },
+  "features": {
+    "bot_user": { "display_name": "LIVO", "always_online": false },
+    "shortcuts": [
+      { "name": "建立 LIVO 卡片", "type": "message", "callback_id": "livo_create_task", "description": "將訊息建立為 LIVO 任務" },
+      { "name": "留言到 LIVO 卡片", "type": "message", "callback_id": "livo_comment_task", "description": "將訊息加入 LIVO 任務" },
+      { "name": "建立 QA Bug", "type": "message", "callback_id": "livo_qa_new", "description": "將訊息與來源連結帶入 QA Bug" }
+    ],
+    "slash_commands": [{ "command": "/livo", "description": "建立任務或 QA Bug", "usage_hint": "bug new 問題標題", "should_escape": false }]
+  },
+  "oauth_config": { "scopes": { "bot": ["commands", "chat:write", "chat:write.customize", "channels:read", "groups:read", "channels:history", "groups:history", "im:write", "users:read", "users:read.email"] } },
+  "settings": {
+    "socket_mode_enabled": true,
+    "interactivity": { "is_enabled": true },
+    "event_subscriptions": { "bot_events": ["message.channels", "message.groups"] }
+  }
+}

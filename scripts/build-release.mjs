@@ -299,7 +299,8 @@ const dockerStats = copyFiltered(DOCKER_SRC, DOCKER_DEST, dockerFilter);
 if (skippedUntracked.length) {
   log(`  ℹ docker/ 略過 ${skippedUntracked.length} 個未進版控的檔案：${skippedUntracked.join(', ')}`);
 }
-for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql']) {
+for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql',
+  ...['index.ts', 'domain.ts', 'workflow.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
   if (!fs.existsSync(path.join(DOCKER_DEST, rel))) die(`docker/${rel} 沒有進交付包，請檢查 docker/ 的複製規則。`);
 }
 // 確保 storage 目錄存在且非空（空目錄不一定每種壓縮／解壓工具都會保留；Docker bind mount 需要它）
@@ -469,6 +470,15 @@ fs.copyFileSync(licenseSrc, path.join(STAGING, 'LICENSE'));
 log('  ✔ README.md / 部署說明.md / LICENSE');
 
 // 2e. 一鍵安裝程式（腳本在交付包根目錄；輔助檔在 installer/）
+// QA's optional Slack app and workflow guide must travel with the self-host
+// package. dockerFilter above already includes every tracked QA function file.
+for (const [source, destination] of [
+  [path.join(TEMPLATE_DIR, 'slack-qa-manifest.json'), 'slack-qa-manifest.json'],
+  [path.join(APP_ROOT, 'QA-WORKFLOW.md'), 'QA-WORKFLOW.md'],
+]) {
+  if (!fs.existsSync(source)) die(`QA release asset missing: ${destination}`);
+  fs.copyFileSync(source, path.join(STAGING, destination));
+}
 // install.sh 以 LF 無 BOM 寫入（CRLF / BOM 都會讓 sh 直接跑不動）
 fs.writeFileSync(
   path.join(STAGING, 'install.sh'),

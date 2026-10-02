@@ -18,11 +18,16 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 import SlackActionsSection from '@/components/integrations/SlackActionsSection';
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('Slack actions capability and feature switches', () => {
-  it.each([[false, false, 'admin'], [true, true, 'admin'], [true, false, 'member']])('hides unsupported surfaces (%s,%s,%s)', (on, cloud, role) => {
+  it.each([[false, false, 'admin'], [true, false, 'member']])('hides unsupported surfaces (%s,%s,%s)', (on, cloud, role) => {
     Object.assign(state, { on, cloud, role, demo: false });
     const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
     const { container } = render(<SlackActionsSection />);
     expect(container.innerHTML).toBe(''); expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('shows Cloudflare QA setup guidance without calling the Docker-only configuration endpoint', () => {
+    Object.assign(state, { on: true, cloud: true, role: 'admin', demo: false });
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock); render(<SlackActionsSection />);
+    expect(screen.getByText('qa.slackCloud')).toBeTruthy(); expect(fetchMock).not.toHaveBeenCalled();
   });
   it('offers manual mapping and lets an admin pick only plain members or themselves', async () => {
     Object.assign(state, { on: true, cloud: false, role: 'admin', demo: false });

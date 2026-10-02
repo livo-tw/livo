@@ -5,7 +5,7 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLicense } from '@/context/LicenseContext';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, Lock, FileText, ClipboardCheck, Inbox } from 'lucide-react';
+import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, Lock, FileText, ClipboardCheck, Inbox, Bug } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
 import { supabase } from '@/integrations/supabase/client';
@@ -23,6 +23,7 @@ const navItemDefs = [
   { id: 'my-tasks' as const, labelKey: 'nav.myTasks', icon: User },
   { id: 'work-report' as const, labelKey: 'nav.workReport', icon: FileText },
   { id: 'knowledge-base' as const, labelKey: 'kb.title', icon: FileText },
+  { id: 'qa' as const, labelKey: 'qa.title', icon: Bug },
 ];
 
 interface TopBarProps {
@@ -33,7 +34,15 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const { t } = useTranslation();
   const { currentMember, currentMemberId, setCurrentMemberId, realMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { approvalsEnabled, setShowCreateTask, setCurrentView, currentView, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
+  const { approvalsEnabled, featureToggles, featureTogglesReady, setShowCreateTask, setCurrentView, currentView, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
+  const qaEnabled = featureTogglesReady && featureToggles.qa;
+  const qaView = qaEnabled && (currentView === 'qa' || currentView === 'my-qa');
+  const createItem = () => {
+    if (!qaView) { setShowCreateTask(true); return; }
+    setSelectedTask(null);
+    const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.set('qaCreate', '1');
+    window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-create'));
+  };
   const { allProjects, setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { allTasks, statuses, taskSpecs } = useTaskContext();
   const { hasFeature } = useLicense();
@@ -101,6 +110,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   }, []);
 
   const handleLogout = async () => {
+    window.dispatchEvent(new Event('livo:qa-abort'));
     await supabase.auth.signOut();
   };
 
@@ -190,10 +200,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
               {searchDropdown}
             </div>
             <button
-              onClick={() => setShowCreateTask(true)}
+              onClick={createItem}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm hover:shadow-md flex-shrink-0"
             >
-              {t('button.createAction')}
+              {t(qaView ? 'qa.report' : 'button.createAction')}
             </button>
           </div>
         )}
@@ -215,10 +225,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
           {/* Mobile create button */}
           {isMobile && (
             <button
-              onClick={() => setShowCreateTask(true)}
+              onClick={createItem}
               className="flex items-center justify-center min-h-[44px] px-3 rounded text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              {t('button.createAction')}
+              {t(qaView ? 'qa.report' : 'button.createAction')}
             </button>
           )}
 
@@ -377,13 +387,14 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
           <div className="flex items-center gap-1 min-w-min">
             {navItemDefs
               .filter(item => !(item.id === 'work-report' && !hasFeature('work-report')))
+              .filter(item => item.id !== 'qa' || qaEnabled)
               .map(item => {
                 const Icon = item.icon;
                 const isActive = currentView === item.id;
                 return (
                   <button
                     key={item.id}
-                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); setCurrentView(item.id); }}
+                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-navigation')); setCurrentView(item.id); }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
                       isActive
                         ? 'bg-sidebar-accent text-sidebar-foreground'

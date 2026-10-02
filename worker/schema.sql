@@ -998,6 +998,169 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- QA is an opt-in domain. All writes go through qa.ts, never /api/query.
+CREATE TABLE IF NOT EXISTS qa_issues (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, project_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('new','triaged','in_progress','verification','closed')),
+  assignee_id TEXT, qa_owner_id TEXT, reporter_id TEXT NOT NULL, title TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version > 0), updated_at TEXT NOT NULL,
+  data TEXT NOT NULL CHECK (json_valid(data)), PRIMARY KEY(workspace_id,id),
+  CHECK (json_extract(data,'$.id') = id AND json_extract(data,'$.workspaceId') = workspace_id
+    AND json_extract(data,'$.projectId') = project_id AND json_extract(data,'$.version') = version
+    AND json_extract(data,'$.state') = state)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_issues_list ON qa_issues(workspace_id,project_id,state,updated_at);
+CREATE INDEX IF NOT EXISTS idx_qa_issues_assignee ON qa_issues(workspace_id,assignee_id,updated_at);
+CREATE TRIGGER IF NOT EXISTS qa_issue_insert_reference_guard BEFORE INSERT ON qa_issues BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM projects WHERE workspace_id=NEW.workspace_id AND id=NEW.project_id AND is_archived=0)
+    THEN RAISE(ABORT,'qa_invalid_project') END;
+  SELECT CASE WHEN NEW.assignee_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.assignee_id)
+    THEN RAISE(ABORT,'qa_invalid_member') END;
+  SELECT CASE WHEN NEW.qa_owner_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.qa_owner_id)
+    THEN RAISE(ABORT,'qa_invalid_member') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.data,'$.taskIds') t WHERE NOT EXISTS
+    (SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND id=t.value AND project_id=NEW.project_id))
+    THEN RAISE(ABORT,'qa_invalid_task') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_commands (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL, actor_role TEXT NOT NULL, expected_version INTEGER NOT NULL,
+  operation TEXT NOT NULL, request_hash TEXT NOT NULL, issue_data TEXT NOT NULL CHECK(json_valid(issue_data)),
+  result_json TEXT NOT NULL CHECK(json_valid(result_json)), created_at TEXT NOT NULL, restored_by TEXT,
+  PRIMARY KEY(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_commands_issue ON qa_commands(workspace_id,issue_id,created_at);
+CREATE TRIGGER IF NOT EXISTS qa_command_guard BEFORE INSERT ON qa_commands WHEN NEW.restored_by IS NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id
+    AND id=NEW.actor_id AND role=NEW.actor_role AND is_active=1) THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM projects WHERE workspace_id=NEW.workspace_id
+    AND id=json_extract(NEW.issue_data,'$.projectId') AND is_archived=0) THEN RAISE(ABORT,'qa_invalid_project') END;
+  SELECT CASE WHEN (NEW.expected_version=-1 AND EXISTS (SELECT 1 FROM qa_issues WHERE workspace_id=NEW.workspace_id AND id=NEW.issue_id))
+    OR (NEW.expected_version<>-1 AND NOT EXISTS (SELECT 1 FROM qa_issues WHERE workspace_id=NEW.workspace_id
+      AND id=NEW.issue_id AND version=NEW.expected_version)) THEN RAISE(ABORT,'qa_conflict') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.issue_data,'$.taskIds') t WHERE NOT EXISTS
+    (SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND id=t.value
+      AND project_id=json_extract(NEW.issue_data,'$.projectId'))) THEN RAISE(ABORT,'qa_invalid_task') END;
+  SELECT CASE WHEN json_extract(NEW.issue_data,'$.assigneeId') IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND is_active=1
+      AND id=json_extract(NEW.issue_data,'$.assigneeId')) THEN RAISE(ABORT,'qa_invalid_member') END;
+  SELECT CASE WHEN json_extract(NEW.issue_data,'$.qaOwnerId') IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND is_active=1
+      AND id=json_extract(NEW.issue_data,'$.qaOwnerId')) THEN RAISE(ABORT,'qa_invalid_member') END;
+  SELECT CASE WHEN json_extract(NEW.issue_data,'$.duplicateOfId') IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM qa_issues WHERE workspace_id=NEW.workspace_id
+      AND project_id=json_extract(NEW.issue_data,'$.projectId')
+      AND id=json_extract(NEW.issue_data,'$.duplicateOfId')) THEN RAISE(ABORT,'qa_invalid_duplicate') END;
+END;
+CREATE TRIGGER IF NOT EXISTS qa_restored_command_guard BEFORE INSERT ON qa_commands WHEN NEW.restored_by IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.restored_by
+    AND role='super_admin' AND is_active=1) THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM qa_issues WHERE workspace_id=NEW.workspace_id AND id=NEW.issue_id)
+    THEN RAISE(ABORT,'qa_not_found') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_restore_batches (
+  workspace_id TEXT NOT NULL,id TEXT NOT NULL,actor_id TEXT NOT NULL,created_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_id,id)
+);
+CREATE TRIGGER IF NOT EXISTS qa_restore_guard BEFORE INSERT ON qa_restore_batches BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id
+    AND role='super_admin' AND is_active=1) THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_comments (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  body TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(workspace_id,id),
+  FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_comments_issue ON qa_comments(workspace_id,issue_id,created_at);
+CREATE TABLE IF NOT EXISTS qa_events (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  type TEXT NOT NULL, detail TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_id,id), FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_events_issue ON qa_events(workspace_id,issue_id,version,created_at);
+CREATE TABLE IF NOT EXISTS qa_upload_sessions (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  file_name TEXT NOT NULL, mime_type TEXT NOT NULL, expected_size INTEGER NOT NULL CHECK(expected_size>0 AND expected_size<=209715200),
+  storage_key TEXT NOT NULL, multipart_id TEXT, state TEXT NOT NULL DEFAULT 'initializing'
+    CHECK(state IN ('initializing','uploading','finalizing','aborting','complete','aborted')),
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(workspace_id,id),
+  FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_uploads_expiry ON qa_upload_sessions(workspace_id,state,expires_at);
+CREATE TRIGGER IF NOT EXISTS qa_upload_reserve_guard BEFORE INSERT ON qa_upload_sessions BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id AND is_active=1)
+    THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM workspaces WHERE id=NEW.workspace_id AND
+    storage_used_bytes + NEW.expected_size + COALESCE((SELECT SUM(expected_size) FROM qa_upload_sessions
+      WHERE workspace_id=NEW.workspace_id AND state IN ('initializing','uploading','finalizing','aborting')),0)
+      > storage_limit_mb*1048576) THEN RAISE(ABORT,'qa_storage_quota') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_upload_parts (
+  workspace_id TEXT NOT NULL, upload_id TEXT NOT NULL, part_number INTEGER NOT NULL,
+  size INTEGER NOT NULL, digest TEXT NOT NULL, etag TEXT, lease_token TEXT NOT NULL, claimed_at INTEGER NOT NULL,
+  PRIMARY KEY(workspace_id,upload_id,part_number),
+  FOREIGN KEY(workspace_id,upload_id) REFERENCES qa_upload_sessions(workspace_id,id)
+);
+CREATE TRIGGER IF NOT EXISTS qa_upload_part_guard BEFORE INSERT ON qa_upload_parts BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM qa_upload_sessions s JOIN members m
+    ON m.workspace_id=s.workspace_id AND m.id=s.actor_id AND m.is_active=1
+    WHERE s.workspace_id=NEW.workspace_id AND s.id=NEW.upload_id AND s.state='uploading') THEN RAISE(ABORT,'qa_upload_conflict') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_attachments (
+  workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, uploaded_by TEXT NOT NULL,
+  file_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, storage_key TEXT NOT NULL,
+  created_at TEXT NOT NULL, restored_by TEXT, PRIMARY KEY(workspace_id,id),
+  FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_attachments_issue ON qa_attachments(workspace_id,issue_id,created_at);
+CREATE TRIGGER IF NOT EXISTS qa_attachment_finalize_guard BEFORE INSERT ON qa_attachments WHEN NEW.restored_by IS NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.uploaded_by AND is_active=1)
+    THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM qa_upload_sessions WHERE workspace_id=NEW.workspace_id AND id=NEW.id
+    AND issue_id=NEW.issue_id AND actor_id=NEW.uploaded_by AND expected_size=NEW.size AND storage_key=NEW.storage_key
+    AND state='finalizing') THEN RAISE(ABORT,'qa_upload_conflict') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM workspaces WHERE id=NEW.workspace_id
+    AND storage_used_bytes+NEW.size>storage_limit_mb*1048576) THEN RAISE(ABORT,'qa_storage_quota') END;
+END;
+CREATE TRIGGER IF NOT EXISTS qa_attachment_finalize AFTER INSERT ON qa_attachments WHEN NEW.restored_by IS NULL BEGIN
+  UPDATE workspaces SET storage_used_bytes=storage_used_bytes+NEW.size WHERE id=NEW.workspace_id;
+  UPDATE qa_upload_sessions SET state='complete' WHERE workspace_id=NEW.workspace_id AND id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS qa_restored_attachment_guard BEFORE INSERT ON qa_attachments WHEN NEW.restored_by IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.restored_by
+    AND role='super_admin' AND is_active=1) THEN RAISE(ABORT,'qa_forbidden') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
+    AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+END;
+CREATE TABLE IF NOT EXISTS qa_slack_links (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL DEFAULT 'default', issue_id TEXT NOT NULL,
+  team_id TEXT NOT NULL, channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, card_ts TEXT,
+  created_at TEXT NOT NULL, UNIQUE(workspace_id,team_id,channel_id,thread_ts),
+  FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
+);
+CREATE TABLE IF NOT EXISTS qa_slack_receipts (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS qa_slack_inbox (
+  workspace_id TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),
+  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','done')),
+  attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, lease_until TEXT,
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(workspace_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_qa_slack_inbox_pending ON qa_slack_inbox(workspace_id,state,next_attempt_at,lease_until);
+
 CREATE TABLE IF NOT EXISTS cloud_waitlist (
   email               TEXT PRIMARY KEY COLLATE NOCASE,
   name                TEXT,

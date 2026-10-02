@@ -12,7 +12,12 @@ export const FEATURE_TOGGLES = [{
 }, {
   key: 'slackActions',
   label: 'featureToggles.slackActionsLabel',
-  description: 'featureToggles.slackActionsDescription',
+  description: 'qa.slackFeatureDescription',
+  resolveDefault: (_history: FeatureHistory) => false,
+}, {
+  key: 'qa',
+  label: 'qa.featureLabel',
+  description: 'qa.featureDescription',
   resolveDefault: (_history: FeatureHistory) => false,
 }] as const;
 
@@ -40,4 +45,8 @@ export const isNotificationVariableEnabled = (key: string, approvalsEnabled: boo
 
 export function resolveApprovalView<T extends string>(view: T, approvalsEnabled: boolean): T | 'board' {
   return view === 'approvals' && !approvalsEnabled ? 'board' : view;
+}
+
+export function resolveQaView<T extends string>(view: T, enabled: boolean): T | 'board' {
+  return (view === 'qa' || view === 'my-qa') && !enabled ? 'board' : view;
 }
