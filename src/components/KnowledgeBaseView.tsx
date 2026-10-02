@@ -1,14 +1,14 @@
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, Plus, Search, FileText, History, Lock, Paperclip, Trash2, ArrowLeft } from 'lucide-react';
+import { BookOpen, Plus, Search, FileText, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { renderKnowledgeHtml } from '@/lib/knowledgeHtml';
 import { toast } from 'sonner';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
-import { useKnowledgeBase, uploadKnowledgeFile } from '@/hooks/useKnowledgeBase';
+import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile } from '@/hooks/useKnowledgeBase';
 import { buildKnowledgeTree, knowledgeSnippet, searchKnowledge, validateKnowledgeTree, type KnowledgeNode } from '@/lib/knowledge';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
@@ -17,7 +17,10 @@ import RichTextEditor from '@/components/RichTextEditorLazy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import type { KnowledgePage, KnowledgeRevision } from '@/types/knowledge';
+import KnowledgePermissionsDialog from '@/components/KnowledgePermissionsDialog';
+import KnowledgeComments from '@/components/KnowledgeComments';
+import { knowledgeCan, parseKnowledgePolicy } from '../../worker/src/knowledgeAccess';
+import type { KnowledgePage, KnowledgeRevision, KnowledgePolicy } from '@/types/knowledge';
 
 const selectStyle = 'h-9 rounded-md border border-input bg-background px-2 text-sm min-w-0';
 
@@ -29,6 +32,10 @@ export default function KnowledgeBaseView() {
   const [scope, setScope] = useState(selectedProjectId || 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<'all' | 'general' | 'meeting'>('all');
+  const [newCategory, setNewCategory] = useState<'general' | 'meeting'>('general');
+  const [newPolicy, setNewPolicy] = useState<KnowledgePolicy>({ mode: 'inherit' });
+  const [permissionTarget, setPermissionTarget] = useState<'page' | 'new' | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState<KnowledgePage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,17 +45,23 @@ export default function KnowledgeBaseView() {
   const [newTitle, setNewTitle] = useState('');
   const [newScope, setNewScope] = useState(selectedProjectId || 'shared');
   const fileInput = useRef<HTMLInputElement>(null);
-  const { pages, attachments, revisions, loading, error, refresh } = useKnowledgeBase(selectedId);
+  const member = users.find(u => u.id === currentMemberId) || currentMember;
+  const actor = member && currentMemberId ? { id: currentMemberId, role: member.role || currentMember?.role || '', jobTitle: member.jobTitle || '', is_active: member.isActive !== false } : null;
+  const { pages, attachments, revisions, comments, loading, error, refresh } = useKnowledgeBase(selectedId, actor);
   const locks = usePresenceLock('knowledge-base');
   const activeLock = useRef<string | null>(null);
-  const admin = currentMember?.role === 'admin' || currentMember?.role === 'super_admin';
+  const admin = actor?.role === 'admin' || actor?.role === 'super_admin';
   const page = pages.find(p => p.id === selectedId);
   const lockedBy = page ? locks.isLockedBy(`kb:${page.id}`) : null;
-  const canEdit = !!page && !page.is_archived && (!page.admin_only || admin) && !lockedBy;
-  const canDelete = !!page && (admin || page.created_by === currentMemberId) && !lockedBy;
+  const hasEditAccess = !!page && knowledgeCan(pages, page.id, actor, 'edit');
+  const canEdit = hasEditAccess && !lockedBy;
+  const canArchive = !!page && admin && knowledgeCan(pages.map(p => p.id === page.id ? { ...p, is_archived: false } : p), page.id, actor, 'edit') && !lockedBy;
+  const canComment = !!page && knowledgeCan(pages, page.id, actor, 'comment');
+  const canDelete = !!page && canEdit && (admin || page.created_by === currentMemberId);
+  const pagePolicy = useMemo(() => parseKnowledgePolicy(page?.access_policy) || { mode: 'inherit' } as KnowledgePolicy, [page?.access_policy]);
   const scopeName = (id: string | null) => id ? allProjects.find(p => p.id === id)?.name || t('kb.unknownProject') : t('kb.shared');
-  const visible = pages.filter(p => showArchived || !p.is_archived);
-  const results = useMemo(() => searchKnowledge(visible, query), [pages, query, showArchived]);
+  const visible = pages.filter(p => (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category));
+  const results = searchKnowledge(visible, query);
   const groups = [{ id: 'shared', name: t('kb.shared') }, ...allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, name: p.name }))];
   const projectGroups = useMemo(() => groupProjectsByLine(productLines, allProjects), [productLines, allProjects]);
   const scopeOptions = <>
@@ -57,6 +70,17 @@ export default function KnowledgeBaseView() {
   </>;
 
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (selectedId && !loading && !page) {
+      setSelectedId(null); setPreview(null); setShowHistory(false); setPermissionTarget(null);
+      void stopEditing();
+    } else if (draft && !hasEditAccess) {
+      void stopEditing();
+    }
+  }, [selectedId, page, loading, hasEditAccess, draft]);
+
+  useEffect(() => { if (!admin) setPermissionTarget(null); }, [admin]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (activeLock.current) { event.preventDefault(); event.returnValue = ''; } };
@@ -92,7 +116,7 @@ export default function KnowledgeBaseView() {
     activeLock.current = key;
   }
   async function edit() {
-    if (!page) return;
+    if (!page || !canEdit) return;
     await run(async () => {
       await takeLock(page);
       // Refresh after acquiring; don't start an editor from a stale subscription.
@@ -109,16 +133,16 @@ export default function KnowledgeBaseView() {
     toast.success(t('kb.saved'));
   }
   async function save() {
-    if (!draft) return;
+    if (!draft || !hasEditAccess) return;
     await run(async () => {
       validateKnowledgeTree(pages.map(p => p.id === draft.id ? draft : p));
       await update(draft, { title: draft.title.trim(), body: draft.body, project_id: draft.project_id,
-        parent_id: draft.parent_id, sort_order: draft.sort_order, ...(admin ? { admin_only: draft.admin_only } : {}) });
+        parent_id: draft.parent_id, sort_order: draft.sort_order, category: draft.category || 'general', ...(admin ? { admin_only: draft.admin_only } : {}) });
       await stopEditing();
     });
   }
   async function archive() {
-    if (!page) return;
+    if (!page || !canArchive) return;
     await run(async () => {
       await takeLock(page);
       try { await update(page, { is_archived: !page.is_archived }); }
@@ -126,7 +150,7 @@ export default function KnowledgeBaseView() {
     });
   }
   async function restore(revision: KnowledgeRevision) {
-    if (!page || !window.confirm(t('kb.restoreConfirm'))) return;
+    if (!page || !canEdit || !window.confirm(t('kb.restoreConfirm'))) return;
     await run(async () => {
       await takeLock(page);
       try { await update(page, { body: revision.body }); setPreview(null); }
@@ -134,7 +158,7 @@ export default function KnowledgeBaseView() {
     });
   }
   async function remove() {
-    if (!page || !window.confirm(t('kb.deleteConfirm', { title: page.title }))) return;
+    if (!page || !canDelete || !window.confirm(t('kb.deleteConfirm', { title: page.title }))) return;
     await run(async () => {
       if (pages.some(p => p.parent_id === page.id)) throw new Error('kb_has_children');
       const result = await supabase.from('kb_pages').delete().eq('id', page.id).select('*').single();
@@ -144,15 +168,32 @@ export default function KnowledgeBaseView() {
   }
   async function create() {
     await run(async () => {
+      ensurePolicyKeepsView(newPolicy);
       const result = await supabase.from('kb_pages').insert({ title: newTitle.trim(), body: '',
-        project_id: newScope === 'shared' ? null : newScope, created_by: currentMemberId, updated_by: currentMemberId }).select('*').single();
+        project_id: newScope === 'shared' ? null : newScope, category: newCategory, access_policy: newPolicy, created_by: currentMemberId, updated_by: currentMemberId }).select('*').single();
       if (result.error || !result.data) throw result.error || new Error('kb_failed');
-      setCreating(false); setNewTitle(''); setScope(newScope); setQuery('');
+      setCreating(false); setNewTitle(''); setScope(newScope); setCategory(newCategory); setNewPolicy({ mode: 'inherit' }); setQuery('');
       await refresh(); setSelectedId(result.data.id);
     });
   }
-  async function withFileLock(action: () => Promise<void>) {
+  async function savePolicy(policy: KnowledgePolicy) {
+    if (!admin) return;
+    try { ensurePolicyKeepsView(policy, permissionTarget === 'page' ? page : undefined); }
+    catch (failure) { report(failure); return; }
+    if (permissionTarget === 'new') { setNewPolicy(policy); setPermissionTarget(null); return; }
     if (!page) return;
+    await run(async () => {
+      await takeLock(page);
+      try { await update(page, { access_policy: policy }); setPermissionTarget(null); }
+      finally { await stopEditing(); }
+    });
+  }
+  function ensurePolicyKeepsView(policy: KnowledgePolicy, target?: KnowledgePage) {
+    const candidate = { id: target?.id || 'new-knowledge-page', parent_id: target?.parent_id || null, access_policy: policy };
+    if (!knowledgeCan([...pages.filter(p => p.id !== candidate.id), candidate], candidate.id, actor, 'view')) throw new Error('kb_self_lockout');
+  }
+  async function withFileLock(action: () => Promise<void>) {
+    if (!page || !hasEditAccess) throw new Error('kb_forbidden');
     const transient = activeLock.current !== `kb:${page.id}`;
     await takeLock(page);
     try { await action(); }
@@ -167,7 +208,7 @@ export default function KnowledgeBaseView() {
         className={`my-0.5 w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${node.id === selectedId ? 'bg-primary/15 text-primary font-semibold shadow-sm' : 'hover:bg-muted text-foreground'}`}
         style={{ paddingLeft: `${12 + depth * 14}px` }}>
         <FileText size={14} className="shrink-0 opacity-60" /><span className="truncate">{node.title}</span>
-        {node.admin_only && <Lock size={12} aria-label={t('kb.adminOnly')} />}
+        {(node.admin_only || node.access_policy?.mode === 'custom') && <Lock size={12} aria-hidden="true" />}
         {node.is_archived && <span className="text-xs text-muted-foreground">{t('kb.archived')}</span>}
       </button>
       {node.children.length > 0 && <ul>{renderTree(node.children, depth + 1)}</ul>}
@@ -179,7 +220,7 @@ export default function KnowledgeBaseView() {
       <div className="flex items-center gap-3"><BookOpen className="text-primary" size={22} /><div>
         <h1 className="font-bold text-lg">{t('kb.title')}</h1><p className="text-xs text-muted-foreground">{t('kb.subtitle')}</p>
       </div></div>
-      <Button disabled={busy || !!draft} onClick={() => { setNewScope(scope === 'all' ? 'shared' : scope); setCreating(true); }} className="shadow-sm gap-2"><Plus size={16} />{t('kb.newPage')}</Button>
+      <Button disabled={busy || !!draft} onClick={() => { setNewScope(scope === 'all' ? 'shared' : scope); setNewCategory(category === 'meeting' ? 'meeting' : 'general'); setNewPolicy({ mode: 'inherit' }); setCreating(true); }} className="shadow-sm gap-2"><Plus size={16} />{t('kb.newPage')}</Button>
     </header>
     {error && <div role="alert" className="px-4 py-2 text-sm text-destructive">{t('kb.errors.kb_load_failed')} <button className="underline" onClick={() => void refresh()}>{t('kb.retry')}</button></div>}
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -188,6 +229,9 @@ export default function KnowledgeBaseView() {
           <div className="relative"><Search size={15} className="absolute left-3 top-3 text-muted-foreground" /><Input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('kb.search')} aria-label={t('kb.search')} className="pl-9" /></div>
           <select className={`${selectStyle} w-full`} aria-label={t('kb.scope')} value={scope} onChange={e => setScope(e.target.value)}>
             <option value="all">{t('kb.allScopes')}</option>{scopeOptions}
+          </select>
+          <select className={`${selectStyle} w-full`} aria-label={t('kb.category')} value={category} onChange={e => setCategory(e.target.value as typeof category)}>
+            <option value="all">{t('kb.allCategories')}</option><option value="general">{t('kb.categories.general')}</option><option value="meeting">{t('kb.categories.meeting')}</option>
           </select>
           <label className="flex gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />{t('kb.showArchived')}</label>
         </div>
@@ -212,32 +256,37 @@ export default function KnowledgeBaseView() {
         }}><ArrowLeft size={16} />{t('kb.pages')}</Button>}
         {!page ? <div className="m-auto text-center max-w-sm text-muted-foreground"><BookOpen size={36} className="mx-auto mb-4 text-primary/60" /><h2 className="font-semibold text-foreground">{t('kb.emptyTitle')}</h2><p className="text-sm mt-2">{t('kb.emptyHint')}</p></div> : <div className="w-full max-w-5xl mx-auto space-y-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0"><p className="text-xs text-primary mb-2">{scopeName(page.project_id)}</p><h2 className="text-2xl font-bold break-words">{page.title}</h2>
+            <div className="min-w-0"><p className="text-xs text-primary mb-2">{scopeName(page.project_id)} · {t(`kb.categories.${page.category || 'general'}`)}</p><h2 className="text-2xl font-bold break-words">{page.title}</h2>
               <p className="text-xs text-muted-foreground mt-2">{t('kb.updated', { name: users.find(u => u.id === page.updated_by)?.name || t('kb.member'), date: new Date(page.updated_at).toLocaleString() })}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {draft ? <><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></> : <>
                 <Button variant="outline" onClick={() => { setShowHistory(!showHistory); setPreview(null); }} className="gap-2"><History size={15} />{t('kb.history')}</Button>
                 {canEdit && <Button disabled={busy} onClick={() => void edit()}>{t('kb.edit')}</Button>}
-                {admin && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => void archive()}>{page.is_archived ? t('kb.unarchive') : t('kb.archive')}</Button>}
+                {admin && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => setPermissionTarget('page')} className="gap-2"><ShieldCheck size={15} />{t('kb.permissions.title')}</Button>}
+                {canArchive && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => void archive()}>{page.is_archived ? t('kb.unarchive') : t('kb.archive')}</Button>}
                 {canDelete && <Button variant="ghost" disabled={busy} aria-label={t('kb.delete')} onClick={() => void remove()}><Trash2 size={16} /></Button>}
               </>}
             </div>
           </div>
           {lockedBy && <p role="status" className="text-sm rounded-lg bg-amber-500/10 p-3">{t('kb.editing', { name: lockedBy.name })}</p>}
           {page.is_archived && <p className="text-sm text-muted-foreground">{t('kb.archivedHint')}</p>}
+          {page.access_policy?.mode === 'custom' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck size={14} />{t('kb.permissions.restricted')}</p>}
           {page.admin_only && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Lock size={14} />{t('kb.adminOnly')}</p>}
           {draft ? <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
             <label className="block text-sm space-y-1"><span>{t('kb.pageTitle')}</span><Input value={draft.title} maxLength={200} disabled={busy} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
             <div className="grid sm:grid-cols-3 gap-3">
-              <label className="flex flex-col gap-1 text-xs">{t('kb.scope')}<select disabled={busy} className={selectStyle} value={draft.project_id || 'shared'} onChange={e => setDraft({ ...draft, project_id: e.target.value === 'shared' ? null : e.target.value, parent_id: null })}>{scopeOptions}</select></label>
-              <label className="flex flex-col gap-1 text-xs">{t('kb.parent')}<select disabled={busy} className={selectStyle} value={draft.parent_id || ''} onChange={e => setDraft({ ...draft, parent_id: e.target.value || null })}>
+              <label className="flex flex-col gap-1 text-xs">{t('kb.scope')}<select disabled={busy || !admin} className={selectStyle} value={draft.project_id || 'shared'} onChange={e => setDraft({ ...draft, project_id: e.target.value === 'shared' ? null : e.target.value, parent_id: null })}>{scopeOptions}</select></label>
+              <label className="flex flex-col gap-1 text-xs">{t('kb.parent')}<select disabled={busy || !admin} className={selectStyle} value={draft.parent_id || ''} onChange={e => setDraft({ ...draft, parent_id: e.target.value || null })}>
                 <option value="">{t('kb.noParent')}</option>{pages.filter(p => p.id !== draft.id && p.project_id === draft.project_id && (!p.is_archived || p.id === draft.parent_id)).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
               </select></label>
               <label className="flex flex-col gap-1 text-xs">{t('kb.order')}<Input disabled={busy} type="number" step="1" value={draft.sort_order} onChange={e => setDraft({ ...draft, sort_order: Number(e.target.value) })} /></label>
             </div>
+            <p className="text-xs text-muted-foreground">{t('kb.permissions.moveHint')}</p>
+            <label className="flex flex-col gap-1 text-xs">{t('kb.category')}<select disabled={busy} className={selectStyle} value={draft.category || 'general'} onChange={e => setDraft({ ...draft, category: e.target.value as 'general' | 'meeting' })}><option value="general">{t('kb.categories.general')}</option><option value="meeting">{t('kb.categories.meeting')}</option></select></label>
             {admin && <label className="flex items-center gap-2 text-sm"><input disabled={busy} type="checkbox" checked={draft.admin_only} onChange={e => setDraft({ ...draft, admin_only: e.target.checked })} />{t('kb.adminOnly')}</label>}
-            <RichTextEditor content={draft.body} onChange={body => setDraft(d => d ? { ...d, body } : d)} editable={!busy && !lockedBy} imageUploadPrefix={`kb/${page.id}`} members={users} />
+            <p className="text-xs text-muted-foreground">{t('kb.privateFilesHint')}</p>
+            <RichTextEditor content={draft.body} onChange={body => setDraft(d => d ? { ...d, body } : d)} editable={!busy && !lockedBy && hasEditAccess} allowImageUpload={false} members={users} />
           </div> : <article className="prose prose-sm dark:prose-invert max-w-none min-h-40 rounded-xl border bg-card p-5 shadow-sm break-words [&_img]:max-w-full" dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(page.body || `<p>${t('kb.emptyBody')}</p>`) }} />}
           {showHistory && <section className="rounded-xl border bg-card shadow-sm p-4 space-y-3" aria-label={t('kb.history')}>
             <h3 className="font-semibold">{t('kb.history')}</h3><p className="text-xs text-muted-foreground">{t('kb.historyHint')}</p>
@@ -258,12 +307,12 @@ export default function KnowledgeBaseView() {
             }} />
             {!attachments.length && <p className="text-sm text-muted-foreground">{t('kb.noFiles')}</p>}
             {attachments.map(file => <div key={file.id} className="flex items-center gap-3 text-sm border-t pt-2">
-              <a className="flex-1 min-w-0 truncate text-primary hover:underline" href={supabase.storage.from('task-images').getPublicUrl(file.storage_path).data.publicUrl} target="_blank" rel="noreferrer">{file.file_name}</a>
+              <button disabled={busy} className="flex-1 min-w-0 truncate text-left text-primary hover:underline" onClick={() => void run(() => downloadKnowledgeFile(file))}>{file.file_name}</button>
               <span className="text-xs text-muted-foreground">{(file.file_size / 1024).toFixed(1)} KB</span>
               {canEdit && <Button size="icon" variant="ghost" disabled={busy} aria-label={t('kb.deleteFile', { name: file.file_name })} onClick={() => {
                 if (!window.confirm(t('kb.deleteFile', { name: file.file_name }))) return;
                 void run(() => withFileLock(async () => {
-                  const removed = await supabase.storage.from('task-images').remove([file.storage_path]);
+                  const removed = await supabase.storage.from(file.storage_bucket || 'task-images').remove([file.storage_path]);
                   if (removed.error) throw removed.error;
                   const result = await supabase.from('kb_attachments').delete().eq('id', file.id).select('*').single();
                   if (result.error) throw result.error;
@@ -271,15 +320,19 @@ export default function KnowledgeBaseView() {
               }}><Trash2 size={14} /></Button>}
             </div>)}
           </section>
+          <KnowledgeComments key={`${page.id}:${currentMemberId}`} pageId={page.id} comments={comments} memberId={currentMemberId} users={users} canComment={canComment} canEdit={hasEditAccess} onChanged={refresh} report={report} />
         </div>}
       </main>
     </div>
-    <Dialog open={creating} onOpenChange={open => { if (!busy) setCreating(open); }}><DialogContent><DialogHeader><DialogTitle>{t('kb.newPage')}</DialogTitle></DialogHeader>
+    <Dialog open={creating} onOpenChange={open => { if (!busy) setCreating(open); }}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>{t('kb.newPage')}</DialogTitle></DialogHeader>
       <form onSubmit={e => { e.preventDefault(); void create(); }} className="space-y-4">
         <label className="block space-y-1 text-sm"><span>{t('kb.pageTitle')}</span><Input autoFocus required maxLength={200} value={newTitle} disabled={busy} onChange={e => setNewTitle(e.target.value)} /></label>
         <label className="flex flex-col gap-1 text-sm">{t('kb.scope')}<select className={selectStyle} value={newScope} disabled={busy} onChange={e => setNewScope(e.target.value)}>{scopeOptions}</select></label>
+        <label className="flex flex-col gap-1 text-sm">{t('kb.category')}<select className={selectStyle} value={newCategory} disabled={busy} onChange={e => setNewCategory(e.target.value as 'general' | 'meeting')}><option value="general">{t('kb.categories.general')}</option><option value="meeting">{t('kb.categories.meeting')}</option></select></label>
+        <div className="flex items-center justify-between gap-2 text-sm"><span>{t(newPolicy.mode === 'custom' ? 'kb.permissions.custom' : 'kb.permissions.inherit')}</span>{admin && <Button type="button" variant="outline" onClick={() => setPermissionTarget('new')}>{t('kb.permissions.title')}</Button>}</div>
         <DialogFooter><Button type="submit" disabled={busy || !newTitle.trim()}>{busy ? t('kb.saving') : t('kb.create')}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
+    <KnowledgePermissionsDialog open={!!permissionTarget} onOpenChange={open => { if (!open) setPermissionTarget(null); }} policy={permissionTarget === 'new' ? newPolicy : pagePolicy} users={users} hasParent={permissionTarget === 'page' && !!page?.parent_id} busy={busy} onSave={savePolicy} />
   </section>;
 }

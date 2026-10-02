@@ -20,10 +20,14 @@ describe('decideMembersUpdate (Cloudflare members write rule)', () => {
     expect(decideMembersUpdate(ADMIN, { sort_order: 3 })).toBe('allow');
     expect(decideMembersUpdate(ADMIN, { color: '#000000' })).toBe('own-row');
     expect(decideMembersUpdate(ADMIN, { role: 'member' })).toBe('deny');
+    expect(decideMembersUpdate(ADMIN, { auth_id: 'self' })).toBe('own-row');
+    expect(decideMembersUpdate(ADMIN, { job_title: 'PM' })).toBe('deny');
   });
 
   it('leaves super_admin unrestricted', () => {
     expect(decideMembersUpdate(SUPER, { role: 'admin', name: 'Example' })).toBe('allow');
+    expect(decideMembersUpdate(SUPER, { job_title: 'PM' })).toBe('allow');
+    expect(decideMembersUpdate(SUPER, { job_title: 'x'.repeat(201) })).toBe('invalid');
   });
 
   it('rejects malformed avatar or colour values', () => {

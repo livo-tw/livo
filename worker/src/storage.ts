@@ -19,7 +19,8 @@ import type { AppContext, Env } from './env';
 import { DEFAULT_WORKSPACE } from './env';
 import { knowledgeStorageAllowed } from './knowledge';
 
-const VALID_BUCKETS = new Set(['task-images', 'backups']);
+const VALID_BUCKETS = new Set(['task-images', 'kb-files', 'backups']);
+export const isKnowledgeStoragePath = (path: string): boolean => /^(?:ws\/[^/]+\/)?kb\//.test(path);
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB hard cap (frontend enforces 2 MB for attachments)
 const INLINE_SAFE_TYPE = /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)\s*(;|$)/i;
 
@@ -96,7 +97,7 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
     return c.json({ data: null, error: { message: 'Invalid path' } }, 403);
   }
   const contentType = c.req.header('content-type') || 'application/octet-stream';
-  if (bucket === 'task-images' && !await knowledgeStorageAllowed(c.env, c.get('auth'), effectivePath)) {
+  if ((bucket === 'task-images' && isKnowledgeStoragePath(effectivePath)) || (bucket === 'kb-files' && (!isKnowledgeStoragePath(effectivePath) || !await knowledgeStorageAllowed(c.env, c.get('auth'), effectivePath)))) {
     return c.json({ data: null, error: { message: 'kb_forbidden' } }, 403);
   }
   await c.env.ATTACHMENTS.put(key(bucket, effectivePath), c.req.raw.body, {
@@ -109,6 +110,14 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
 }
 
 export async function handleDownload(c: Context<AppContext>, bucket: string, path: string): Promise<Response> {
+  const privateKnowledge = bucket === 'kb-files' || isKnowledgeStoragePath(path);
+  if (privateKnowledge) {
+    const auth = c.get('auth');
+    if (!auth || !isKnowledgeStoragePath(path) || !pathAllowed(auth.member.workspaceId || DEFAULT_WORKSPACE, path)
+      || !await knowledgeStorageAllowed(c.env, auth, path, 'view')) {
+      return c.json({ data: null, error: { message: 'Object not found' } }, 404);
+    }
+  }
   // backups are private per-workspace dumps: prefix-gated on the caller
   // (route already enforces member + super_admin). task-images stay public.
   if (bucket === 'backups') {
@@ -120,7 +129,7 @@ export async function handleDownload(c: Context<AppContext>, bucket: string, pat
 
   // task-images are immutable and public — serve/store via the edge Cache API
   // so repeat views skip the R2 GET entirely. backups stay private/uncached.
-  const cacheable = bucket === 'task-images';
+  const cacheable = bucket === 'task-images' && !privateKnowledge;
   const cache = caches.default;
   if (cacheable) {
     const hit = await cache.match(c.req.raw);
@@ -140,7 +149,7 @@ export async function handleDownload(c: Context<AppContext>, bucket: string, pat
     headers.set('content-security-policy', "default-src 'none'; sandbox");
     headers.set('content-disposition', 'attachment');
   }
-  if (bucket === 'task-images') {
+  if (cacheable) {
     // Content-addressed-ish paths (timestamped) — safe to cache aggressively.
     headers.set('cache-control', 'public, max-age=31536000, immutable');
   } else {
@@ -163,7 +172,7 @@ export async function handleRemove(c: Context<AppContext>, bucket: string): Prom
   // Silently drop out-of-namespace paths (same shape as deleting a
   // nonexistent object) — a tenant can never delete another tenant's files.
   const paths = requested.filter((p) => typeof p === 'string' && pathAllowed(ws, p));
-  if (bucket === 'task-images') {
+  if (bucket === 'task-images' || bucket === 'kb-files') {
     for (const path of paths) {
       if (!await knowledgeStorageAllowed(c.env, c.get('auth'), path)) {
         return c.json({ data: null, error: { message: 'kb_forbidden' } }, 403);

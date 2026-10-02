@@ -1,4 +1,16 @@
 {
+  "memberJobTitle": {
+    "edit": "Edit job title",
+    "editMember": "Edit {{name}}'s job title",
+    "permissionHint": "Changing a job title affects knowledge access granted to that job title.",
+    "customHint": "Enter any title or choose an existing one. Leave blank to clear.",
+    "superAdminOnly": "Job titles are assigned by a super administrator.",
+    "tooLong": "Job titles can contain up to 200 characters.",
+    "saved": "Job title updated",
+    "saveFailed": "Could not update job title: ",
+    "save": "Save job title",
+    "activity": "Changed {{name}}'s job title to {{jobTitle}}"
+  },
   "slackActions": {
     "manual": {
       "title": "Manual mapping (when Slack and LIVO emails differ)",
@@ -2648,7 +2660,7 @@
     "deleteFile": "Delete attachment “{{name}}”?",
     "retry": "Retry",
     "errors": {
-      "kb_forbidden": "You do not have permission for this action.",
+      "kb_forbidden": "You do not have permission for this action. Refresh the page.",
       "kb_conflict": "The page changed, is locked, or your edit lock expired. Keep your draft and reopen the page before editing.",
       "kb_depth": "Pages can have at most three levels. Choose another parent.",
       "kb_cycle": "A page cannot be placed under itself or one of its descendants.",
@@ -2662,7 +2674,55 @@
       "kb_invalid_attachment": "Invalid attachment or file too large.",
       "kb_invalid_request": "Check the fields and try again.",
       "kb_load_failed": "Could not load the knowledge base. Try again.",
-      "kb_failed": "The action failed. Please try again."
+      "kb_failed": "The action failed. Please try again.",
+      "kb_self_lockout": "Keep your own view permission so you can continue managing this page.",
+      "kb_policy_invalid": "The permission settings are invalid. Select the allowed people again.",
+      "kb_legacy_public_attachments": "This page or a child still has legacy public files. Download a backup, remove those attachments and upload them again as private files before restricting view access. Public inline images must also be replaced with private attachments.",
+      "kb_comment_invalid": "Comments must contain 1 to 10,000 characters of plain text."
+    },
+    "category": "Category",
+    "allCategories": "All categories",
+    "categories": {
+      "general": "General knowledge",
+      "meeting": "Meeting notes"
+    },
+    "privateFilesHint": "Upload images and files as attachments below. Downloads check access to this page.",
+    "permissions": {
+      "title": "Page permissions",
+      "mode": "Permission mode",
+      "inherit": "Inherit permissions",
+      "inheritParent": "Use the parent page’s view, edit and comment permissions.",
+      "inheritRoot": "Without a parent, all active members can view, edit and comment. The admin-only editing restriction still applies.",
+      "custom": "Custom permissions",
+      "matchAny": "For each permission, allow system roles, positions or specific members. Matching any selected option grants access.",
+      "hierarchy": "Parent restrictions always apply. A child page can narrow access but cannot expand its parent’s permissions.",
+      "emptyDenied": "Leaving a permission empty denies it to everyone. Keep your own view access.",
+      "moveHint": "Moving a page applies the new parent’s restrictions and may change who can access it. Only administrators can move pages.",
+      "viewRequired": "Editing and commenting require view access first. Administrators do not bypass view restrictions. Positions match each member’s current job title.",
+      "view": "Can view",
+      "edit": "Can edit",
+      "comment": "Can comment",
+      "roles": "System roles",
+      "positions": "Positions",
+      "members": "Specific members",
+      "noPositions": "No job titles have been set",
+      "inactiveMember": "Inactive; no access",
+      "restricted": "This page has custom permissions. Parent restrictions still apply.",
+      "role": {
+        "member": "Member",
+        "admin": "Administrator",
+        "super_admin": "Super administrator"
+      }
+    },
+    "comments": {
+      "title": "Comments",
+      "empty": "No comments yet.",
+      "body": "Leave a comment",
+      "send": "Post comment",
+      "edit": "Edit comment",
+      "delete": "Delete comment",
+      "deleteConfirm": "Delete this comment?",
+      "readOnly": "You can read comments but do not currently have permission to post or edit them."
     }
   },
   "qa": {

@@ -21,6 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import type { User } from '@/types';
 import type { Editor } from '@tiptap/core';
+import { KnowledgeHighlight, KnowledgeTextBackground } from '@/lib/knowledgeEditorMarks';
 
 interface SuggestionProps {
   editor: Editor;
@@ -50,6 +51,8 @@ interface RichTextEditorProps {
   members?: User[];
   onMention?: (userId: string) => void;
   imageUploadPrefix?: string;
+  /** Knowledge pages use private attachments, not public inline uploads. */
+  allowImageUpload?: boolean;
 }
 
 // Mention suggestion list component
@@ -113,7 +116,7 @@ const MentionList = forwardRef<{ onKeyDown: (props: { event: KeyboardEvent }) =>
 );
 MentionList.displayName = 'MentionList';
 
-const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads' }: RichTextEditorProps) => {
+const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads', allowImageUpload = true }: RichTextEditorProps) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +132,8 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
       }),
       TextStyle,
       Color,
+      KnowledgeHighlight,
+      KnowledgeTextBackground,
       Image.configure({ inline: false, allowBase64: true }),
       Underline,
       Table.configure({ resizable: true }),
@@ -246,7 +251,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
   }, [editable, editor]);
 
   const handleImageUpload = useCallback(async (file: File) => {
-    if (!editor) return;
+    if (!editor || !allowImageUpload) return;
     if (file.size > MAX_UPLOAD_BYTES) {
       toast.error(i18n.t('taskDetail.attachments.fileSizeExceeded', { files: file.name, size: MAX_UPLOAD_MB }));
       return;
@@ -262,7 +267,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
     }
     const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(up?.path || path);
     editor.chain().focus().setImage({ src: publicUrl }).run();
-  }, [editor, imageUploadPrefix]);
+  }, [editor, imageUploadPrefix, allowImageUpload]);
 
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -357,9 +362,9 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
 
           <span className="w-px h-4 bg-border mx-1" />
 
-          <ToolBtn onClick={() => fileInputRef.current?.click()} title={t('editor.insertImage')}>
+          {allowImageUpload && <ToolBtn onClick={() => fileInputRef.current?.click()} title={t('editor.insertImage')}>
             <ImageIcon size={14} />
-          </ToolBtn>
+          </ToolBtn>}
           <ToolBtn onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} title={t('editor.insertTable')}>
             <TableIcon size={14} />
           </ToolBtn>
@@ -395,7 +400,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
       )}
 
       <EditorContent editor={editor} className="tiptap-editor" />
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
+      {allowImageUpload && <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />}
     </div>
   );
 };

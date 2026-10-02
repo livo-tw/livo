@@ -43,6 +43,20 @@ function tryWrangler(args) {
 }
 
 // Independent column upgrades must run before the tenancy sentinel can exit.
+for (const [table, column, definition] of [
+  ['kb_pages', 'category', "TEXT NOT NULL DEFAULT 'general'"],
+  ['kb_pages', 'access_policy', `TEXT NOT NULL DEFAULT '{"mode":"inherit"}'`],
+  ['kb_attachments', 'storage_bucket', "TEXT NOT NULL DEFAULT 'task-images'"],
+]) {
+  const result = tryWrangler(`--command "SELECT ${column} FROM ${table} LIMIT 0"`);
+  if (!result.ok && /no such column/i.test(result.out)) {
+    const file = join(tmpdir(), `livo-kb-${table}-${column}-${process.pid}.sql`);
+    try { writeFileSync(file, `ALTER TABLE ${table} ADD COLUMN ${column} ${definition};\n`); wrangler(`--file="${file}"`); }
+    finally { try { unlinkSync(file); } catch { /* cleanup only */ } }
+  } else if (!result.ok && !/no such table/i.test(result.out)) {
+    throw new Error(`Knowledge upgrade probe failed for ${table}.${column}`);
+  }
+}
 const manualProbe = tryWrangler('--command "SELECT custom_fields FROM member_manuals LIMIT 0"');
 if (!manualProbe.ok && /no such column/i.test(manualProbe.out)) {
   wrangler(`--file="${join(WORKER_DIR, 'migrate', 'member-manual-alters.sql')}"`);
