@@ -1,3 +1,5 @@
+import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
+import { deploymentEnvironmentOptions } from '@/lib/deploymentEnvironments';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
@@ -12,8 +14,7 @@ import { toast } from 'sonner';
 import type { Priority, Tag, TaskDeployment, Status } from '@/types';
 import { type ProjectGroup } from '@/lib/projectGroups';
 
-const envList = ['Dev', 'QA', 'Stage', 'Live Staging', 'Prod'] as const;
-type EnvName = typeof envList[number];
+type EnvName = string;
 
 const priorities: { value: Priority; label: string; color: string }[] = [
   { value: 'highest', label: 'Highest', color: '#FF5630' },
@@ -79,6 +80,7 @@ const TaskFormFields = ({
   hideDeployment,
 }: TaskFormFieldsProps) => {
   const { t } = useTranslation();
+  const environmentConfig = useDeploymentEnvironments();
   const toggleDeploy = (env: EnvName) => {
     const exists = deployments.find(d => d.environment === env);
     if (exists) {
@@ -286,20 +288,20 @@ const TaskFormFields = ({
       <div className="border-t border-border pt-3">
         <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1"><Rocket size={16} /> {t('taskCreate.deploymentLabel')}</h3>
         <div className="space-y-2">
-          {envList.map(env => {
+          {deploymentEnvironmentOptions(environmentConfig.values, deployments.map(d => d.environment)).map(({ value: env, legacy }) => {
             const dep = deployments.find(d => d.environment === env);
             const active = !!dep;
             return (
               <div key={env} className="flex items-center gap-2">
-                <button onClick={() => toggleDeploy(env)}
+                <button type="button" disabled={!environmentConfig.ready} onClick={() => toggleDeploy(env)}
                   className={cn("px-2.5 py-1 rounded text-xs font-medium border transition-colors min-w-[80px] text-left",
                     active ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50")}>
-                  {env}
+                  {env}{legacy && ` (${t('qa.legacyValue')})`}
                 </button>
                 {active && (
                   <Popover>
                     <PopoverTrigger asChild>
-                      <button className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 border border-border rounded px-1.5 py-0.5">
+                      <button type="button" disabled={legacy || !environmentConfig.ready} className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 border border-border rounded px-1.5 py-0.5">
                         <CalendarIcon size={10} />
                         {dep?.deployDate || t('taskCreate.scheduled')}
                       </button>

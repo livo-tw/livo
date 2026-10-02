@@ -1,5 +1,6 @@
 /** Shared QA contract. Canonical source copied to both backend runtimes. */
-export type QaState = 'new' | 'triaged' | 'in_progress' | 'verification' | 'closed';
+import { DEFAULT_DEPLOYMENT_ENVIRONMENTS } from './environments.ts';
+export type QaState = 'new' | 'triaged' | 'in_progress' | 'verification' | 'verified' | 'failed' | 'closed' | 'dismissed';
 export type QaSeverity = 'untriaged' | 'low' | 'medium' | 'high';
 export type QaResult = 'pass' | 'fail' | 'blocked';
 export type QaResolution = 'fixed' | 'duplicate' | 'not_bug' | 'wont_fix' | 'cannot_reproduce';
@@ -20,6 +21,8 @@ export interface QaIssue {
   fixCycle: number; version: number; fixSummary: string; holdReason: string;
   targets: QaTarget[]; runs: QaRun[]; taskIds: string[];
   createdAt: string; updatedAt: string; closedAt: string | null; reopenedAt: string | null;
+  /** Preserved by privileged historical restore only; never accepted by create/edit. */
+  legacySource?: { system: string; originalStatus: string; recordId: string; snapshotSha256: string; [key: string]: unknown };
 }
 export interface QaCreateInput {
   projectId: string; title: string; actual: string; observedEnvironment: string;
@@ -32,7 +35,7 @@ export type QaCommand =
   | { type: 'submit_fix'; summary: string; targets: Array<Pick<QaTarget, 'environment' | 'component' | 'build' | 'required'>> }
   | { type: 'record_deployment'; targetId: string; build: string; evidence: string }
   | { type: 'record_verification'; targetId: string; build: string; result: QaResult; note: string }
-  | { type: 'close'; resolution: QaResolution; reason: string; duplicateOfId?: string }
+  | { type: 'close'; resolution: QaResolution; reason: string; duplicateOfId?: string; acknowledgeHistoricalPass?: boolean }
   | { type: 'reopen'; reason: string }
   | { type: 'hold'; reason: string }
   | { type: 'link_tasks'; taskIds: string[] };
@@ -42,12 +45,13 @@ export interface QaContext {
   /** Trusted same-workspace, active entities resolved by the backend. */
   memberIds: ReadonlySet<string>; projectIds: ReadonlySet<string>; taskIds: ReadonlySet<string>;
   duplicateIssueIds?: ReadonlySet<string>;
+  environmentValues?: readonly string[];
 }
 export interface QaComment { id: string; issueId: string; actorId: string; body: string; createdAt: string; }
 export interface QaEvent { id: string; issueId: string; actorId: string; type: string; detail: string; createdAt: string; version: number; }
 export interface QaAttachment { id: string; issueId: string; fileName: string; mimeType: string; size: number; uploadedBy: string; createdAt: string; }
 export interface QaDetail { issue: QaIssue; comments: QaComment[]; events: QaEvent[]; attachments: QaAttachment[]; }
-export interface QaListInput { projectId?: string; state?: QaState; search?: string; mine?: 'assigned' | 'testing' | 'reported'; offset?: number; limit?: number; }
+export interface QaListInput { projectId?: string; state?: QaState; states?: QaState[]; search?: string; mine?: 'assigned' | 'testing' | 'reported'; offset?: number; limit?: number; }
 export interface QaListResult { issues: QaIssue[]; total: number; hasMore: boolean; }
 export interface QaUpload { id: string; provider: 'r2' | 'supabase'; partSize: number; bucket?: string; path?: string; token?: string; }
 export class QaError extends Error {
@@ -55,7 +59,16 @@ export class QaError extends Error {
 }
 export const QA_MAX_FILE_BYTES = 200 * 1024 * 1024;
 export const QA_PART_BYTES = 5 * 1024 * 1024;
-export const QA_STATES: QaState[] = ['new', 'triaged', 'in_progress', 'verification', 'closed'];
+export const QA_STATES: QaState[] = ['new', 'triaged', 'in_progress', 'verification', 'verified', 'failed', 'closed', 'dismissed'];
+export const isQaTerminal = (state: QaState) => state === 'closed' || state === 'dismissed';
+
+/** A historical PASS is source evidence, not a fabricated LIVO verification run. */
+export function isHistoricalQaPass(issue: QaIssue): boolean {
+  const source = issue.legacySource;
+  return issue.state === 'verified' && issue.fixCycle === 0 && issue.targets.length === 0 && issue.runs.length === 0
+    && source?.system === 'slack_list' && source.originalStatus === 'PASS'
+    && /^Rec[A-Z0-9]+$/.test(source.recordId) && /^[a-f0-9]{64}$/i.test(source.snapshotSha256);
+}
 
 const admin = (actor: QaActor) => actor.role === 'admin' || actor.role === 'super_admin';
 const fail = (code: string, status = 400): never => { throw new QaError(code, status); };
@@ -89,20 +102,24 @@ function validContext(ctx: QaContext) {
   if (!ctx.actor.id || !ctx.memberIds.has(ctx.actor.id)) fail('qa_forbidden', 403);
   if (!Number.isFinite(Date.parse(ctx.now))) fail('qa_invalid_time');
 }
+function activeEnvironment(value: string, ctx: QaContext): string {
+  if (!(ctx.environmentValues ?? DEFAULT_DEPLOYMENT_ENVIRONMENTS).includes(value)) return fail('qa_invalid_environment');
+  return value;
+}
 
 /** Permissions are checked again inside both server adapters; UI is advisory. */
 export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['type']): boolean {
   const lead = admin(actor) || issue.qaOwnerId === actor.id;
   const developer = admin(actor) || issue.assigneeId === actor.id;
   const participant = lead || developer || issue.reporterId === actor.id;
-  if (type === 'reopen') return participant && (issue.state === 'closed' || issue.state === 'verification');
-  if (issue.state === 'closed') return false;
+  if (type === 'reopen') return participant && (isQaTerminal(issue.state) || ['verification', 'verified'].includes(issue.state));
+  if (isQaTerminal(issue.state)) return false;
   switch (type) {
     case 'triage': return lead;
-    case 'start_fix': return developer && ['triaged', 'in_progress'].includes(issue.state);
-    case 'submit_fix': return developer && ['triaged', 'in_progress', 'verification'].includes(issue.state);
-    case 'record_deployment': return (developer || lead) && issue.state === 'verification';
-    case 'record_verification': return lead && issue.state === 'verification';
+    case 'start_fix': return developer && ['triaged', 'in_progress', 'failed'].includes(issue.state);
+    case 'submit_fix': return developer && ['triaged', 'in_progress', 'verification', 'verified', 'failed'].includes(issue.state);
+    case 'record_deployment': return (developer || lead) && ['verification', 'verified'].includes(issue.state);
+    case 'record_verification': return lead && ['verification', 'verified'].includes(issue.state);
     case 'close': return lead;
     case 'link_tasks': return lead || developer;
     case 'edit': case 'hold': return participant;
@@ -120,7 +137,7 @@ export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaCont
     id: id(issueId), workspaceId: ctx.workspaceId, projectId,
     title: str(input.title, 200, true), actual: str(input.actual, 20000, true),
     steps: str(input.steps ?? ''), expected: str(input.expected ?? ''),
-    observedEnvironment: str(input.observedEnvironment, 120, true), observedVersion: str(input.observedVersion ?? '', 200),
+    observedEnvironment: activeEnvironment(str(input.observedEnvironment, 120, true), ctx), observedVersion: str(input.observedVersion ?? '', 200),
     component: str(input.component ?? '', 120), reporterId: ctx.actor.id, assigneeId: null, qaOwnerId: null,
     severity: enumValue(input.severity ?? 'untriaged', ['untriaged', 'low', 'medium', 'high']),
     priority: 3, dueDate: null, state: 'new', resolution: null, resolutionReason: '', duplicateOfId: null,
@@ -132,6 +149,14 @@ export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaCont
 export function latestQaRun(issue: QaIssue, targetId: string): QaRun | undefined {
   return issue.runs.filter(run => run.fixCycle === issue.fixCycle && run.targetId === targetId)
     .reduce<QaRun | undefined>((latest, run) => !latest || run.sequence > latest.sequence ? run : latest, undefined);
+}
+
+export function requiredTargetsPassed(issue: QaIssue): boolean {
+  const required = issue.targets.filter(target => target.required);
+  return required.length > 0 && required.every(target => {
+    const run = latestQaRun(issue, target.id);
+    return !!target.deployedAt && run?.result === 'pass' && run.build === target.build;
+  });
 }
 
 /** Each candidate is immutable. A new build requires submit_fix, never a target edit. */
@@ -147,6 +172,7 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.title = str(command.title, 200, true); next.actual = str(command.actual, 20000, true);
       next.steps = str(command.steps); next.expected = str(command.expected);
       next.observedEnvironment = str(command.observedEnvironment, 120, true);
+      if (next.observedEnvironment !== issue.observedEnvironment) activeEnvironment(next.observedEnvironment, ctx);
       next.observedVersion = str(command.observedVersion, 200); next.component = str(command.component, 120);
       break;
     }
@@ -156,6 +182,8 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.severity = enumValue(command.severity, ['low', 'medium', 'high']);
       if (!Number.isInteger(command.priority) || command.priority < 1 || command.priority > 5) return fail('qa_invalid_priority');
       next.priority = command.priority;
+      if (next.legacySource?.priorityMeaning === 'LIVO default 3; source has severity only')
+        next.legacySource = { ...next.legacySource, priorityMeaning: 'LIVO triage selected priority' };
       if (command.dueDate !== null && (typeof command.dueDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(command.dueDate) || !Number.isFinite(Date.parse(command.dueDate)) || new Date(command.dueDate).toISOString().slice(0, 10) !== command.dueDate)) return fail('qa_invalid_date');
       next.dueDate = command.dueDate;
       if (issue.state === 'new') next.state = 'triaged';
@@ -172,7 +200,8 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.targets = command.targets.map((raw): QaTarget => {
         record(raw); keys(raw, ['environment', 'component', 'build', 'required']);
         const environment = str(raw.environment, 120, true), component = str(raw.component, 120), build = str(raw.build, 200, true);
-        const key = JSON.stringify([environment.toLowerCase(), component.toLowerCase()]);
+        activeEnvironment(environment, ctx);
+        const key = JSON.stringify([environment, component.toLowerCase()]);
         if (seen.has(key) || typeof raw.required !== 'boolean') return fail('qa_invalid_target');
         seen.add(key);
         return { id: ctx.newId(), environment, component, build, required: raw.required, deployedAt: null, deployedBy: null, deploymentEvidence: '' };
@@ -199,20 +228,22 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.runs.push({ id: ctx.newId(), sequence: issue.runs.reduce((seq, run) => Math.max(seq, run.sequence), 0) + 1,
         fixCycle: issue.fixCycle, targetId: target.id, environment: target.environment, component: target.component,
         build: target.build, result, note, testerId: ctx.actor.id, createdAt: ctx.now });
-      if (result === 'fail') { next.state = 'in_progress'; next.reopenedAt = ctx.now; }
+      if (result === 'fail') { next.state = 'failed'; next.reopenedAt = ctx.now; }
+      else next.state = requiredTargetsPassed(next) ? 'verified' : 'verification';
       break;
     }
     case 'close': {
-      keys(command, ['type', 'resolution', 'reason', 'duplicateOfId']);
+      keys(command, ['type', 'resolution', 'reason', 'duplicateOfId', 'acknowledgeHistoricalPass']);
       const resolution = enumValue(command.resolution, ['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce']);
+      if (command.acknowledgeHistoricalPass !== undefined && typeof command.acknowledgeHistoricalPass !== 'boolean') return fail('qa_invalid_request');
+      const historical = command.acknowledgeHistoricalPass === true;
+      if (historical && (resolution !== 'fixed' || !isHistoricalQaPass(issue))) return fail('qa_historical_pass_unavailable');
       if (resolution === 'fixed') {
-        const required = issue.targets.filter(target => target.required);
-        if (issue.state !== 'verification' || !required.length || required.some(target => {
-          const run = latestQaRun(issue, target.id);
-          return !target.deployedAt || !run || run.result !== 'pass' || run.build !== target.build;
-        })) return fail('qa_verification_required');
+        // Before verified existed, a fully passing candidate remained verification.
+        // Permit that saved shape only with the same complete, current real evidence.
+        if (!historical && (!['verified', 'verification'].includes(issue.state) || !requiredTargetsPassed(issue))) return fail('qa_verification_required');
       }
-      next.resolutionReason = str(command.reason, 8000, resolution !== 'fixed');
+      next.resolutionReason = str(command.reason, 8000, resolution !== 'fixed' || historical);
       if (resolution === 'duplicate') {
         const duplicate = id(command.duplicateOfId);
         if (duplicate === issue.id || !ctx.duplicateIssueIds?.has(duplicate)) return fail('qa_duplicate_unavailable');
@@ -221,7 +252,7 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
         if (command.duplicateOfId) return fail('qa_invalid_request');
         next.duplicateOfId = null;
       }
-      next.state = 'closed'; next.resolution = resolution; next.closedAt = ctx.now;
+      next.state = resolution === 'fixed' ? 'closed' : 'dismissed'; next.resolution = resolution; next.closedAt = ctx.now;
       break;
     }
     case 'reopen':
@@ -255,7 +286,7 @@ export function qaEventDetail(issue: QaIssue, type: string): string {
     const run = issue.runs[issue.runs.length - 1];
     return run ? `第 ${run.fixCycle} 輪 · 第 ${run.sequence} 次驗證\n${run.environment} · ${run.component || '-'} · ${run.build}\n${run.result.toUpperCase()}\n${run.note}` : '';
   }
-  if (type === 'close') return `${issue.resolution}\n${issue.resolutionReason}${issue.duplicateOfId ? '\n' + issue.duplicateOfId : ''}`;
+  if (type === 'close') return `${issue.resolution}\n${issue.resolution === 'fixed' && issue.fixCycle === 0 && issue.legacySource?.originalStatus === 'PASS' ? '依既有歷史 PASS 證據明確結案；未新增 LIVO 驗證紀錄。\n' : ''}${issue.resolutionReason}${issue.duplicateOfId ? '\n' + issue.duplicateOfId : ''}`;
   if (type === 'hold' || type === 'reopen') return issue.holdReason;
   if (type === 'triage') return `RD: ${issue.assigneeId} · QA: ${issue.qaOwnerId}\n${issue.severity} · P${issue.priority}${issue.dueDate ? '\n' + issue.dueDate : ''}`;
   if (type === 'link_tasks') return issue.taskIds.join('\n');

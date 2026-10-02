@@ -23,6 +23,15 @@ beforeEach(() => {
 });
 const adapter = () => createQaSlackActions(env, { slack, reply: vi.fn(), background: vi.fn() } as unknown as Actions);
 describe('Docker QA Slack durable inbox adapter', () => {
+  it('loads deployment environments with the authenticated member session', async () => {
+    const actor = {id:'m',role:'member' as const,team:'T-allowed',slack_user:'U1',jwt:'member-session'};
+    mocks.rows.mockResolvedValue([{value:{version:1,values:['Preview','Production']}}]);
+    expect(await adapter().environments(actor)).toEqual(['Preview','Production']);
+    expect(mocks.rows).toHaveBeenCalledWith('system_settings',{select:'value',key:'eq.deployment_environments',limit:'1'});
+    expect(mocks.session).toHaveBeenLastCalledWith('member-session');
+    mocks.rows.mockResolvedValue([{value:{version:1,values:['']}}]);
+    await expect(adapter().environments(actor)).rejects.toThrow('qa_invalid_environment');
+  });
   it('filters project search at the server before applying the 100-option limit', async () => {
     mocks.rows.mockImplementation(async (table: string) => table === 'product_lines' ? [{id:'l',name:'Product line',icon:'🐟'}] : [{id:'project-101',name:'Zebra',line_id:'l'}]);
     const actor = {id:'m',role:'member' as const,team:'T-allowed',slack_user:'U1',jwt:'member-session'};

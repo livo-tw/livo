@@ -1,3 +1,4 @@
+import { missingRestoreEnvironments, parseDeploymentEnvironments } from '@/lib/deploymentEnvironments';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Clock, FileText, AlertTriangle, Trash2, Download, RefreshCw, RotateCcw } from 'lucide-react';
@@ -136,6 +137,15 @@ const AdminBackupSection = ({
         toast.error(t('adminBackup.missingTables') + ' ' + missingTables.join(', '));
         return;
       }
+
+      // Ordinary restore does not replace system_settings. Check the live catalog
+      // before its first destructive step, including when the backup has old settings.
+      const environmentResult = await supabase.from('system_settings').select('value').eq('key', 'deployment_environments').maybeSingle();
+      if (environmentResult.error) throw environmentResult.error;
+      const environments = parseDeploymentEnvironments(environmentResult.data?.value);
+      if (!environments) throw new Error(t('deploymentEnvironments.loadFailed'));
+      const missingEnvironments = missingRestoreEnvironments(backup.task_deployments, environments.values);
+      if (missingEnvironments.length) throw new Error(t('deploymentEnvironments.restoreMissing', { values: missingEnvironments.join(', ') }));
 
       const hasQa = Object.entries(backup).some(([table, rows]) => table.startsWith('qa_') && (!Array.isArray(rows) || rows.length > 0));
       const restoreQa = async (validateOnly: boolean) => {

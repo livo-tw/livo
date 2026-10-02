@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import i18n from '@/i18n';
 import type { User, Task, Project } from '@/types';
-import { getDepartment } from '@/lib/department';
+import { DEPARTMENTS, getDepartment } from '@/lib/department';
+import { restoreStandupGroups, type StandupLaunchSnapshot } from '@/lib/standupLaunch';
 import type { SortMode } from '@/hooks/useStandupSettings';
 
 export interface StandupGroup {
@@ -58,6 +59,7 @@ export function groupMembers(
   getDuration: (id: string) => number,
   bufferSeconds: number,
 ): StandupGroup[] {
+  members = members.filter(member => member.isActive === true);
   switch (sortMode) {
     case 'by_member': {
       return members.map(m => {
@@ -120,7 +122,7 @@ export function groupMembers(
 
     case 'by_due_date': {
       const bucketMap = new Map<DueBucket, { members: User[]; tasks: Task[] }>(
-        DUE_BUCKET_ORDER.map(b => [b, { members: [], tasks: [] }]),
+        DUE_BUCKET_ORDER.map(b => [b, { members: [] as User[], tasks: [] as Task[] }]),
       );
 
       for (const member of members) {
@@ -159,7 +161,8 @@ export function groupMembers(
         g.tasks.push(...tasks.filter(t => t.assigneeId === member.id));
       }
 
-      return [...deptMap.entries()].map(([key, g]) => ({
+      const departmentRank = (key: string) => { const index = DEPARTMENTS.findIndex(dept => dept === key); return index < 0 ? DEPARTMENTS.length : index; };
+      return [...deptMap.entries()].sort(([a], [b]) => departmentRank(a) - departmentRank(b)).map(([key, g]) => ({
         group_key: key,
         group_title: g.label,
         task_count: g.tasks.length,
@@ -186,10 +189,11 @@ export function useStandupGrouping(
   sortMode: SortMode,
   getDuration: (id: string) => number,
   bufferSeconds: number,
+  launch?: StandupLaunchSnapshot,
 ) {
   const groups = useMemo(
-    () => groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds),
-    [members, tasks, projects, sortMode, getDuration, bufferSeconds],
+    () => launch ? restoreStandupGroups(launch, members, tasks, getDuration, bufferSeconds) : groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds),
+    [members, tasks, projects, sortMode, getDuration, bufferSeconds, launch],
   );
 
   const flatQueue = useMemo<QueueItem[]>(() => {

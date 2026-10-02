@@ -98,7 +98,7 @@ export interface TaskTodo {
 }
 
 export interface TaskDeployment {
-  environment: 'Dev' | 'QA' | 'Stage' | 'Live Staging' | 'Prod';
+  environment: string;
   status: 'deployed' | 'scheduled';
   deployDate?: string;
 }

@@ -128,7 +128,7 @@ export const TABLES: TableRegistry = {
     pk: 'id',
     clientAccess: 'full',
     autoId: true,
-    write: { insert: 'all', update: 'none', delete: 'all' },
+    write: { insert: 'all', update: 'all', delete: 'all' },
   },
   task_specs: {
     pk: 'id',

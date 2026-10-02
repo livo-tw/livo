@@ -457,7 +457,8 @@
       "memberOverrides": "Individual member time settings",
       "preview": "Sort Preview",
       "totalDuration": "Estimated total duration: ",
-      "memberCountUnit": "people"
+      "memberCountUnit": "people",
+      "shuffle": "Shuffle order"
     },
     "groupHeader": "Group {{current}}/{{total}}",
     "taskCount": "tasks",
@@ -474,7 +475,9 @@
       "nextWeek": "Next Week",
       "later": "Later",
       "noDue": "No Due Date"
-    }
+    },
+    "noActiveMembers": "No active members are available for this standup",
+    "turnUnit": "turns"
   },
   "approval": {
     "title": "Approval Required",
@@ -2732,9 +2735,9 @@
     "openBug": "Open bug",
     "loadMore": "Load more",
     "boardEmpty": "No bugs in this stage.",
-    "boardHint": "Use a card action to open the bug and complete the required workflow form.",
+    "boardHint": "Open a card for details. Available next steps appear at the bottom of each card.",
     "workflowTitle": "QA workflow settings",
-    "workflowHint": "One shared workflow for the company. Rename or reorder the five stages; display order does not change the triage, fix, verification or closure requirements.",
+    "workflowHint": "The company shares one workflow. Rename and reorder columns; grouped columns preserve each Bug's actual stage and verification requirements.",
     "workflowLabelHint": "Names are limited to 40 characters and must be distinct. Leave a name blank to use the default translation.",
     "workflowStage": "{{number}}. {{name}}",
     "workflowMoveUp": "Move {{name}} up",
@@ -2761,7 +2764,7 @@
     "observedVersion": "Observed version / build",
     "component": "Component",
     "severity": "Severity",
-    "priority": "Priority (1 = highest)",
+    "priority": "Priority",
     "dueDate": "Due date",
     "assignee": "Fix owner",
     "qaOwner": "QA owner",
@@ -2790,7 +2793,10 @@
       "triaged": "Triaged",
       "in_progress": "Fix in progress",
       "verification": "Verification",
-      "closed": "Closed"
+      "closed": "Closed",
+      "verified": "Verified, awaiting closure",
+      "failed": "Verification failed",
+      "dismissed": "Dismissed"
     },
     "severityNames": {
       "untriaged": "Untriaged",
@@ -2877,6 +2883,69 @@
     "versionLoadFailed": "Version suggestions are unavailable. You can still enter a version.",
     "versionEmpty": "This project has no version history yet. Enter a version directly.",
     "versionChoose": "Choose an existing version",
-    "fixVersionHint": "Type a build, version or commit ID for this fix, or choose a recorded version from this project."
+    "fixVersionHint": "Type a build, version or commit ID for this fix, or choose a recorded version from this project.",
+    "unassigned": "Unassigned",
+    "priorityUnassigned": "Priority not set",
+    "createIntro": "Describe the problem and add evidence to help the team reproduce it.",
+    "workspaceIntro": "Track issues through repair and verification.",
+    "searchPlaceholder": "Search title or Bug ID",
+    "filtersApplied": "Filters applied",
+    "clearFilters": "Clear filters",
+    "slackSource": "View Slack source",
+    "sourceAttachments": "Original Slack attachments",
+    "notProvided": "Not provided",
+    "noHistory": "No activity yet.",
+    "properties": "Properties",
+    "legacyValue": "Previous option",
+    "acknowledgeHistoricalPass": "I have reviewed the original PASS evidence and accept it to close this Bug. This does not record a new verification.",
+    "workflowFullPreset": "Full QA workflow",
+    "workflowSlackPreset": "Slack Bug six-column board",
+    "dropFiles": "Drop files here, or click to choose",
+    "draftFileHint": "Select multiple files, up to 200 MB each",
+    "fileSizeError": "Files must be nonempty and no larger than 200 MB",
+    "fileTypeError": "This file type or extension is not supported",
+    "fileNameError": "Invalid or overly long filename; please rename it",
+    "removeFile": "Remove {{name}}",
+    "previewFile": "Preview {{name}}",
+    "createdAttachmentsPending": "Bug created. Attachments are being processed.",
+    "attachmentRetryHint": "The Bug is saved. Retry unfinished attachments; completed files will not upload again.",
+    "createRetryHint": "The create result has not arrived. Retry to recover the same Bug. Fields are locked to prevent duplicates.",
+    "retryCreate": "Retry creation",
+    "createBug": "Create Bug",
+    "openWithoutPendingFiles": "Skip unfinished files and open Bug",
+    "createAttachmentHint": "Attachments upload after the Bug is created. Stay on this page until they finish.",
+    "attachmentsRefreshFailed": "Attachments were saved, but the list could not refresh. Please reload.",
+    "finishPending": "Finish or cancel the current QA action before leaving this page.",
+    "fileStatus": {
+      "pending": "Ready to upload",
+      "uploading": "Uploading",
+      "complete": "Uploaded",
+      "failed": "Upload failed"
+    },
+    "error": {
+      "qa_invalid_environment": "Deployment environments changed. Select an available environment.",
+      "qa_historical_pass_unavailable": "The original PASS evidence is unavailable. Complete verification first."
+    },
+    "verificationTab": "Repair and verification"
+  },
+  "deploymentEnvironments": {
+    "title": "Deployment environments",
+    "description": "Manage shared environment options for task cards, QA Bugs and Slack.",
+    "historyHint": "Adding, renaming or removing an option changes future selections. Existing card history is preserved.",
+    "loadFailed": "Could not load environment settings.",
+    "reload": "Reload",
+    "name": "Environment {{number}}",
+    "moveUp": "Move environment up",
+    "moveDown": "Move environment down",
+    "remove": "Remove environment",
+    "add": "Add environment",
+    "save": "Save environments",
+    "invalid": "Enter 1–30 unique environment names, up to 120 characters each.",
+    "saved": "Environment settings saved.",
+    "conflict": "Another administrator updated these settings. Reload before editing again.",
+    "saveFailed": "Could not save. Your edits are retained; please retry.",
+    "changed": "Environment options changed. Please select again.",
+    "taskCreatedWithoutDeployments": "The card was created, but its deployment environments were not saved. Select them again on the card.",
+    "restoreMissing": "The backup contains inactive environments: {{values}}. Add them in Task configuration before restoring."
   }
 }

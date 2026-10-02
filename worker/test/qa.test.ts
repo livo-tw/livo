@@ -93,7 +93,20 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     db.exec("UPDATE system_settings SET value='{\"qa\":false}' WHERE workspace_id='ws-a' AND key='feature_toggles'");
     await expect(executeQaAction(environment(),auth,{action:'versions',projectId:'project-a'})).rejects.toMatchObject({code:'qa_disabled'});
   });
-  const customWorkflow=():QaWorkflow=>({version:1,order:['verification','new','triaged','in_progress','closed'],labels:{new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',closed:'結案完成'}});
+  it('paginates grouped states in one scoped query without including another state or workspace',async()=>{
+    const env=environment();
+    for(const state of ['new','triaged','verified'] as const){
+      const data={...issue(),id:'group-'+state,state};
+      db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?)').run('ws-a',data.id,'project-a',state,'member-a','Grouped',1,'now',JSON.stringify(data));
+    }
+    const first=await executeQaAction(env,auth,{action:'list',input:{states:['new','triaged'],limit:1,offset:0}}) as {total:number;hasMore:boolean;issues:QaIssue[]};
+    const second=await executeQaAction(env,auth,{action:'list',input:{states:['new','triaged'],limit:1,offset:1}}) as typeof first;
+    expect(first.total).toBe(2);expect(first.hasMore).toBe(true);expect(second.total).toBe(2);expect(second.hasMore).toBe(false);
+    expect(new Set([...first.issues,...second.issues].map(row=>row.state))).toEqual(new Set(['new','triaged']));
+    for(const input of [{states:[]},{states:['new','new']},{states:['bogus']},{state:'new',states:['new']}])
+      await expect(executeQaAction(env,auth,{action:'list',input})).rejects.toThrow('qa_invalid_state');
+  });
+  const customWorkflow=():QaWorkflow=>({...DEFAULT_QA_WORKFLOW,order:['verification','new','triaged','in_progress','verified','failed','closed','dismissed'],labels:{...DEFAULT_QA_WORKFLOW.labels,new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',closed:'結案完成'}});
   it('returns workflow defaults without creating settings and falls back from invalid stored data',async()=>{
     const env=environment();expect(await executeQaAction(env,auth,{action:'get_workflow'})).toEqual(DEFAULT_QA_WORKFLOW);
     expect(db.prepare("SELECT COUNT(*) AS n FROM system_settings WHERE workspace_id='ws-a' AND key='qa_workflow'").get()?.n).toBe(0);
@@ -106,7 +119,7 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     expect(await executeQaAction(env,auth,{action:'get_workflow'})).toEqual(customWorkflow());
     db.exec("UPDATE members SET role='super_admin' WHERE workspace_id='ws-a' AND id='member-a'");
     const superAuth={...auth,member:{...auth.member,role:'super_admin'}};
-    const updated=customWorkflow();updated.order=['closed','new','triaged','in_progress','verification'];
+    const updated=customWorkflow();updated.order=['closed','new','triaged','in_progress','verification','verified','failed','dismissed'];
     expect(await executeQaAction(env,superAuth,{action:'save_workflow',workflow:updated})).toEqual(updated);
     const created=await executeQaAction(env,superAuth,create) as QaIssue;expect(created.state).toBe('new');
   });
@@ -145,7 +158,7 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
       {...workflow,order:['new','triaged','verification','closed']},
       {...workflow,labels:{new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',done:'完成'}},
       {...workflow,labels:{...workflow.labels,done:'新增狀態'}},
-      {...workflow,version:2},
+      {...workflow,version:99},
     ];
     for(const candidate of invalid)await expect(executeQaAction(env,auth,{action:'save_workflow',workflow:candidate})).rejects.toThrow('qa_invalid_workflow');
     expect(await executeQaAction(env,auth,{action:'get_workflow'})).toEqual(workflow);
@@ -165,7 +178,7 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     const command=async(cmd:Record<string,unknown>)=>{current=await executeQaAction(env,auth,{action:'command',id:'new-issue',commandId:crypto.randomUUID(),expectedVersion:current.version,command:cmd}) as typeof current;return current;};
     await command({type:'triage',assigneeId:'member-a',qaOwnerId:'member-a',severity:'high',priority:1,dueDate:null});
     await command({type:'start_fix'});
-    await command({type:'submit_fix',summary:'Fixed',targets:[{environment:'Stage',component:'app',build:'build-A',required:true},{environment:'Production',component:'app',build:'build-A',required:true}]});
+    await command({type:'submit_fix',summary:'Fixed',targets:[{environment:'Stage',component:'app',build:'build-A',required:true},{environment:'Prod',component:'app',build:'build-A',required:true}]});
     const [stage,prod]=current.targets;
     await command({type:'record_deployment',targetId:stage.id,build:'build-A',evidence:'manual release'});
     await command({type:'record_verification',targetId:stage.id,build:'build-A',result:'pass',note:'Verified'});

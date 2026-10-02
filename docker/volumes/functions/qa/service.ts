@@ -1,3 +1,4 @@
+import { parseDeploymentEnvironments } from './environments.ts';
 import { applyQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
   type QaAttachment, type QaCommand, type QaContext, type QaCreateInput, type QaIssue,
   type QaListInput, type QaListResult } from './domain.ts';
@@ -98,13 +99,16 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const candidates = [...candidateIds].filter(Boolean).map(id);
     const linked = command?.type === 'link_tasks' ? command.taskIds : [];
     if (!Array.isArray(linked) || linked.length > 50) fail('qa_invalid_tasks');
-    const [members, projects, tasks, duplicates] = await Promise.all([
+    const [members, projects, tasks, duplicates, environmentRows] = await Promise.all([
       db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
       db.rows('projects', { select: 'id', id: `eq.${id(projectId)}`, is_archived: 'eq.false', limit: 1 }),
       linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${id(projectId)}` }) : [],
       command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, limit: 1 }) : [],
+      db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
     ]);
-    return { actor: { id: actor.id, role: actor.role }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
+    const environments = parseDeploymentEnvironments(environmentRows[0]?.value);
+    if (!environments) return fail('qa_invalid_environment');
+    return { environmentValues: environments.values, actor: { id: actor.id, role: actor.role }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
       memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
@@ -153,6 +157,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const query: Row = { select: 'data', workspace_id: `eq.${WORKSPACE}`, order: 'updated_at.desc,id', offset, limit };
         if (input.projectId) query.project_id = `eq.${id(input.projectId)}`;
         if (input.state) { if (!QA_STATES.includes(input.state)) fail('qa_invalid_state'); query.state = `eq.${input.state}`; }
+        if (input.states !== undefined) {
+          if (input.state || !Array.isArray(input.states) || !input.states.length || input.states.length > QA_STATES.length
+            || new Set(input.states).size !== input.states.length || input.states.some(state => !QA_STATES.includes(state))) fail('qa_invalid_state');
+          query.state = `in.(${input.states.join(',')})`;
+        }
         if (input.mine) {
           const column = ({ assigned: 'assignee_id', testing: 'qa_owner_id', reported: 'reporter_id' } as Row)[input.mine];
           if (!column) fail('qa_invalid_filter'); query[column] = `eq.${actor.id}`;

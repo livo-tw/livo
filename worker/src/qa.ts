@@ -1,3 +1,4 @@
+import { parseDeploymentEnvironments } from './qa/environments';
 import type { Context } from 'hono';
 import type { AppContext, AuthCtx, Ctx, Env } from './env';
 import { DEMO_BLOCKED_MESSAGE, isDemoMember } from './env';
@@ -56,13 +57,16 @@ export async function qaHash(value: string | Uint8Array): Promise<string> {
 }
 async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: string[], duplicateId?: string): Promise<QaContext> {
   const ws=auth.member.workspaceId;
-  const [members, project, tasks, duplicate] = await Promise.all([
+  const [members, project, tasks, duplicate, environmentRow] = await Promise.all([
     env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND is_active=1').bind(ws).all<{id:string}>(),
     env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=? AND is_archived=0').bind(ws,projectId).first<{id:string}>(),
     taskIds.length ? env.DB.prepare(`SELECT id FROM tasks WHERE workspace_id=? AND project_id=? AND id IN (${taskIds.map(()=>'?').join(',')})`).bind(ws,projectId,...taskIds).all<{id:string}>() : Promise.resolve({results:[]}),
     duplicateId ? env.DB.prepare('SELECT id FROM qa_issues WHERE workspace_id=? AND project_id=? AND id=?').bind(ws,projectId,duplicateId).first<{id:string}>() : Promise.resolve(null),
+    env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>(),
   ]);
-  return {actor:{id:auth.member.id,role:auth.member.role},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
+  const environments = parseDeploymentEnvironments(environmentRow ? JSON.parse(environmentRow.value) : undefined);
+  if (!environments) throw new QaError('qa_invalid_environment');
+  return {environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
     memberIds:new Set(members.results.map(r=>r.id)),projectIds:new Set(project?[project.id]:[]),taskIds:new Set(tasks.results.map(r=>r.id)),duplicateIssueIds:new Set(duplicate?[duplicate.id]:[])};
 }
 async function receipt(env: Env, ws: string, commandId: string, hash: string, actor: string): Promise<unknown | undefined> {
@@ -96,7 +100,7 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   const recipients=new Set<string>();
   if(type==='create') {
     const admins=await env.DB.prepare("SELECT id FROM members WHERE workspace_id=? AND is_active=1 AND role IN ('admin','super_admin')").bind(ws).all<{id:string}>(); admins.results.forEach(r=>recipients.add(r.id));
-  } else if(type==='triage'||type==='reopen'||(type==='record_verification'&&after.state==='in_progress')) {if(after.assigneeId)recipients.add(after.assigneeId);}
+  } else if(type==='triage'||type==='reopen'||(type==='record_verification'&&after.state==='failed')) {if(after.assigneeId)recipients.add(after.assigneeId);}
   else if(type==='record_deployment'||type==='submit_fix') {if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
   else if(type==='close') recipients.add(after.reporterId);
   else if(type==='comment') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
@@ -113,6 +117,11 @@ async function list(env:Env,ws:string,actor:string,input:QaListInput) {
   const clauses=['q.workspace_id=?'], params:(string|number)[]=[ws];
   if(input.projectId){clauses.push('q.project_id=?');params.push(qaId(input.projectId));}
   if(input.state){if(!QA_STATES.includes(input.state))throw new QaError('qa_invalid_state');clauses.push('q.state=?');params.push(input.state);}
+  if(input.states!==undefined){
+    if(input.state||!Array.isArray(input.states)||!input.states.length||input.states.length>QA_STATES.length
+      ||new Set(input.states).size!==input.states.length||input.states.some(state=>!QA_STATES.includes(state)))throw new QaError('qa_invalid_state');
+    clauses.push(`q.state IN (${input.states.map(()=>'?').join(',')})`);params.push(...input.states);
+  }
   if(input.search){if(typeof input.search!=='string'||input.search.length>200)throw new QaError('qa_invalid_search');clauses.push("q.title LIKE ? ESCAPE '\\'");params.push(`%${input.search.replace(/[\\%_]/g,'\\$&')}%`);}
   const mine={assigned:'assignee_id',testing:'qa_owner_id',reported:'reporter_id'};
   if(input.mine){if(!Object.prototype.hasOwnProperty.call(mine,input.mine))throw new QaError('qa_invalid_filter');clauses.push(`q.${mine[input.mine]}=?`);params.push(actor);}

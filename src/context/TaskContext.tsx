@@ -1,9 +1,9 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, type Dispatch, type SetStateAction } from 'react';
 import type { Task, Status, Tag, TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog, CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency } from '@/types';
 
 export interface TaskContextType {
   allTasks: Task[];
-  setAllTasks: (t: Task[]) => void;
+  setAllTasks: Dispatch<SetStateAction<Task[]>>;
   statuses: Status[];
   tags: Tag[];
   taskSpecs: TaskSpec[];

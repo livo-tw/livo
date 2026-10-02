@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Users, Settings, MessageSquare, Link2, Layers } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import MemberManageView from '@/components/MemberManageView';
+import DeploymentEnvironmentSettings from '@/components/DeploymentEnvironmentSettings';
 import StatusManageView from '@/components/StatusManageView';
 import TaskTemplateManager from '@/components/TaskTemplateManager';
 import NotificationRuleManager from '@/components/notifications/NotificationRuleManager';
@@ -95,6 +96,8 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
                 </div>
                 <StatusManageView embedded />
               </div>
+
+              <DeploymentEnvironmentSettings />
 
               {/* Task Templates */}
               <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-6">

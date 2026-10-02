@@ -5,7 +5,7 @@ import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, createQaIssue, QA_MAX_FILE_BYTES, QA_PART_BYTES, QaError } from './domain';
+import { applyQaCommand, createQaIssue, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload } from './domain';
 
 export class QaClientError extends Error {
@@ -19,6 +19,31 @@ const demoCommands = new Map<string, unknown>();
 const demoWorkflows = new Map<string, QaWorkflow>();
 const clone = <T,>(value: T): T => structuredClone(value);
 export const qaId = randomUUID;
+export function qaThrowIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+}
+
+/** A draft keeps this in memory across retries; never persist signed capabilities. */
+export interface QaUploadResume {
+  issueId?: string; file?: File; upload?: QaUpload; attachment?: QaAttachment;
+  parts?: Array<{ partNumber: number; etag: string }>;
+}
+const commonFileTypes: Record<string, string[]> = {
+  'image/png': ['png'], 'image/jpeg': ['jpg', 'jpeg'], 'image/webp': ['webp'], 'image/gif': ['gif'],
+  'video/mp4': ['mp4'], 'application/pdf': ['pdf'], 'text/plain': ['txt', 'log'],
+};
+export function qaUploadFileTypes(): Record<string, string[]> {
+  return import.meta.env.VITE_API_URL
+    ? { ...commonFileTypes, 'text/csv': ['csv'], 'application/json': ['json'] }
+    : { ...commonFileTypes, 'video/webm': ['webm'] };
+}
+export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'file_name' | undefined {
+  if (!file.size || file.size > QA_MAX_FILE_BYTES) return 'file_size';
+  const cloud = !!import.meta.env.VITE_API_URL;
+  if (!file.name.trim() || file.name.length > (cloud ? 180 : 255) || /[\x00-\x1f\\/]/.test(file.name)) return 'file_name';
+  const extensions = qaUploadFileTypes()[file.type.toLowerCase()];
+  if (!extensions || (cloud && !extensions.includes(file.name.split('.').pop()!.toLowerCase()))) return 'file_type';
+}
 
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }
 export function createQaClient(options: QaClientOptions) {
@@ -74,22 +99,29 @@ export function createQaClient(options: QaClientOptions) {
     },
     async list(input: QaListInput, signal?: AbortSignal): Promise<QaListResult> {
       ensureEnabled();
+      qaThrowIfAborted(signal);
       if (!mock) return request('list', { input }, signal);
+      if (input.state && !QA_STATES.includes(input.state)) throw new QaClientError('qa_invalid_state', 400);
+      if (input.states !== undefined && (input.state || !Array.isArray(input.states) || !input.states.length || input.states.length > QA_STATES.length ||
+        new Set(input.states).size !== input.states.length || input.states.some(state => !QA_STATES.includes(state)))) throw new QaClientError('qa_invalid_state', 400);
+      const offset = input.offset ?? 0, limit = input.limit ?? 50;
+      if (!Number.isInteger(offset) || offset < 0 || offset > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new QaClientError('qa_invalid_page', 400);
       const context = options.context();
       const issues = [...demoIssues.values()].map(d => d.issue).filter(issue => issue.workspaceId === context.workspaceId &&
         (!input.projectId || issue.projectId === input.projectId) && (!input.state || issue.state === input.state) &&
+        (!input.states || input.states.includes(issue.state)) &&
         (!input.search || `${issue.title} ${issue.id}`.toLowerCase().includes(input.search.toLowerCase())) &&
         (!input.mine || (input.mine === 'assigned' ? issue.assigneeId : input.mine === 'testing' ? issue.qaOwnerId : issue.reporterId) === context.actor.id))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      const offset = input.offset || 0, limit = input.limit || 25;
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
       return clone({ issues: issues.slice(offset, offset + limit), total: issues.length, hasMore: offset + limit < issues.length });
     },
     async get(id: string, signal?: AbortSignal): Promise<QaDetail> {
       ensureEnabled(); return mock ? clone(getDemo(id)) : request('get', { id }, signal);
     },
-    async create(input: QaCreateInput, id = qaId(), commandId = qaId()): Promise<QaIssue> {
+    async create(input: QaCreateInput, id = qaId(), commandId = qaId(), signal?: AbortSignal): Promise<QaIssue> {
       ensureEnabled();
-      if (!mock) return request('create', { id, commandId, input });
+      qaThrowIfAborted(signal);
+      if (!mock) return request('create', { id, commandId, input }, signal);
       return demoOnce(commandId, () => {
         if (demoIssues.has(id)) throw new QaClientError('conflict', 409);
         const ctx = options.context(), issue = createQaIssue(input, id, ctx);
@@ -119,17 +151,42 @@ export function createQaClient(options: QaClientOptions) {
         getDemo(id).comments.push(comment); return comment;
       });
     },
-    async upload(id: string, file: File, onProgress?: (percent: number) => void, signal?: AbortSignal): Promise<QaAttachment> {
+    async upload(id: string, file: File, onProgress?: (percent: number) => void, signal?: AbortSignal, resume: QaUploadResume = {}): Promise<QaAttachment> {
       ensureEnabled();
-      signal?.throwIfAborted();
-      if (!file.size || file.size > QA_MAX_FILE_BYTES) throw new QaClientError('file_size', 400);
+      qaThrowIfAborted(signal);
+      const fileError = qaValidateUploadFile(file);
+      if (fileError) throw new QaClientError(fileError, 400);
+      if ((resume.file && resume.file !== file) || (resume.issueId && resume.issueId !== id)) throw new QaClientError('invalid_upload', 400);
+      resume.file = file; resume.issueId = id;
+      if (resume.attachment) { onProgress?.(100); return resume.attachment; }
       onProgress?.(0);
       if (mock) {
         const ctx = options.context(), attachment = { id: qaId(), issueId: id, fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, uploadedBy: ctx.actor.id, createdAt: ctx.now };
-        getDemo(id).attachments.push(attachment); demoFiles.set(attachment.id, file); onProgress?.(100); return clone(attachment);
+        getDemo(id).attachments.push(attachment); demoFiles.set(attachment.id, file); resume.attachment = clone(attachment); onProgress?.(100); return clone(attachment);
       }
-      const upload = await request<QaUpload>('upload_init', { id, fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size }, signal);
-      const parts: Array<{ partNumber: number; etag: string }> = [];
+      const complete = async () => {
+        const result = await request<QaAttachment>('upload_complete', { uploadId: resume.upload!.id,
+          ...(resume.parts?.length ? { parts: resume.parts } : {}) }, signal);
+        resume.attachment = result; onProgress?.(100); return result;
+      };
+      if (resume.upload) {
+        // A lost upload/finalize response must not allocate another attachment.
+        try { return await complete(); }
+        catch (error) {
+          qaThrowIfAborted(signal); ensureEnabled();
+          const code = (error as QaClientError)?.code;
+          if (['qa_upload_expired', 'qa_upload_not_found', 'upload_expired', 'upload_not_found'].includes(code)) {
+            // Exact reservation ID only: matching a filename could merge distinct files.
+            const detail = await api.get(id, signal);
+            const prior = detail.attachments.find(item => item.id === resume.upload!.id);
+            if (prior) { resume.attachment = prior; onProgress?.(100); return prior; }
+            resume.upload = undefined; resume.parts = [];
+          } else if (code !== 'qa_upload_incomplete' && code !== 'upload_incomplete') throw error;
+        }
+      }
+      if (!resume.upload) resume.upload = await request<QaUpload>('upload_init', { id, fileName: file.name, mimeType: file.type, size: file.size }, signal);
+      const upload = resume.upload;
+      const parts = resume.parts ??= [];
       if (upload.provider === 'supabase') {
         if (!upload.bucket || !upload.path || !upload.token) throw new QaClientError('invalid_upload', 500);
         ensureEnabled();
@@ -142,12 +199,14 @@ export function createQaClient(options: QaClientOptions) {
           global: { headers: await headers(), fetch: (url, init) => fetch(url, { ...init, signal }) },
         });
         const { error } = await storageClient.storage.from(upload.bucket).uploadToSignedUrl(upload.path, upload.token, file, { contentType: file.type || 'application/octet-stream' });
-        signal?.throwIfAborted();
+        qaThrowIfAborted(signal);
         if (error) throw new QaClientError('upload_failed', 400, error.message);
         onProgress?.(95);
       } else {
         const partSize = upload.partSize || QA_PART_BYTES;
         for (let start = 0, partNumber = 1; start < file.size; start += partSize, partNumber++) {
+          ensureEnabled(); qaThrowIfAborted(signal);
+          if (parts.some(part => part.partNumber === partNumber)) continue;
           const url = `${fnUrl('qa')}?action=upload_part&uploadId=${encodeURIComponent(upload.id)}&partNumber=${partNumber}`;
           const response = await checkResponse(await fetch(url, { method: 'POST', signal, headers: { ...await headers(), 'Content-Type': 'application/octet-stream' }, body: file.slice(start, start + partSize) }));
           const result = await response.json();
@@ -156,8 +215,7 @@ export function createQaClient(options: QaClientOptions) {
           parts.push({ partNumber, etag }); onProgress?.(Math.round(Math.min(start + partSize, file.size) / file.size * 95));
         }
       }
-      const result = await request<QaAttachment>('upload_complete', { uploadId: upload.id, ...(parts.length ? { parts } : {}) }, signal);
-      onProgress?.(100); return result;
+      return complete();
     },
     async download(attachmentId: string, signal?: AbortSignal): Promise<Blob> {
       ensureEnabled();

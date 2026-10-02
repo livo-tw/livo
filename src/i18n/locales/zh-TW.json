@@ -457,7 +457,8 @@
       "memberOverrides": "個別成員時間設定",
       "preview": "排序預覽",
       "totalDuration": "預估總時長：",
-      "memberCountUnit": "人"
+      "memberCountUnit": "人",
+      "shuffle": "隨機排序"
     },
     "groupHeader": "第 {{current}}/{{total}} 組",
     "taskCount": "個任務",
@@ -474,7 +475,9 @@
       "nextWeek": "下週",
       "later": "更遠",
       "noDue": "無到期日"
-    }
+    },
+    "noActiveMembers": "目前沒有可出席的啟用成員",
+    "turnUnit": "次報告"
   },
   "approval": {
     "title": "需要主管簽核",
@@ -2732,9 +2735,9 @@
     "openBug": "開啟 Bug",
     "loadMore": "載入更多",
     "boardEmpty": "此階段沒有 Bug。",
-    "boardHint": "使用卡片上的操作開啟 Bug，填寫該階段必需的流程表單。",
+    "boardHint": "點選卡片查看內容；卡片下方會顯示你可執行的下一步。",
     "workflowTitle": "QA 流程設定",
-    "workflowHint": "全公司共用同一套流程，可調整五個階段的名稱與顯示順序；排序不會改變分流、修復、驗證或結案條件。",
+    "workflowHint": "公司共用一套流程。可調整欄位名稱與順序；合併顯示仍保留各 Bug 的實際階段與驗證要求。",
     "workflowLabelHint": "名稱最多 40 字且不可重複；留白時使用預設翻譯。",
     "workflowStage": "{{number}}. {{name}}",
     "workflowMoveUp": "將「{{name}}」上移",
@@ -2761,7 +2764,7 @@
     "observedVersion": "發現版本／Build",
     "component": "模組",
     "severity": "嚴重度",
-    "priority": "優先級（1 最高）",
+    "priority": "優先度",
     "dueDate": "預計日期",
     "assignee": "修復負責人",
     "qaOwner": "QA 負責人",
@@ -2790,7 +2793,10 @@
       "triaged": "已分流",
       "in_progress": "修復中",
       "verification": "待驗證",
-      "closed": "已結案"
+      "closed": "已結案",
+      "verified": "驗證通過待結案",
+      "failed": "驗證未通過",
+      "dismissed": "不處理"
     },
     "severityNames": {
       "untriaged": "待判定",
@@ -2877,6 +2883,69 @@
     "versionLoadFailed": "暫時無法載入版本建議，仍可自行輸入。",
     "versionEmpty": "此專案尚無版本記錄，可直接輸入。",
     "versionChoose": "選取已有版本",
-    "fixVersionHint": "可自行輸入，或從同專案的 QA 歷史版本選取；請填寫本次修復的 Build、版本或 Commit ID。"
+    "fixVersionHint": "可自行輸入，或從同專案的 QA 歷史版本選取；請填寫本次修復的 Build、版本或 Commit ID。",
+    "unassigned": "未指派",
+    "priorityUnassigned": "優先度未排定",
+    "createIntro": "描述問題並附上證據，讓團隊快速重現。",
+    "workspaceIntro": "追蹤問題、修復與驗證進度。",
+    "searchPlaceholder": "搜尋標題或 Bug ID",
+    "filtersApplied": "已套用篩選",
+    "clearFilters": "清除篩選",
+    "slackSource": "查看 Slack 原單",
+    "sourceAttachments": "Slack 原始附件",
+    "notProvided": "尚未填寫",
+    "noHistory": "目前沒有活動記錄。",
+    "properties": "基本資訊",
+    "legacyValue": "歷史選項",
+    "acknowledgeHistoricalPass": "我已確認來源的 PASS 紀錄，沿用當時驗證結果正式結案；這不代表本次重新驗證。",
+    "workflowFullPreset": "完整 QA 流程",
+    "workflowSlackPreset": "Slack Bug 六欄",
+    "dropFiles": "拖曳檔案到這裡，或點擊選擇",
+    "draftFileHint": "可選擇多個檔案，每檔上限 200 MB",
+    "fileSizeError": "檔案不可為空，且每檔不得超過 200 MB",
+    "fileTypeError": "此檔案類型或副檔名不受支援",
+    "fileNameError": "檔名無效或過長，請重新命名",
+    "removeFile": "移除 {{name}}",
+    "previewFile": "預覽 {{name}}",
+    "createdAttachmentsPending": "Bug 已建立，正在處理附件。",
+    "attachmentRetryHint": "Bug 已保留，請重試未完成的附件；已上傳的檔案不會重複上傳。",
+    "createRetryHint": "尚未收到建單結果。請重試確認同一張 Bug，資料暫時鎖定以避免重複開單。",
+    "retryCreate": "重試確認建單",
+    "createBug": "建立 Bug",
+    "openWithoutPendingFiles": "略過未完成附件並開啟 Bug",
+    "createAttachmentHint": "附件會在 Bug 建立後逐一上傳；請留在此頁直到完成。",
+    "attachmentsRefreshFailed": "附件已儲存，但清單更新失敗。請重新整理。",
+    "finishPending": "請先完成或取消目前的 QA 操作，再切換頁面。",
+    "fileStatus": {
+      "pending": "待上傳",
+      "uploading": "上傳中",
+      "complete": "已上傳",
+      "failed": "上傳失敗"
+    },
+    "error": {
+      "qa_invalid_environment": "部署環境清單已更新，請重新選擇可用環境。",
+      "qa_historical_pass_unavailable": "原單的 PASS 證據不足，請先完成驗證。"
+    },
+    "verificationTab": "修復與驗證"
+  },
+  "deploymentEnvironments": {
+    "title": "部署環境",
+    "description": "統一管理一般卡片、QA Bug 與 Slack 使用的環境選項。",
+    "historyHint": "新增、更名或移除只影響之後可選的項目；既有卡片的環境紀錄會保留。",
+    "loadFailed": "無法載入環境設定。",
+    "reload": "重新載入",
+    "name": "環境 {{number}}",
+    "moveUp": "上移環境",
+    "moveDown": "下移環境",
+    "remove": "移除環境",
+    "add": "新增環境",
+    "save": "儲存環境設定",
+    "invalid": "請填寫 1 至 30 個不重複的環境名稱，每個最多 120 字。",
+    "saved": "環境設定已儲存。",
+    "conflict": "其他管理員已更新設定，請重新載入後再調整。",
+    "saveFailed": "儲存失敗，修改仍保留，請重試。",
+    "changed": "環境清單已變更，請重新選擇。",
+    "taskCreatedWithoutDeployments": "卡片已建立，但部署環境未儲存。請至卡片重新選擇環境。",
+    "restoreMissing": "備份含未啟用的環境：{{values}}。請先在任務配置新增後再還原。"
   }
 }

@@ -4,7 +4,7 @@ const json = value => `${literal(JSON.stringify(value))}::jsonb`;
 const auth = { member: '00000000-0000-0000-0000-000000000001', admin: '00000000-0000-0000-0000-000000000002', super: '00000000-0000-0000-0000-000000000003', assignee: '00000000-0000-0000-0000-000000000004', qa: '00000000-0000-0000-0000-000000000005' };
 const tables = ['qa_issues','qa_commands','qa_events','qa_comments','qa_uploads','qa_attachments','qa_slack_links','qa_slack_receipts','qa_slack_inbox'];
 const backup = Object.fromEntries(tables.slice(0,7).map(t => [t, []]));
-const workflow = { version: 1, order: ['new','triaged','in_progress','verification','closed'], labels: { new: '待判斷', triaged: '', in_progress: '', verification: '', closed: '' } };
+const workflow = { version: 2, order: ['new','triaged','in_progress','verification','verified','failed','closed','dismissed'], labels: { new: '待判斷', triaged: '', in_progress: '', verification: '', verified:'', failed:'', closed: '', dismissed:'' }, groups:[] };
 const base = { id:'issue-main',workspaceId:'default',projectId:'p-test',state:'new',reporterId:'m-member',assigneeId:null,qaOwnerId:null,title:'PostgreSQL QA fixture',version:1,createdAt:'2026-10-02T00:00:00.000Z',updatedAt:'2026-10-02T00:00:00.000Z',actual:'Actual result',observedEnvironment:'test',severity:'untriaged',priority:3,fixCycle:0,targets:[],runs:[],taskIds:[] };
 
 export function buildQaPostgresCases() {
@@ -160,11 +160,23 @@ export function buildQaPostgresCases() {
   sql.push(`UPDATE system_settings SET value='{"qa":true,"slackActions":false}' WHERE key='feature_toggles';`);
   error('disabled Slack rejects inbox',`SELECT livo_qa_slack_enqueue('inbox-disabled-slack','{}')`,'42501','qa_disabled');
   sql.push(`UPDATE system_settings SET value='{"qa":true,"slackActions":true}' WHERE key='feature_toggles'; RESET ROLE;`);
+  role('service_role');
+  const imported = ['verified','failed','dismissed','triaged'].map(state=>{
+    const data={...base,id:`historical-${state}`,state,legacySource:{system:'slack_list',originalStatus:state==='verified'?'PASS':state,recordId:'RecTEST123',snapshotSha256:'b'.repeat(64)}};
+    return {workspace_id:'default',id:data.id,project_id:data.projectId,state,assignee_id:null,qa_owner_id:null,reporter_id:data.reporterId,title:data.title,version:data.version,updated_at:data.updatedAt,data};
+  });
+  check('restore accepts distinct historical states with unknown roles and no fabricated runs',`(${restore('super',{...backup,qa_issues:imported},false)}->>'inserted')::integer=4`);
+  check('historical PASS is nonclosed with no invented verification',`(SELECT state='verified' AND data->'runs'='[]'::jsonb AND assignee_id IS NULL AND qa_owner_id IS NULL FROM qa_issues WHERE id='historical-verified')`);
+  const grouped={...workflow,groups:[{id:'triaged',label:'Assigned',states:['new','triaged']},{id:'in_progress',label:'Active',states:['in_progress','verification']}]};
+  check('admin can save six display columns without collapsing canonical states',`(${save('admin',grouped)}->'groups')=${json(grouped.groups)}`);
+  error('cannot merge PASS with completed in display settings',`SELECT ${save('admin',{...workflow,groups:[{id:'verified',label:'Done',states:['verified','closed']}]})}`,'22023','qa_invalid_workflow');
+  error('cannot put a state in two display groups',`SELECT ${save('admin',{...workflow,groups:[{id:'new',label:'A',states:['new','triaged']},{id:'triaged',label:'B',states:['triaged','verification']}]})}`,'22023','qa_invalid_workflow');
+  role('postgres');
   // Snapshot all persistent QA rows and display settings before migration rerun.
   const snapshot = `jsonb_build_object(${tables.flatMap(t => [literal(t),`(SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY id),'[]') FROM public.${t} r)`]).join(',')},'workflow',(SELECT value FROM system_settings WHERE key='qa_workflow'))`;
   sql.push(`CREATE TABLE qa_test.before_rerun AS SELECT ${snapshot} AS data;`);
   const after = `SELECT qa_test.check((SELECT data FROM qa_test.before_rerun)=${snapshot},'second migration pass preserves every QA row and company workflow');
-SELECT qa_test.check((SELECT count(*) FROM public.livo_schema_migrations)=2,'release migration ledger stays deduplicated');
+SELECT qa_test.check((SELECT count(*) FROM public.livo_schema_migrations)=3,'release migration ledger stays deduplicated');
 SELECT json_build_object('status','passed','assertions',count(*),'migrationPasses',2) FROM qa_test.results;`;
   return { sql: sql.join('\n'), after, assertionCount: labels.length+2, labels };
 }

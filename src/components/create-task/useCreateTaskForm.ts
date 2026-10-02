@@ -1,3 +1,4 @@
+import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -27,6 +28,7 @@ interface PendingFile {
 
 export function useCreateTaskForm() {
   const { t } = useTranslation();
+  const environmentConfig = useDeploymentEnvironments();
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
   const { showCreateTask, setShowCreateTask, requiredFields } = useUIContext();
@@ -228,6 +230,7 @@ export function useCreateTaskForm() {
 
   const handleSubmit = async () => {
     if (!isValid || isSubmitting) return;
+    if (deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
     setIsSubmitting(true);
     const status = statuses.find(s => s.id === statusId);
     const now = new Date().toISOString().split('T')[0];
@@ -267,7 +270,11 @@ export function useCreateTaskForm() {
         await supabase.from('task_todos').insert(todoItems.map((text, i) => ({ id: `td_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
       }
       if (deployments.length > 0) {
-        await supabase.from('task_deployments').insert(deployments.map(d => ({ task_id: taskId, environment: d.environment, status: d.status, deploy_date: d.deployDate || null })));
+        const result = await supabase.from('task_deployments').insert(deployments.map(d => ({ task_id: taskId, environment: d.environment, status: d.status, deploy_date: d.deployDate || null })));
+        if (result.error) {
+          setAllTasks(prev => prev.map(task => task.id === taskId ? { ...task, deployments: [] } : task));
+          toast.warning(t('deploymentEnvironments.taskCreatedWithoutDeployments'));
+        }
       }
       if (pendingFiles.length > 0) { setUploading(true); await uploadFiles(taskId); setUploading(false); }
       await supabase.from('status_logs').insert({ id: `sl_${randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId });
