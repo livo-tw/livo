@@ -13,12 +13,15 @@
 //   apply: one-shot --file first; if that fails (e.g. a previous partial
 //   run), fall back to per-statement apply tolerating duplicate-column /
 //   already-exists errors so re-runs converge.
+// Independent table rebuilds run only after tenancy succeeds, including the
+// already-migrated path; schema.sql then installs their current guards.
 
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, unlinkSync, mkdtempSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { applyPostTenantSchemaUpgrades } from './schema-upgrades.mjs';
 
 const WORKER_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ALTERS_FILE = join(WORKER_DIR, 'migrate', 'tenant-alters.sql');
@@ -67,14 +70,15 @@ if (!manualProbe.ok && /no such column/i.test(manualProbe.out)) {
 }
 
 // ── Probe ─────────────────────────────────────────────────────────────────
+function ensureTenancy() {
 const probe = tryWrangler('--command "SELECT workspace_id FROM tasks LIMIT 0"');
 if (probe.ok) {
   console.log('[tenant-alters] tasks.workspace_id present — already migrated, skipping.');
-  process.exit(0);
+  return;
 }
 if (/no such table/i.test(probe.out)) {
   console.log('[tenant-alters] tasks table absent — fresh DB, schema.sql will create the final shape.');
-  process.exit(0);
+  return;
 }
 if (!/no such column/i.test(probe.out)) {
   console.error('[tenant-alters] unexpected probe failure:\n' + probe.out);
@@ -86,7 +90,7 @@ console.log(`[tenant-alters] pre-tenancy DB detected — applying tenant-alters.
 const oneShot = tryWrangler(`--file="${ALTERS_FILE}"`);
 if (oneShot.ok) {
   console.log('[tenant-alters] one-shot apply OK.');
-  process.exit(0);
+  return;
 }
 console.warn('[tenant-alters] one-shot apply failed — falling back to per-statement mode.');
 
@@ -121,3 +125,17 @@ for (let i = 0; i < statements.length; i++) {
   }
 }
 console.log(`[tenant-alters] per-statement apply done: ${applied} applied, ${tolerated} tolerated (already done).`);
+}
+
+ensureTenancy();
+await applyPostTenantSchemaUpgrades({
+  queryRows(sql) {
+    const parsed = JSON.parse(wrangler(`--command "${sql}" --json`));
+    if (!Array.isArray(parsed) || parsed.some(result => result.success === false || !Array.isArray(result.results))) {
+      throw new Error('Unexpected D1 schema probe response');
+    }
+    return parsed.flatMap(result => result.results);
+  },
+  applyFile(name) { wrangler(`--file="${join(WORKER_DIR, 'migrate', name)}"`); },
+  log(message) { console.log(message); },
+});

@@ -33,6 +33,7 @@ beforeEach(() => {
     calls.push(call);
     const endpoint = call.url.pathname;
     if (endpoint === '/auth/v1/user') return json({ id: AUTH });
+    if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.deployment_environments') return json([]);
     if (endpoint === '/rest/v1/system_settings') return json(call.url.searchParams.get('key') === 'eq.qa_workflow'
       ? workflowSetting === undefined ? [] : [{ value: workflowSetting }] : [{ value: { qa: enabled } }]);
     if (endpoint === '/rest/v1/members') return json(call.url.searchParams.has('auth_id')
@@ -77,9 +78,27 @@ describe('Docker QA version suggestions', () => {
   });
 });
 
+describe('Docker grouped QA list', () => {
+  it('uses one scoped IN filter with the same server pagination and count', async () => {
+    const result = await service().handle({action:'list',input:{states:['new','triaged'],offset:20,limit:20}});
+    const query = calls.find(call=>call.url.pathname==='/rest/v1/qa_issues');
+    expect(query?.url.searchParams.get('workspace_id')).toBe('eq.default');
+    expect(query?.url.searchParams.get('state')).toBe('in.(new,triaged)');
+    expect(query?.url.searchParams.get('offset')).toBe('20');
+    expect(query?.headers.get('Prefer')).toBe('count=exact');
+    expect(result).toMatchObject({total:1,hasMore:false});
+  });
+  it.each([[],['new','new'],['new','untrusted'],['new,closed']].map(states=>({states})))('rejects unsafe or ambiguous grouped states $states',async ({states})=>{
+    await expect(service().handle({action:'list',input:{states}})).rejects.toMatchObject({code:'qa_invalid_state'});
+  });
+  it('rejects simultaneous singular and grouped filters',async()=>{
+    await expect(service().handle({action:'list',input:{state:'new',states:['new','triaged']}})).rejects.toMatchObject({code:'qa_invalid_state'});
+  });
+});
+
 describe('Docker company QA display workflow', () => {
-  const workflow = () => ({ version: 1, order: ['closed', 'verification', 'in_progress', 'triaged', 'new'],
-    labels: { new: '回報', triaged: '已分流', in_progress: '修正中', verification: 'QA 檢驗', closed: '' } });
+  const workflow = () => ({ ...DEFAULT_QA_WORKFLOW, order: [...DEFAULT_QA_WORKFLOW.order].reverse(),
+    labels: { ...DEFAULT_QA_WORKFLOW.labels, new: '回報', triaged: '已分流', in_progress: '修正中', verification: 'QA 檢驗', closed: '' } });
   it('lets an active member read defaults when no company configuration exists', async () => {
     expect(await service().handle({ action: 'get_workflow' })).toEqual(DEFAULT_QA_WORKFLOW);
   });

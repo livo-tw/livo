@@ -14,13 +14,13 @@ vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, sup
 import QaWorkspace from '@/components/qa/QaWorkspace';
 import QaIssueDetail from '@/components/qa/QaIssueDetail';
 import QaAttachments from '@/components/qa/QaAttachments';
-import { createQaIssue } from '@/lib/qa/domain';
+import { createQaIssue, QA_STATES } from '@/lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
 import type { QaDetail } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 const issue = createQaIssue({ projectId: 'p1', title: 'Protected bug detail', actual: 'Broken', observedEnvironment: 'Stage' }, 'bug1', { actor: { id: 'admin', role: 'admin' }, workspaceId: 'default', now: '2026-10-02T00:00:00Z', newId: () => crypto.randomUUID(), memberIds: new Set(['admin']), projectIds: new Set(['p1']), taskIds: new Set() });
 const detail: QaDetail = { issue, comments: [], events: [], attachments: [] };
-beforeEach(() => { vi.clearAllMocks(); mocks.enabled = false; mocks.ready = true; mocks.role = 'admin'; window.history.replaceState({}, '', '/'); mocks.list.mockImplementation(async filters => ({ issues: !filters.state || filters.state === 'new' ? [issue] : [], total: !filters.state || filters.state === 'new' ? 1 : 0, hasMore: false })); mocks.get.mockResolvedValue(detail); mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.saveWorkflow.mockImplementation(async value => value); });
+beforeEach(() => { vi.clearAllMocks(); mocks.enabled = false; mocks.ready = true; mocks.role = 'admin'; window.history.replaceState({}, '', '/'); mocks.list.mockImplementation(async filters => ({ issues: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? [issue] : [], total: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? 1 : 0, hasMore: false })); mocks.get.mockResolvedValue(detail); mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.saveWorkflow.mockImplementation(async value => value); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => { mocks.versions.mockResolvedValue([]); });
 describe('QA feature gate and conflict recovery', () => {
@@ -58,7 +58,7 @@ describe('QA feature gate and conflict recovery', () => {
     mocks.getWorkflow.mockResolvedValue({ ...DEFAULT_QA_WORKFLOW, order: [...DEFAULT_QA_WORKFLOW.order].reverse(), labels: { ...DEFAULT_QA_WORKFLOW.labels, new: 'Incoming reports' } });
     render(<QaWorkspace />); await screen.findByText(issue.title);
     const board = screen.getByLabelText('qa.board');
-    expect(within(board).getAllByRole('heading', { level: 2 }).map(node => node.textContent)).toEqual(['qa.state.closed', 'qa.state.verification', 'qa.state.in_progress', 'qa.state.triaged', 'Incoming reports']);
+    expect(within(board).getAllByRole('heading', { level: 2 }).map(node => node.textContent)).toEqual([...QA_STATES].reverse().map(state => state === 'new' ? 'Incoming reports' : `qa.state.${state}`));
     fireEvent.click(screen.getByRole('button', { name: 'qa.list' }));
     const title = await screen.findByRole('heading', { name: issue.title });
     expect(within(title.closest('button')!).getByText('Incoming reports')).toBeTruthy();
@@ -71,13 +71,13 @@ describe('QA feature gate and conflict recovery', () => {
     expect(await screen.findByLabelText(/qa.assignee/)).toBeTruthy();
     expect(mocks.command).not.toHaveBeenCalled();
   });
-  it('allows administrators to rename and reorder the fixed five stages', async () => {
+  it('allows administrators to rename and reorder the fixed semantic stages', async () => {
     mocks.enabled = true; render(<QaWorkspace />); await screen.findByText(issue.title);
     fireEvent.click(screen.getByRole('button', { name: 'qa.workflowTitle' }));
     fireEvent.change(screen.getAllByLabelText('qa.workflowStage')[0], { target: { value: 'Incoming reports' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'qa.workflowMoveDown' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
-    await waitFor(() => expect(mocks.saveWorkflow).toHaveBeenCalledWith(expect.objectContaining({ order: ['triaged', 'new', 'in_progress', 'verification', 'closed'], labels: expect.objectContaining({ new: 'Incoming reports' }) })));
+    await waitFor(() => expect(mocks.saveWorkflow).toHaveBeenCalledWith(expect.objectContaining({ order: ['triaged', 'new', ...QA_STATES.slice(2)], labels: expect.objectContaining({ new: 'Incoming reports' }) })));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'qa.workflowTitle' })).toBeNull());
     expect(within(screen.getByLabelText('qa.board')).getAllByRole('heading', { level: 2 })[1].textContent).toBe('Incoming reports');
   });
@@ -91,15 +91,15 @@ describe('QA feature gate and conflict recovery', () => {
   it('paginates each board column without moving or omitting other stages', async () => {
     mocks.enabled = true;
     const firstPage = Array.from({ length: 20 }, (_, index) => ({ ...issue, id: `page-${index}`, title: `Report ${index}` }));
-    mocks.list.mockImplementation(async filters => filters.state === 'new'
+    mocks.list.mockImplementation(async filters => filters.states?.includes('new')
       ? { issues: filters.offset ? [{ ...issue, id: 'page-20', title: 'Report 20' }] : firstPage, total: 21, hasMore: !filters.offset }
       : { issues: [], total: 0, hasMore: false });
     render(<QaWorkspace />); await screen.findByText('Report 0');
-    expect(mocks.list.mock.calls.map(call => call[0].state).sort()).toEqual(['closed', 'in_progress', 'new', 'triaged', 'verification']);
+    expect(mocks.list.mock.calls.flatMap(call => call[0].states).sort()).toEqual([...QA_STATES].sort());
     fireEvent.click(screen.getByRole('button', { name: 'qa.loadMore' }));
     expect(await screen.findByText('Report 20')).toBeTruthy();
     expect(screen.getByText('Report 0')).toBeTruthy();
-    expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'new', offset: 20, limit: 20 }), expect.any(AbortSignal));
+    expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ states: ['new'], offset: 20, limit: 20 }), expect.any(AbortSignal));
     expect(mocks.command).not.toHaveBeenCalled();
   });
   it('retains workflow edits when saving fails', async () => {

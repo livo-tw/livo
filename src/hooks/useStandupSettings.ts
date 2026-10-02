@@ -36,14 +36,18 @@ function persistToLocalStorage(s: StandupSettings): void {
   try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch { /* ignore */ }
 }
 
-export function useStandupSettings(memberIds: string[]) {
-  const [settings, setSettings] = useState<StandupSettings>(loadFromLocalStorage);
+export function useStandupSettings(memberIds: string[], options: { active?: boolean; initial?: StandupSettings } = {}) {
+  const [settings, setSettings] = useState<StandupSettings>(() => options.initial || loadFromLocalStorage());
+  const revision = useRef(0);
   // Track active session ID for DB updates
   const sessionIdRef = useRef<string | null>(null);
 
   // On mount: load from DB first, fallback to localStorage
   useEffect(() => {
+    if (options.active === false || options.initial) return;
     let cancelled = false;
+    const startedRevision = revision.current;
+    setSettings(loadFromLocalStorage());
     (async () => {
       try {
         const { data, error } = await sessionQueries.fetchActive(supabase);
@@ -64,8 +68,7 @@ export function useStandupSettings(memberIds: string[]) {
             bufferSeconds: data.buffer_seconds,
             memberDurations,
           };
-          setSettings(dbSettings);
-          persistToLocalStorage(dbSettings);
+          if (!cancelled && revision.current === startedRevision) { setSettings(dbSettings); persistToLocalStorage(dbSettings); }
           return;
         }
         // No active session — create one
@@ -91,14 +94,15 @@ export function useStandupSettings(memberIds: string[]) {
       } catch {
         // DB unavailable — fall through to localStorage
       }
-      if (!cancelled) {
+      if (!cancelled && revision.current === startedRevision) {
         setSettings(loadFromLocalStorage());
       }
     })();
     return () => { cancelled = true; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [options.active, options.initial]);
 
   const updateSettings = useCallback((patch: Partial<StandupSettings>) => {
+    revision.current++;
     setSettings(prev => {
       const next = { ...prev, ...patch };
       persistToLocalStorage(next);
@@ -116,6 +120,7 @@ export function useStandupSettings(memberIds: string[]) {
   }, []);
 
   const setMemberDuration = useCallback((memberId: string, duration: number) => {
+    revision.current++;
     setSettings(prev => {
       const next = {
         ...prev,
@@ -135,6 +140,7 @@ export function useStandupSettings(memberIds: string[]) {
   }, []);
 
   const resetMemberDuration = useCallback((memberId: string) => {
+    revision.current++;
     setSettings(prev => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [memberId]: _, ...rest } = prev.memberDurations;

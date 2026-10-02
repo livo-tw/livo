@@ -9,6 +9,7 @@ export function StandupItemCard({ member, active, onClick }: StandupItemCardProp
     <button
       onClick={onClick}
       aria-label={member.name}
+      aria-current={active ? 'step' : undefined}
       className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs transition-colors ${
         active
           ? 'bg-sidebar-active text-sidebar-primary-foreground'

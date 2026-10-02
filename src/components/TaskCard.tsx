@@ -1,3 +1,4 @@
+import { deploymentEnvironmentPresentation } from '@/lib/deploymentEnvironments';
 import { memo, useMemo, useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -279,15 +280,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
       {f.deployments && task.deployments.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap mt-2">
           {task.deployments.map((d, i) => {
-            const envColors: Record<string, string> = {
-              'Dev': '#36B37E',
-              'QA': '#00B8D9',
-              'Stage': '#FF8B00',
-              'Live Staging': '#6554C0',
-              'Prod': '#FF5630',
-            };
-            const color = envColors[d.environment] || '#36B37E';
-            const abbr: Record<string, string> = { 'Dev': 'D', 'QA': 'Q', 'Stage': 'S', 'Live Staging': 'LS', 'Prod': 'P' };
+            const { color, abbreviation } = deploymentEnvironmentPresentation(d.environment);
             return (
               <span
                 key={i}
@@ -297,7 +290,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
                   : { border: `1.5px solid ${color}`, color }}
                 title={`${d.environment}: ${d.status}`}
               >
-                {abbr[d.environment] || d.environment}
+                {abbreviation}
               </span>
             );
           })}

@@ -1,9 +1,9 @@
 /** Slack QA UI and intent routing shared by Socket Mode and HTTP transports. */
-import { canQaCommand, type QaActor, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
-import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from './workflow.ts';
+import { canQaCommand, isHistoricalQaPass, isQaTerminal, type QaActor, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
+import { DEFAULT_QA_WORKFLOW, getQaStateLabel, type QaWorkflow } from './workflow.ts';
 import { slackProjectOptionGroups, type ProjectGroup } from './projectGroups.ts';
 export type SlackBlock = Record<string, unknown>;
-type Selection = { value?: string; selected_option?: { value: string }; };
+type Selection = { value?: string; selected_option?: { value: string }; selected_options?: Array<{value:string}>; };
 export interface QaSlackPayload {
   type?: string; command?: string; text?: string; trigger_id?: string; callback_id?: string; event_id?: string;
   user_id?: string; team_id?: string; channel_id?: string; user?: { id: string }; team?: { id: string }; channel?: { id: string };
@@ -19,6 +19,7 @@ export interface QaSlackActions {
   actor(payload: QaSlackPayload): Promise<QaSlackActor>;
   api<T>(actor: QaSlackActor, body: Record<string, unknown>): Promise<T>;
   projects(actor: QaSlackActor, search: string): Promise<ProjectGroup[]>;
+  environments(actor: QaSlackActor): Promise<string[]>;
   mapped(actor: QaSlackActor, source: QaSlackSource): Promise<string | undefined>;
   publish(actor: QaSlackActor, issue: QaIssue, source: QaSlackSource): Promise<void>;
   sync(actor: QaSlackActor, issue: QaIssue): Promise<void>;
@@ -72,7 +73,6 @@ export function qaMessageIntent(message: string, issue: QaIssue, actor: QaActor)
   if (/^(?:部署完成|已部署|deployed)[。.!！]?$/i.test(value)) return 'deploy';
   if (/^(?:重新開啟|重開|reopen)[。.!！]?$/i.test(value)) return 'reopen';
 }
-const stateNames = { new: '待分流', triaged: '待修復', in_progress: '修復中', verification: '驗證階段', closed: '已結案' };
 export function qaSlackCard(issue: QaIssue, url: string, workflow: QaWorkflow = DEFAULT_QA_WORKFLOW): SlackBlock[] {
   const button = (intent: string, label: string): SlackBlock => ({ type: 'button', action_id: `livo_qa_${intent}`, text: text(label), value: issue.id });
   const summary = issue.targets.map(target => {
@@ -81,8 +81,8 @@ export function qaSlackCard(issue: QaIssue, url: string, workflow: QaWorkflow = 
   }).join('\n');
   return [
     { type: 'header', text: text(`Bug · ${issue.title}`.slice(0, 150)) },
-    { type: 'section', text: text(`${workflow.labels[issue.state] || stateNames[issue.state]} · ${issue.severity} · 修復輪次 ${issue.fixCycle}\nID: ${issue.id}${summary ? '\n' + summary : ''}`.slice(0, 3000)) },
-    { type: 'actions', elements: issue.state === 'closed' ? [button('reopen', '重新開啟'), { type: 'button', text: text('查看 LIVO'), url }]
+    { type: 'section', text: text(`${getQaStateLabel(workflow,issue.state)} · ${issue.severity} · 修復輪次 ${issue.fixCycle}\nID: ${issue.id}${summary ? '\n' + summary : ''}`.slice(0, 3000)) },
+    { type: 'actions', elements: isQaTerminal(issue.state) ? [button('reopen', '重新開啟'), { type: 'button', text: text('查看 LIVO'), url }]
       : [button('fix', '回報修復'), button('deploy', '部署完成'), button('pass', '驗證通過'), button('fail', '驗證失敗'), button('close', '結案')] },
     { type: 'actions', elements: [{ type: 'button', text: text('查看 LIVO'), url }, button('comment', '新增留言'), button('new', '新增 Bug')] },
   ];
@@ -109,9 +109,11 @@ async function openQaForm(p: QaSlackPayload, d: QaSlackActions, intent: string, 
         const link = await d.slack('chat.getPermalink', { channel: source.channel, message_ts: p.message.ts });
         if (typeof link.permalink === 'string') actual += `\n\nSlack 來源：${link.permalink}`;
       }
+      const environments = await d.environments(actor);
+      if (!environments.length) throw new Error('qa_invalid_environment');
       view = modal('新增 QA Bug', [input('project', '專案', { type: 'external_select', min_query_length: 0, initial_option: option(projects[0].id, projects[0].name) }),
         input('title', '問題標題', field(((p.actions ? '' : p.message?.text) || draft).split('\n')[0], false, 200)),
-        input('environment', '發現環境', field('Stage', false, 120)), input('version', '發現版本（可未知）', field('', false, 200), true),
+        input('environment', '發現環境', { type: 'static_select', options: environments.map(env => option(env, env)), initial_option: option(environments.includes('Stage') ? 'Stage' : environments[0], environments.includes('Stage') ? 'Stage' : environments[0]) }), input('version', '發現版本（可未知）', field('', false, 200), true),
         input('actual', '實際問題與來源', field(actual, true)), input('steps', '重現步驟', field('', true), true), input('expected', '預期結果', field('', true), true)], source);
     } else {
       const detail = await d.api<QaDetail>(actor, { action: 'get', id: issueId });
@@ -119,13 +121,22 @@ async function openQaForm(p: QaSlackPayload, d: QaSlackActions, intent: string, 
       if (command && !canQaCommand(issue, actor, command)) throw new Error('目前階段或你的 LIVO 權限不允許這項操作，請開啟 Bug 查看。');
       source.issueId = issue.id; source.version = issue.version;
       const blocks: SlackBlock[] = [{ type: 'section', text: text(issue.title.slice(0, 200)) }];
-      if (intent === 'fix') blocks.push(input('note', '修復說明', field(draft, true)), input('build', '修復版本／Commit ID', field('', false, 200)),
-        input('environment', '需驗證環境（逗號分隔）', field(issue.observedEnvironment, false, 500)), input('component', '元件', field(issue.component, false, 120), true));
+      if (intent === 'fix') {
+        const environments = await d.environments(actor);
+        if (!environments.length) throw new Error('qa_invalid_environment');
+        const initial = environments.filter(env => issue.targets.some(target => target.environment === env) || !issue.targets.length && env === issue.observedEnvironment);
+        blocks.push(input('note', '修復說明', field(draft, true)), input('build', '修復版本／Commit ID', field('', false, 200)),
+          input('environment', '需驗證環境', { type: 'multi_static_select', options: environments.map(env => option(env, env)), ...(initial.length ? { initial_options: initial.map(env => option(env, env)) } : {}) }),
+          input('component', '元件', field(issue.component, false, 120), true));
+      }
       else if (['pass', 'fail', 'blocked', 'deploy'].includes(intent)) {
         const targets = issue.targets.filter(target => intent === 'deploy' || target.deployedAt);
         if (!targets.length) throw new Error(intent === 'deploy' ? '請先回報修復版本，再回報部署。' : '還沒有可驗證的部署，請先回報部署完成。');
         blocks.push(input('target', '驗證環境與版本', { type: 'static_select', options: targets.map(target => option(target.id, `${target.environment} · ${target.component} · ${target.build}`)) }),
           input('note', intent === 'deploy' ? '部署完成依據' : '驗證結果與說明', field(draft, true), intent === 'pass'));
+      } else if (intent === 'close' && isHistoricalQaPass(issue)) {
+        blocks.push(input('historical_pass', '確認歷史 PASS 證據', { type:'checkboxes', options:[option('acknowledge', '我已檢視來源 PASS 證據並確認正式結案；這不代表本次重新驗證。')] }),
+          input('note', '正式結案原因（依歷史 PASS 證據）', field(draft, true)));
       } else blocks.push(input('note', intent === 'close' ? '結案說明（檢查所有必要環境通過）' : intent === 'reopen' ? '重開原因' : '留言', field(draft, true), intent === 'close'));
       view = modal(({ fix: '回報修復', deploy: '回報部署', pass: '驗證通過', fail: '驗證失敗', blocked: '驗證受阻', close: 'QA 結案', reopen: '重新開啟 Bug', comment: '留言到 Bug' } as Record<string, string>)[intent] || 'LIVO QA', blocks, source);
     }
@@ -137,7 +148,7 @@ export function qaSlackError(error: unknown): string {
   const messages: Record<string, string> = { qa_disabled: 'QA 功能目前關閉，請洽管理員。', qa_forbidden: '你沒有此操作權限，請確認 Bug 的主責與 QA 人員。',
     qa_conflict: 'Bug 已有更新。請重新開啟表單，確認最新版本與環境後再送出。', qa_build_mismatch: '修復版本已改變，請重新開啟表單。',
     qa_verification_required: '尚有必要環境未通過驗證，不能結案。', qa_not_deployed: '此環境尚未回報部署完成。', qa_triage_required: '請先在 LIVO 分流，指定修復者與驗證 QA。',
-    qa_member_unavailable: '指定成員無法使用，請重新分派。', qa_required: '請填寫必要欄位。' };
+    qa_invalid_environment: '部署環境清單已更新，請重新開啟表單並選擇可用環境。', qa_member_unavailable: '指定成員無法使用，請重新分派。', qa_required: '請填寫必要欄位。' };
   if (messages[code]) return messages[code];
   return /[\u3400-\u9fff]/.test(code) && code.length < 300 ? code : '操作未完成，請重新開啟表單再試；可在 LIVO 查看目前狀態。';
 }
@@ -202,15 +213,25 @@ export async function handleQaSlack(p: QaSlackPayload, _envelopeId: string, d: Q
       const source = sourceOf(p), values = p.view.state?.values || {};
       const value = (name: string) => values[name]?.[name]?.value ?? values[name]?.[name]?.selected_option?.value ?? '';
       const intent = source.intent || '';
+      const historicalForm = intent === 'close' && Object.prototype.hasOwnProperty.call(values, 'historical_pass');
+      const acknowledgement = values.historical_pass?.historical_pass?.selected_options;
+      const acknowledgeHistoricalPass = acknowledgement?.length === 1 && acknowledgement[0]?.value === 'acknowledge';
+      const chosenEnvironments = values.environment?.environment?.selected_options?.map(item => item.value)
+        ?? (intent === 'fix' ? value('environment').split(/[,，\n]/).map(item => item.trim()).filter(Boolean) : [value('environment')]);
       const required = intent === 'new' ? ['project', 'title', 'environment', 'actual'] : intent === 'fix' ? ['note', 'build', 'environment']
-        : ['deploy', 'fail', 'blocked'].includes(intent) ? ['target', 'note'] : intent === 'pass' ? ['target'] : ['reopen', 'comment'].includes(intent) ? ['note'] : [];
-      const errors = Object.fromEntries(required.filter(name => !value(name).trim()).map(name => [name, '請填寫此欄位']));
+        : ['deploy', 'fail', 'blocked'].includes(intent) ? ['target', 'note'] : intent === 'pass' ? ['target'] : ['reopen', 'comment'].includes(intent) || historicalForm ? ['note'] : [];
+      const errors = Object.fromEntries(required.filter(name => name === 'environment' ? !chosenEnvironments.length || chosenEnvironments.some(env => !env.trim()) : !value(name).trim()).map(name => [name, '請填寫此欄位']));
+      if (historicalForm && !acknowledgeHistoricalPass) errors.historical_pass = '請先檢視來源 PASS 證據，再勾選正式結案確認。';
       if (Object.keys(errors).length) return { response_action: 'errors', errors };
       const viewId = p.view.id;
       d.background((async () => {
         let message: string;
         try {
           const actor = await d.actor(p), commandId = await qaRequestId(`${actor.team}:${viewId}`);
+          if (intent === 'new' || intent === 'fix') {
+            const activeEnvironments = await d.environments(actor);
+            if (!chosenEnvironments.length || chosenEnvironments.some(env => !activeEnvironments.includes(env))) throw new Error('qa_invalid_environment');
+          }
           let issue: QaIssue;
           let deliveryFailed = false;
           if (intent === 'new') {
@@ -228,9 +249,16 @@ export async function handleQaSlack(p: QaSlackPayload, _envelopeId: string, d: Q
             if (intent === 'comment') await d.api(actor, { action: 'comment', id: issue.id, commandId, body: value('note') });
             else {
               let command: QaCommand;
-              if (intent === 'fix') command = { type: 'submit_fix', summary: value('note'), targets: value('environment').split(/[,，\n]/).map(environment => environment.trim()).filter(Boolean).map(environment => ({ environment, component: value('component'), build: value('build'), required: true })) };
+              if (intent === 'fix') command = { type: 'submit_fix', summary: value('note'), targets: chosenEnvironments.map(environment => ({ environment, component: value('component'), build: value('build'), required: true })) };
               else if (intent === 'reopen') command = { type: 'reopen', reason: value('note') };
-              else if (intent === 'close') command = { type: 'close', resolution: 'fixed', reason: value('note') };
+              else if (intent === 'close') {
+                const historical = isHistoricalQaPass(issue);
+                // Modal state is advisory. Recheck the trusted aggregate after auth,
+                // and leave actor permission / expectedVersion enforcement to the API.
+                if (historical && (!acknowledgeHistoricalPass || !value('note').trim())) throw new Error('歷史 PASS 必須明確勾選確認並填寫正式結案原因，請重新開啟結案表單。');
+                if (!historical && (historicalForm || acknowledgeHistoricalPass)) throw new Error('Bug 的歷史 PASS 狀態已有變更，請重新開啟結案表單。');
+                command = { type: 'close', resolution: 'fixed', reason: value('note'), ...(historical ? {acknowledgeHistoricalPass:true} : {}) };
+              }
               else {
                 const target = issue.targets.find(item => item.id === value('target'));
                 if (!target) throw new Error('qa_build_mismatch');

@@ -43,5 +43,4 @@ export const getPriorityOptions = (): { value: string; label: string; icon: stri
 ];
 
 
-export const envList = ['Dev', 'QA', 'Stage', 'Live Staging', 'Prod'] as const;
-export type EnvName = typeof envList[number];
+export type EnvName = string;

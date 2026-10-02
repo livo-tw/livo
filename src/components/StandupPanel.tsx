@@ -6,7 +6,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { logActivity } from '@/lib/activityLog';
-import { Play, Pause, RotateCcw, Zap, Trophy, SkipForward } from 'lucide-react';
+import { Play, Pause, RotateCcw, Trophy, SkipForward } from 'lucide-react';
 import { useStandupSettings } from '@/hooks/useStandupSettings';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useStandupTimer } from '@/hooks/useStandupTimer';
@@ -16,6 +16,7 @@ import type { PendingTaskAction } from '@/context/SprintContext';
 import { StandupGroupHeader } from './standup/StandupGroupHeader';
 import { StandupItemCard } from './standup/StandupItemCard';
 import { useTranslation } from 'react-i18next';
+import { clearStandupLaunch, getStandupLaunch, resolveStandupCursor, standupQueueKey } from '@/lib/standupLaunch';
 
 const TIMER_STROKE: Record<string, string> = {
   idle:     'hsl(var(--sidebar-active))',
@@ -38,38 +39,42 @@ const StandupPanel = () => {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [showStartModal, setShowStartModal]     = useState(false);
   const [carryOverTaskIds, setCarryOverTaskIds] = useState<string[]>([]);
-  const [queueIndex, setQueueIndex]             = useState(0);
+  const [cursor, setCursor] = useState<{ key: string | null; index: number }>({ key: null, index: 0 });
+  const [launch] = useState(getStandupLaunch);
   const [standupFinished, setStandupFinished]   = useState(false);
 
   const sprintPromptRef = useFocusTrap(showSprintPrompt);
 
-  const memberIds  = users.map(u => u.id);
+  const memberIds = users.filter(user => user.isActive === true).map(u => u.id);
   const sprintTasks = currentSprint
     ? allTasks.filter(t => t.sprintId === currentSprint.id)
     : allTasks;
 
-  const { settings, getDurationForMember } = useStandupSettings(memberIds);
+  const { settings, getDurationForMember } = useStandupSettings(memberIds, { initial: launch?.settings });
   const { groups, flatQueue } = useStandupGrouping(
     users, sprintTasks, allProjects,
-    settings.sortMode, getDurationForMember, settings.bufferSeconds,
+    settings.sortMode, getDurationForMember, settings.bufferSeconds, launch,
   );
 
+  const queueIndex = resolveStandupCursor(flatQueue, cursor);
   const currentItem    = flatQueue[queueIndex] ?? null;
   const currentDuration = currentItem
     ? getDurationForMember(currentItem.member.id)
     : settings.defaultSpeakDuration;
 
   const handleAdvance = useCallback(() => {
+    if (!flatQueue.length) return;
     const nextIdx = queueIndex + 1;
     if (nextIdx < flatQueue.length) {
-      setQueueIndex(nextIdx);
+      setCursor({ key: standupQueueKey(flatQueue[nextIdx]), index: nextIdx });
       setStandupUserId(flatQueue[nextIdx].member.id);
     } else {
       // All members done — show completion screen
       setStandupFinished(true);
       setStandupUserId(null);
+      if (sprintActive) setShowSprintPrompt(true);
     }
-  }, [queueIndex, flatQueue, setStandupUserId]);
+  }, [queueIndex, flatQueue, setStandupUserId, sprintActive]);
 
   const { displayTime, inBuffer, isRunning, timerStatus, toggle, reset, skip } = useStandupTimer({
     duration: currentDuration,
@@ -78,18 +83,23 @@ const StandupPanel = () => {
     onAdvance: handleAdvance,
   });
 
-  // Sync board filter with current speaker
+  // Resolve the current speaker by identity when the active roster shrinks. An
+  // unrelated member disappearing must not move the speaker or overrun the queue.
+  const currentKey = currentItem ? standupQueueKey(currentItem) : null;
   useEffect(() => {
-    if (currentItem) setStandupUserId(currentItem.member.id);
-  }, [currentItem?.member.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setCursor(previous => previous.key === currentKey && previous.index === queueIndex ? previous : { key: currentKey, index: queueIndex });
+  }, [currentKey, queueIndex]);
+  useEffect(() => {
+    setStandupUserId(standupFinished ? null : currentItem?.member.id ?? null);
+    reset();
+  }, [currentKey, currentItem?.member.id, standupFinished, setStandupUserId, reset]);
+
+  const leaveStandup = useCallback(() => { clearStandupLaunch(); setStandupUserId(null); setStandupMode(false); }, [setStandupUserId, setStandupMode]);
 
   const handleExitStandup = useCallback(() => {
-    if (sprintActive) setShowSprintPrompt(true);
-    else {
-      setStandupMode(false);
-      if (currentMemberId) logActivity(currentMemberId, 'end_standup', `${t('activityLog.endStandup')}`, undefined, undefined, 'system');
-    }
-  }, [sprintActive, setStandupMode, currentMemberId, t]);
+    leaveStandup();
+    if (currentMemberId) logActivity(currentMemberId, 'end_standup', `${t('activityLog.endStandup')}`, undefined, undefined, 'system');
+  }, [leaveStandup, currentMemberId, t]);
 
   // Keep a stable ref so the event listener always calls the latest version
   const handleExitStandupRef = useRef(handleExitStandup);
@@ -104,7 +114,7 @@ const StandupPanel = () => {
 
   const handleSkipSprint = () => {
     setShowSprintPrompt(false);
-    setStandupMode(false);
+    leaveStandup();
     if (currentMemberId) logActivity(currentMemberId, 'end_standup', `${t('activityLog.endStandup')}`, undefined, undefined, 'system');
   };
 
@@ -131,10 +141,10 @@ const StandupPanel = () => {
     if (currentMemberId) {
       await logActivity(currentMemberId, 'start_sprint', `${t('activityLog.startSprint')}「${name}」`, undefined, undefined, 'sprint');
     }
-    setStandupMode(false);
+    leaveStandup();
   };
 
-  const handleCancelStart = () => { setShowStartModal(false); setCarryOverTaskIds([]); setStandupMode(false); };
+  const handleCancelStart = () => { setShowStartModal(false); setCarryOverTaskIds([]); leaveStandup(); };
 
   // Escape key handler for sprint prompt
   useEffect(() => {
@@ -159,7 +169,8 @@ const StandupPanel = () => {
   const currentGroup = currentItem ? groups[currentItem.groupIndex] : null;
 
   const selectQueue = (idx: number) => {
-    setQueueIndex(idx);
+    if (!flatQueue[idx]) return;
+    setCursor({ key: standupQueueKey(flatQueue[idx]), index: idx });
     setStandupUserId(flatQueue[idx]?.member.id ?? null);
     reset();
   };
@@ -215,13 +226,14 @@ const StandupPanel = () => {
 
           {/* Progress indicator */}
           <p className="text-[10px] text-sidebar-foreground/50 mb-2">
-            {queueIndex + 1} / {flatQueue.length} {t('standup.memberCount')}
+            {currentItem ? queueIndex + 1 : 0} / {flatQueue.length} {t(settings.sortMode === 'by_project' ? 'standup.turnUnit' : 'standup.memberCount')}
           </p>
 
           {/* Controls */}
           <div className="flex items-center justify-center gap-2">
             <button
               onClick={toggle}
+              disabled={!currentItem || standupFinished}
               className="p-1.5 rounded-full bg-sidebar-accent text-sidebar-primary-foreground hover:bg-sidebar-hover transition-colors"
               title={isRunning ? t('button.pause') : t('button.play')}
               aria-label={isRunning ? t('button.pause') : t('button.play')}
@@ -230,6 +242,7 @@ const StandupPanel = () => {
             </button>
             <button
               onClick={() => reset()}
+              disabled={!currentItem || standupFinished}
               className="p-1.5 rounded-full bg-sidebar-accent text-sidebar-primary-foreground hover:bg-sidebar-hover transition-colors"
               title={t('common.reset')}
               aria-label={t('common.reset')}
@@ -238,6 +251,7 @@ const StandupPanel = () => {
             </button>
             <button
               onClick={skip}
+              disabled={!currentItem || standupFinished}
               className="p-1.5 rounded-full bg-sidebar-accent text-sidebar-primary-foreground hover:bg-sidebar-hover transition-colors"
               title={t('button.skipToNext')}
               aria-label={t('button.skipToNext')}
@@ -249,6 +263,7 @@ const StandupPanel = () => {
 
         {/* Member list */}
         <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
+          {!flatQueue.length && <p role="status" className="px-2 py-3 text-xs text-sidebar-foreground/60">{t('standup.noActiveMembers')}</p>}
           {settings.sortMode === 'by_member'
             ? flatQueue.map((item, idx) => (
                 <StandupItemCard
@@ -287,10 +302,10 @@ const StandupPanel = () => {
             <Trophy size={40} className="text-yellow-400 mb-3" />
             <p className="text-sm font-bold text-sidebar-primary-foreground">{t('standup.completion.title')}</p>
             <p className="text-xs text-sidebar-foreground/60 mt-1">
-              {t('standup.completion.message', { count: flatQueue.length })}
+              {t('standup.completion.message', { count: new Set(flatQueue.map(item => item.member.id)).size })}
             </p>
             <button
-              onClick={() => { setStandupFinished(false); setQueueIndex(0); reset(); }}
+              onClick={() => { setStandupFinished(false); setCursor({ key: flatQueue[0] ? standupQueueKey(flatQueue[0]) : null, index: 0 }); reset(); }}
               className="mt-4 text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground underline transition-colors"
             >
               {t('button.backToList')}
@@ -338,7 +353,7 @@ const StandupPanel = () => {
           currentSprint={currentSprint}
           completedCount={completedCount}
           pendingTasks={pendingTasks}
-          onClose={() => { setShowCompleteModal(false); setStandupMode(false); }}
+          onClose={() => { setShowCompleteModal(false); leaveStandup(); }}
           onComplete={handleCompleteSprint}
         />
       )}

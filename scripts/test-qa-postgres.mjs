@@ -13,7 +13,7 @@ import { buildQaPostgresCases } from './lib/qa-postgres-cases.mjs';
 
 export const IMAGE = 'postgres:15.8-alpine'; // PostgreSQL 15.8, same major/minor as delivery DB.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MIGRATIONS = ['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql'];
+const MIGRATIONS = ['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql','20261007_qa_status_semantics.sql'];
 const LABEL = 'com.livo.qa-postgres-test';
 const DB = 'livo_qa_test';
 

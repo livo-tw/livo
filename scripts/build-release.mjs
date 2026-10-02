@@ -301,7 +301,7 @@ if (skippedUntracked.length) {
 }
 for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql',
   'volumes/functions/slack-interact/projectGroups.ts',
-  ...['index.ts', 'versions.ts', 'projectGroups.ts', 'domain.ts', 'workflow.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
+  ...['index.ts', 'environments.ts', 'versions.ts', 'projectGroups.ts', 'domain.ts', 'workflow.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
   if (!fs.existsSync(path.join(DOCKER_DEST, rel))) die(`docker/${rel} 沒有進交付包，請檢查 docker/ 的複製規則。`);
 }
 // 確保 storage 目錄存在且非空（空目錄不一定每種壓縮／解壓工具都會保留；Docker bind mount 需要它）

@@ -1,3 +1,4 @@
+import { parseDeploymentEnvironments } from './environments.ts';
 import { groupProjectsByLine, type ProductLineOption } from './projectGroups.ts';
 import { Database, type Environment } from '../slack-interact/backend.ts';
 import type { Actions } from '../slack-interact/handler.ts';
@@ -15,6 +16,13 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
     api: async <T>(actor: QaSlackActor, body: Record<string, unknown>): Promise<T> => {
       if (!await adapter.enabled()) throw new Error('qa_disabled');
       return await createQaService(env, (actor as QaSlackActor & { jwt: string }).jwt).handle(body) as T;
+    },
+    environments: async actor => {
+      const member = new Database(env, (actor as QaSlackActor & { jwt: string }).jwt);
+      const rows = await member.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: '1' });
+      const parsed = parseDeploymentEnvironments(rows[0]?.value);
+      if (!parsed) throw new Error('qa_invalid_environment');
+      return parsed.values;
     },
     projects: async (actor, search) => {
       const member = new Database(env, (actor as QaSlackActor & { jwt: string }).jwt);

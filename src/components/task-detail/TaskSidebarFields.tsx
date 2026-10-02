@@ -8,7 +8,7 @@ import { X, ChevronDown, ChevronRight, GripVertical, Settings2 } from 'lucide-re
 import { useUIContext } from '@/context/UIContext';
 import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
-import { getPriorityOptions, envList } from './utils';
+import { getPriorityOptions } from './utils';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { Priority } from '@/types';
 import TaskDeploymentSection from './TaskDeploymentSection';

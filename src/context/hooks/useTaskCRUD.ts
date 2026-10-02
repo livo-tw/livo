@@ -5,7 +5,6 @@ import i18n from '@/i18n';
 import { getDepartment } from '@/lib/department';
 import { getWebhookConfig, triggerWebhook, type WebhookConfig } from '@/lib/webhook';
 import type { Task, Status, StatusLog, User, Project } from '@/types';
-import type { Database } from '@/integrations/supabase/types';
 import { randomUUID } from '@/lib/generateId';
 
 interface TaskCRUDDeps {
@@ -140,18 +139,31 @@ export function useTaskCRUD({
           }
         }
 
-        // Sync deployments
+        // Preserve row identity and historical environments; never delete before validation succeeds.
         if ('deployments' in updates) {
           const deployments = updates.deployments ?? [];
-          await supabase.from('task_deployments').delete().eq('task_id', taskId);
-          if (deployments.length > 0) {
-            const deployRows = deployments.map(d => ({
-              task_id: taskId,
-              environment: d.environment as Database['public']['Enums']['deploy_environment'],
-              status: d.status as Database['public']['Enums']['deploy_status'],
-              deploy_date: d.deployDate ?? null,
-            }));
-            await supabase.from('task_deployments').insert(deployRows);
+          const stored = await supabase.from('task_deployments').select('*').eq('task_id', taskId);
+          let deploymentError = stored.error;
+          if (!deploymentError) {
+            const previous = stored.data ?? [];
+            for (const deployment of deployments) {
+              const existing = previous.find(row => row.environment === deployment.environment);
+              const row = { task_id: taskId, environment: deployment.environment, status: deployment.status, deploy_date: deployment.deployDate ?? null };
+              if (existing && existing.status === row.status && existing.deploy_date === row.deploy_date) continue;
+              const result = existing
+                ? await supabase.from('task_deployments').update(row).eq('id', existing.id).eq('task_id', taskId)
+                : await supabase.from('task_deployments').insert(row);
+              if (result.error) { deploymentError = result.error; break; }
+            }
+            if (!deploymentError) {
+              const removed = previous.filter(row => !deployments.some(deployment => deployment.environment === row.environment));
+              if (removed.length) deploymentError = (await supabase.from('task_deployments').delete().eq('task_id', taskId).in('id', removed.map(row => row.id))).error;
+            }
+          }
+          if (deploymentError) {
+            toast.error(i18n.t('error.updateFailed') + deploymentError.message);
+            await refreshTasks();
+            return;
           }
         }
 

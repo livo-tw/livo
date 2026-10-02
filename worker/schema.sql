@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS task_deployments (
   workspace_id TEXT NOT NULL DEFAULT 'default',
   id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
   task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  environment TEXT NOT NULL CHECK (environment IN ('Dev','QA','Stage','Live Staging','Prod')),
+  environment TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('deployed','scheduled')),
   deploy_date TEXT
 );
@@ -485,6 +485,56 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_by TEXT,
   PRIMARY KEY (workspace_id, key)
 );
+
+
+-- A validated settings view keeps SQL writes and all environment consumers on
+-- one contract. Missing keys use defaults; malformed stored rows fail closed.
+CREATE VIEW IF NOT EXISTS livo_deployment_environment_settings_valid AS
+SELECT workspace_id,settings.value FROM system_settings settings WHERE key='deployment_environments' AND
+  CASE WHEN json_valid(settings.value) THEN
+    CASE WHEN json_type(settings.value)='object' AND json_type(settings.value,'$.version') IN ('integer','real')
+      AND json_extract(settings.value,'$.version')=1 AND json_type(settings.value,'$.values')='array' THEN
+      (SELECT count(*) FROM json_each(settings.value))=2
+      AND json_array_length(settings.value,'$.values') BETWEEN 1 AND 30
+      AND NOT EXISTS(SELECT 1 FROM json_each(settings.value,'$.values') item
+        WHERE item.type<>'text' OR length(item.value) NOT BETWEEN 1 AND 120
+          OR item.value IS NOT trim(item.value,char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))
+          OR instr(item.value,char(0))>0 OR item.value GLOB ('*['||char(1)||'-'||char(31)||char(127)||']*'))
+      AND (SELECT count(DISTINCT item.value) FROM json_each(settings.value,'$.values') item)=json_array_length(settings.value,'$.values')
+    ELSE 0 END
+  ELSE 0 END;
+CREATE TRIGGER IF NOT EXISTS deployment_environment_setting_insert AFTER INSERT ON system_settings
+WHEN NEW.key='deployment_environments' BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid WHERE workspace_id=NEW.workspace_id)
+    THEN RAISE(ABORT,'invalid_deployment_environments') END;
+END;
+CREATE TRIGGER IF NOT EXISTS deployment_environment_setting_update AFTER UPDATE ON system_settings
+WHEN NEW.key='deployment_environments' OR OLD.key='deployment_environments' BEGIN
+  SELECT CASE WHEN OLD.key='deployment_environments' AND
+    (NEW.key IS NOT OLD.key OR NEW.workspace_id IS NOT OLD.workspace_id)
+    THEN RAISE(ABORT,'deployment_environment_setting_key_immutable') END;
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid WHERE workspace_id=NEW.workspace_id)
+    THEN RAISE(ABORT,'invalid_deployment_environments') END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS task_deployment_environment_insert BEFORE INSERT ON task_deployments BEGIN
+  SELECT CASE WHEN NOT COALESCE((EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid settings,
+      json_each(CASE WHEN json_valid(settings.value) THEN settings.value ELSE '{}' END,'$.values') choice
+      WHERE settings.workspace_id=NEW.workspace_id AND choice.value=NEW.environment)
+    OR (NOT EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='deployment_environments')
+      AND NEW.environment IN ('Dev','QA','Stage','Live Staging','Prod'))),0)
+    THEN RAISE(ABORT,'deployment_environment_unavailable') END;
+END;
+CREATE TRIGGER IF NOT EXISTS task_deployment_environment_update BEFORE UPDATE ON task_deployments
+WHEN NEW.environment IS NOT OLD.environment OR NEW.id IS NOT OLD.id
+  OR NEW.task_id IS NOT OLD.task_id OR NEW.workspace_id IS NOT OLD.workspace_id BEGIN
+  SELECT CASE WHEN NOT COALESCE((EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid settings,
+      json_each(CASE WHEN json_valid(settings.value) THEN settings.value ELSE '{}' END,'$.values') choice
+      WHERE settings.workspace_id=NEW.workspace_id AND choice.value=NEW.environment)
+    OR (NOT EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='deployment_environments')
+      AND NEW.environment IN ('Dev','QA','Stage','Live Staging','Prod'))),0)
+    THEN RAISE(ABORT,'deployment_environment_unavailable') END;
+END;
 
 CREATE TABLE IF NOT EXISTS team_settings (
   workspace_id TEXT NOT NULL DEFAULT 'default',
@@ -1034,7 +1084,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
 -- QA is an opt-in domain. All writes go through qa.ts, never /api/query.
 CREATE TABLE IF NOT EXISTS qa_issues (
   workspace_id TEXT NOT NULL, id TEXT NOT NULL, project_id TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('new','triaged','in_progress','verification','closed')),
+  state TEXT NOT NULL CHECK (state IN ('new','triaged','in_progress','verification','verified','failed','closed','dismissed')),
   assignee_id TEXT, qa_owner_id TEXT, reporter_id TEXT NOT NULL, title TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version > 0), updated_at TEXT NOT NULL,
   data TEXT NOT NULL CHECK (json_valid(data)), PRIMARY KEY(workspace_id,id),
@@ -1086,6 +1136,29 @@ CREATE TRIGGER IF NOT EXISTS qa_command_guard BEFORE INSERT ON qa_commands WHEN 
     (SELECT 1 FROM qa_issues WHERE workspace_id=NEW.workspace_id
       AND project_id=json_extract(NEW.issue_data,'$.projectId')
       AND id=json_extract(NEW.issue_data,'$.duplicateOfId')) THEN RAISE(ABORT,'qa_invalid_duplicate') END;
+END;
+-- Commands validate the current workspace catalog in the same D1 batch as
+-- the issue write. Restored history is deliberately outside this constraint.
+CREATE TRIGGER IF NOT EXISTS qa_command_environment_guard BEFORE INSERT ON qa_commands
+WHEN NEW.restored_by IS NULL BEGIN
+  SELECT CASE WHEN (NEW.expected_version=-1 OR (NEW.operation='edit' AND
+    json_extract(NEW.issue_data,'$.observedEnvironment') IS NOT (SELECT json_extract(data,'$.observedEnvironment')
+      FROM qa_issues WHERE workspace_id=NEW.workspace_id AND id=NEW.issue_id)))
+    AND NOT COALESCE((EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid settings,
+      json_each(CASE WHEN json_valid(settings.value) THEN settings.value ELSE '{}' END,'$.values') choice
+      WHERE settings.workspace_id=NEW.workspace_id AND choice.value=json_extract(NEW.issue_data,'$.observedEnvironment'))
+    OR (NOT EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='deployment_environments')
+      AND json_extract(NEW.issue_data,'$.observedEnvironment') IN ('Dev','QA','Stage','Live Staging','Prod'))),0)
+    THEN RAISE(ABORT,'qa_invalid_environment') END;
+  SELECT CASE WHEN NEW.operation='submit_fix' AND json_type(NEW.issue_data,'$.targets') IS NOT 'array'
+    THEN RAISE(ABORT,'qa_invalid_environment') END;
+  SELECT CASE WHEN NEW.operation='submit_fix' AND EXISTS(SELECT 1 FROM json_each(NEW.issue_data,'$.targets') target
+    WHERE NOT COALESCE((EXISTS(SELECT 1 FROM livo_deployment_environment_settings_valid settings,
+      json_each(CASE WHEN json_valid(settings.value) THEN settings.value ELSE '{}' END,'$.values') choice
+      WHERE settings.workspace_id=NEW.workspace_id AND choice.value=CASE WHEN target.type='object' THEN json_extract(target.value,'$.environment') END)
+    OR (NOT EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='deployment_environments')
+      AND CASE WHEN target.type='object' THEN json_extract(target.value,'$.environment') END IN ('Dev','QA','Stage','Live Staging','Prod'))),0))
+    THEN RAISE(ABORT,'qa_invalid_environment') END;
 END;
 CREATE TRIGGER IF NOT EXISTS qa_restored_command_guard BEFORE INSERT ON qa_commands WHEN NEW.restored_by IS NOT NULL BEGIN
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.restored_by

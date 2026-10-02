@@ -1,3 +1,4 @@
+import { DeploymentEnvironmentProvider } from './DeploymentEnvironmentContext';
 import { useMemo, useCallback } from 'react';
 import i18n from '@/i18n';
 
@@ -192,6 +193,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   // ─── Provider Composition ───
   return (
     <AuthContext.Provider value={authValue}>
+      <DeploymentEnvironmentProvider>
       <MemberContext.Provider value={memberValue}>
         <UIContext.Provider value={uiValue}>
           <ProjectContext.Provider value={projectValue}>
@@ -203,6 +205,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
           </ProjectContext.Provider>
         </UIContext.Provider>
       </MemberContext.Provider>
+      </DeploymentEnvironmentProvider>
     </AuthContext.Provider>
   );
 };

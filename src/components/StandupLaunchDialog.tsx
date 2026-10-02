@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
-import { X, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Shuffle } from 'lucide-react';
 import { useMemberContext } from '@/context/MemberContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useStandupSettings, type SortMode } from '@/hooks/useStandupSettings';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
+import { applyStandupOrder, saveStandupLaunch, shuffleStandupOrder, type StandupOrder } from '@/lib/standupLaunch';
 
 export interface StandupLaunchDialogProps {
   open: boolean;
@@ -39,44 +40,48 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   const { currentSprint } = useSprintContext();
   const { allProjects } = useProjectContext();
   const [showOverrides, setShowOverrides] = useState(false);
+  const [randomOrder, setRandomOrder] = useState<StandupOrder>();
+  useEffect(() => { if (open) setRandomOrder(undefined); }, [open]);
 
-  const memberIds = users.map(u => u.id);
+  const activeUsers = users.filter(user => user.isActive === true);
+  const memberIds = activeUsers.map(u => u.id);
   const {
     settings,
     updateSettings,
     setMemberDuration,
     resetMemberDuration,
     getDurationForMember,
-    calculateTotalDuration,
-  } = useStandupSettings(memberIds);
+  } = useStandupSettings(memberIds, { active: open });
 
   const sprintTasks = currentSprint
     ? allTasks.filter(t => t.sprintId === currentSprint.id)
     : allTasks;
 
-  const { groups } = useStandupGrouping(
-    users, sprintTasks, allProjects,
+  const { groups: sortedGroups } = useStandupGrouping(
+    activeUsers, sprintTasks, allProjects,
     settings.sortMode, getDurationForMember, settings.bufferSeconds,
   );
+  const groups = applyStandupOrder(sortedGroups, randomOrder);
 
-  const totalSec  = calculateTotalDuration();
+  const totalSec = groups.reduce((sum, group) => sum + group.estimated_duration, 0);
   const totalMins = Math.round(totalSec / 60);
 
   const handleCancel = () => { onCancel?.(); onOpenChange(false); };
-  const handleConfirm = () => { onConfirm?.(); onOpenChange(false); };
+  const handleConfirm = () => { if (!groups.length) return; saveStandupLaunch(settings, groups); onConfirm?.(); onOpenChange(false); };
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleCancel}>
       <div
-        className="bg-card rounded-xl shadow-xl border border-border w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog" aria-modal="true" aria-labelledby="standup-launch-title"
+        className="bg-card rounded-xl shadow-xl border border-border w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col mx-3"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
-          <h2 className="text-base font-bold text-foreground">{t('standup.settings.title')}</h2>
-          <button onClick={handleCancel} className="text-muted-foreground hover:text-foreground">
+          <h2 id="standup-launch-title" className="text-base font-bold text-foreground">{t('standup.settings.title')}</h2>
+          <button aria-label={t('common.cancel')} onClick={handleCancel} className="text-muted-foreground hover:text-foreground">
             <X size={18} />
           </button>
         </div>
@@ -91,7 +96,8 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
               {SORT_MODES.map(m => (
                 <button
                   key={m.value}
-                  onClick={() => updateSettings({ sortMode: m.value })}
+                  onClick={() => { setRandomOrder(undefined); updateSettings({ sortMode: m.value }); }}
+                  aria-pressed={settings.sortMode === m.value}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     settings.sortMode === m.value
                       ? 'bg-primary text-primary-foreground border-primary'
@@ -101,6 +107,11 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                   {t(m.labelKey)}
                 </button>
               ))}
+              <button type="button" disabled={activeUsers.length < 2} aria-pressed={!!randomOrder}
+                onClick={() => setRandomOrder(shuffleStandupOrder(groups))}
+                className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50">
+                <Shuffle size={13} aria-hidden="true" />{t('standup.settings.shuffle')}
+              </button>
             </div>
           </div>
 
@@ -152,7 +163,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
             </button>
             {showOverrides && (
               <div className="mt-2 space-y-1.5 border border-border rounded-md p-3 bg-accent/20">
-                {users.map(user => {
+                {activeUsers.map(user => {
                   const custom = settings.memberDurations[user.id];
                   return (
                     <div key={user.id} className="flex items-center gap-2">
@@ -193,11 +204,11 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
           {groups.length > 0 && (
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-2 block">{t('standup.settings.preview')}</label>
-              <div className="space-y-1">
+              <div className="space-y-1" role="list" aria-label={t('standup.settings.preview')}>
                 {groups.map((g, i) => (
-                  <div key={g.group_key} className="flex items-center gap-2 text-xs py-1 px-2 rounded bg-accent/30">
+                  <div key={g.group_key} role="listitem" className="flex items-center gap-2 text-xs py-1 px-2 rounded bg-accent/30">
                     <span className="text-muted-foreground w-5 flex-shrink-0">{i + 1}.</span>
-                    <span className="flex-1 font-medium text-foreground truncate">{g.group_title}</span>
+                    <div className="min-w-0 flex-1"><span className="block font-medium text-foreground truncate">{g.group_title}</span>{settings.sortMode !== 'by_member' && <span className="mt-0.5 block break-words text-muted-foreground">{g.members.map(member => member.name).join(' → ')}</span>}</div>
                     <span className="text-muted-foreground flex-shrink-0">{g.members.length} {t('standup.settings.memberCountUnit')}</span>
                     <span className="text-muted-foreground flex-shrink-0">{formatDuration(g.estimated_duration)}</span>
                   </div>
@@ -205,6 +216,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
               </div>
             </div>
           )}
+          {!groups.length && <p role="status" className="text-sm text-muted-foreground">{t('standup.noActiveMembers')}</p>}
         </div>
 
         {/* Footer */}
@@ -221,7 +233,8 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
             </button>
             <button
               onClick={handleConfirm}
-              className="px-4 py-2 rounded text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              disabled={!groups.length}
+              className="px-4 py-2 rounded text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {t('standup.startButton')}
             </button>

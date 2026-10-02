@@ -1,3 +1,4 @@
+import { parseDeploymentEnvironments } from './qa/environments';
 import { groupProjectsByLine } from './qa/projectGroups';
 import type { Context } from 'hono';
 import { isDemoMember, type AppContext, type AuthCtx, type Ctx, type Env } from './env';
@@ -47,6 +48,12 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
     api: async <T>(actor: QaSlackActor, body: Record<string, unknown>) => {
       if (!await qaSlackEnabled(env, ws)) throw new Error('qa_disabled');
       return await executeQaAction(env, (actor as Actor).auth, body, ctx) as T;
+    },
+    environments: async () => {
+      const row = await env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>();
+      const parsed = parseDeploymentEnvironments(row ? JSON.parse(row.value) : undefined);
+      if (!parsed) throw new Error('qa_invalid_environment');
+      return parsed.values;
     },
     projects: async (_actor, search) => {
       const [rows, lines] = await Promise.all([

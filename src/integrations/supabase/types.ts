@@ -598,21 +598,21 @@ export type Database = {
       task_deployments: {
         Row: {
           deploy_date: string | null
-          environment: Database["public"]["Enums"]["deploy_environment"]
+          environment: string
           id: string
           status: Database["public"]["Enums"]["deploy_status"]
           task_id: string
         }
         Insert: {
           deploy_date?: string | null
-          environment: Database["public"]["Enums"]["deploy_environment"]
+          environment: string
           id?: string
           status?: Database["public"]["Enums"]["deploy_status"]
           task_id: string
         }
         Update: {
           deploy_date?: string | null
-          environment?: Database["public"]["Enums"]["deploy_environment"]
+          environment?: string
           id?: string
           status?: Database["public"]["Enums"]["deploy_status"]
           task_id?: string

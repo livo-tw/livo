@@ -1,9 +1,10 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Task, Project } from '@/types';
 import { DEFAULT_REQUIRED_FIELDS, type RequiredFieldsConfig, type ViewType, type TaskDisplayMode } from '../UIContext';
 import { canManageFeatureToggles, resolveFeatureToggles, type FeatureKey, type FeatureToggles } from '@/lib/featureToggles';
 import { loadFeatureToggles, persistFeatureToggle } from '@/lib/featureToggleQueries';
+import { clearQaNavigationGuards, hasQaNavigationGuard, notifyQaNavigationBlocked } from '@/lib/qa/navigationGuard';
 
 export function useUIState(role?: string) {
   const [featureToggles, setFeatureToggles] = useState<FeatureToggles>(() =>
@@ -33,14 +34,37 @@ export function useUIState(role?: string) {
     setFeatureToggles(previous => ({ ...previous, [key]: enabled }));
     await refreshFeatureToggles();
   }, [role, featureTogglesReady, refreshFeatureToggles]);
-  const [currentView, setCurrentView] = useState<ViewType>('board');
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [currentView, setCurrentViewState] = useState<ViewType>('board');
+  const navigationState = useRef({ currentView, qaEnabled: false });
+  navigationState.current = { currentView, qaEnabled: featureTogglesReady && featureToggles.qa };
+  const setCurrentView = useCallback<Dispatch<SetStateAction<ViewType>>>(value => {
+    const previous = navigationState.current.currentView;
+    const next = typeof value === 'function' ? value(previous) : value;
+    if (next === previous) return;
+    if (navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+    // Capability revocation has priority over preserving pending UI work.
+    if (!navigationState.current.qaEnabled) clearQaNavigationGuards();
+    navigationState.current.currentView = next; setCurrentViewState(next);
+  }, []);
+  const [selectedTask, setSelectedTaskState] = useState<Task | null>(null);
+  const [taskDisplayMode, setTaskDisplayModeState] = useState<TaskDisplayMode>('modal');
+  const taskNavigation = useRef({ selectedTask, taskDisplayMode });
+  taskNavigation.current = { selectedTask, taskDisplayMode };
+  const setSelectedTask = useCallback<Dispatch<SetStateAction<Task | null>>>(value => {
+    const next = typeof value === 'function' ? value(taskNavigation.current.selectedTask) : value;
+    if (next && taskNavigation.current.taskDisplayMode === 'page' && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+    taskNavigation.current.selectedTask = next; setSelectedTaskState(next);
+  }, []);
+  const setTaskDisplayMode = useCallback<Dispatch<SetStateAction<TaskDisplayMode>>>(value => {
+    const next = typeof value === 'function' ? value(taskNavigation.current.taskDisplayMode) : value;
+    if (next === 'page' && taskNavigation.current.selectedTask && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+    taskNavigation.current.taskDisplayMode = next; setTaskDisplayModeState(next);
+  }, []);
   const [standupMode, setStandupMode] = useState(false);
   const [standupUserId, setStandupUserId] = useState<string | null>(null);
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [taskDisplayMode, setTaskDisplayMode] = useState<TaskDisplayMode>('modal');
   const [requiredFields, setRequiredFields] = useState<RequiredFieldsConfig>(DEFAULT_REQUIRED_FIELDS);
   const [isLoading, setIsLoading] = useState(true);
 

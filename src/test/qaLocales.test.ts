@@ -3,12 +3,21 @@ import i18n from '@/i18n';
 import en from '@/i18n/locales/en.json';
 import zhTW from '@/i18n/locales/zh-TW.json';
 import zhCN from '@/i18n/locales/zh-CN.json';
+import { QA_STATES } from '@/lib/qa/domain';
 
 const keys = (value: Record<string, unknown>, prefix = ''): string[] => Object.entries(value).flatMap(([key, item]) =>
   item && typeof item === 'object' ? keys(item as Record<string, unknown>, `${prefix}${key}.`) : [`${prefix}${key}`]).sort();
 
 afterEach(async () => { await i18n.changeLanguage('zh-TW'); });
 describe('QA translations use the shared locale resources', () => {
+  it.each(['en', 'zh-TW', 'zh-CN'])('translates every workflow state and new reporting action in %s', language => {
+    const required = [...QA_STATES.map(state => `qa.state.${state}`),
+      'qa.workflowSlackPreset', 'qa.dropFiles', 'qa.createBug', 'qa.priorityUnassigned',
+      'qa.slackSource', 'qa.notProvided', 'qa.finishPending',
+      'standup.settings.shuffle', 'standup.noActiveMembers', 'standup.turnUnit', 'sidebar.standup',
+      'deploymentEnvironments.title', 'deploymentEnvironments.restoreMissing'];
+    for (const key of required) expect(i18n.getResource(language, 'translation', key), key).toEqual(expect.stringMatching(/\S/));
+  });
   it('provides matching QA keys and nonempty translations in all three locale files', () => {
     const expected = keys(en.qa);
     expect(keys(zhTW.qa)).toEqual(expected);
