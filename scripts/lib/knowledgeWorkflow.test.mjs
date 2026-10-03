@@ -1,14 +1,17 @@
 // @vitest-environment node
-import {beforeEach,afterEach,describe,it,expect} from 'vitest';
+import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import {executeKnowledgeWorkflow} from '../../worker/src/knowledgeWorkflow';
+import {notifyChanges} from '../../worker/src/notify';
+vi.mock('../../worker/src/notify',()=>({notifyChanges:vi.fn()}));
 let db,env,beforeBatch;
 const actor=(id='pm',role='member')=>({userId:id,email:`${id}@example.com`,member:{id,role,workspaceId:'default',name:id,email:`${id}@example.com`}});
-const run=(body,auth=actor())=>executeKnowledgeWorkflow(env,auth,{pageId:'private',...body});
+const run=(body,auth=actor())=>executeKnowledgeWorkflow(env,auth,{pageId:'private',...body},{waitUntil:vi.fn()});
 const add=()=>run({action:'checklist_add',commandId:'add',text:'Review evidence',anchorId:'stable'});
 beforeEach(()=>{
+ vi.mocked(notifyChanges).mockReset();
  db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
  db.exec(fs.readFileSync(path.resolve(__dirname,'../../worker/schema.sql'),'utf8'));
  db.exec(fs.readFileSync(path.resolve(__dirname,'../../worker/knowledge-workflow.schema.sql'),'utf8'));
@@ -60,6 +63,11 @@ describe('knowledge workflow D1 transactions and live ACL',()=>{
   expect(db.prepare('SELECT s.body FROM kb_work_links l JOIN kb_source_snapshots s ON s.id=l.snapshot_id WHERE l.target_id=?').get(result.targetId).body).toBe('<p>Immutable original</p>');
   await expect(run({...request,commandId:'done-create',input:{...request.input,statusId:'done'}})).rejects.toThrow('kb_workflow_conflict');
   expect(db.prepare('SELECT count(*) n FROM tasks').get().n).toBe(2);
+  expect(notifyChanges).toHaveBeenCalledTimes(1);
+  const events=vi.mocked(notifyChanges).mock.calls[0][2];
+  expect(events).toEqual([{table:'tasks',eventType:'INSERT',new:{...db.prepare('SELECT * FROM tasks WHERE id=?').get(result.targetId),requires_approval:false},old:null}]);
+  expect(vi.mocked(notifyChanges).mock.calls[0][3]).toBe('default');
+  expect(JSON.stringify(events)).not.toMatch(/Private title|Immutable original|snapshot_id|page_id/);
  });
  it('captures immutable body versions independently of progress and forbids direct mutation',async()=>{
   const request={action:'capture_snapshot',commandId:'capture',expectedPageVersion:1};const first=await run(request);
@@ -77,9 +85,30 @@ describe('knowledge workflow D1 transactions and live ACL',()=>{
   db.exec(`UPDATE system_settings SET value='{"qa":false}' WHERE key='feature_toggles'`);
   await expect(run({...request,commandId:'qa-disabled'})).rejects.toThrow('kb_workflow_conflict');
   expect((await run({action:'list'})).links[0]).toMatchObject({unavailable:true,title:''});
+  expect(notifyChanges).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(notifyChanges).mock.calls[0][2]).toEqual([{table:'qa_issues',eventType:'INSERT',new:{id:result.targetId,workspace_id:'default',project_id:'project',version:1},old:null}]);
  });
  it('keeps source deletion independent of task deletion',async()=>{
   const item=await add();await run({action:'link',commandId:'link',targetKind:'task',targetId:'task',checklistId:item.id,expectedVersion:1});
   db.exec("DELETE FROM kb_pages WHERE id='private'");expect(db.prepare("SELECT id FROM tasks WHERE id='task'").get()).toBeTruthy();expect(db.prepare('SELECT count(*) n FROM kb_work_links').get().n).toBe(0);
  });
+ it('notifies only the winning create transaction and never failed writes',async()=>{
+  const request={action:'create_task',commandId:'race',expectedPageVersion:1,input:{projectId:'project',statusId:'open',title:'Public action'}};
+  const [first,second]=await Promise.all([run(request),run(request)]);expect(first).toEqual(second);expect(notifyChanges).toHaveBeenCalledTimes(1);
+  vi.mocked(notifyChanges).mockClear();beforeBatch=()=>db.exec("UPDATE members SET job_title='Engineer' WHERE id='pm'");
+  await expect(run({...request,commandId:'revoked'})).rejects.toThrow();expect(notifyChanges).not.toHaveBeenCalled();
+ });
+ it('returns committed work if the realtime transport fails',async()=>{
+  vi.mocked(notifyChanges).mockImplementation(()=>{throw new Error('transport unavailable');});
+  const request={action:'create_task',commandId:'transport',expectedPageVersion:1,input:{projectId:'project',statusId:'open',title:'Published'}};
+  const created=await run(request);expect(db.prepare('SELECT id FROM tasks WHERE id=?').get(created.targetId)).toBeTruthy();expect(await run(request)).toEqual(created);expect(notifyChanges).toHaveBeenCalledTimes(1);
+ });
+
+ it('sends task booleans with the same wire types as regular task writes',async()=>{
+  db.exec("CREATE TRIGGER fixture_requires_approval AFTER INSERT ON tasks BEGIN UPDATE tasks SET requires_approval=1 WHERE id=NEW.id; END");
+  const created=await run({action:'create_task',commandId:'approval',expectedPageVersion:1,input:{projectId:'project',statusId:'open',title:'Approval task'}});
+  expect(db.prepare('SELECT requires_approval FROM tasks WHERE id=?').get(created.targetId).requires_approval).toBe(1);
+  expect(vi.mocked(notifyChanges).mock.calls[0][2][0].new.requires_approval).toBe(true);
+ });
+
 });

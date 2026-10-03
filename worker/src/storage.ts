@@ -15,9 +15,11 @@
 //     workspaces row → unlimited, exactly the old behavior.
 
 import type { Context } from 'hono';
-import type { AppContext, Env } from './env';
+import type { AppContext } from './env';
 import { DEFAULT_WORKSPACE } from './env';
 import { knowledgeStorageAllowed } from './knowledge';
+import { reserveStorageBytes, releaseStorageBytes, StorageQuotaError } from './storageQuota';
+import { ImportError } from './knowledgeImport';
 
 const VALID_BUCKETS = new Set(['task-images', 'kb-files', 'backups']);
 export const isKnowledgeStoragePath = (path: string): boolean => /^(?:ws\/[^/]+\/)?kb\//.test(path);
@@ -42,23 +44,12 @@ function pathAllowed(ws: string, path: string): boolean {
   return path.startsWith(`ws/${ws}/`);
 }
 
-interface WorkspaceQuotaRow {
-  storage_limit_mb: number;
-  storage_used_bytes: number;
-}
-
-/** Best-effort usage bookkeeping (delta in bytes, floor at 0). */
-async function bumpUsage(env: Env, ws: string, delta: number): Promise<void> {
-  if (ws === DEFAULT_WORKSPACE || delta === 0) return;
-  try {
-    await env.DB.prepare(
-      'UPDATE workspaces SET storage_used_bytes = MAX(0, storage_used_bytes + ?) WHERE id = ?'
-    )
-      .bind(Math.round(delta), ws)
-      .run();
-  } catch {
-    /* accounting is best-effort */
-  }
+async function uploadBytes(request:Request):Promise<Uint8Array>{
+  const reader=request.body?.getReader();if(!reader)return new Uint8Array();
+  const chunks:Uint8Array[]=[];let total=0;
+  try{for(;;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>MAX_UPLOAD_BYTES)throw new Error('upload_size_limit');chunks.push(value);}}
+  finally{await reader.cancel().catch(()=>undefined);}
+  const result=new Uint8Array(total);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}return result;
 }
 
 export async function handleUpload(c: Context<AppContext>, bucket: string, path: string): Promise<Response> {
@@ -76,20 +67,6 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
     if (!Number.isFinite(len) || len <= 0) {
       return c.json({ data: null, error: { message: 'Content-Length required' } }, 411);
     }
-    const quota = await c.env.DB.prepare(
-      'SELECT storage_limit_mb, storage_used_bytes FROM workspaces WHERE id = ?'
-    )
-      .bind(ws)
-      .first<WorkspaceQuotaRow>();
-    // QA multipart uploads reserve their full expected size before accepting parts.
-    const reserved = await c.env.DB.prepare("SELECT COALESCE(SUM(expected_size),0) AS bytes FROM qa_upload_sessions WHERE workspace_id=? AND state IN ('initializing','uploading','finalizing','aborting')")
-      .bind(ws).first<{bytes:number}>();
-    if (quota && quota.storage_used_bytes + (reserved?.bytes ?? 0) + len > quota.storage_limit_mb * 1024 * 1024) {
-      return c.json(
-        { data: null, error: { message: `附件空間已滿（Beta 上限 ${quota.storage_limit_mb}MB），請刪除舊附件或聯繫 service@livo-tw.com` } },
-        413
-      );
-    }
   }
 
   const effectivePath = wsPath(ws, path);
@@ -102,10 +79,14 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
   if ((bucket === 'task-images' && isKnowledgeStoragePath(effectivePath)) || (bucket === 'kb-files' && (!isKnowledgeStoragePath(effectivePath) || !await knowledgeStorageAllowed(c.env, c.get('auth'), effectivePath)))) {
     return c.json({ data: null, error: { message: 'kb_forbidden' } }, 403);
   }
-  await c.env.ATTACHMENTS.put(key(bucket, effectivePath), c.req.raw.body, {
-    httpMetadata: { contentType },
-  });
-  await bumpUsage(c.env, ws, len);
+  let bytes:Uint8Array;
+  try{bytes=await uploadBytes(c.req.raw);}catch(error){if(String(error).includes('upload_size_limit'))return c.json({data:null,error:{message:'File too large (max 20MB)'}},413);throw error;}
+  const objectKey=key(bucket,effectivePath),previous=await c.env.ATTACHMENTS.head(objectKey);
+  const reserved=Math.max(0,bytes.length-(previous?.size||0));
+  try{await reserveStorageBytes(c.env,ws,reserved);}catch(error){if(error instanceof StorageQuotaError)return c.json({data:null,error:{message:'附件空間已滿，請刪除舊附件或聯繫管理員'}},413);if(error instanceof ImportError&&error.code==='storage_reconciliation_pending')return c.json({data:null,error:{code:error.code,message:'附件容量帳務正在核對，請稍後再試'}},409);throw error;}
+  try{await c.env.ATTACHMENTS.put(objectKey,bytes,{httpMetadata:{contentType}});}
+  catch(error){await releaseStorageBytes(c.env,ws,reserved);throw error;}
+  await releaseStorageBytes(c.env,ws,Math.max(0,(previous?.size||0)-bytes.length));
   // Wire path = effective path: the frontend stores this and builds public
   // URLs from it, so tenant objects resolve without any client-side mapping.
   return c.json({ data: { path: effectivePath }, error: null });
@@ -174,7 +155,7 @@ export async function handleRemove(c: Context<AppContext>, bucket: string): Prom
   const requested = Array.isArray(body.paths) ? body.paths : [];
   // Silently drop out-of-namespace paths (same shape as deleting a
   // nonexistent object) — a tenant can never delete another tenant's files.
-  const paths = requested.filter((p) => typeof p === 'string' && pathAllowed(ws, p));
+  const paths = [...new Set(requested.filter((p) => typeof p === 'string' && pathAllowed(ws, p)))];
   if (bucket === 'task-images' || bucket === 'kb-files') {
     for (const path of paths) {
       if (!await knowledgeStorageAllowed(c.env, c.get('auth'), path)) {
@@ -183,13 +164,7 @@ export async function handleRemove(c: Context<AppContext>, bucket: string): Prom
     }
   }
 
-  // Usage bookkeeping for tenants: size up objects before deleting.
-  let freed = 0;
-  if (ws !== DEFAULT_WORKSPACE) {
-    const heads = await Promise.all(paths.map((p) => c.env.ATTACHMENTS.head(key(bucket, p))));
-    for (const h of heads) freed += h?.size ?? 0;
-  }
-  await Promise.all(paths.map((p) => c.env.ATTACHMENTS.delete(key(bucket, p))));
-  await bumpUsage(c.env, ws, -freed);
+  // Credit each successful deletion once; a later failure must not lose earlier credits.
+  for(const path of paths){const objectKey=key(bucket,path),head=await c.env.ATTACHMENTS.head(objectKey);await c.env.ATTACHMENTS.delete(objectKey);await releaseStorageBytes(c.env,ws,head?.size||0);}
   return c.json({ data: paths, error: null });
 }

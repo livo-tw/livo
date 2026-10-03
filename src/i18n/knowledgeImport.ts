@@ -1,5 +1,13 @@
 /** Root locale files consume this namespace; no environment or company data. */
 const entries:Record<string,[string,string,string]>={
+  retryCommit:['Review destination and retry import','核對目的地並重試匯入','核对目标位置并重试导入'],
+  storage_reconciliation_pending:['Storage usage is being updated. Try importing again shortly.','儲存用量正在更新，請稍後再匯入。','存储用量正在更新，请稍后再导入。'],
+  storage_quota_exceeded:['The workspace has insufficient storage. Remove unused attachments or contact an administrator.','工作區容量不足，請清理不再使用的附件或聯繫管理員。','工作区容量不足，请清理不再使用的附件或联系管理员。'],
+  storage_busy:['The file is still being processed. Try again shortly.','檔案仍在處理中，請稍後重試。','文件仍在处理中，请稍后重试。'],
+  storage_key_conflict:['The source content changed. Start a new import.','來源內容已變動，請重新匯入。','来源内容已变动，请重新导入。'],
+  import_payload_missing:['The staged converted content could not be read. Retry the import.','無法讀取暫存的解析內容，請重試匯入。','无法读取暂存的解析内容，请重试导入。'],
+  import_metadata_too_large:['This import contains too much metadata. Import fewer documents at a time.','此次匯入的附加資料過多，請分批匯入。','此次导入的附加数据过多，请分批导入。'],
+  parsed_document_too_large:['The converted document exceeds 900,000 UTF-8 bytes. Split it into smaller documents.','解析後的單篇正文超過 900,000 UTF-8 位元組，請拆成較小的文件。','解析后的单篇正文超过 900,000 UTF-8 字节，请拆成较小的文档。'],
   reload:['Try again','重新載入','重新加载'],
   import_forbidden:['Your current permissions do not allow this action. Private content has been cleared.','目前權限不允許此操作，已清除私有內容。','当前权限不允许此操作，已清除私有内容。'],
   preview_expired:['This private preview expired after 24 hours. Start a new import.','私有預覽已超過 24 小時，請重新匯入。','私有预览已超过 24 小时，请重新导入。'],

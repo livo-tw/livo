@@ -8,8 +8,8 @@ import {IMAGE,runPostgres} from './test-qa-postgres.mjs';
 import {buildUpgradeFile,lintUpgradeMigration} from './release-upgrades.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const BASE=['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql','20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261002_knowledge_base.sql','20261007_knowledge_permissions.sql'];
-const NEW=['20261009_knowledge_navigation.sql','20261010_knowledge_workflow.sql','20261011_knowledge_import.sql','20261012_knowledge_slack_search.sql'];
-const CASES=['knowledge-workflow-pg-security.sql','knowledge-navigation-pg.sql','knowledge-import-pg-security.sql','knowledge-slack-pg-security.sql'];
+const NEW=['20261009_knowledge_navigation.sql','20261010_knowledge_workflow.sql','20261011_knowledge_import.sql','20261012_knowledge_slack_search.sql','20261013_knowledge_import_maintenance.sql'];
+const CASES=['knowledge-workflow-pg-security.sql','knowledge-navigation-pg.sql','knowledge-import-pg-security.sql','knowledge-slack-pg-security.sql','knowledge-import-maintenance-pg-security.sql'];
 const read=(p)=>fs.readFileSync(path.join(ROOT,p),'utf8');
 export function buildKnowledgePlan(){
   const source=[...BASE,...NEW].map(name=>{const sql=read(`supabase/migrations/${name}`);const problems=lintUpgradeMigration(sql);if(problems.length)throw new Error(`${name}: ${JSON.stringify(problems)}`);return{name,sql,sha256:createHash('sha256').update(sql).digest('hex')};});

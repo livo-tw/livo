@@ -29,6 +29,9 @@ export const TABLES: TableRegistry = {
   kb_workflow_commands: { pk: 'id', clientAccess: 'none', jsonCols: ['result_json'] },
   knowledge_import_policy: { pk: 'workspace_id', clientAccess: 'none', jsonCols: ['data'] },
   knowledge_import_jobs: { pk: 'id', clientAccess: 'none', jsonCols: ['data'] },
+  knowledge_import_files: { pk: 'file_key', clientAccess: 'none' },
+  knowledge_import_usage_reconciliations: { pk: 'workspace_id', clientAccess: 'none', boolCols: ['complete'] },
+  knowledge_import_maintenance_state: { pk: 'id', clientAccess: 'none', jsonCols: ['data'] },
   knowledge_import_sources: { pk: 'id', clientAccess: 'none', jsonCols: ['original', 'assets'] },
   // QA's guarded command API owns these tables. Query cannot bypass workflow/feature gates.
   qa_issues: { pk:'id', clientAccess:'none', jsonCols:['data'] },

@@ -3168,7 +3168,15 @@
     "warning": "Conversion warning",
     "page": "Page",
     "noHistory": "No recent imports",
-    "successHelp": "Saved source snapshots remain separate from edited knowledge pages."
+    "successHelp": "Saved source snapshots remain separate from edited knowledge pages.",
+    "retryCommit": "Review destination and retry import",
+    "storage_reconciliation_pending": "Storage usage is being updated. Try importing again shortly.",
+    "storage_quota_exceeded": "The workspace has insufficient storage. Remove unused attachments or contact an administrator.",
+    "storage_busy": "The file is still being processed. Try again shortly.",
+    "storage_key_conflict": "The source content changed. Start a new import.",
+    "import_payload_missing": "The staged converted content could not be read. Retry the import.",
+    "import_metadata_too_large": "This import contains too much metadata. Import fewer documents at a time.",
+    "parsed_document_too_large": "The converted document exceeds 900,000 UTF-8 bytes. Split it into smaller documents."
   },
   "kbWorkflow": {
     "heading": "Actions and linked work",

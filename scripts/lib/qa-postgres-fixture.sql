@@ -26,7 +26,7 @@ CREATE TABLE storage.buckets (
 );
 CREATE TABLE storage.objects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),bucket_id text REFERENCES storage.buckets(id),
-  name text,metadata jsonb,updated_at timestamptz DEFAULT now(),last_accessed_at timestamptz,
+  name text,metadata jsonb,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),last_accessed_at timestamptz,
   UNIQUE(bucket_id,name)
 );
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
