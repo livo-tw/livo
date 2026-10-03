@@ -121,8 +121,10 @@ Deno.serve(async (req) => {
       return json({ error: 'Permission denied: only super_admin can manage another member login' },403);
     }
     if (action === 'create') {
+      if (params.qaAdmin !== undefined && typeof params.qaAdmin !== 'boolean') return json({ error: 'invalid QA capability' },400);
+      if (params.role && !['member','admin','super_admin'].includes(params.role)) return json({ error: 'invalid role' },400);
       if (params.jobTitle !== undefined && (typeof params.jobTitle !== 'string' || params.jobTitle.length > 200)) return json({ error: 'job_title must be at most 200 characters' },400);
-      if (callerRole !== 'super_admin' && ((params.jobTitle || '').trim() || (params.role && params.role !== 'member'))) {
+      if (callerRole !== 'super_admin' && ((params.jobTitle || '').trim() || (params.role && params.role !== 'member') || params.qaAdmin === true)) {
         return json({ error: 'Permission denied: only super_admin can assign positions or administrative roles' },403);
       }
     }
@@ -197,6 +199,7 @@ Deno.serve(async (req) => {
           email: emailStr,
           name: nameStr,
           role: role || "member",
+          is_qa_admin: (!role || role === "member") && params.qaAdmin === true,
           job_title: jobTitle || "",
           avatar: avatar || nameStr.slice(0, 1).toUpperCase(),
           color: color || "#6B778C",

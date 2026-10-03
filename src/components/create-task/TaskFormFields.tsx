@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
 import { deploymentEnvironmentOptions } from '@/lib/deploymentEnvironments';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
@@ -94,24 +95,24 @@ const TaskFormFields = ({
     <div className="space-y-3">
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.projectLabel')}</label>
-        <select value={projectId} onChange={e => setProjectId(e.target.value)}
+        <SearchableSelect value={projectId} onChange={e => setProjectId(e.target.value)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
           <ProjectSelectOptions groups={groupedProjects} />
-        </select>
+        </SearchableSelect>
       </div>
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.statusLabel')}{requiredFields.status && <span className="text-destructive"> *</span>}</label>
-        <select value={statusId} onChange={e => setStatusId(e.target.value)}
+        <SearchableSelect value={statusId} onChange={e => setStatusId(e.target.value)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
           {statuses.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
-        </select>
+        </SearchableSelect>
       </div>
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.priorityLabel')}{requiredFields.priority && <span className="text-destructive"> *</span>}</label>
-        <select value={priority} onChange={e => setPriority(e.target.value as Priority)}
+        <SearchableSelect value={priority} onChange={e => setPriority(e.target.value as Priority)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
           {priorities.map(p => (<option key={p.value} value={p.value}>{p.label}</option>))}
-        </select>
+        </SearchableSelect>
       </div>
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.assigneeLabel')}{requiredFields.assignee && <span className="text-destructive"> *</span>}</label>

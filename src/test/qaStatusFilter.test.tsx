@@ -8,8 +8,13 @@ import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { ProductLine, Project } from '@/types';
 
 const mocks = vi.hoisted(() => ({ getWorkflow: vi.fn() }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: true }, featureTogglesReady: true }) }));
+// Keep initialization exports available when an import graph loads the real i18n singleton.
+vi.mock('react-i18next', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+import '@/i18n';
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: true }, featureTogglesReady: true, taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn() }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[], productLines: [] as ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
@@ -23,8 +28,9 @@ vi.mock('@/components/qa/QaWorkflowSettings', () => ({ default: (): null => null
 import QaWorkspace from '@/components/qa/QaWorkspace';
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
-beforeAll(() => Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() }));
+beforeAll(() => { vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} }); Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() }); });
 afterAll(() => {
+  vi.unstubAllGlobals();
   if (originalScrollIntoView) Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
 });
@@ -97,12 +103,12 @@ describe('QA status filtering', () => {
       const option = within(listbox).getByRole('option', { name: workflow.labels[state] || `qa.state.${state}` });
       expect(option.querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors[state] });
     }
-    fireEvent.keyDown(within(listbox).getByRole('option', { name: 'QA accepted' }), { key: 'Enter' });
+    fireEvent.click(within(listbox).getByRole('option', { name: 'QA accepted' }));
     await waitFor(() => expect(trigger).toHaveTextContent('QA accepted'));
     expect(trigger.querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors.verified });
     expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('verified');
     const reopened = await open('qa.allStates');
-    fireEvent.keyDown(within(reopened).getByRole('option', { name: 'qa.allStates' }), { key: 'Enter' });
+    fireEvent.click(within(reopened).getByRole('option', { name: 'qa.allStates' }));
     await waitFor(() => expect(trigger).toHaveTextContent('qa.allStates'));
     expect(trigger.querySelector('[data-status-dot]')).toBeNull();
     expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('all');

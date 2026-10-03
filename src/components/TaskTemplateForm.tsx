@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { X } from 'lucide-react';
 import RichTextEditor from '@/components/RichTextEditorLazy';
@@ -94,19 +95,19 @@ const TaskTemplateForm = ({
         </div>
         <div>
           <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskTemplate.applicableProjectLabel')}</label>
-          <select value={formProjectId} onChange={e => setFormProjectId(e.target.value)}
+          <SearchableSelect value={formProjectId} onChange={e => setFormProjectId(e.target.value)}
             className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
             <option value="">{t('taskTemplate.globalProject')}</option>
             <ProjectSelectOptions groups={groupedProjects} />
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskTemplate.defaultPriorityLabel')}</label>
-          <select value={formPriority} onChange={e => setFormPriority(e.target.value as Priority | '')}
+          <SearchableSelect value={formPriority} onChange={e => setFormPriority(e.target.value as Priority | '')}
             className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
             <option value="">{t('taskTemplate.noPriority')}</option>
             {priorities.map(p => (<option key={p.value} value={p.value}>{p.label}</option>))}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskTemplate.defaultTagsLabel')}</label>
@@ -125,13 +126,13 @@ const TaskTemplateForm = ({
               );
             })}
           </div>
-          <select value="" onChange={e => { if (e.target.value) setFormTagIds(prev => [...prev, e.target.value]); }}
+          <SearchableSelect value="" onChange={e => { if (e.target.value) setFormTagIds(prev => [...prev, e.target.value]); }}
             className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
             <option value="">{t('taskTemplate.addTagPlaceholder')}</option>
             {tags.filter(t => !formTagIds.includes(t.id)).map(tag => (
               <option key={tag.id} value={tag.id}>{tag.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskTemplate.defaultBackgroundLabel')}</label>

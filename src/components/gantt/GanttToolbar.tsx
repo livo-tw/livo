@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import React from 'react';
 import { Lightbulb, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
@@ -95,7 +96,7 @@ const GanttToolbar = React.memo(({
             ))}
           </div>
           <DepartmentFilter value={filterDept} onChange={setFilterDept} />
-          <select
+          <SearchableSelect
             value={selectedSprintId}
             onChange={e => setSelectedSprintId(e.target.value)}
             className="px-2.5 py-1.5 text-[13px] font-medium rounded-md border border-border bg-card text-foreground cursor-pointer"
@@ -109,7 +110,7 @@ const GanttToolbar = React.memo(({
                 <option key={s.id} value={s.id}>{s.name}{s.completedAt ? ' ✓' : ''}</option>
               ))
             }
-          </select>
+          </SearchableSelect>
         </div>
         <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
           {viewModeOptions.map(([mode, label]) => (

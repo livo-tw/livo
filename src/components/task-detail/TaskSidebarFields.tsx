@@ -1,3 +1,5 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import UserSelect from '@/components/UserSelect';
 import CustomFieldManager from '@/components/CustomFieldManager';
@@ -117,16 +119,23 @@ const TaskSidebarFields = ({ detail }: Props) => {
   fieldJsx['project'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.project', '專案')}</label>
-      <select value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
+      <SearchableSelect value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
         <ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, [task.projectId])} />
-      </select>
+      </SearchableSelect>
     </div>
   );
 
   fieldJsx['status'] = (
     <div>
       <div className="relative" ref={statusDropdownRef}>
+        {statuses.length > 5 ? <>
+          <ColoredStatusSelect label={t('taskDetail.sidebar.status', '狀態')} value={task.statusId}
+            options={statuses.map(item => ({ value: item.id, label: item.name, color: item.color }))}
+            onValueChange={handleStatusChange}
+            className="[&>label]:text-[11px] [&>label]:uppercase [&>label]:tracking-wider [&>label]:text-muted-foreground" />
+          {task.approvalStatus === 'pending_approval' && <span className="mt-1 block text-[10px] text-purple-600 dark:text-purple-400">⏳ {t('taskDetail.sidebar.pendingApproval', '待簽核')}</span>}
+        </> : <>
         <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.status', '狀態')}</label>
         <button type="button" onClick={() => setStatusDropdownOpen(v => !v)}
           className="w-full mt-1 text-sm font-semibold rounded px-2 py-1.5 outline-none border-0 cursor-pointer text-left"
@@ -148,6 +157,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
             ))}
           </div>
         )}
+        </>}
       </div>
       {/* Requires Approval toggle */}
       {approvalsEnabled && <div className="flex items-center justify-between mt-2">
@@ -193,10 +203,10 @@ const TaskSidebarFields = ({ detail }: Props) => {
   fieldJsx['priority'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.priority', '優先級')}</label>
-      <select value={task.priority} onChange={e => updateTask({ priority: e.target.value as Priority })}
+      <SearchableSelect value={task.priority} onChange={e => updateTask({ priority: e.target.value as Priority })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
         {getPriorityOptions().map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
-      </select>
+      </SearchableSelect>
     </div>
   );
 
@@ -219,11 +229,11 @@ const TaskSidebarFields = ({ detail }: Props) => {
   fieldJsx['department'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.department', '負責部門')}</label>
-      <select value={derivedDept || ''} onChange={e => updateTask({ department: e.target.value || undefined })}
+      <SearchableSelect value={derivedDept || ''} onChange={e => updateTask({ department: e.target.value || undefined })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
         <option value="">{t('common.unassigned', '未指定')}</option>
         {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-      </select>
+      </SearchableSelect>
     </div>
   );
 

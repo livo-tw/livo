@@ -8,6 +8,7 @@ import { QaError, type QaIssue } from '../src/qa/domain';
 import type { Env, AuthCtx } from '../src/env';
 import { createCloudQaSlackActions } from '../src/qaSlack';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '../src/qa/workflow';
+import { runQuery } from '../src/db';
 
 describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
   let db:DatabaseSync;
@@ -63,21 +64,66 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     expect(()=>db.prepare('INSERT INTO qa_attachments(workspace_id,id,issue_id,uploaded_by,file_name,mime_type,size,storage_key,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run('ws-a','upload-a','issue-a','member-a','a.mp4','video/mp4',70*1048576,'qa/ws-a/issue-a/upload-a','now')).toThrow('qa_storage_quota');
     expect(db.prepare('SELECT COUNT(*) AS n FROM qa_attachments').get()?.n).toBe(0);
   });
-  function environment(beforeRun?:(sql:string)=>void):Env {
+  function environment(beforeRun?:(sql:string)=>void, beforeBatch?:()=>void):Env {
     const statement=(sql:string,args:unknown[]=[])=>({
       bind:(...params:unknown[])=>statement(sql,params),
-      all:async()=>({results:db.prepare(sql).all(...args as never[]),success:true}),
+      all:async()=>{beforeRun?.(sql);return {results:db.prepare(sql).all(...args as never[]),success:true};},
       first:async()=>db.prepare(sql).get(...args as never[])??null,
       run:async()=>{beforeRun?.(sql);return {success:true,meta:{changes:Number(db.prepare(sql).run(...args as never[]).changes)}};},
       execute:()=>({results:db.prepare(sql).all(...args as never[]),success:true}),
     });
-    return {DB:{prepare:(sql:string)=>statement(sql),batch:async(stmts:Array<{execute:()=>unknown}>)=>{let out:unknown[]=[];atomic(()=>{out=stmts.map(s=>s.execute());});return out;}},
+    return {DB:{prepare:(sql:string)=>statement(sql),batch:async(stmts:Array<{execute:()=>unknown}>)=>{let out:unknown[]=[];beforeBatch?.();atomic(()=>{out=stmts.map(s=>s.execute());});return out;}},
       REALTIME:{idFromName:(name:string)=>name,get:()=>({fetch:async()=>new Response('ok')})},
       ATTACHMENTS:{head:async():Promise<null>=>null},
     } as unknown as Env;
   }
   const auth:AuthCtx={userId:'auth-a',email:'a@test',member:{id:'member-a',role:'admin',email:'a@test',name:'A',workspaceId:'ws-a'}};
   const create={action:'create',id:'new-issue',commandId:'create-1',input:{projectId:'project-a',title:'QA bug',actual:'Broken',observedEnvironment:'Stage'}};
+  it('blocks generic-query capability escalation and QA-catalog bypass without granting broader settings access',async()=>{
+    const env=environment(),ctx={waitUntil:():void=>{}};
+    const patch={table:'members',op:'update' as const,values:{is_qa_admin:true},filters:[{col:'id',op:'eq' as const,val:'member-a'}]};
+    expect((await runQuery(env,ctx,auth,structuredClone(patch))).error?.code).toBe('42501');
+    db.exec("UPDATE members SET role='member',is_qa_admin=1 WHERE workspace_id='ws-a'");
+    const manager={...auth,member:{...auth.member,role:'member'}};
+    expect((await runQuery(env,ctx,manager,structuredClone(patch))).error?.code).toBe('42501');
+    expect((await runQuery(env,ctx,manager,{table:'system_settings',op:'upsert',values:{key:'feature_toggles',value:{qa:false}}})).error?.code).toBe('42501');
+    db.exec("UPDATE members SET role='super_admin',is_qa_admin=0 WHERE workspace_id='ws-a'");
+    const superAuth={...auth,member:{...auth.member,role:'super_admin'}};
+    expect((await runQuery(env,ctx,superAuth,structuredClone(patch))).error).toBeNull();
+    expect(db.prepare("SELECT role,is_qa_admin FROM members WHERE workspace_id='ws-a'").get()).toEqual({role:'super_admin',is_qa_admin:1});
+    for(const key of ['qa_custom_fields','qa_workflow']) expect((await runQuery(env,ctx,superAuth,{table:'system_settings',op:'upsert',values:{key,value:{unsafe:true}}})).error?.code).toBe('42501');
+    const revoked=environment(sql=>{if(sql.startsWith('UPDATE members SET is_qa_admin'))db.exec("UPDATE members SET role='member',is_qa_admin=0 WHERE workspace_id='ws-a'");});
+    expect((await runQuery(revoked,ctx,superAuth,structuredClone(patch))).error).not.toBeNull();
+    expect(db.prepare("SELECT is_qa_admin FROM members WHERE workspace_id='ws-a'").get()?.is_qa_admin).toBe(0);
+  });
+  it('commits manual states with immutable evidence and a single replayable audit event',async()=>{
+    const env=environment();let current=await executeQaAction(env,auth,create) as QaIssue;
+    db.exec("UPDATE members SET role='member' WHERE id='member-a'");
+    const reporter={...auth,member:{...auth.member,role:'member'}};
+    for(const state of ['verified','failed','closed','new'] as const){
+      const before=current,body={action:'command',id:current.id,commandId:'manual-'+state,expectedVersion:current.version,command:{type:'set_state',state}};
+      current=await executeQaAction(env,reporter,body) as QaIssue;
+      expect(await executeQaAction(env,reporter,body)).toEqual(current);
+      expect(current).toMatchObject({state,targets:[],runs:[],fixCycle:0});
+      const event=db.prepare("SELECT detail FROM qa_events WHERE issue_id=? AND type='set_state' AND version=?").get(current.id,current.version) as {detail:string};
+      expect(JSON.parse(event.detail)).toMatchObject({mode:'manual',from:before.state,to:state});
+    }
+    expect(db.prepare("SELECT count(*) AS n FROM qa_events WHERE type='set_state'").get()?.n).toBe(4);
+    expect(current).toMatchObject({closedAt:null,closedBy:null});
+  });
+  it('keeps manual-state permission, feature, tenant and stale-version failures atomic',async()=>{
+    const env=environment(),current=await executeQaAction(env,auth,create) as QaIssue;
+    const body={action:'command',id:current.id,commandId:'manual-denied',expectedVersion:current.version,command:{type:'set_state',state:'failed'}};
+    db.exec("INSERT INTO members(workspace_id,id,name,email,avatar,color,role,is_active) VALUES('ws-a','outsider','Outsider','outsider@example.com','O','#000000','member',1)");
+    const outsider={...auth,member:{...auth.member,id:'outsider',role:'member'}};
+    await expect(executeQaAction(env,outsider,body)).rejects.toMatchObject({code:'qa_forbidden'});
+    await expect(executeQaAction(env,auth,{...body,expectedVersion:99})).rejects.toMatchObject({code:'qa_conflict'});
+    await expect(executeQaAction(env,{...auth,member:{...auth.member,workspaceId:'ws-b',id:'member-b'}},body)).rejects.toBeDefined();
+    db.exec("UPDATE system_settings SET value='{\"qa\":false}' WHERE workspace_id='ws-a' AND key='feature_toggles'");
+    await expect(executeQaAction(env,auth,body)).rejects.toMatchObject({code:'qa_disabled'});
+    expect(db.prepare("SELECT count(*) AS n FROM qa_commands WHERE operation='set_state'").get()?.n).toBe(0);
+    expect(db.prepare('SELECT state FROM qa_issues WHERE id=?').get(current.id)?.state).toBe('new');
+  });
   it('returns recorded builds only from the selected tenant and project, never CAS versions',async()=>{
     putIssue();
     db.prepare('UPDATE qa_issues SET data=? WHERE id=?').run(JSON.stringify({...issue(),observedVersion:' v2 ',targets:[{build:'v10'}],runs:[{build:'v1'},{build:'v2'}]}),'issue-a');
@@ -107,6 +153,51 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
       await expect(executeQaAction(env,auth,{action:'list',input})).rejects.toThrow('qa_invalid_state');
   });
   const customWorkflow=():QaWorkflow=>({...DEFAULT_QA_WORKFLOW,order:['verification','new','triaged','in_progress','verified','failed','closed','dismissed'],labels:{...DEFAULT_QA_WORKFLOW.labels,new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',closed:'結案完成'}});
+  const fieldConfiguration={version:1,fields:[{id:'reason',fieldName:'Reason',fieldType:'text',isRequired:true,isEnabled:true,sortOrder:0}]};
+  it('uses a live QA capability only for its own workspace configuration, never arbitrary issue privileges',async()=>{
+    const env=environment();
+    expect(await executeQaAction(env,auth,{action:'get_field_configuration'})).toEqual({version:1,fields:[]});
+    db.exec("UPDATE members SET role='member',is_qa_admin=1 WHERE workspace_id='ws-a' AND id='member-a'");
+    const manager={...auth,member:{...auth.member,role:'member'}};
+    expect(await executeQaAction(env,manager,{action:'save_field_configuration',configuration:fieldConfiguration})).toEqual(fieldConfiguration);
+    expect(await executeQaAction(env,manager,{action:'save_workflow',workflow:DEFAULT_QA_WORKFLOW})).toEqual(DEFAULT_QA_WORKFLOW);
+    const other={userId:'auth-b',email:'b@test',member:{id:'member-b',role:'admin',email:'b@test',name:'B',workspaceId:'ws-b'}};
+    expect(await executeQaAction(env,other,{action:'get_field_configuration',workspaceId:'ws-a'})).toEqual({version:1,fields:[]});
+    await expect(executeQaAction(env,manager,{action:'save_field_configuration',configuration:{version:1,fields:[]}})).rejects.toThrow('qa_field_identity_immutable');
+    db.exec("UPDATE members SET is_qa_admin=0 WHERE workspace_id='ws-a'");
+    await expect(executeQaAction(env,manager,{action:'save_field_configuration',configuration:fieldConfiguration,qaAdmin:true})).rejects.toThrow('qa_forbidden');
+    db.exec("UPDATE system_settings SET value='{\"qa\":false}' WHERE workspace_id='ws-a' AND key='feature_toggles'");
+    await expect(executeQaAction(env,manager,{action:'get_field_configuration'})).rejects.toThrow('qa_disabled');
+  });
+  it('validates report fields in both create and edit while allowing state changes of old incomplete reports',async()=>{
+    const env=environment(),historical=await executeQaAction(env,auth,create) as QaIssue;
+    await executeQaAction(env,auth,{action:'save_field_configuration',configuration:fieldConfiguration});
+    await expect(executeQaAction(env,auth,{...create,id:'missing',commandId:'missing-fields'})).rejects.toThrow('qa_custom_field_required');
+    const valid=await executeQaAction(env,auth,{...create,id:'with-fields',commandId:'with-fields',input:{...create.input,customFields:{reason:'Evidence'}}}) as QaIssue;
+    expect(valid.customFields).toEqual({reason:'Evidence'});
+    await expect(executeQaAction(env,auth,{action:'command',id:valid.id,commandId:'bad-edit',expectedVersion:1,command:{type:'edit',title:'Edit',actual:'Issue',steps:'',expected:'',observedEnvironment:'Stage',observedVersion:'',component:'',customFields:{reason:42}}})).rejects.toThrow('qa_invalid_custom_field_value');
+    expect((await executeQaAction(env,auth,{action:'command',id:historical.id,commandId:'old-state',expectedVersion:1,command:{type:'set_state',state:'failed'}}) as QaIssue).state).toBe('failed');
+    expect(db.prepare("SELECT count(*) AS n FROM qa_commands WHERE id IN ('missing-fields','bad-edit')").get()?.n).toBe(0);
+  });
+  it('rechecks QA capability and field-catalog identity atomically on settings writes',async()=>{
+    db.exec("UPDATE members SET role='member',is_qa_admin=1 WHERE workspace_id='ws-a'");
+    const manager={...auth,member:{...auth.member,role:'member'}};
+    const revoked=environment(sql=>{if(sql.startsWith('INSERT INTO system_settings'))db.exec("UPDATE members SET is_qa_admin=0 WHERE workspace_id='ws-a'");});
+    await expect(executeQaAction(revoked,manager,{action:'save_field_configuration',configuration:fieldConfiguration})).rejects.toThrow('qa_configuration_conflict');
+    expect(db.prepare("SELECT count(*) AS n FROM system_settings WHERE key='qa_custom_fields'").get()?.n).toBe(0);
+    db.exec("UPDATE members SET is_qa_admin=1 WHERE workspace_id='ws-a'");
+    const raced=environment(sql=>{if(sql.startsWith('INSERT INTO system_settings'))db.prepare("INSERT OR REPLACE INTO system_settings(workspace_id,key,value) VALUES('ws-a','qa_custom_fields',?)").run(JSON.stringify(fieldConfiguration));});
+    await expect(executeQaAction(raced,manager,{action:'save_field_configuration',configuration:{version:1,fields:[]}})).rejects.toThrow('qa_configuration_conflict');
+    expect(await executeQaAction(environment(),manager,{action:'get_field_configuration'})).toEqual(fieldConfiguration);
+  });
+  it('rolls back an entire report commit if its validated catalog changes before the D1 batch',async()=>{
+    let changed=false;
+    const env=environment(undefined,()=>{if(!changed){changed=true;db.prepare("INSERT INTO system_settings(workspace_id,key,value) VALUES('ws-a','qa_custom_fields',?)").run(JSON.stringify(fieldConfiguration));}});
+    await expect(executeQaAction(env,auth,create)).rejects.toThrow('qa_configuration_conflict');
+    expect(db.prepare('SELECT count(*) AS n FROM qa_issues').get()?.n).toBe(0);
+    expect(db.prepare('SELECT count(*) AS n FROM qa_commands').get()?.n).toBe(0);
+    expect(db.prepare('SELECT count(*) AS n FROM qa_events').get()?.n).toBe(0);
+  });
   it('returns workflow defaults without creating settings and falls back from invalid stored data',async()=>{
     const env=environment();expect(await executeQaAction(env,auth,{action:'get_workflow'})).toEqual(DEFAULT_QA_WORKFLOW);
     expect(db.prepare("SELECT COUNT(*) AS n FROM system_settings WHERE workspace_id='ws-a' AND key='qa_workflow'").get()?.n).toBe(0);

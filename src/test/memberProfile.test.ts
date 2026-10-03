@@ -5,6 +5,11 @@ import { clipAvatarText } from '@/lib/avatarText';
 const MEMBER = 0, ADMIN = 1, SUPER = 2;
 
 describe('decideMembersUpdate (Cloudflare members write rule)', () => {
+  it('reserves scoped QA capability assignment to super administrators',()=>{
+    for(const rank of [MEMBER,ADMIN]) expect(decideMembersUpdate(rank,{is_qa_admin:true})).toBe('deny');
+    expect(decideMembersUpdate(SUPER,{is_qa_admin:true,role:'member'})).toBe('allow');
+    expect(decideMembersUpdate(SUPER,{is_qa_admin:'true'})).toBe('invalid');
+  });
   it('lets a member change their own badge and theme, on their own row only', () => {
     expect(decideMembersUpdate(MEMBER, { avatar: 'A', color: '#36B37E' })).toBe('own-row');
     expect(decideMembersUpdate(MEMBER, { theme: 'dark', avatar: '🙂' })).toBe('own-row');

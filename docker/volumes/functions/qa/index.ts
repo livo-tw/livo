@@ -1,5 +1,6 @@
 import { createQaService } from './service.ts';
 import { QaError } from './domain.ts';
+import { QaFieldError } from './fields.ts';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -17,7 +18,7 @@ Deno.serve(async (request: Request) => {
     if (result instanceof Response) { for (const [key, value] of Object.entries(cors)) result.headers.set(key, value); return result; }
     return json(result);
   } catch (error) {
-    const code = error instanceof QaError ? error.code : error instanceof SyntaxError ? 'qa_invalid_json' : 'qa_internal_error';
-    return json({ error: { code, message: code } }, error instanceof QaError ? error.status : error instanceof SyntaxError ? 400 : 500);
+    const code = error instanceof QaError || error instanceof QaFieldError ? error.code : error instanceof SyntaxError ? 'qa_invalid_json' : 'qa_internal_error';
+    return json({ error: { code, message: code } }, error instanceof QaError ? error.status : error instanceof SyntaxError || error instanceof QaFieldError ? 400 : 500);
   }
 });

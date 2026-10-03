@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
+import { toast } from 'sonner';
 import { Inbox } from 'lucide-react';
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDraggable, useDroppable, closestCenter, pointerWithin, KeyboardCode, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
 import QaIssueCard from './QaIssueCard';
@@ -29,68 +31,119 @@ const columnCoordinates: KeyboardCoordinateGetter = (event, { currentCoordinates
 
 const columnCollision: CollisionDetection = args => args.pointerCoordinates ? pointerWithin(args) : closestCenter(args);
 
-export default function QaKanban({ client, actor, workflow, filters, onOpen }: {
+interface QaBoardMove { issue: QaIssue; fromState: QaState; state: QaState; acknowledgedRevision?: number }
+
+export default function QaKanban({ client, actor, workflow, filters, onOpen, onPendingChange }: {
   client: QaClient;
   actor: QaActor;
   workflow: QaWorkflow;
   filters: QaListInput;
   onOpen: (id: string, action?: QaCommand['type'], defaults?: QaActionDefaults) => void;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [active, setActive] = useState<QaIssue | null>(null), [revision, setRevision] = useState(0);
-  const [busy, setBusy] = useState(false), [error, setError] = useState<unknown>(null), [blocked, setBlocked] = useState(false);
-  const request = useRef<{ issue: QaIssue; command: Extract<QaCommand, { type: 'start_fix' }>; id: string } | null>(null);
+  const [busy, setBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
+  const [failure, setFailure] = useState<{ error: unknown; issue: QaIssue; uncertain: boolean } | null>(null);
+  const [move, setMove] = useState<QaBoardMove | null>(null);
+  const request = useRef<{ issue: QaIssue; command: Extract<QaCommand, { type: 'set_state' }>; id: string; label: string } | null>(null);
+  const refreshRequest = useRef<{ revision: number; remaining: Set<QaState> } | null>(null);
+  const revisionNumber = useRef(0);
   const mounted = useRef(true), sending = useRef(false);
+  useQaNavigationGuard(busy || !!failure?.uncertain);
+  const pendingOperation = busy || refreshing || !!failure?.uncertain;
+  useEffect(() => { onPendingChange?.(pendingOperation); return () => onPendingChange?.(false); }, [pendingOperation, onPendingChange]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const columns = getQaWorkflowColumns(workflow, state => t(`qa.state.${state}`)).filter(column => !filters.state || column.states.includes(filters.state));
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: columnCoordinates, keyboardCodes: { start: [KeyboardCode.Space], end: [KeyboardCode.Space], cancel: [KeyboardCode.Esc] } }));
+  const columnLoaded = useCallback((state: QaState, loadedRevision: number) => {
+    const refreshing = refreshRequest.current;
+    if (!refreshing || refreshing.revision !== loadedRevision) return;
+    refreshing.remaining.delete(state);
+    if (!refreshing.remaining.size) {
+      refreshRequest.current = null;
+      if (mounted.current) { setMove(null); setRefreshing(false); }
+    }
+  }, []);
+  const refreshBoard = () => {
+    if (request.current) toast.dismiss(`qa-move-${request.current.id}`);
+    request.current = null; setFailure(null); setMove(null);
+    const nextRevision = ++revisionNumber.current;
+    refreshRequest.current = { revision: nextRevision, remaining: new Set(columns.map(column => column.id)) };
+    setRefreshing(true); setRevision(nextRevision);
+  };
+  const openSafely = (id: string, action?: QaCommand['type'], defaults?: QaActionDefaults) => {
+    if (sending.current || request.current || refreshing) { toast.info(t('qa.finishPending'), { position: 'top-center' }); return; }
+    onOpen(id, action, defaults);
+  };
   const send = async () => {
     const pending = request.current;
     if (!pending || sending.current) return;
-    sending.current = true; setBusy(true); setError(null);
+    sending.current = true; setBusy(true); setFailure(null);
+    setMove({ issue: pending.issue, fromState: pending.issue.state, state: pending.command.state });
+    const toastId = `qa-move-${pending.id}`;
+    toast.loading(t('qa.dropSaving', { status: pending.label }), { id: toastId, position: 'top-center' });
     try {
-      await client.command(pending.issue, pending.command, pending.id);
+      const updated = await client.command(pending.issue, pending.command, pending.id);
       request.current = null;
-      if (mounted.current) setRevision(value => value + 1);
-    } catch (failure) {
+      toast.success(t('qa.dropSaved', { status: getQaStateLabel(workflow, updated.state, state => t(`qa.state.${state}`)) }), { id: toastId, duration: 4000, position: 'top-center' });
+      if (mounted.current) {
+        const nextRevision = ++revisionNumber.current;
+        refreshRequest.current = { revision: nextRevision, remaining: new Set(columns.map(column => column.id)) };
+        setMove({ issue: { ...pending.issue, ...updated }, fromState: pending.issue.state, state: updated.state, acknowledgedRevision: nextRevision });
+        setRefreshing(true); setRevision(nextRevision);
+      }
+    } catch (error) {
       // Preserve the command ID after a lost response, so retry cannot duplicate the transition.
-      if (mounted.current) setError(failure);
+      const status = (error as { status?: number } | null)?.status;
+      const uncertain = !status || status >= 500 || status === 408;
+      if (!uncertain) request.current = null;
+      if (mounted.current) { setMove(null); setFailure({ error, issue: pending.issue, uncertain }); }
+      toast.error(t('qa.dropFailed'), { id: toastId, position: 'top-center', duration: uncertain ? Infinity : 10000,
+        description: t(status === 403 ? 'qa.dropPermission' : status === 409 ? 'qa.conflict' : uncertain ? 'qa.dropUncertain' : 'qa.failed'),
+        action: { label: t(uncertain ? 'qa.retry' : 'qa.openBug'), onClick: () => { if (uncertain && mounted.current) void send(); else if (!uncertain) openSafely(pending.issue.id); } } });
     } finally { sending.current = false; if (mounted.current) setBusy(false); }
   };
   const end = (event: DragEndEvent) => {
     setActive(null);
     const issue = event.active.data.current?.issue as QaIssue | undefined;
     const column = columns.find(item => `qa-column-${item.id}` === event.over?.id);
-    if (!issue || !column || request.current) return;
-    const intent = getQaDropIntent(issue, actor, column.states);
-    setError(null); setBlocked(intent.kind === 'blocked');
-    if (intent.kind === 'form') onOpen(issue.id, intent.action, { result: intent.result, resolution: intent.resolution });
-    else if (intent.kind === 'command') { request.current = { issue, command: intent.command, id: qaId() }; void send(); }
+    if (!issue || !column) return;
+    if (request.current || busy || refreshing) {
+      toast.info(t(request.current && !sending.current ? 'qa.dropUncertain' : 'qa.saving'), { position: 'top-center' });
+      return;
+    }
+    const intent = getQaDropIntent(issue, actor, column.states, column.id);
+    if (intent.kind === 'blocked') {
+      toast.error(t('qa.dropFailed'), { description: t(intent.reason === 'permission' ? 'qa.dropPermission' : 'qa.dropUnavailable'), position: 'top-center', duration: 10000,
+        action: { label: t('qa.openBug'), onClick: () => openSafely(issue.id) } });
+    } else if (intent.kind === 'command') {
+      request.current = { issue, command: intent.command, id: qaId(), label: column.label }; void send();
+    }
   };
   return <div className="space-y-3">
     <p className="text-xs text-muted-foreground">{t('qa.boardHint')}</p>
-    {busy && <p role="status" className="text-sm text-muted-foreground">{t('qa.saving')}</p>}
-    {blocked && <p role="status" className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">{t('qa.dropUnavailable')}</p>}
-    {error !== null && <div className="flex flex-wrap items-center gap-2"><QaFailure error={error} /><button className={qaButton} disabled={busy} onClick={() => void send()}>{t('qa.retry')}</button><button className={qaButton} disabled={busy} onClick={() => { request.current = null; setError(null); setRevision(value => value + 1); }}>{t('qa.refresh')}</button></div>}
-    <DndContext sensors={sensors} collisionDetection={columnCollision} onDragStart={event => { setBlocked(false); setActive(event.active.data.current?.issue as QaIssue || null); }} onDragEnd={end} onDragCancel={() => setActive(null)}
+    {(busy || refreshing) && <p role="status" className="text-sm text-muted-foreground">{t(busy ? 'qa.saving' : 'qa.loading')}</p>}
+    {failure && <div className="flex flex-wrap items-center gap-2"><QaFailure error={failure.error} />{failure.uncertain && <button className={qaButton} disabled={busy} onClick={() => void send()}>{t('qa.retry')}</button>}<button className={qaButton} disabled={busy} onClick={refreshBoard}>{t('qa.refresh')}</button>{!failure.uncertain && <button className={qaButton} disabled={busy} onClick={() => openSafely(failure.issue.id)}>{t('qa.openBug')}</button>}</div>}
+    <DndContext sensors={sensors} collisionDetection={columnCollision} onDragStart={event => { setActive(event.active.data.current?.issue as QaIssue || null); }} onDragEnd={end} onDragCancel={() => setActive(null)}
       accessibility={{ screenReaderInstructions: { draggable: t('qa.dragInstructions') }, announcements: {
         onDragStart: ({ active: item }) => t('qa.dragPickedUp', { title: (item.data.current?.issue as QaIssue)?.title }),
         onDragOver: ({ over }) => over ? t('qa.dragOver', { status: columns.find(column => `qa-column-${column.id}` === over.id)?.label }) : t('qa.dragOutside'),
         onDragEnd: ({ over }) => over ? t('qa.dragDropped') : t('qa.dragCancelled'), onDragCancel: () => t('qa.dragCancelled'),
       } }}>
     <div className="flex min-h-[480px] items-stretch gap-3 overflow-x-auto pb-4 snap-x snap-proximity" aria-label={t('qa.board')}>
-      {columns.map(column => <QaColumn key={column.id} client={client} actor={actor} active={active} revision={revision} disabled={!!request.current || busy}
+      {columns.map(column => <QaColumn key={column.id} client={client} actor={actor} active={active} revision={revision} disabled={!!request.current || busy || refreshing} move={move} onLoaded={columnLoaded}
         state={column.id} states={filters.state ? [filters.state] : column.states} workflow={workflow} grouped={column.states.length > 1}
-        label={column.label} filters={filters} onOpen={onOpen} />)}
+        label={column.label} filters={filters} onOpen={openSafely} />)}
     </div>
     <DragOverlay dropAnimation={null}>{active && <div aria-hidden="true" className="w-[280px] rounded-lg border border-border bg-card p-3 text-sm font-semibold shadow-xl">{active.title}</div>}</DragOverlay>
     </DndContext>
   </div>;
 }
 
-function QaColumn({ client, actor, state, states, workflow, grouped, label, filters, onOpen, active, revision, disabled }: {
+function QaColumn({ client, actor, state, states, workflow, grouped, label, filters, onOpen, active, revision, disabled, move, onLoaded }: {
   client: QaClient;
   actor: QaActor;
   state: QaState;
@@ -101,15 +154,19 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
   filters: QaListInput;
   onOpen: (id: string, action?: QaCommand['type']) => void;
   active: QaIssue | null; revision: number; disabled: boolean;
+  move: QaBoardMove | null; onLoaded: (state: QaState, revision: number) => void;
 }) {
   const { t } = useTranslation();
   const [result, setResult] = useState<QaListResult>({ issues: [], total: 0, hasMore: false });
+  const [loadedRevision, setLoadedRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const pending = useRef<AbortController | null>(null);
   const nextOffset = useRef(0);
   const attemptedOffset = useRef(0);
   const stateKey = states.join(',');
+  const scopeKey = JSON.stringify({ ...filters, states: stateKey });
+  const previousScope = useRef({ client, key: scopeKey });
   const load = useCallback(async (offset: number) => {
     pending.current?.abort();
     attemptedOffset.current = offset;
@@ -120,30 +177,44 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
       if (!controller.signal.aborted) {
         nextOffset.current = offset + page.issues.length;
         setResult(previous => ({ ...page, issues: offset ? [...previous.issues, ...page.issues.filter(issue => !previous.issues.some(old => old.id === issue.id))] : page.issues }));
+        setLoadedRevision(revision);
+        if (offset === 0) onLoaded(state, revision);
       }
     } catch (failure) { if (!controller.signal.aborted) setError(failure); }
     finally { if (!controller.signal.aborted) setLoading(false); }
-  }, [client, filters, stateKey]);
-  useEffect(() => { nextOffset.current = 0; setResult({ issues: [], total: 0, hasMore: false }); void load(0); return () => pending.current?.abort(); }, [load, revision]);
+  }, [client, filters, stateKey, revision, onLoaded, state]);
+  useEffect(() => {
+    nextOffset.current = 0;
+    if (previousScope.current.client !== client || previousScope.current.key !== scopeKey) {
+      previousScope.current = { client, key: scopeKey }; setResult({ issues: [], total: 0, hasMore: false }); setLoadedRevision(0);
+    }
+    void load(0); return () => pending.current?.abort();
+  }, [load, client, scopeKey]);
+  // Keep the card in its destination until each refreshed page confirms the server result.
+  const optimistic = move && (move.acknowledgedRevision === undefined || loadedRevision < move.acknowledgedRevision) ? move : null;
+  const movedHere = !!optimistic && states.includes(optimistic.state), movedFrom = !!optimistic && states.includes(optimistic.fromState);
+  const issues = optimistic ? [
+    ...(movedHere ? [{ ...optimistic.issue, state: optimistic.state }] : []),
+    ...result.issues.filter(issue => issue.id !== optimistic.issue.id),
+  ] : result.issues;
+  const total = Math.max(0, result.total + Number(movedHere) - Number(movedFrom));
   const { setNodeRef, isOver } = useDroppable({ id: `qa-column-${state}` });
-  const blockedDrop = !!active && getQaDropIntent(active, actor, states).kind === 'blocked';
+  const blockedDrop = !!active && getQaDropIntent(active, actor, states, state).kind === 'blocked';
   return <section ref={setNodeRef} className={`flex min-h-[320px] w-[min(82vw,280px)] min-w-[250px] flex-1 shrink-0 snap-start flex-col rounded-lg border bg-background transition-colors ${isOver ? blockedDrop ? 'border-destructive bg-destructive/5' : 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-border/80'}`} aria-label={label}>
-    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{result.total}</span></header><div className="min-h-0 max-h-[calc(100dvh-310px)] flex-1 space-y-3 overflow-y-auto overscroll-contain p-2.5">
+    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[calc(100dvh-310px)] flex-1 space-y-3 overflow-y-auto overscroll-contain p-2.5">
     {error !== null && <div className="mb-3 space-y-2"><QaFailure error={error} /><button className={qaButton} onClick={() => void load(attemptedOffset.current)}>{t('qa.refresh')}</button></div>}
-    <ul className="space-y-2.5">{result.issues.map(issue => <QaDraggableCard key={issue.id} issue={issue} actor={actor} onOpen={onOpen} disabled={disabled}
+    <ul className="space-y-2.5">{issues.map(issue => <QaDraggableCard key={issue.id} issue={issue} actor={actor} onOpen={onOpen} disabled={disabled}
       stateLabel={grouped ? getQaStateLabel(workflow,issue.state,state => t(`qa.state.${state}`)) : undefined} />)}</ul>
     {loading && <p role="status" className="py-4 text-center text-xs text-muted-foreground">{t('qa.loading')}</p>}
-    {!loading && !error && !result.issues.length && <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-10 text-center text-xs text-muted-foreground"><Inbox size={22} strokeWidth={1.5} aria-hidden="true" />{t('qa.boardEmpty')}</div>}
+    {!loading && !error && !issues.length && <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-10 text-center text-xs text-muted-foreground"><Inbox size={22} strokeWidth={1.5} aria-hidden="true" />{t('qa.boardEmpty')}</div>}
     {result.hasMore && <button className={`${qaButton} mt-3 w-full`} disabled={loading} onClick={() => void load(nextOffset.current)}>{t('qa.loadMore')}</button>}
     </div>
   </section>;
 }
 
 function QaDraggableCard({ issue, actor, onOpen, stateLabel, disabled }: { issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void; stateLabel?: string; disabled: boolean }) {
-  const movable = ['new', 'triaged', 'in_progress', 'verification', 'verified', 'failed', 'closed', 'dismissed'].some(state => {
-    const intent = getQaDropIntent(issue, actor, [state as QaState]); return intent.kind === 'form' || intent.kind === 'command';
-  });
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: issue.id, data: { issue }, disabled: disabled || !movable });
+  // Permission is explained visibly on drop; silently disabling drag looks like a broken board.
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: issue.id, data: { issue }, disabled });
   return <li ref={setNodeRef} {...attributes} {...listeners} aria-label={issue.title} className={`rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary ${isDragging ? 'opacity-30' : ''}`}
     onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter') { event.preventDefault(); onOpen(issue.id); } else listeners?.onKeyDown?.(event); }}>
     <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} />

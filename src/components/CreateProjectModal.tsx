@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { LEGACY_PROJECT_COLOR, PROJECT_COLOR_PALETTE, suggestProjectColor } from '@/lib/projectColors';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -159,7 +160,7 @@ const CreateProjectModal = () => {
           {/* Product Line */}
           <div>
             <label className="text-[11px] font-medium text-muted-foreground mb-1 block">{t('project.lineLabel')}</label>
-            <select
+            <SearchableSelect
               value={lineId}
               onChange={e => setLineId(e.target.value)}
               className="w-full border border-border rounded px-2.5 py-1.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -167,7 +168,7 @@ const CreateProjectModal = () => {
               {productLines.map(l => (
                 <option key={l.id} value={l.id}>{l.icon} {l.name}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Name */}

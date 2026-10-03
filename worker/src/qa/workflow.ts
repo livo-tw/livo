@@ -1,7 +1,7 @@
 import { QA_STATES, QaError, type QaState } from './domain.ts';
 
 export interface QaWorkflowGroup { id: QaState; label: string; states: QaState[]; }
-/** Display groups never change the canonical state or its transition guards. */
+/** Display groups preserve the canonical state IDs and separate outcomes. */
 export interface QaWorkflow { version: 2; order: QaState[]; labels: Record<QaState, string>; groups: QaWorkflowGroup[]; }
 export const DEFAULT_QA_STATE_LABELS: Record<QaState, string> = {
   new: '新回報', triaged: '已分流', in_progress: '修復中', verification: '待部署／驗證',
@@ -9,8 +9,6 @@ export const DEFAULT_QA_STATE_LABELS: Record<QaState, string> = {
 };
 export const DEFAULT_QA_WORKFLOW: QaWorkflow = { version: 2, order: [...QA_STATES],
   labels: { new:'',triaged:'',in_progress:'',verification:'',verified:'',failed:'',closed:'',dismissed:'' }, groups: [] };
-export const SLACK_QA_WORKFLOW: QaWorkflow = { ...DEFAULT_QA_WORKFLOW, order: [...QA_STATES], labels: { ...DEFAULT_QA_WORKFLOW.labels, verified:'PASS',failed:'FAIL',closed:'完成',dismissed:'不處理' },
-  groups: [{ id:'triaged',label:'已分配',states:['new','triaged'] }, { id:'in_progress',label:'進行中',states:['in_progress','verification'] }] };
 const OLD_STATES: QaState[] = ['new','triaged','in_progress','verification','closed'];
 const fail = (): never => { throw new QaError('qa_invalid_workflow'); };
 function label(value: unknown): string {

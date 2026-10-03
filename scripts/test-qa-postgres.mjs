@@ -13,7 +13,24 @@ import { buildQaPostgresCases } from './lib/qa-postgres-cases.mjs';
 
 export const IMAGE = 'postgres:15.8-alpine'; // PostgreSQL 15.8, same major/minor as delivery DB.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MIGRATIONS = ['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql','20261007_qa_status_semantics.sql'];
+const MIGRATIONS = ['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql',
+  '20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261013_qa_manual_state.sql',
+  '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql'];
+// Keep the shared base fixture compatible with the separate environment suite,
+// which installs its complete permission-floor fixture itself.
+const ENVIRONMENT_FIXTURE = `
+CREATE FUNCTION auth.email() RETURNS text LANGUAGE sql STABLE AS $$ SELECT NULL::text $$;
+ALTER TABLE public.members ADD COLUMN email text NOT NULL DEFAULT '';
+CREATE FUNCTION public.current_member_id() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
+  SELECT id FROM public.members WHERE auth_id=auth.uid() LIMIT 1
+$$;
+CREATE TABLE public.task_deployments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text NOT NULL REFERENCES public.tasks(id),
+  environment text NOT NULL,status text NOT NULL DEFAULT 'scheduled'
+);
+GRANT ALL ON public.task_deployments TO service_role;
+INSERT INTO public.system_settings(key,value) VALUES('deployment_environments','{"version":1,"values":["test","QA"]}');
+`;
 const LABEL = 'com.livo.qa-postgres-test';
 const DB = 'livo_qa_test';
 
@@ -44,8 +61,9 @@ export function buildPlan() {
   // Use the delivery transaction/ledger wrapper. Do not makeIdempotent here:
   // repeatability must come from the actual migration, not a test-side repair.
   const migrations = source.map(({name,sql}) => buildUpgradeFile(name,sql)).join('\n');
-  const cases = buildQaPostgresCases();
-  const sql = ['\\set ON_ERROR_STOP on', 'SET client_min_messages=warning;',fixture,migrations,
+  const cases = buildQaPostgresCases({ migrationCount: source.length,
+    permissionFloorSql: fs.readFileSync(path.join(ROOT,'supabase/migrations/20260713_permission_floor.sql'),'utf8') });
+  const sql = ['\\set ON_ERROR_STOP on', 'SET client_min_messages=warning;',fixture,ENVIRONMENT_FIXTURE,migrations,
     cases.sql,migrations,cases.after].join('\n');
   return { sql, summary: { image:IMAGE, migrations:source.map(({name,sha256})=>({name,sha256})),
     migrationPasses:2, assertions:cases.assertionCount, network:'none', publishedPorts:0,

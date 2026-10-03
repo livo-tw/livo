@@ -101,6 +101,15 @@ function enforceWritePolicy(
 
   if (!protectTeamIntroTemplate(req, rank)) return permissionDenied(table);
 
+  // QA configuration has schema/identity and scoped-capability guards in its API.
+  // The generic query endpoint must not bypass those guards with broad updates.
+  if (table === 'system_settings') {
+    const protectedKeys = ['qa_custom_fields', 'qa_workflow'];
+    const values = Array.isArray(req.values) ? req.values : [req.values];
+    if (values.some(value => value && typeof value === 'object' && protectedKeys.includes(String((value as Row).key)))) return permissionDenied(table);
+    if (req.op === 'update') req.filters = [...(req.filters || []), ...protectedKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
+  }
+
   // ── members SPECIAL rule (checked before the generic rules) ──
   // insert/delete are server-only (manage-member function writes directly).
   // update: column rules in memberProfile.ts (super_admin unrestricted; admin
@@ -727,8 +736,16 @@ export async function runQuery(
           .filter((k) => patch[k] !== undefined && k !== 'workspace_id') // rows can never change workspace
           .map((k) => ident(k));
         if (!setCols.length) throw new Error('update requires at least one column');
-        const setSql = setCols.map((c) => `${c} = ?`).join(', ');
-        const setParams = setCols.map((c) => valueToDb(c, patch[c], meta));
+        const setParams: unknown[] = [];
+        const setSql = setCols.map((column) => {
+          if (table === 'members' && column === 'is_qa_admin') {
+            // Permission must remain live when the capability is actually granted.
+            setParams.push(ws, auth.member.id, valueToDb(column, patch[column], meta));
+            return `${column} = CASE WHEN EXISTS(SELECT 1 FROM members caller WHERE caller.workspace_id=? AND caller.id=? AND caller.is_active=1 AND caller.role='super_admin') THEN ? ELSE NULL END`;
+          }
+          setParams.push(valueToDb(column, patch[column], meta));
+          return `${column} = ?`;
+        }).join(', ');
 
         const stmts = buildFilteredWriteStatements(
           env,

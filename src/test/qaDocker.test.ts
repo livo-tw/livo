@@ -23,21 +23,24 @@ let issue: QaIssue, enabled: unknown, active: boolean, role: string;
 let receipt: Record<string, unknown> | undefined;
 let rpcError: Record<string, unknown> | undefined;
 let workflowSetting: unknown;
+let fieldSetting: unknown;
+let qaAdmin = false;
 let calls: { url: URL; body: any; headers: Headers; method: string }[];
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
-  issue = fixture(); enabled = true; active = true; role = 'member'; receipt = undefined; rpcError = undefined; workflowSetting = undefined; calls = [];
+  issue = fixture(); enabled = true; active = true; role = 'member'; receipt = undefined; rpcError = undefined; workflowSetting = undefined; fieldSetting = undefined; qaAdmin = false; calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
     const call = { url: new URL(url), body: init.body ? JSON.parse(String(init.body)) : undefined, headers: new Headers(init.headers), method: init.method || 'GET' };
     calls.push(call);
     const endpoint = call.url.pathname;
     if (endpoint === '/auth/v1/user') return json({ id: AUTH });
     if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.deployment_environments') return json([]);
+    if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.qa_custom_fields') return json(fieldSetting === undefined ? [] : [{value:fieldSetting}]);
     if (endpoint === '/rest/v1/system_settings') return json(call.url.searchParams.get('key') === 'eq.qa_workflow'
       ? workflowSetting === undefined ? [] : [{ value: workflowSetting }] : [{ value: { qa: enabled } }]);
     if (endpoint === '/rest/v1/members') return json(call.url.searchParams.has('auth_id')
-      ? active ? [{ id: 'member-1', role, auth_id: AUTH, is_active: true }] : []
+      ? active ? [{ id: 'member-1', role, auth_id: AUTH, is_active: true, is_qa_admin: qaAdmin }] : []
       : [{ id: 'member-1' }, { id: 'member-2' }]);
     if (endpoint === '/rest/v1/projects') return json([{ id: 'project-1' }]);
     if (endpoint === '/rest/v1/qa_commands') return json(receipt ? [receipt] : []);
@@ -50,6 +53,7 @@ beforeEach(() => {
     if (endpoint === '/rest/v1/rpc/livo_qa_finalize_upload') return rpcError ? json(rpcError, 400) : json({ id: 'upload-1', issue_id: 'issue-1', file_name: 'proof.mp4', mime_type: 'video/mp4', size: 100, uploaded_by: 'member-1', created_at: context.now });
     if (endpoint === '/rest/v1/rpc/livo_qa_restore') return json({ validateOnly: call.body.p_validate_only, inserted: 0, skipped: 0, conflicts: [], missingAssets: [], pending: 0 });
     if (endpoint === '/rest/v1/rpc/livo_qa_save_workflow') return rpcError ? json(rpcError, 403) : json(call.body.p_workflow);
+    if (endpoint === '/rest/v1/rpc/livo_qa_save_field_configuration') return rpcError ? json(rpcError, 403) : json(call.body.p_configuration);
     if (endpoint === '/rest/v1/tasks') return json([]);
     if (endpoint.startsWith('/rest/v1/qa_')) return json([]);
     throw new Error(`Unexpected fetch: ${endpoint}`);
@@ -57,6 +61,55 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const service = () => createQaService(env, 'actual-session');
+
+describe('Docker QA field configuration',()=>{
+  const configuration={version:1,fields:[{id:'reason',fieldName:'Reason',fieldType:'text',isRequired:true,isEnabled:true,sortOrder:0}]};
+  it('uses the authenticated member capability for only scoped settings',async()=>{
+    await expect(service().handle({action:'save_field_configuration',configuration,qaAdmin:true})).rejects.toMatchObject({code:'qa_forbidden'});
+    qaAdmin=true;
+    expect(await service().handle({action:'save_field_configuration',configuration})).toEqual(configuration);
+    expect(await service().handle({action:'save_workflow',workflow:DEFAULT_QA_WORKFLOW})).toEqual(DEFAULT_QA_WORKFLOW);
+    issue.reporterId='member-2';
+    await expect(service().handle({action:'command',id:issue.id,commandId:'outsider-qa-manager',expectedVersion:1,command:{type:'set_state',state:'failed'}})).rejects.toMatchObject({code:'qa_forbidden'});
+  });
+  it('fails closed for malformed settings and validates report values before RPC',async()=>{
+    fieldSetting={version:99,fields:[]};
+    await expect(service().handle({action:'get_field_configuration'})).rejects.toMatchObject({code:'qa_invalid_field_configuration'});
+    fieldSetting=configuration;
+    await expect(service().handle({action:'create',id:'new-issue',commandId:'required-field',input})).rejects.toMatchObject({code:'qa_custom_field_required'});
+    const created=await service().handle({action:'create',id:'new-issue',commandId:'valid-field',input:{...input,customFields:{reason:'Observed'}}});
+    expect(created.customFields).toEqual({reason:'Observed'});
+    const state=await service().handle({action:'command',id:issue.id,commandId:'state-no-fields',expectedVersion:1,command:{type:'set_state',state:'failed'}});
+    expect(state.state).toBe('failed');
+  });
+});
+
+describe('Docker manual QA states', () => {
+  it('lets the active reporter move PASS to FAIL and across terminal states with explicit audit metadata', async () => {
+    issue.state = 'verified';
+    for (const state of ['failed', 'closed', 'new'] as const) {
+      const before = issue;
+      const next = await service().handle({ action: 'command', id: issue.id, commandId: 'manual-' + state,
+        expectedVersion: issue.version, command: { type: 'set_state', state } });
+      expect(next).toMatchObject({ state, targets: before.targets, runs: before.runs, fixCycle: before.fixCycle });
+      const call = calls.filter(item => item.url.pathname.endsWith('/rpc/livo_qa_commit')).at(-1)!;
+      expect(call.body.p_event.type).toBe('set_state');
+      expect(JSON.parse(call.body.p_event.detail)).toMatchObject({ mode: 'manual', from: before.state, to: state });
+      issue = next;
+    }
+  });
+  it('rejects outsiders, feature-off and inactive sessions before committing a state change', async () => {
+    const request = { action: 'command', id: issue.id, commandId: 'manual-forbidden', expectedVersion: issue.version,
+      command: { type: 'set_state', state: 'failed' } };
+    issue.reporterId = 'member-2';
+    await expect(service().handle(request)).rejects.toMatchObject({ code: 'qa_forbidden' });
+    issue.reporterId = 'member-1'; enabled = false;
+    await expect(service().handle(request)).rejects.toMatchObject({ code: 'qa_disabled' });
+    enabled = true; active = false;
+    await expect(service().handle(request)).rejects.toBeDefined();
+    expect(calls.some(call => call.url.pathname.endsWith('/rpc/livo_qa_commit'))).toBe(false);
+  });
+});
 
 describe('Docker QA version suggestions', () => {
   it('reads only the selected default-workspace project and version-bearing fields', async () => {
@@ -235,6 +288,13 @@ describe('Docker QA restore preflight', () => {
   it('accepts a valid own-workspace snapshot', () => {
     const backup = { ...emptyBackup(), qa_issues: [issueRow()] };
     expect(validateQaBackup(backup)).toBe(backup);
+  });
+  it('round-trips manually closed/dismissed issues and historical custom values without fabricated resolutions',()=>{
+    for(const state of ['closed','dismissed'] as const){
+      issue={...issue,state,closedAt:context.now,closedBy:'member-1',resolution:null,customFields:{disabled:'Historical',flag:false}};
+      const backup={...emptyBackup(),qa_issues:[issueRow()]};
+      expect(validateQaBackup(backup)).toBe(backup);
+    }
   });
   it.each([
     () => ({ ...emptyBackup(), qa_issues: [issueRow({ ...fixture(), workspaceId: 'another' })] }),

@@ -140,6 +140,6 @@ describe('member title entry points',()=>{
    const i18n=await translation();
    render(<I18nextProvider i18n={i18n}><AddMemberModal show onClose={vi.fn()} form={{email:'new@example.com',name:'New member',role:'member',jobTitle:'',password:''}} setForm={vi.fn()} jobTitleRef={{current:null}} jobTitleOpen={false} setJobTitleOpen={vi.fn()} filteredJobTitles={['PM']} onSubmit={vi.fn()} loading={false} canEditJobTitle={canEditJobTitle}/></I18nextProvider>);
    expect(!!screen.queryByPlaceholderText(i18n.t('memberList.jobTitlePlaceholder'))).toBe(canEditJobTitle);
-   expect(screen.getAllByRole('option')).toHaveLength(canEditJobTitle ? 3 : 1);
+   expect(screen.getAllByRole('option')).toHaveLength(canEditJobTitle ? 4 : 1);
  });
 });

@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { logActivity } from '@/lib/activityLog';
-import { getRoleLabel, type MemberRole } from '@/lib/permissions';
+import { selectedMemberRole, selectionRoleLabel, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 import { sortUsersByDept } from '@/lib/department';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
@@ -29,7 +29,7 @@ export function useMemberManage() {
   const canReorder = currentMember && (currentMember.role === 'super_admin' || currentMember.role === 'admin');
 
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addForm, setAddForm] = useState({ email: '', name: '', role: 'member' as MemberRole, jobTitle: '', password: '' });
+  const [addForm, setAddForm] = useState({ email: '', name: '', role: 'member' as MemberRoleSelection, jobTitle: '', password: '' });
   const [addLoading, setAddLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
@@ -167,19 +167,19 @@ export function useMemberManage() {
     touchActivatedRef.current = false;
   };
 
-  const handleRoleChange = async (memberId: string, newRole: MemberRole) => {
+  const handleRoleChange = async (memberId: string, newRole: MemberRoleSelection) => {
     if (memberId === currentMemberId) { toast.error(i18n.t('member.cannotChangeSelfRole')); return; }
     const { acquired, lockerName } = await acquireLock(`member-${memberId}`);
     if (!acquired) { toast.error(i18n.t('member.lockedByOther', { name: lockerName || i18n.t('common.unknown') })); return; }
     try {
       const targetUser = users.find(u => u.id === memberId);
-      const { error } = await supabase.from('members').update({ role: newRole }).eq('id', memberId);
+      const { error } = await supabase.from('members').update({ role: newRole === 'qa_admin' ? 'member' : newRole, is_qa_admin: newRole === 'qa_admin' }).eq('id', memberId);
       if (error) toast.error(i18n.t('error.updateFailed') + error.message);
       else {
         toast.success(i18n.t('member.roleUpdated'));
         if (currentMemberId) {
-          const oldRoleLabel = getRoleLabel((targetUser?.role || 'member') as MemberRole);
-          const newRoleLabel = getRoleLabel(newRole);
+          const oldRoleLabel = selectionRoleLabel(targetUser ? selectedMemberRole(targetUser) : 'member');
+          const newRoleLabel = selectionRoleLabel(newRole);
           await logActivity(currentMemberId, 'change_role', i18n.t('activity.changeRole', { name: targetUser?.name || memberId, oldRole: oldRoleLabel, newRole: newRoleLabel }), undefined, undefined, 'member');
         }
         await refreshUsers();
@@ -246,13 +246,13 @@ export function useMemberManage() {
     const { data, error } = await supabase.functions.invoke('manage-member', {
       // password: the member's initial login password. Empty → the backend
       // generates a random throwaway (member can't log in until reset).
-      body: { action: 'create', email: addForm.email, name: addForm.name, role: newRole, jobTitle: isSuperAdmin ? addForm.jobTitle.trim() : '', avatar: addForm.name.slice(0, 1).toUpperCase(), color: COLORS[Math.floor(Math.random() * COLORS.length)], ...(addForm.password ? { password: addForm.password } : {}) },
+      body: { action: 'create', email: addForm.email, name: addForm.name, role: newRole === 'qa_admin' ? 'member' : newRole, qaAdmin: newRole === 'qa_admin', jobTitle: isSuperAdmin ? addForm.jobTitle.trim() : '', avatar: addForm.name.slice(0, 1).toUpperCase(), color: COLORS[Math.floor(Math.random() * COLORS.length)], ...(addForm.password ? { password: addForm.password } : {}) },
     });
     if (error || data?.error) { toast.error(i18n.t('member.addFailed') + (data?.error || error?.message)); }
     else {
       toast.success(i18n.t('member.added'));
       if (currentMemberId) {
-        await logActivity(currentMemberId, 'add_member', i18n.t('activity.addMember', { name: addForm.name, email: addForm.email, role: getRoleLabel(newRole) }), undefined, undefined, 'member');
+        await logActivity(currentMemberId, 'add_member', i18n.t('activity.addMember', { name: addForm.name, email: addForm.email, role: selectionRoleLabel(newRole) }), undefined, undefined, 'member');
       }
       setShowAddModal(false);
       setAddForm({ email: '', name: '', role: 'member', jobTitle: '', password: '' });

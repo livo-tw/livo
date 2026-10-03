@@ -1,5 +1,6 @@
+import { RecordViewModeButtons } from '@/components/ui/record-view-mode-buttons';
 import { useProjectColor } from '@/hooks/useProjectColor';
-import { FileText, MessageSquare, Clock, Timer, History, Layers, PanelRight, Maximize2, Link2, Copy, Trash2, X, ListTree, CornerDownRight, GitMerge, ChevronDown, ChevronRight, Plus, Lock, type LucideIcon } from 'lucide-react';
+import { FileText, MessageSquare, Clock, Timer, History, Link2, Copy, Trash2, X, ListTree, CornerDownRight, GitMerge, ChevronDown, ChevronRight, Plus, Lock, type LucideIcon } from 'lucide-react';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -11,7 +12,7 @@ import TaskActivityTab from './TaskActivityTab';
 import TaskSubtasksTab from './TaskSubtasksTab';
 import TaskTimeTab from './TaskTimeTab';
 import TaskSidebarFields from './TaskSidebarFields';
-import { useUIContext, type TaskDisplayMode } from '@/context/UIContext';
+import { useUIContext } from '@/context/UIContext';
 import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 
 type Props = { onClose: () => void };
@@ -39,12 +40,6 @@ const TaskDetailContent = ({ onClose }: Props) => {
   } = detail;
 
   if (!task) return null;
-
-  const modeButtons: { mode: TaskDisplayMode; icon: typeof Layers; tip: string }[] = [
-    { mode: 'modal', icon: Layers, tip: t('task.displayMode.modal') },
-    { mode: 'side',  icon: PanelRight, tip: t('task.displayMode.side') },
-    { mode: 'page',  icon: Maximize2, tip: t('task.displayMode.page') },
-  ];
 
   return (
     <div className="bg-card flex flex-col h-full min-h-0">
@@ -81,12 +76,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
           )}
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          {!isMobile && modeButtons.map(({ mode, icon: Icon, tip }) => (
-            <button key={mode} onClick={() => setTaskDisplayMode(mode)} title={tip}
-              className={`p-1.5 rounded transition-colors ${taskDisplayMode === mode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent'}`}>
-              <Icon size={15} />
-            </button>
-          ))}
+          {!isMobile && <RecordViewModeButtons value={taskDisplayMode} onChange={setTaskDisplayMode} />}
           {!isMobile && <div className="w-px h-4 bg-border mx-0.5 md:mx-1" />}
           <button onClick={handleCopyLink} title={t('task.copyLink')} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
             <Link2 size={15} />
