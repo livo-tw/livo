@@ -19,7 +19,15 @@ Deno.serve(async(req:Request)=>{
       getJob:id=>db('get',{id}),listJobs:()=>db('list'),saveJob:(job,expected)=>db('save_job',{job,expected}),
       async putFile(key,data,type){const {error}=await client.storage.from('kb-imports').upload(key,data,{contentType:type,upsert:true});if(error)throw new ImportError('staging_failed',503);},
       async getFile(key){const {data,error}=await client.storage.from('kb-imports').download(key);if(error)return null;return new Uint8Array(await data.arrayBuffer());},
-      async deleteFile(key){const {error}=await client.storage.from('kb-imports').remove([key]);if(error)throw new ImportError('cleanup_failed',503);},
+      async deleteFile(key){
+        const checks=await Promise.all([
+          client.from('knowledge_import_sources').select('id').eq('original->>key',key).limit(1),
+          client.from('knowledge_import_sources').select('id').contains('assets',[{key}]).limit(1),
+        ]);
+        if(checks.some(result=>result.error))throw new ImportError('cleanup_failed',503);
+        if(checks.some(result=>result.data?.length))return;
+        const {error}=await client.storage.from('kb-imports').remove([key]);if(error)throw new ImportError('cleanup_failed',503);
+      },
       sources:pageId=>db('sources',{page_id:pageId}),
       findSources:(keys,parent,project)=>db('find_sources',{keys,parent,project}),
       results:jobId=>db('results',{job_id:jobId}),

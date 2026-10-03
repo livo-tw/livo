@@ -28,6 +28,7 @@ import { handleUpload, handleDownload, handleRemove, isKnowledgeStoragePath } fr
 import { handleQa } from './qa';
 import { handleKnowledgeWorkflow } from './knowledgeWorkflow';
 import { handleKnowledgeImport } from './functions/knowledgeImport';
+import { runKnowledgeImportCleanup } from './functions/knowledgeImportCleanup';
 import { ImportError } from './knowledgeImport';
 import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
@@ -241,6 +242,7 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       Promise.allSettled([
+        runKnowledgeImportCleanup(env), // system retention: all tenants, including disabled importers
         runScheduledBackup(env, ctx),
         runQaSlackInbox(env, ctx),
         runSlackDigest(env, ctx),

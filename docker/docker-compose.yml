@@ -468,7 +468,8 @@ services:
       - -c
       - mkdir -p /home/deno/functions && cp -r /functions-src/. /home/deno/functions/ && exec edge-runtime start --main-service /home/deno/functions/main
 
-  # Tiny scheduler sidecar: pokes the scheduled-backup and due-reminders edge
+  # Tiny scheduler sidecar: runs backup, reminders and expired import maintenance.
+  # Import cleanup has no member, capability or page-ACL dependency.
   # functions once an hour. scheduled-backup checks backup_settings (enabled /
   # interval_days / backup_hour) and no-ops unless a backup is actually due;
   # due-reminders creates due_soon notifications (and, via the DB email
@@ -496,6 +497,10 @@ services:
             -H "Content-Type: application/json" \
             -d '{}' > /dev/null 2>&1 || true
           curl -s -X POST http://kong:8000/functions/v1/due-reminders \
+            -H "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}' > /dev/null 2>&1 || true
+          curl -s --max-time 300 -X POST http://kong:8000/functions/v1/knowledge-import-cleanup \
             -H "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
             -H "Content-Type: application/json" \
             -d '{}' > /dev/null 2>&1 || true

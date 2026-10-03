@@ -5,7 +5,7 @@ CREATE TABLE public.members(id text PRIMARY KEY,auth_id uuid,role text,job_title
 CREATE TABLE public.projects(id text PRIMARY KEY,is_archived boolean NOT NULL DEFAULT false);
 CREATE TABLE public.field_locks(lock_key text PRIMARY KEY,locked_by text,expires_at timestamptz);
 CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean DEFAULT false);
-CREATE TABLE storage.objects(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),bucket_id text,name text);
+CREATE TABLE storage.objects(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),bucket_id text,name text,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 CREATE POLICY test_storage_broad ON storage.objects FOR ALL TO authenticated USING(true) WITH CHECK(true);
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT (nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid$$;
