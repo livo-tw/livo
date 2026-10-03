@@ -5,9 +5,10 @@
     "shortcuts": [
       { "name": "建立 LIVO 卡片", "type": "message", "callback_id": "livo_create_task", "description": "將訊息建立為 LIVO 任務" },
       { "name": "留言到 LIVO 卡片", "type": "message", "callback_id": "livo_comment_task", "description": "將訊息加入 LIVO 任務" },
-      { "name": "建立 QA Bug", "type": "message", "callback_id": "livo_qa_new", "description": "將訊息與來源連結帶入 QA Bug" }
+      { "name": "建立 QA Bug", "type": "message", "callback_id": "livo_qa_new", "description": "將訊息與來源連結帶入 QA Bug" },
+      { "name": "搜尋知識庫", "type": "message", "callback_id": "livo_search_knowledge", "description": "用訊息搜尋自己可閱讀的知識庫" }
     ],
-    "slash_commands": [{ "command": "/livo", "description": "建立任務或 QA Bug", "usage_hint": "bug new 問題標題", "should_escape": false }]
+    "slash_commands": [{ "command": "/livo", "description": "建立任務、QA Bug 或搜尋知識庫", "usage_hint": "kb 關鍵字 | bug new 問題標題", "should_escape": false }]
   },
   "oauth_config": { "scopes": { "bot": ["commands", "chat:write", "chat:write.customize", "channels:read", "groups:read", "channels:history", "groups:history", "im:write", "users:read", "users:read.email"] } },
   "settings": {

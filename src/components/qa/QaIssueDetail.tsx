@@ -1,4 +1,5 @@
 import { getQaNextAction } from './QaIssueCard';
+import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
@@ -184,6 +185,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
         <QaSection title={t('qa.properties')}>
           <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
+        <RelatedKnowledge targetKind="qa" targetId={issue.id} />
         <QaSection title={t('qa.taskLinks')}><p className="mb-2 text-xs text-muted-foreground">{t('qa.taskLinksHint')}</p>{!issue.taskIds.length && <p className="text-sm text-muted-foreground">{t('qa.noTasks')}</p>}<ul className="space-y-2">{issue.taskIds.map(id => { const task = allTasks.find(row => row.id === id); return <li key={id}><button className="text-left text-sm text-primary underline disabled:text-muted-foreground" disabled={busy || !task} onClick={() => task && setSelectedTask(task)}>{task ? `${task.taskKey} · ${task.title}` : id}</button></li>; })}</ul></QaSection>
 
       </div>

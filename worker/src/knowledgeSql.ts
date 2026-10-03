@@ -13,11 +13,11 @@ export function knowledgePermissionSql(pageExpression: string, action: Knowledge
         FROM kb_pages AS kb_acl_seed WHERE kb_acl_seed.workspace_id=? AND kb_acl_seed.id=${pageExpression}
       UNION ALL SELECT p.id,p.parent_id,p.access_policy,p.admin_only,p.is_archived,a.depth+1
         FROM kb_pages p JOIN ancestry a ON p.id=a.parent_id WHERE p.workspace_id=? AND a.depth<4
-    ) SELECT 1 FROM members m WHERE m.workspace_id=? AND m.id=? AND m.is_active=1 AND m.role IN ('member','admin','super_admin')
+    ) SELECT 1 FROM members m WHERE m.workspace_id=? AND m.id=? AND m.auth_id=? AND m.is_active=1 AND m.role IN ('member','admin','super_admin')
     AND EXISTS (SELECT 1 FROM ancestry WHERE parent_id IS NULL)
     AND NOT EXISTS (SELECT 1 FROM ancestry a WHERE a.depth>3 OR CASE WHEN json_valid(a.access_policy)=0 THEN 1
       WHEN json_extract(a.access_policy,'$.mode')='inherit' THEN 0
       WHEN json_extract(a.access_policy,'$.mode')='custom' THEN NOT (${match('view')}${action === 'view' ? '' : ` AND ${match(action)}`}) ELSE 1 END
       ${action === 'view' ? '' : `OR a.is_archived=1${action === 'edit' ? " OR (a.admin_only=1 AND m.role NOT IN ('admin','super_admin'))" : ''}`})
-  )`, params: [ws, ws, ws, auth.member.id] };
+  )`, params: [ws, ws, ws, auth.member.id, auth.userId] };
 }

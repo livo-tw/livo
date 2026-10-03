@@ -13,11 +13,11 @@ vi.mock('@/integrations/supabase/client', async () => {
   return { supabase: createMockClient(), USING_MOCK_BACKEND: true };
 });
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: 'm-001', currentMember: { id: 'm-001', role: state.role, jobTitle: 'Stale position' } }) }));
-vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [
+vi.mock('@/context/MemberContext', async () => ({ ...(await vi.importActual<typeof import('@/context/MemberContext')>('@/context/MemberContext')), useMemberContext: () => ({ users: [
   { id: 'm-001', name: 'Example Editor', role: state.role, jobTitle: state.jobTitle, isActive: state.active },
   { id: 'm-002', name: 'Example Reviewer', role: 'member', jobTitle: 'PM', isActive: true },
 ] }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as never[], productLines: [] as never[], selectedProjectId: null as string | null }) }));
+vi.mock('@/context/ProjectContext', async () => ({ ...(await vi.importActual<typeof import('@/context/ProjectContext')>('@/context/ProjectContext')), useProjectContext: () => ({ allProjects: [] as never[], productLines: [] as never[], selectedProjectId: null as string | null }) }));
 vi.mock('@/hooks/usePresenceLock', () => ({ usePresenceLock: () => ({ acquireLock: vi.fn(async () => ({ acquired: true })), releaseLock: vi.fn(), isLockedBy: (): null => null }) }));
 vi.mock('@/components/RichTextEditorLazy', () => ({ default: ({ content }: { content: string }) => <textarea aria-label="Body" value={content} readOnly /> }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, opts?: Record<string, unknown>) => {

@@ -1,7 +1,8 @@
 import { toast } from "sonner";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { appDeepLinkSearch } from '@/lib/appDeepLink';
 import { useState, useEffect, lazy, Suspense } from "react";
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from "@/integrations/supabase/client";
@@ -43,8 +44,14 @@ const OfflineBanner = ({ visible }: { visible: boolean }) => {
 const IS_LOCAL = import.meta.env.VITE_LOCAL_MODE === 'true';
 
 const ProtectedRoute = ({ session, children }: { session: Session | null; children: React.ReactNode }) => {
-  if (!session) return <Navigate to="/auth" replace />;
+  const location = useLocation();
+  if (!session) return <Navigate to={`/auth${appDeepLinkSearch(location.search)}`} replace />;
   return <>{children}</>;
+};
+
+const AuthRoute = ({ session }: { session: Session | null }) => {
+  const location = useLocation();
+  return session ? <Navigate to={`/${appDeepLinkSearch(location.search)}`} replace /> : <Auth />;
 };
 
 // /signup must render whenever an ?invite= token is present — a leftover
@@ -208,7 +215,7 @@ const App = () => {
       <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
         <Suspense fallback={<PageFallback />}>
           <Routes>
-            <Route path="/auth" element={session ? <Navigate to="/" replace /> : <Auth />} />
+            <Route path="/auth" element={<AuthRoute session={session} />} />
             {/* Cloud-beta invite signup (see SignupRoute above) */}
             <Route path="/signup" element={<SignupRoute session={session} />} />
             {/* Invitation link for a login an admin created (Jira import / 啟用帳號);

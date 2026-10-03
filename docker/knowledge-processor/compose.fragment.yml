@@ -1,0 +1,20 @@
+# Merge this service into the self-host stack. No host port and no volume access.
+services:
+  knowledge-processor:
+    build: ./knowledge-processor
+    restart: unless-stopped
+    environment:
+      KNOWLEDGE_PROCESSOR_TOKEN: ${KNOWLEDGE_PROCESSOR_TOKEN:?Set a random processor token}
+      KNOWLEDGE_OCR_ENABLED: ${KNOWLEDGE_OCR_ENABLED:-1}
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [knowledge-processing]
+networks:
+  knowledge-processing:
+    internal: true

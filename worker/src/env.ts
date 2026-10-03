@@ -32,6 +32,9 @@ export interface Env {
   DEMO_RESET?: string;
   /** "1" → block the (no-op) license RPCs for everyone on this instance. */
   DEMO_LOCK_LICENSE?: string;
+  KNOWLEDGE_PROCESSOR_URL?: string;
+  KNOWLEDGE_PROCESSOR_TOKEN?: string;
+  KNOWLEDGE_IMPORT_SECRET?: string;
   /** Shared demo super-admin email (e.g. jianhong@livo.test). When set, that
    *  member is blocked from destructive/admin actions (see demoGuard). */
   DEMO_ACCOUNT_EMAIL?: string;

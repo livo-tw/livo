@@ -12,6 +12,7 @@ import TaskSubtasksTab from './TaskSubtasksTab';
 import TaskTimeTab from './TaskTimeTab';
 import TaskSidebarFields from './TaskSidebarFields';
 import { useUIContext, type TaskDisplayMode } from '@/context/UIContext';
+import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 
 type Props = { onClose: () => void };
 
@@ -203,7 +204,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
 
           {/* Tab content */}
           <div className="flex-1 overflow-y-auto p-3 md:p-5">
-            {activeTab === 'spec'      && <TaskSpecTab     detail={detail} />}
+            {activeTab === 'spec'      && <><TaskSpecTab detail={detail} /><RelatedKnowledge targetKind="task" targetId={task.id} /></>}
             {activeTab === 'comments'  && <TaskCommentsTab detail={detail} />}
             {activeTab === 'metrics'   && <TaskMetricsTab  detail={detail} />}
             {activeTab === 'time'      && <TaskTimeTab     detail={detail} />}

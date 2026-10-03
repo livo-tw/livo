@@ -497,10 +497,21 @@ function Ensure-SlackSecret {
   $slackSecret = -join ($slackBytes | ForEach-Object { $_.ToString('x2') })
   Set-DotenvVar 'SLACK_INTERNAL_SECRET' $slackSecret
 }
+function Ensure-KnowledgeSecrets {
+  foreach ($knowledgeKey in @('KNOWLEDGE_PROCESSOR_TOKEN', 'KNOWLEDGE_IMPORT_SECRET')) {
+    if (Get-DotenvValue $knowledgeKey) { continue }
+    $knowledgeBytes = New-Object byte[] 32
+    $knowledgeRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $knowledgeRng.GetBytes($knowledgeBytes) } finally { $knowledgeRng.Dispose() }
+    $knowledgeSecret = -join ($knowledgeBytes | ForEach-Object { $_.ToString('x2') })
+    Set-DotenvVar $knowledgeKey $knowledgeSecret
+  }
+}
 
 Invoke-KeyRotation
 Invoke-S3KeyRotation
 Ensure-SlackSecret
+Ensure-KnowledgeSecrets
 Sync-FrontendAnonKey
 Backup-EnvFile
 
@@ -509,6 +520,8 @@ Backup-EnvFile
 # ============================================================
 Say ''
 Say '[3/7] 啟動後端與前端服務（第一次執行需下載映像檔，約 5-10 分鐘）...'
+Invoke-Compose build knowledge-processor
+if ($LASTEXITCODE -ne 0) { Fail 'Knowledge processor build failed.' 'Check the network and rerun the installer. Existing workspace data has not been changed.' }
 Invoke-Compose up -d
 if ($LASTEXITCODE -ne 0) {
   Fail 'docker compose 啟動失敗。' @'

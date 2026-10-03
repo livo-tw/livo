@@ -1,0 +1,53 @@
+-- Tests run only after fixtures and both passes of the unmodified migrations.
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000006',false);
+INSERT INTO public.kb_pages(id,title,body,created_by,updated_by,category,access_policy) VALUES
+ ('kw-private','Private planning','<p id="original">Original evidence [ ]</p>','m-member','m-member','meeting',
+ '{"mode":"custom","view":{"roles":[],"positions":["PM"],"member_ids":[]},"edit":{"roles":[],"positions":["PM"],"member_ids":[]},"comment":{"roles":[],"positions":["PM"],"member_ids":[]}}'),
+ ('kw-public','Public guide','<p>Guide</p>','m-member','m-member','general','{"mode":"inherit"}');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false);
+SELECT qa_test.check(public.kb_workflow('{"action":"list","pageId":"kw-private"}') -> 'checklist'='[]','workflow PM reads private page');
+SELECT qa_test.check(public.kb_workflow('{"action":"checklist_add","pageId":"kw-private","commandId":"kw-add-1","text":"Add a diagram","anchorId":"anchor-stable"}') ? 'id','workflow checklist created');
+SELECT qa_test.check(public.kb_workflow('{"action":"checklist_add","pageId":"kw-private","commandId":"kw-add-1","text":"Add a diagram","anchorId":"anchor-stable"}') ? 'id','workflow idempotent replay');
+SELECT qa_test.check(jsonb_array_length(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist')=1,'workflow retry does not duplicate');
+SELECT qa_test.expect_error('workflow command mismatch',$$SELECT public.kb_workflow('{"action":"checklist_add","pageId":"kw-private","commandId":"kw-add-1","text":"Changed text"}')$$,'23505','idempotency_conflict');
+SELECT qa_test.check(public.kb_workflow(jsonb_build_object('action','checklist_set','pageId','kw-private','commandId','kw-done-1','checklistId',(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist'->0->>'id'),'expectedVersion',1,'isDone',true)) ? 'id','workflow checklist toggle');
+SELECT qa_test.check((public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist'->0->>'version')::integer=2,'workflow checklist CAS version');
+SELECT qa_test.expect_error('workflow stale toggle rejected',$$SELECT public.kb_workflow(jsonb_build_object('action','checklist_set','pageId','kw-private','commandId','kw-stale-1','checklistId',(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist'->0->>'id'),'expectedVersion',1,'isDone',false))$$,'40001','conflict');
+SELECT qa_test.check(public.kb_workflow('{"action":"capture_snapshot","pageId":"kw-private","commandId":"kw-snapshot-1","expectedPageVersion":1}') ? 'id','workflow snapshot captured');
+SELECT qa_test.check(public.kb_workflow('{"action":"capture_snapshot","pageId":"kw-private","commandId":"kw-snapshot-2","expectedPageVersion":1}') ? 'id','workflow same-body snapshot dedupe');
+SELECT qa_test.check(jsonb_array_length(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'snapshots')=1,'workflow one immutable source');
+SELECT qa_test.expect_error('workflow raw checklist write blocked',$$INSERT INTO public.kb_checklist_items(page_id,anchor_id,text,created_by,updated_by) VALUES('kw-private','raw','Bypass','m-member','m-member')$$,'42501');
+SELECT qa_test.check(public.kb_workflow(jsonb_build_object('action','link','pageId','kw-private','commandId','kw-link-1','targetKind','task','targetId','t-test','checklistId',(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist'->0->>'id'),'expectedVersion',2)) ? 'id','workflow atomic checklist promotion');
+SELECT qa_test.check((public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'links'->0->>'anchorId')='anchor-stable','workflow promotion retains stable anchor');
+SELECT qa_test.expect_error('workflow linked checklist has no second completion',$$SELECT public.kb_workflow(jsonb_build_object('action','checklist_set','pageId','kw-private','commandId','kw-linked-toggle','checklistId',(public.kb_workflow('{"action":"list","pageId":"kw-private"}')->'checklist'->0->>'id'),'expectedVersion',2,'isDone',false))$$,'40001','conflict');
+SELECT qa_test.check(jsonb_array_length(public.kb_workflow('{"action":"backlinks","targetKind":"task","targetId":"t-test"}')->'items')=1,'workflow PM sees reverse link');
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+SELECT qa_test.check(public.kb_workflow('{"action":"backlinks","targetKind":"task","targetId":"t-test"}')->'items'='[]','workflow admin cannot infer private backlink');
+SELECT qa_test.expect_error('workflow admin cannot read source',$$SELECT public.kb_workflow('{"action":"list","pageId":"kw-private"}')$$,'P0002','unavailable');
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000003',false);
+SELECT qa_test.check(public.kb_workflow('{"action":"backlinks","targetKind":"task","targetId":"t-test"}')->'items'='[]','workflow superadmin no implicit bypass');
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000004',false);
+SELECT qa_test.check(public.kb_workflow('{"action":"backlinks","targetKind":"task","targetId":"t-test"}')->'items'='[]','workflow other member no private count');
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false);
+SELECT qa_test.check(public.kb_workflow('{"action":"create_task","pageId":"kw-private","commandId":"kw-create-task","expectedPageVersion":1,"input":{"projectId":"p-test","statusId":"s-open","title":"Public delivery","description":"Approved description"}}')->>'targetKind'='task','workflow atomically creates task and source link');
+SELECT qa_test.check(public.kb_workflow('{"action":"create_task","pageId":"kw-private","commandId":"kw-create-task","expectedPageVersion":1,"input":{"projectId":"p-test","statusId":"s-open","title":"Public delivery","description":"Approved description"}}')->>'targetKind'='task','workflow task create replay');
+SELECT qa_test.check((SELECT count(*) FROM public.tasks WHERE title='Public delivery')=1,'workflow no duplicate created task');
+SELECT qa_test.expect_error('workflow no create in completed status',$$SELECT public.kb_workflow('{"action":"create_task","pageId":"kw-private","commandId":"kw-create-done","expectedPageVersion":1,"input":{"projectId":"p-test","statusId":"s-done","title":"Invalid done"}}')$$,'22023','invalid');
+SELECT qa_test.check(public.kb_workflow('{"action":"create_qa","pageId":"kw-private","commandId":"kw-create-bug","expectedPageVersion":1,"input":{"projectId":"p-test","title":"Expected behavior differs","actual":"Actual result","observedEnvironment":"QA"}}')->>'targetKind'='qa','workflow QA creation uses existing transaction');
+RESET ROLE;
+SELECT qa_test.check((SELECT state='new' AND (data->>'fixCycle')::integer=0 AND data->'runs'='[]' FROM public.qa_issues WHERE title='Expected behavior differs'),'workflow no fabricated PASS or runs');
+SELECT qa_test.check((SELECT count(*)=1 FROM public.kb_work_links l JOIN public.tasks t ON t.id=l.target_id JOIN public.kb_source_snapshots s ON s.id=l.snapshot_id WHERE t.title='Public delivery' AND s.body='<p id="original">Original evidence [ ]</p>'),'workflow created task keeps immutable source in same transaction');
+SELECT qa_test.check((SELECT count(*)=1 FROM public.kb_work_links l JOIN public.qa_issues q ON q.id=l.target_id JOIN public.kb_source_snapshots s ON s.id=l.snapshot_id WHERE q.title='Expected behavior differs' AND s.page_id=l.page_id),'workflow created QA keeps original source link');
+SELECT qa_test.expect_error('workflow snapshot update immutable',$$UPDATE public.kb_source_snapshots SET body='Changed' WHERE page_id='kw-private'$$,'42501','immutable');
+SELECT qa_test.expect_error('workflow duplicate task key blocked',$$INSERT INTO public.tasks(id,project_id,task_key) VALUES('duplicate-key','p-test','EX-1')$$,'23505','task_key_conflict');
+SELECT set_config('request.jwt.claim.sub','',false);
+UPDATE public.members SET job_title='Engineer' WHERE id='m-member';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false);
+SELECT qa_test.expect_error('workflow receipt replay after position revoked',$$SELECT public.kb_workflow('{"action":"create_task","pageId":"kw-private","commandId":"kw-create-task","expectedPageVersion":1,"input":{"projectId":"p-test","statusId":"s-open","title":"Public delivery","description":"Approved description"}}')$$,'P0002','unavailable');
+SELECT qa_test.check(public.kb_workflow('{"action":"backlinks","targetKind":"task","targetId":"t-test"}')->'items'='[]','workflow revoked position loses backlinks immediately');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub','',false);
+UPDATE public.members SET job_title='PM' WHERE id='m-member';

@@ -267,13 +267,13 @@ describe('backend security and effects', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].body).toMatchObject({ member_id: actor.id, is_verified: true, verified_by: 'email' });
   });
-  it('lets admins map only plain members or themselves; super admins map anyone who can log in', () => {
+  it('restricts identity assignment to owners, including member-role accounts protected by job-title ACLs', () => {
     const member = { id: 'm1', role: 'member', is_active: true, auth_id: 'a1' };
     const otherAdmin = { id: 'a2', role: 'admin', is_active: true, auth_id: 'a2' };
     const superAdmin = { id: 's1', role: 'super_admin', is_active: true, auth_id: 's1' };
     const admin = { id: 'a1', role: 'admin' };
-    expect(canAssignSlackMember(admin, member)).toBe(true);
-    expect(canAssignSlackMember(admin, { ...otherAdmin, id: 'a1' })).toBe(true);
+    expect(canAssignSlackMember(admin, { ...member, job_title: 'Product' })).toBe(false);
+    expect(canAssignSlackMember(admin, { ...otherAdmin, id: 'a1' })).toBe(false);
     expect(canAssignSlackMember(admin, otherAdmin)).toBe(false);
     expect(canAssignSlackMember(admin, superAdmin)).toBe(false);
     expect(canAssignSlackMember({ id: 's1', role: 'super_admin' }, otherAdmin)).toBe(true);

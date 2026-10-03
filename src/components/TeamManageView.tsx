@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Settings, MessageSquare, Link2, Layers } from 'lucide-react';
+import { Users, Settings, MessageSquare, Link2, Layers, BookOpen } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
+import { useMemberContext } from '@/context/MemberContext';
+import KnowledgeImportPermissions from '@/components/KnowledgeImportPermissions';
 import MemberManageView from '@/components/MemberManageView';
 import DeploymentEnvironmentSettings from '@/components/DeploymentEnvironmentSettings';
 import StatusManageView from '@/components/StatusManageView';
@@ -12,7 +14,7 @@ import ReportSendConfig from '@/components/reports/ReportSendConfig';
 import ExternalPlatformSettings from '@/components/integrations/ExternalPlatformSettings';
 import ProductLineManageModal from '@/components/ProductLineManageModal';
 
-export type TeamManageTab = 'members' | 'task-config' | 'notifications' | 'external';
+export type TeamManageTab = 'members' | 'task-config' | 'notifications' | 'external' | 'knowledge';
 
 interface Props {
   initialTab?: TeamManageTab;
@@ -24,7 +26,8 @@ const TAB_INACTIVE = `${TAB_STYLE_BASE} text-muted-foreground hover:text-foregro
 
 const TeamManageView = ({ initialTab = 'members' }: Props) => {
   const { t } = useTranslation();
-  const { permissions } = useAuthContext();
+  const { permissions, currentMember } = useAuthContext();
+  const { users } = useMemberContext();
   const [activeTab, setActiveTab] = useState<TeamManageTab>(initialTab === 'approval' ? 'task-config' : initialTab as TeamManageTab);
   const [showLineManage, setShowLineManage] = useState(false);
 
@@ -33,6 +36,7 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
     { id: 'task-config', label: t('teamManage.tabs.taskConfig'), icon: <Settings size={14} />, show: permissions.canManageStatuses },
     { id: 'notifications', label: t('teamManage.tabs.notifications'), icon: <MessageSquare size={14} /> },
     { id: 'external', label: t('teamManage.tabs.external'), icon: <Link2 size={14} /> },
+    { id: 'knowledge', label: t('kbImport.permissionTitle'), icon: <BookOpen size={14} />, show: currentMember?.role === 'super_admin' },
   ];
 
   return (
@@ -61,6 +65,7 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
           </div>
 
           {/* Tab content */}
+          {activeTab === 'knowledge' && currentMember?.role === 'super_admin' && <KnowledgeImportPermissions actor={currentMember} users={users} />}
           {activeTab === 'members' && (
             <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-6">
               <MemberManageView embedded />

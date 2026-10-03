@@ -21,6 +21,7 @@ import { knowledgeStorageAllowed } from './knowledge';
 
 const VALID_BUCKETS = new Set(['task-images', 'kb-files', 'backups']);
 export const isKnowledgeStoragePath = (path: string): boolean => /^(?:ws\/[^/]+\/)?kb\//.test(path);
+export const isKnowledgeImportPath = (path: string): boolean => /^(?:ws\/[^/]+\/)?kb-imports(?:\/|$)/.test(path);
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB hard cap (frontend enforces 2 MB for attachments)
 const INLINE_SAFE_TYPE = /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)\s*(;|$)/i;
 
@@ -35,6 +36,7 @@ function wsPath(ws: string, path: string): string {
 
 /** May this workspace's members touch this (already-effective) path? */
 function pathAllowed(ws: string, path: string): boolean {
+  if (isKnowledgeImportPath(path)) return false;
   if (path.startsWith('seller/')) return false; // seller dumps: never member-readable
   if (ws === DEFAULT_WORKSPACE) return !path.startsWith('ws/'); // legacy flat namespace only
   return path.startsWith(`ws/${ws}/`);
@@ -110,6 +112,7 @@ export async function handleUpload(c: Context<AppContext>, bucket: string, path:
 }
 
 export async function handleDownload(c: Context<AppContext>, bucket: string, path: string): Promise<Response> {
+  if (isKnowledgeImportPath(path)) return c.json({ data: null, error: { message: 'Object not found' } }, 404);
   const privateKnowledge = bucket === 'kb-files' || isKnowledgeStoragePath(path);
   if (privateKnowledge) {
     const auth = c.get('auth');

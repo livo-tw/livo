@@ -49,14 +49,12 @@ export function parseCommand(text: string) {
   return { kind: 'help' as const };
 }
 /**
- * Who may an admin assign a Slack account to? A super admin: any active member
- * who can log in. An admin: only plain members or themselves, so nobody can map
- * their own Slack account onto a higher role.
+ * Manual identity assignment is a workspace-owner operation. Job-title ACLs
+ * can protect a member-role account, so comparing role rank is insufficient.
  */
 export function canAssignSlackMember(caller: Row, target: Row | undefined): boolean {
   if (!target || target.is_active !== true || !target.auth_id) return false;
-  if (caller.role === 'super_admin') return true;
-  return caller.role === 'admin' && (target.role === 'member' || target.id === caller.id);
+  return caller.role === 'super_admin';
 }
 export const SLACK_USER_ID = /^[UW][A-Z0-9]{2,30}$/;
 /**
