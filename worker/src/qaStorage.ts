@@ -2,6 +2,8 @@ import type { Context } from 'hono';
 import type { AppContext, Env } from './env';
 import { QaError, QA_MAX_FILE_BYTES, QA_PART_BYTES, type QaAttachment } from './qa/domain';
 import { getQaIssue, qaHash, qaId, qaReadBody, requireQaEnabled } from './qa';
+import { ensureKnowledgeImportUsageReconciled } from './knowledgeImportStorage';
+import { ImportError } from './knowledgeImport';
 
 type C=Context<AppContext>;
 interface Session {
@@ -65,6 +67,10 @@ async function init(c:C,body:Record<string,unknown>):Promise<Response>{
   const auth=c.get('auth'),ws=auth.member.workspaceId,id=qaId(body.id);
   const issue=await getQaIssue(c.env,ws,id),file=qaFileInput(body.fileName,body.mimeType,body.size);
   await cleanupQaExpiredUploads(c.env,ws);
+  try{await ensureKnowledgeImportUsageReconciled(c.env,ws);}catch(error){
+    if(error instanceof ImportError&&error.code==='storage_reconciliation_pending')return c.json({data:null,error:{code:error.code,message:'附件容量帳務正在核對，請稍後再試'}},409);
+    throw error;
+  }
   const uploadId=crypto.randomUUID(),storageKey=`qa/${ws}/${id}/${uploadId}`,now=new Date().toISOString(),expiry=new Date(Date.now()+24*60*60*1000).toISOString();
   await c.env.DB.prepare('INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(ws,uploadId,issue.id,auth.member.id,file.fileName,file.mimeType,file.size,storageKey,now,expiry).run();
   try{

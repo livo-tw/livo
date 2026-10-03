@@ -3134,7 +3134,15 @@
     "warning": "转换提醒",
     "page": "页码",
     "noHistory": "没有近期导入记录",
-    "successHelp": "已保存来源快照，与人工整理的知识页分开保存。"
+    "successHelp": "已保存来源快照，与人工整理的知识页分开保存。",
+    "retryCommit": "核对目标位置并重试导入",
+    "storage_reconciliation_pending": "存储用量正在更新，请稍后再导入。",
+    "storage_quota_exceeded": "工作区容量不足，请清理不再使用的附件或联系管理员。",
+    "storage_busy": "文件仍在处理中，请稍后重试。",
+    "storage_key_conflict": "来源内容已变动，请重新导入。",
+    "import_payload_missing": "无法读取暂存的解析内容，请重试导入。",
+    "import_metadata_too_large": "此次导入的附加数据过多，请分批导入。",
+    "parsed_document_too_large": "解析后的单篇正文超过 900,000 UTF-8 字节，请拆成较小的文档。"
   },
   "kbWorkflow": {
     "heading": "行动与工作关联",

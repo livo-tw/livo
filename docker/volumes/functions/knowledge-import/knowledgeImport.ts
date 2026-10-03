@@ -48,11 +48,12 @@ const mime = (source: ImportSource) => ({notion:'text/markdown',md:'text/markdow
 function validRule(value: unknown): KnowledgeRule { const candidate={mode:'custom',view:value,edit:value,comment:value};const p=parseKnowledgePolicy(candidate);if(!p||p.mode!=='custom')throw new ImportError('invalid_policy');return p.view; }
 export function notionPageId(value: unknown): string { if(typeof value!=='string')throw new ImportError('invalid_notion_page');let raw=value.trim();if(raw.startsWith('https://')){const u=new URL(raw);if(!['notion.so','www.notion.so'].includes(u.hostname)||u.username||u.password)throw new ImportError('invalid_notion_page');raw=u.pathname.split('/').pop()||'';}const match=raw.match(/([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);if(!match)throw new ImportError('invalid_notion_page');return match[1].replace(/-/g,'').toLowerCase(); }
 export function allowedNotionAsset(value:string):boolean {try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&['prod-files-secure.s3.us-west-2.amazonaws.com','s3.us-west-2.amazonaws.com','file.notion.so'].includes(u.hostname);}catch{return false;}}
-async function boundedResponse(response:Response,limit:number):Promise<Uint8Array>{if(Number(response.headers.get('content-length')||0)>limit)throw new ImportError('source_size_limit');const reader=response.body?.getReader();if(!reader)throw new ImportError('source_missing');const chunks:Uint8Array[]=[];let total=0;try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>limit)throw new ImportError('source_size_limit');chunks.push(value);}}finally{await reader.cancel().catch(():void=>{});}const result=new Uint8Array(total);let at=0;for(const c of chunks){result.set(c,at);at+=c.length;}return result;}
+async function boundedResponse(response:Response,limit:number,sizeCode='source_size_limit'):Promise<Uint8Array>{if(Number(response.headers.get('content-length')||0)>limit)throw new ImportError(sizeCode,413);const reader=response.body?.getReader();if(!reader)throw new ImportError('source_missing');const chunks:Uint8Array[]=[];let total=0;try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>limit)throw new ImportError(sizeCode,413);chunks.push(value);}}finally{await reader.cancel().catch(():void=>{});}const result=new Uint8Array(total);let at=0;for(const c of chunks){result.set(c,at);at+=c.length;}return result;}
 async function cryptSecret(value: string, secret: string|undefined, decode = false) { if(!secret||secret.length<32)throw new ImportError('notion_encryption_not_configured',503);const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(secret)),'AES-GCM',false,[decode?'decrypt':'encrypt']);if(decode){const raw=fromBase64(value);return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12)},key,raw.slice(12)));}const iv=crypto.getRandomValues(new Uint8Array(12));const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(value)));const bytes=new Uint8Array(iv.length+encrypted.length);bytes.set(iv);bytes.set(encrypted,12);return toBase64(bytes); }
 function publicPolicy(policy: ImportPolicy) { const {notion_secret:_,...rest}=policy;return {...rest,notion_configured:!!policy.notion_secret}; }
 function checkParsed(value: unknown): ImportParsed {
-  const p=asRecord(value);if(typeof p.body!=='string'||p.body.length>900000||!Array.isArray(p.warnings)||!Array.isArray(p.pages)||!Array.isArray(p.assets)||p.pages.length>40||p.assets.length>24)throw new ImportError('invalid_processor_result',502);
+  const p=asRecord(value);if(typeof p.body==='string'&&new TextEncoder().encode(p.body).byteLength>900000)throw new ImportError('parsed_document_too_large',413);
+  if(typeof p.body!=='string'||!Array.isArray(p.warnings)||!Array.isArray(p.pages)||!Array.isArray(p.assets)||p.pages.length>40||p.assets.length>24)throw new ImportError('invalid_processor_result',502);
   // Defense in depth if a misconfigured processor does not run the bundled allowlist.
   if(/<(?:script|iframe|object|embed|svg|math|img)\b|\son\w+\s*=|(?:javascript|vbscript|data):/i.test(p.body))throw new ImportError('unsafe_processor_result',502);
   if(!p.body.trim()&&!p.incomplete)throw new ImportError('empty_document');return p as ImportParsed;
@@ -61,7 +62,7 @@ export async function parseWithProcessor(config: ImportConfig, source: 'md'|'doc
   if(!config.processorUrl||!config.processorToken||config.processorToken.length<32)throw new ImportError('processor_not_configured',503);
   const url=new URL(config.processorUrl);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new ImportError('invalid_processor_configuration',503);
   const result=await (config.fetcher||fetch)(new URL('/parse',url),{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',Authorization:`Bearer ${config.processorToken}`},body:JSON.stringify({source,data:toBase64(bytes),...(source==='pdf'&&previous?.parsed?{previous_pages:previous.parsed.pages,previous_hash:previous.source_hash}:{})}),signal:AbortSignal.timeout(115000)});
-  const body=asRecord(await result.json());if(!result.ok)throw new ImportError(typeof body.error==='string'?body.error:'processing_failed',result.status);return checkParsed(body.result);
+  const body=asRecord(JSON.parse(new TextDecoder().decode(await boundedResponse(result,IMPORT_LIMIT,'parsed_document_too_large'))));if(!result.ok)throw new ImportError(typeof body.error==='string'?body.error:'processing_failed',result.status);return checkParsed(body.result);
 }
 
 export function createKnowledgeImport(repo: ImportRepository, config: ImportConfig) {
@@ -88,7 +89,7 @@ export function createKnowledgeImport(repo: ImportRepository, config: ImportConf
     const start=job.version,run=id();job.status='parsing';job.run_id=run;await persist(job,start);
     const owns=async()=>{const live=await jobFor(job.id);if(live.job.run_id!==run||live.job.version!==job.version||live.job.status!=='parsing')throw new ImportError('processing_superseded',409);return live;};
     const heartbeat=async()=>{await owns();await persist(job,job.version);};
-    const stage=async(key:string,bytes:Uint8Array,type:string)=>{await owns();job.staged_keys=[...new Set([...(job.staged_keys||[]),key])];if(job.staged_keys.length>500)throw new ImportError('asset_size_limit');await persist(job,job.version);await repo.putFile(key,bytes,type);await owns();};
+    const stage=async(key:string,bytes:Uint8Array,type:string)=>{await owns();job.staged_keys=[...new Set([...(job.staged_keys||[]),key])];if(job.staged_keys.length>500)throw new ImportError('asset_size_limit');await persist(job,job.version);try{await repo.putFile(key,bytes,type);await owns();}catch(error){await repo.deleteFile(key).catch(():void=>{});throw error;}};
     for(const item of job.items.filter(x=>x.status!=='committed'&&x.status!=='ready')) {
       try {
         await heartbeat();const live=await owns();
@@ -137,7 +138,8 @@ export function createKnowledgeImport(repo: ImportRepository, config: ImportConf
       if(action==='sources')return sources.map(({original,assets,...s})=>({...s,original:{name:original.name,type:original.type,size:original.size},assets:assets.map(({name,type,size})=>({name,type,size}))}));
       const source=sources.find(s=>s.id===body.source_id);if(!source)deny();const file=body.asset_index===undefined?source!.original:source!.assets[Number(body.asset_index)];if(!file)throw new ImportError('file_not_found',404);const data=await repo.getFile(file.key);if(!data)throw new ImportError('file_not_found',404);return {name:file.name,type:file.type,data:toBase64(data)};
     }
-    if(action==='list'){const c=await context();if(!importAllowed(c.policy,c.actor))deny();repo.background((async()=>{for(const old of await repo.expiredJobs()){const kept=new Set((await repo.results(old.id)).flatMap(i=>i.file_keys||[]));const keys=new Set([...(old.staged_keys||[]),...old.items.flatMap(i=>[i.original.key,...i.assets.map(a=>a.key)])]);for(const key of keys)if(!kept.has(key))await repo.deleteFile(key);await repo.deleteExpiredJob(old.id);}})().catch(():void=>{}));return(await repo.listJobs()).filter(j=>j.actor_id===c.actor.id&&Date.parse(j.expires_at)>now()&&(!j.initial_parent||knowledgeCan(c.pages,j.initial_parent,c.actor,'view'))&&(j.source!=='notion'||(!!c.policy.notion_secret&&knowledgeRuleMatches(c.policy.notion_subjects,c.actor)&&j.items.every(i=>c.policy.notion_pages.includes(i.source_key.replace('notion:','')))))).map(({items,...j})=>({...j,item_count:items.length}));}
+    // Retention is performed by the system scheduler even when this actor is disabled.
+    if(action==='list'){const c=await context();if(!importAllowed(c.policy,c.actor))deny();return(await repo.listJobs()).filter(j=>j.actor_id===c.actor.id&&Date.parse(j.expires_at)>now()&&(!j.initial_parent||knowledgeCan(c.pages,j.initial_parent,c.actor,'view'))&&(j.source!=='notion'||(!!c.policy.notion_secret&&knowledgeRuleMatches(c.policy.notion_subjects,c.actor)&&j.items.every(i=>c.policy.notion_pages.includes(i.source_key.replace('notion:','')))))).map(({items,...j})=>({...j,item_count:items.length}));}
     if(action==='start'){
       const c=await context();if(!importAllowed(c.policy,c.actor))deny();if((await repo.listJobs()).filter(j=>!['succeeded','cancelled','failed'].includes(j.status)).length>=10)throw new ImportError('active_job_limit',429);const source=body.source as ImportSource;if(!['notion','md','pdf','docx'].includes(source))throw new ImportError('unsupported_format');
       const parent=typeof body.parent_id==='string'?body.parent_id:null;if(parent&&!knowledgeCan(c.pages,parent,c.actor,'edit'))deny();
@@ -146,8 +148,13 @@ export function createKnowledgeImport(repo: ImportRepository, config: ImportConf
       if(source==='notion'){if(!c.policy.notion_secret||!knowledgeRuleMatches(c.policy.notion_subjects,c.actor))deny();if(!Array.isArray(body.page_ids)||!body.page_ids.length||body.page_ids.length>10)throw new ImportError('notion_selection_limit');for(const page of [...new Set(body.page_ids.map(notionPageId))]){if(!c.policy.notion_pages.includes(page))deny();inputs.push({name:'Notion.md',bytes:new Uint8Array(),key:'notion:'+page,url:'https://www.notion.so/'+page});}}
       else {if(typeof body.name!=='string'||body.name.length>200||!body.name.toLowerCase().endsWith('.'+source))throw new ImportError('unsupported_format');inputs.push({name:body.name.replace(/[\\/\x00-\x1f]/g,'_'),bytes:fromBase64(body.data)});}
       if(inputs.reduce((n,x)=>n+x.bytes.length,0)>IMPORT_LIMIT)throw new ImportError('file_size_limit');
-      for(const input of inputs){const itemId=id(),hash=await sha256(input.bytes),key=`${c.actor.id}/${job.id}/${itemId}/original`;if(input.bytes.length)await repo.putFile(key,input.bytes,mime(source));job.items.push({id:itemId,title:input.name.replace(/\.(md|docx|pdf)$/i,''),source_key:input.key||'file:'+hash,source_url:input.url,source_hash:hash,original:{key,name:input.name,type:mime(source),size:input.bytes.length},assets:[],status:'pending',...(input.warnings?.length?{error:input.warnings.join(',')}: {})});}
-      if(!await repo.saveJob(job,null)){for(const item of job.items)await repo.deleteFile(item.original.key);throw new ImportError('job_changed',409);}repo.background(process(job.id).catch(():void=>{}));return job;
+      for(const input of inputs){const itemId=id(),hash=await sha256(input.bytes),key=`${c.actor.id}/${job.id}/${itemId}/original`;job.items.push({id:itemId,title:input.name.replace(/\.(md|docx|pdf)$/i,''),source_key:input.key||'file:'+hash,source_url:input.url,source_hash:hash,original:{key,name:input.name,type:mime(source),size:input.bytes.length},assets:[],status:'pending',...(input.warnings?.length?{error:input.warnings.join(',')}: {})});}
+      // Persist the retention identity before the first object-store write. An interrupted
+      // request now leaves a discoverable job prefix instead of an untracked private file.
+      if(!await repo.saveJob(job,null))throw new ImportError('job_changed',409);
+      try{for(const [index,input] of inputs.entries()){if(!input.bytes.length)continue;await jobFor(job.id);await repo.putFile(job.items[index].original.key,input.bytes,mime(source));await jobFor(job.id);}}
+      catch(error){for(const item of job.items)await repo.deleteFile(item.original.key).catch(():void=>{});job.status='failed';await persist(job,job.version).catch(():void=>{});throw error;}
+      repo.background(process(job.id).catch(():void=>{}));return job;
     }
     const c=await jobFor(body.job_id),job=c.job;
     if(action==='download_preview'){const item=job.items.find(i=>i.id===body.item_id);if(!item)throw new ImportError('file_not_found',404);const file=await repo.getFile(item.original.key);if(!file)throw new ImportError('file_not_found',404);return {name:item.original.name,type:item.original.type,data:toBase64(file)};}
@@ -155,7 +162,15 @@ export function createKnowledgeImport(repo: ImportRepository, config: ImportConf
       // Recover after an edge process stops between an atomic item commit and job readback.
       if(['parsing','committing'].includes(job.status)&&now()-Date.parse(job.updated_at||job.created_at)>180000){const results=await repo.results(job.id);for(const result of results){const item=job.items.find(i=>i.id===result.item_id);if(item&&knowledgeCan(c.pages,result.page_id,c.actor,'view')){item.status='committed';item.page_id=result.page_id;item.snapshot_id=result.snapshot_id;}}job.status=job.items.every(i=>i.status==='committed')?'succeeded':job.items.some(i=>i.status==='committed'||i.parsed)?'partially_failed':'failed';await persist(job,job.version);}return job;
     }
-    if(action==='cancel'){if(job.status==='committing')throw new ImportError('commit_in_progress',409);job.status='cancelled';await persist(job,job.version);return job;}
+    if(action==='cancel'){
+      if(job.status==='committing')throw new ImportError('commit_in_progress',409);
+      job.status='cancelled';await persist(job,job.version);
+      // The successful CAS fences pending parsers and commits. Adapters recheck
+      // durable source references, including a commit whose response was lost.
+      const keys=new Set([...(job.staged_keys||[]),...job.items.flatMap(item=>[item.original.key,...item.assets.map(asset=>asset.key)])]);
+      for(const key of keys)await repo.deleteFile(key).catch(():void=>{});
+      return job;
+    }
     if(action==='retry'){
       if(['committing','parsing','succeeded','cancelled'].includes(job.status))throw new ImportError('job_not_retryable',409);
       for(const item of job.items)if(item.status!=='committed'&&(item.status==='failed'||item.parsed?.incomplete)){item.status='pending';delete item.error;}

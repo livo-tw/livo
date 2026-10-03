@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source: 'worker/src/knowledgeImportCleanup.ts', copies: ['docker/volumes/functions/knowledge-import-cleanup/knowledgeImportCleanup.ts', 'supabase/functions/knowledge-import-cleanup/knowledgeImportCleanup.ts'] },
+  { source: 'docker/volumes/functions/knowledge-import-cleanup/index.ts', copies: ['supabase/functions/knowledge-import-cleanup/index.ts'] },
   { source: 'worker/src/knowledgeImport.ts', copies: ['docker/volumes/functions/knowledge-import/knowledgeImport.ts', 'supabase/functions/knowledge-import/knowledgeImport.ts'], denoAccess: true },
   { source: 'worker/src/knowledgeAccess.ts', copies: ['docker/volumes/functions/knowledge-import/knowledgeAccess.ts', 'supabase/functions/knowledge-import/knowledgeAccess.ts'] },
   { source: 'src/lib/knowledgeWorkflowDomain.ts', copies: ['worker/src/knowledgeWorkflow/domain.ts', 'docker/volumes/functions/knowledge-workflow/domain.ts', 'supabase/functions/knowledge-workflow/domain.ts'] },

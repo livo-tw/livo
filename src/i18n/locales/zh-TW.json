@@ -3134,7 +3134,15 @@
     "warning": "轉換提醒",
     "page": "頁碼",
     "noHistory": "沒有近期匯入紀錄",
-    "successHelp": "已儲存來源快照，與人工整理的知識頁分開保存。"
+    "successHelp": "已儲存來源快照，與人工整理的知識頁分開保存。",
+    "retryCommit": "核對目的地並重試匯入",
+    "storage_reconciliation_pending": "儲存用量正在更新，請稍後再匯入。",
+    "storage_quota_exceeded": "工作區容量不足，請清理不再使用的附件或聯繫管理員。",
+    "storage_busy": "檔案仍在處理中，請稍後重試。",
+    "storage_key_conflict": "來源內容已變動，請重新匯入。",
+    "import_payload_missing": "無法讀取暫存的解析內容，請重試匯入。",
+    "import_metadata_too_large": "此次匯入的附加資料過多，請分批匯入。",
+    "parsed_document_too_large": "解析後的單篇正文超過 900,000 UTF-8 位元組，請拆成較小的文件。"
   },
   "kbWorkflow": {
     "heading": "行動與工作關聯",

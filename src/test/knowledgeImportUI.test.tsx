@@ -34,4 +34,34 @@ describe('knowledge import access and recovery UI',()=>{
     expect(screen.queryByText('Private source text')).toBeNull();expect(screen.queryByText(/Secret source/)).toBeNull();
   });
 
+  it('retries parsing from partial results, returns to preview and waits for a fresh review',async()=>{
+    const good={id:'good',title:'Ready note',status:'ready',original:{size:0},parsed:{body:'<p>Converted note</p>',warnings:[] as string[],pages:[] as never[],incomplete:true}};
+    const failed={id:'failed',title:'Failed note',status:'failed',original:{size:0},error:'processing_timeout'};
+    const initial={id:'job',source:'md',status:'preview_ready',version:2,items:[good,failed]};
+    const partial={...initial,status:'partially_failed',version:4,items:[{...good,status:'committed',page_id:'created'},failed]};
+    const parsing={...partial,status:'parsing',version:5,items:[partial.items[0],{...failed,status:'pending',error:undefined}]};
+    const recovered={...partial,status:'preview_ready',version:6,items:[partial.items[0],{...good,id:'failed',title:'Recovered note',parsed:{...good.parsed,body:'<p>Newly recovered text</p>',incomplete:false}}]};
+    vi.mocked(knowledgeImportRequest).mockImplementation(async action=>action==='list'?[]:action==='start'?initial:action==='preview_target'?{job:initial,previous:[],current:null,duplicates:[]}:action==='commit'?partial:action==='retry'?parsing:action==='get'?recovered:[]);
+    render(<KnowledgeImportDialog open onOpenChange={vi.fn()} pages={[]} users={[]} actor={user()} onImported={vi.fn()}/>);
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Markdown .md'})).not.toBeDisabled());fireEvent.click(screen.getByRole('button',{name:'Markdown .md'}));fireEvent.change(screen.getByLabelText('Choose a file'),{target:{files:[new File(['# Note'],'note.md')]}});fireEvent.click(screen.getByRole('button',{name:'Upload and parse privately'}));
+    await screen.findByText('Converted note');fireEvent.click(screen.getByLabelText('I reviewed the converted text and all warnings.'));fireEvent.click(screen.getByLabelText(/Save the available text and original file/i));fireEvent.click(screen.getByRole('button',{name:'Continue'}));fireEvent.click(screen.getByRole('button',{name:'Check destination and compare'}));fireEvent.click(await screen.findByLabelText('I confirm the destination audience may read this source.'));fireEvent.click(screen.getByRole('button',{name:'Confirm import'}));
+    await screen.findByText('Partially completed; inspect each item');expect(screen.queryByRole('button',{name:'Review destination and retry import'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry failed items / OCR pages'}));
+    await waitFor(()=>expect(knowledgeImportRequest).toHaveBeenCalledWith('retry',{job_id:'job'}));
+    expect(screen.getByText('2. Preview and review')).toHaveAttribute('aria-current','step');
+    await screen.findByText('Newly recovered text',{}, {timeout:3500});
+    expect(screen.queryByLabelText(/Save the available text and original file/i)).toBeNull();expect(screen.getByLabelText('I reviewed the converted text and all warnings.')).not.toBeChecked();expect(screen.getByRole('button',{name:'Continue'})).toBeDisabled();
+    expect(vi.mocked(knowledgeImportRequest).mock.calls.filter(([action])=>action==='commit')).toHaveLength(1);
+  });
+  it('rechecks the destination and retries only commit after a commit failure',async()=>{
+    const item={id:'item',title:'Ready note',status:'ready',error:undefined as string|undefined,page_id:undefined as string|undefined,original:{size:0},parsed:{body:'<p>Converted note</p>',warnings:[] as string[],pages:[] as never[],incomplete:false}};
+    let current={id:'job',source:'md',status:'preview_ready',version:2,items:[item]};let commits=0;
+    vi.mocked(knowledgeImportRequest).mockImplementation(async action=>{if(action==='list')return [];if(action==='start')return current;if(action==='preview_target')return {job:current,previous:[],current:null,duplicates:[]};if(action==='commit'){commits++;current={...current,status:commits===1?'partially_failed':'succeeded',version:current.version+1,items:commits===1?[{...item,error:'commit_failed'}]:[{...item,status:'committed',page_id:'created'}]};return current;}return current;});
+    render(<KnowledgeImportDialog open onOpenChange={vi.fn()} pages={[]} users={[]} actor={user()} onImported={vi.fn()}/>);
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Markdown .md'})).not.toBeDisabled());fireEvent.click(screen.getByRole('button',{name:'Markdown .md'}));fireEvent.change(screen.getByLabelText('Choose a file'),{target:{files:[new File(['# Note'],'note.md')]}});fireEvent.click(screen.getByRole('button',{name:'Upload and parse privately'}));
+    await screen.findByText('Converted note');fireEvent.click(screen.getByLabelText('I reviewed the converted text and all warnings.'));fireEvent.click(screen.getByRole('button',{name:'Continue'}));fireEvent.click(screen.getByRole('button',{name:'Check destination and compare'}));fireEvent.click(await screen.findByLabelText('I confirm the destination audience may read this source.'));fireEvent.click(screen.getByRole('button',{name:'Confirm import'}));
+    const retryCommit=await screen.findByRole('button',{name:'Review destination and retry import'});expect(screen.queryByRole('button',{name:'Retry failed items / OCR pages'})).toBeNull();fireEvent.click(retryCommit);
+    expect(screen.getByRole('button',{name:'Confirm import'})).toBeDisabled();fireEvent.click(screen.getByRole('button',{name:'Check destination and compare'}));const audience=await screen.findByLabelText('I confirm the destination audience may read this source.');expect(audience).not.toBeChecked();fireEvent.click(audience);fireEvent.click(screen.getByRole('button',{name:'Confirm import'}));
+    await waitFor(()=>expect(commits).toBe(2));expect(vi.mocked(knowledgeImportRequest).mock.calls.filter(([action])=>action==='retry')).toHaveLength(0);
+  });
+
 });

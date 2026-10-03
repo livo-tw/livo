@@ -1,5 +1,8 @@
 import type { Context } from 'hono';
-import type { AppContext, AuthCtx, Env } from './env';
+import type { AppContext, AuthCtx, Ctx, Env } from './env';
+import { notifyChanges } from './notify';
+import { rowToWire } from './meta';
+import { TABLES } from './tables';
 import { isDemoMember } from './env';
 import { knowledgePermissionSql } from './knowledgeSql';
 import { createQaIssue, QaError, type QaCreateInput } from './qa/domain';
@@ -15,7 +18,7 @@ const optionalId = (value: unknown) => value == null || value === '' ? null : wo
 const fields = (alias: string) => `${alias}.id,${alias}.page_id AS pageId,${alias}.anchor_id AS anchorId,${alias}.text,${alias}.is_done AS isDone,${alias}.version,${alias}.updated_by AS updatedBy,${alias}.updated_at AS updatedAt,${alias}.completed_by AS completedBy,${alias}.completed_at AS completedAt`;
 
 /** Every query, including reverse-link counts, joins the live page and actor ACL. */
-export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unknown): Promise<unknown> {
+export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unknown, ctx?: Ctx): Promise<unknown> {
   const body = workflowRecord(raw), action = String(body.action || ''), ws = auth.member.workspaceId, memberId = auth.member.id;
   const live = freshActor(auth), db = env.DB;
   const all = async (sql: string, params: Params = []) => (await db.prepare(sql).bind(...params).all<Row>()).results;
@@ -169,13 +172,23 @@ export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unk
     const code = error instanceof Error ? error.message.match(/(?:kb_workflow|qa)_[a-z_]+/)?.[0] : undefined;
     workflowFail(code || 'kb_workflow_conflict', 409);
   }
+  // Only the winning transaction reaches this point. Replays return above, and
+  // notifications contain the published work item, never its private KB source.
+  if (ctx && (action === 'create_task' || action === 'create_qa')) {
+    try {
+      const table = action === 'create_task' ? 'tasks' : 'qa_issues';
+      const columns = table === 'tasks' ? '*' : 'id,workspace_id,project_id,version';
+      const created = await first(`SELECT ${columns} FROM ${table} WHERE workspace_id=? AND id=?`, [ws, result.targetId]);
+      if (created) notifyChanges(env, ctx, [{ table, eventType: 'INSERT', new: rowToWire(created, TABLES[table]), old: null }], ws);
+    } catch { /* A transport failure must not make a committed command appear to fail. */ }
+  }
   return result;
 }
 
 export async function handleKnowledgeWorkflow(c: Context<AppContext>): Promise<Response> {
   try {
     const raw = await c.req.text(); if (raw.length > 262144) workflowFail('kb_workflow_too_large', 413);
-    return c.json(await executeKnowledgeWorkflow(c.env, c.get('auth'), JSON.parse(raw)));
+    return c.json(await executeKnowledgeWorkflow(c.env, c.get('auth'), JSON.parse(raw), c.executionCtx));
   } catch (error) {
     const e = error instanceof KnowledgeWorkflowError || error instanceof QaError ? error : new KnowledgeWorkflowError('kb_workflow_invalid', 400);
     return c.json({error:{code:e.code,message:e.code}}, e.status as 400);

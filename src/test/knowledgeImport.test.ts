@@ -16,6 +16,29 @@ function harness() {
   return {execute,start,jobs,repo,files,background,commits:()=>commits,setActor:(a:KnowledgeActor)=>{actor=a;},setPolicy:(p:ImportPolicy)=>{policy=p;},expire:()=>{clock+=25*3600000;},advance:(ms:number)=>{clock+=ms;},setTransport:(next:typeof fetch)=>{transport=next;}};
 }
 describe('private knowledge imports',()=>{
+  it('persists the retention identity before storing the first private object',async()=>{
+    const h=harness(),write=h.repo.putFile;let writes=0;
+    h.repo.putFile=async(key,data,type)=>{expect(h.jobs.has(key.split('/')[1])).toBe(true);writes++;await write(key,data,type);};
+    await h.start();expect(writes).toBe(1);
+    const tasks=h.background.length;h.repo.expiredJobs=async()=>{throw new Error('User reads must not run maintenance');};
+    await h.execute({action:'list'});expect(h.background.length).toBe(tasks);
+  });
+  it('does not upload when job persistence fails and removes a write completed after expiry',async()=>{
+    const rejected=harness();rejected.repo.saveJob=async()=>false;
+    await expect(rejected.start()).rejects.toThrow('job_changed');expect(rejected.files.size).toBe(0);
+    const late=harness(),write=late.repo.putFile;
+    late.repo.putFile=async(key,data,type)=>{await write(key,data,type);late.expire();};
+    await expect(late.start()).rejects.toThrow('preview_expired');expect(late.files.size).toBe(0);expect(late.jobs.size).toBe(1);
+  });
+  it('reports multibyte converted bodies exceeding the UTF-8 byte cap',async()=>{
+    const h=harness();h.setTransport(async()=>new Response(JSON.stringify({result:{body:'字'.repeat(300001),warnings:[],pages:[],assets:[],hash:'a'.repeat(64),parser_version:'test',incomplete:false,needs_review:false}})));
+    const job=await h.start();expect(job.status).toBe('failed');expect(job.items[0].error).toBe('parsed_document_too_large');expect(h.commits()).toBe(0);
+  });
+  it('caps the streamed processor response before JSON parsing even without Content-Length',async()=>{
+    const h=harness();let cancelled=false;
+    h.setTransport(async()=>new Response(new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(1024*1024));},cancel(){cancelled=true;}})));
+    const job=await h.start();expect(job.status).toBe('failed');expect(job.items[0].error).toBe('parsed_document_too_large');expect(cancelled).toBe(true);expect(h.commits()).toBe(0);
+  });
   it('a superseded parser cannot overwrite a retry that has already committed',async()=>{
     const h=harness();let finishOld!:(response:Response)=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
     h.setTransport(async()=>{started();return new Promise<Response>(resolve=>{finishOld=resolve;});});
@@ -49,5 +72,23 @@ describe('private knowledge imports',()=>{
   it('does not allow import permission to grant custom page ACL management',async()=>{const h=harness(),job=await h.start();await expect(h.execute({action:'preview_target',job_id:job.id,destination:{...destination,policy:{mode:'custom',view:rule,edit:rule,comment:rule}}})).rejects.toThrow('import_forbidden');});
   it('requires the current destination version and preserves manual content',async()=>{const h=harness(),job=await h.start();await expect(h.execute({action:'preview_target',job_id:job.id,destination:{...destination,mode:'update',target_id:'pm-page',expected_version:3}})).rejects.toThrow('destination_changed');const preview=await h.execute({action:'preview_target',job_id:job.id,destination:{...destination,mode:'update',target_id:'pm-page',expected_version:4}}) as {current:{body:string};preserve_manual_body:boolean};expect(preview.current.body).toBe('<p>Human edits</p>');expect(preview.preserve_manual_body).toBe(true);});
   it('cannot import through arbitrary URLs or off-host Notion attachment redirects',()=>{expect(notionPageId('https://www.notion.so/Page-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe('a'.repeat(32));expect(()=>notionPageId('https://127.0.0.1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toThrow();expect(allowedNotionAsset('https://prod-files-secure.s3.us-west-2.amazonaws.com/file')).toBe(true);for(const url of ['http://169.254.169.254/latest','https://file.notion.so.evil.test/file','https://file.notion.so@127.0.0.1/file','https://file.notion.so:8443/file'])expect(allowedNotionAsset(url)).toBe(false);});
-  it('cancel keeps successfully committed pages and blocks a new commit',async()=>{const h=harness(),job=await h.start();const result=await h.execute({action:'cancel',job_id:job.id}) as ImportJob;expect(result.status).toBe('cancelled');await expect(h.execute({action:'commit',job_id:job.id,version:result.version,mappings:[]})).rejects.toThrow('job_not_ready');});
+  it('cancel immediately removes uncommitted originals, assets and staged writes after the version fence',async()=>{
+    const h=harness(),job=await h.start(),prefix=`member-1/${job.id}/`;
+    job.items[0].assets=[{key:prefix+'asset',name:'asset.png',type:'image/png',size:1}];job.staged_keys=[prefix+'abandoned'];
+    h.files.set(prefix+'asset',new Uint8Array(1));h.files.set(prefix+'abandoned',new Uint8Array(1));h.jobs.set(job.id,job);
+    const remove=h.repo.deleteFile;h.repo.deleteFile=async key=>{expect(h.jobs.get(job.id)?.status).toBe('cancelled');await remove(key);};
+    const result=await h.execute({action:'cancel',job_id:job.id}) as ImportJob;
+    expect(result.status).toBe('cancelled');expect(h.files.size).toBe(0);
+    await expect(h.execute({action:'commit',job_id:job.id,version:result.version,mappings:[]})).rejects.toThrow('job_not_ready');
+  });
+  it('cancel preserves committed source files and keeps failed deletes discoverable for scheduled retry',async()=>{
+    const h=harness(),job=await h.start();
+    await h.execute({action:'commit',job_id:job.id,version:job.version,mappings:[{item_id:job.items[0].id,destination,reviewed:true,confirm_audience:true}]});
+    // Adapters consult durable sources, not the potentially stale job status.
+    h.repo.deleteFile=async key=>{const referenced=(await h.repo.sources((await h.repo.getJob(job.id))!.items[0].page_id!)).some(source=>source.original.key===key);if(!referenced)h.files.delete(key);};
+    await h.execute({action:'cancel',job_id:job.id});expect(h.files.has(job.items[0].original.key)).toBe(true);expect(h.commits()).toBe(1);
+    const failed=harness(),pending=await failed.start();failed.repo.deleteFile=async()=>{throw new Error('storage unavailable');};
+    const cancelled=await failed.execute({action:'cancel',job_id:pending.id}) as ImportJob;
+    expect(cancelled.status).toBe('cancelled');expect(failed.files.size).toBe(1);expect(failed.jobs.has(pending.id)).toBe(true);
+  });
 });
