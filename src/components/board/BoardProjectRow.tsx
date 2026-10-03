@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import React, { useMemo, useCallback, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Task, Status, Project, ProductLine } from '@/types';
@@ -23,6 +24,7 @@ const BoardProjectRow = React.memo(({
   cardFields, subtaskMode, customCardFields,
 }: BoardProjectRowProps) => {
   const isMobile = useIsMobile();
+  const getProjectColor = useProjectColor();
   const [dragOverStatusId, setDragOverStatusId] = useState<string | null>(null);
 
   return (
@@ -30,7 +32,7 @@ const BoardProjectRow = React.memo(({
       <div
         className="flex items-center gap-2.5 px-3 md:px-4 py-2.5 md:py-3 cursor-pointer hover:bg-accent/30 transition-colors"
         onClick={onToggle}
-        style={{ borderLeft: `4px solid ${project.color}` }}
+        style={{ borderLeft: `4px solid ${getProjectColor(project)}` }}
       >
         <span className="text-muted-foreground">
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}

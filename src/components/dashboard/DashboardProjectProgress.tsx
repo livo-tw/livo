@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { useTranslation } from 'react-i18next';
 
 interface ProjectItem {
@@ -16,6 +17,7 @@ interface DashboardProjectProgressProps {
 }
 
 const DashboardProjectProgress = ({ projectProgressData }: DashboardProjectProgressProps) => {
+  const getProjectColor = useProjectColor();
   const { t } = useTranslation();
 
   return (
@@ -33,7 +35,7 @@ const DashboardProjectProgress = ({ projectProgressData }: DashboardProjectProgr
                 <div className="text-[13px] md:text-sm font-bold text-foreground">{project.pct}%</div>
               </div>
               <div className="w-full bg-border rounded-full h-2 mb-2 md:mb-3">
-                <div className="h-2 rounded-full transition-all" style={{ width: `${project.pct}%`, backgroundColor: project.color }} />
+                <div className="h-2 rounded-full transition-all" style={{ width: `${project.pct}%`, backgroundColor: getProjectColor(project) }} />
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>

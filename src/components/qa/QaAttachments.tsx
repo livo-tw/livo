@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, FileText, Film, Loader2 } from 'lucide-react';
+import { Download, FileText, Film, Loader2, Plus } from 'lucide-react';
 import type { QaAttachment } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import { qaButton } from './QaFields';
 import QaDraftAttachments, { qaFileSize, uploadQaDraftFiles, useQaDraftFiles } from './QaDraftAttachments';
 
-export default function QaAttachments({ issueId, attachments, client, onChanged, onError, onBusyChange }: { issueId: string; attachments: QaAttachment[]; client: QaClient; onChanged: () => Promise<void>; onError: (error: unknown) => void; onBusyChange?: (busy: boolean) => void }) {
+export default function QaAttachments({ issueId, attachments, client, onChanged, onError, onBusyChange, compact = false }: { issueId: string; attachments: QaAttachment[]; client: QaClient; onChanged: () => Promise<void>; onError: (error: unknown) => void; onBusyChange?: (busy: boolean) => void; compact?: boolean }) {
   const { t } = useTranslation();
   const draft = useQaDraftFiles();
   const [busy, setBusy] = useState(false), [refreshFailed, setRefreshFailed] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; file: QaAttachment } | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const keepUploadVisible = busy || draft.files.length > 0 || refreshFailed;
+  const showUpload = !compact || uploadOpen || keepUploadVisible;
   const active = useRef(true), running = useRef(false), disabled = useRef(false), downloadController = useRef<AbortController>();
   const uploadController = useRef<AbortController>();
   const busyCallback = useRef(onBusyChange); busyCallback.current = onBusyChange;
@@ -49,14 +52,14 @@ export default function QaAttachments({ issueId, attachments, client, onChanged,
     finally { if (active.current && !controller.signal.aborted) setLoading(null); }
   };
   return <div className="space-y-3">
-    <p className="text-sm text-muted-foreground">{t('qa.attachmentHint')}</p>
-    <QaDraftAttachments files={draft.files} rejected={draft.rejected} busy={busy} onFiles={files => { if (!running.current && !disabled.current && draft.add(files).length) void upload(); }} onRemove={id => { if (!running.current) draft.remove(id); }} onRetry={() => void upload()} />
-    {refreshFailed && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><p className="text-muted-foreground">{t('qa.attachmentsRefreshFailed')}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void upload()}>{t('qa.reload')}</button></div>}
     <ul className="space-y-2">{attachments.map(file => <li key={file.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 text-sm">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">{file.mimeType.startsWith('video/') ? <Film className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> : <FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}</span>
       <div className="min-w-0 flex-1"><p className="break-all font-medium">{file.fileName}</p><p className="mt-0.5 text-xs text-muted-foreground">{qaFileSize(file.size)}</p></div>
       <button type="button" className={`${qaButton} shrink-0`} disabled={loading !== null} onClick={() => void open(file)}>{loading === file.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}{t(loading === file.id ? 'qa.downloading' : 'qa.view')}</button>
     </li>)}</ul>
+    {compact && <button type="button" className={qaButton} aria-expanded={showUpload} disabled={keepUploadVisible} onClick={() => setUploadOpen(previous => !previous)}><Plus size={14} aria-hidden="true" />{t(showUpload ? 'qa.hideAttachmentUpload' : 'qa.addAttachment')}</button>}
+    {showUpload && <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('qa.attachmentHint')}</p><QaDraftAttachments files={draft.files} rejected={draft.rejected} busy={busy} onFiles={files => { if (!running.current && !disabled.current && draft.add(files).length) void upload(); }} onRemove={id => { if (!running.current) draft.remove(id); }} onRetry={() => void upload()} /></div>}
+    {refreshFailed && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><p className="text-muted-foreground">{t('qa.attachmentsRefreshFailed')}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void upload()}>{t('qa.reload')}</button></div>}
     {preview && <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><span className="break-all text-sm">{preview.file.fileName}</span><button type="button" className={qaButton} onClick={() => setPreview(null)}>{t('qa.closePreview')}</button></div>
       {/^(video\/(mp4|webm))$/i.test(preview.file.mimeType) && <video className="max-h-[60vh] w-full rounded bg-black" controls preload="metadata" src={preview.url} />}

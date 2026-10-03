@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { Fragment, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -29,9 +30,10 @@ export function ProjectCheckboxList({ groups, selected, onToggle }: {
   selected: readonly string[];
   onToggle: (id: string) => void;
 }) {
+  const getProjectColor = useProjectColor();
   return <ProjectGroupedList groups={groups}>{project => <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent cursor-pointer">
     <input type="checkbox" checked={selected.includes(project.id)} onChange={() => onToggle(project.id)} className="rounded border-border accent-primary" />
-    {project.color && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: project.color }} />}
+    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getProjectColor(project) }} />
     <span className="text-foreground truncate">{project.name}</span>
   </label>}</ProjectGroupedList>;
 }
@@ -44,10 +46,11 @@ export function ProjectMultiSelect({ projects, label, selected, onToggle, option
   options?: ProjectGroupOptions;
 }) {
   const { productLines } = useProjectContext();
+  const getProjectColor = useProjectColor();
   const { t } = useTranslation();
   const groups = groupProjectsByLine(productLines, projects, options);
   return <MultiSelectDropdown label={label} selected={selected} onToggle={onToggle} options={groups.flatMap(group => group.projects.map(project => ({
-    id: project.id, label: project.name, color: project.color,
+    id: project.id, label: project.name, color: getProjectColor(project),
     group: { id: group.line?.id ?? '__unclassified', label: projectGroupLabel(group.line, t('common.other')) },
   })))} />;
 }

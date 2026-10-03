@@ -22,8 +22,12 @@ export function QaPriorityBadge({ priority, issue }: { priority: number; issue?:
 }
 export function QaSeverityBadge({ severity }: { severity: QaSeverity }) {
   const { t } = useTranslation();
+  // Reuse the task card's icon treatment; severity remains its own domain field.
+  const visual = severity === 'untriaged' ? null : priorityConfig[severity];
   return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title={t('qa.severity')}>
-    <AlertCircle size={12} aria-hidden="true" />{t('qa.severity')}: {t(`qa.severityNames.${severity}`)}
+    <span aria-hidden="true" className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${visual ? `${visual.className} ${visual.bg}` : 'bg-muted text-muted-foreground'}`}>
+      {visual ? visual.icon : <AlertCircle size={13} />}
+    </span>{t('qa.severity')}: {t(`qa.severityNames.${severity}`)}
   </span>;
 }
 export function QaStateBadge({ state, label }: { state: QaState; label?: string }) {

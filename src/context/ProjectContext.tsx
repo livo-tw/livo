@@ -1,8 +1,11 @@
 import { createContext, useContext } from 'react';
 import type { Project, ProductLine } from '@/types';
+import type { ProjectColorResolver } from '@/lib/projectColors';
 
 export interface ProjectContextType {
   allProjects: Project[];
+  /** Presentation only; allProjects and mutations retain the stored colour. */
+  getProjectColor?: ProjectColorResolver;
   setAllProjects: (p: Project[]) => void;
   selectedProjectId: string | null;
   setSelectedProjectId: (id: string | null) => void;

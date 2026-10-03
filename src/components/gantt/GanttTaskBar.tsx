@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import React from 'react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
@@ -25,10 +26,11 @@ const GanttTaskBar = React.memo(({
   users, onPointerDown, onTouchStart, onClickTask, dragActivatedRef,
 }: GanttTaskBarProps) => {
   const { t } = useTranslation();
+  const getProjectColor = useProjectColor();
   const isMobile = useIsMobile();
   const barColor = isSubtask
-    ? (task.isOverdue ? '#FF7452' : (task.project?.color ? task.project.color + 'BB' : '#4C9AFF'))
-    : (task.isOverdue ? '#FF5630' : (task.project?.color || '#0065FF'));
+    ? (task.isOverdue ? '#FF7452' : (task.project ? getProjectColor(task.project) + 'BB' : '#4C9AFF'))
+    : (task.isOverdue ? '#FF5630' : (task.project ? getProjectColor(task.project) : '#0065FF'));
 
   return (
     <Tooltip>

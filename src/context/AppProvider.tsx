@@ -1,3 +1,4 @@
+import { createProjectColorResolver } from '@/lib/projectColors';
 import { DeploymentEnvironmentProvider } from './DeploymentEnvironmentContext';
 import { useMemo, useCallback } from 'react';
 import i18n from '@/i18n';
@@ -136,6 +137,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   const projectValue = useMemo(() => ({
     allProjects: project.allProjects, setAllProjects: project.setAllProjects,
+    getProjectColor: createProjectColorResolver(project.allProjects),
     selectedProjectId: project.selectedProjectId, setSelectedProjectId: project.setSelectedProjectId,
     selectedLineId: project.selectedLineId, setSelectedLineId: project.setSelectedLineId,
     productLines: project.productLines, refreshProductLines: project.refreshProductLines,

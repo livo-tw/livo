@@ -28,16 +28,24 @@ export default function QaReportForm({ initial, projectId, projects, productLine
       {!initial && <QaSelect label={t('qa.project')} required value={form.projectId} onChange={e => change('projectId', e.target.value)}><option value="">{t('qa.choose')}</option><ProjectSelectOptions groups={groupProjectsByLine(productLines, projects)} /></QaSelect>}
       <QaField label={t('qa.titleField')} required maxLength={200} value={form.title} onChange={e => change('title', e.target.value)} />
       <QaField label={t('qa.actual')} multiline required maxLength={20000} value={form.actual} onChange={e => change('actual', e.target.value)} />
-      <div className="grid gap-4 rounded-lg border border-border bg-muted/20 p-3 sm:grid-cols-2 sm:p-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <QaEnvironmentField label={t('qa.environment')} required value={form.observedEnvironment} onChange={value => change('observedEnvironment', value)} />
         <QaVersionField label={t('qa.observedVersion')} value={form.observedVersion || ''} onChange={value => change('observedVersion', value)} suggestions={versions} />
-        <QaField label={t('qa.problemArea')} hint={t('qa.problemAreaHint')} maxLength={100} value={form.component} onChange={e => change('component', e.target.value)} />
-        {!initial && <QaSelect label={t('qa.severity')} value={form.severity} onChange={e => change('severity', e.target.value as QaSeverity)}>{['untriaged', 'low', 'medium', 'high'].map(s => <option key={s} value={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <QaField label={t('qa.steps')} multiline maxLength={20000} value={form.steps} onChange={e => change('steps', e.target.value)} />
-        <QaField label={t('qa.expected')} multiline maxLength={20000} value={form.expected} onChange={e => change('expected', e.target.value)} />
-      </div>
+      <details open={!!initial?.steps || !!initial?.expected} className="rounded-lg border border-border p-3">
+        <summary className="cursor-pointer text-sm font-medium">{t('qa.reportDetails')}</summary>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <QaField label={t('qa.steps')} multiline maxLength={20000} value={form.steps} onChange={e => change('steps', e.target.value)} />
+          <QaField label={t('qa.expected')} multiline maxLength={20000} value={form.expected} onChange={e => change('expected', e.target.value)} />
+        </div>
+      </details>
+      <details open={!!initial?.component} className="rounded-lg border border-border p-3">
+        <summary className="cursor-pointer text-sm font-medium">{t('qa.additionalDetails')}</summary>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <QaField label={t('qa.problemArea')} hint={t('qa.problemAreaHint')} maxLength={100} value={form.component} onChange={e => change('component', e.target.value)} />
+          {!initial && <QaSelect label={t('qa.severity')} value={form.severity} onChange={e => change('severity', e.target.value as QaSeverity)}>{['untriaged', 'low', 'medium', 'high'].map(s => <option key={s} value={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
+        </div>
+      </details>
     </fieldset>
     {children && <div className="min-w-0 border-t border-border pt-5">{children}</div>}
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
