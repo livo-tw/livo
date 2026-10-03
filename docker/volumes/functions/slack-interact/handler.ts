@@ -4,8 +4,10 @@ import { handleWorkspaceInteraction } from './workspace-handler.ts';
 import type { WorkspaceData } from './workspace-backend.ts';
 import { detailModal } from './workspace-ui.ts';
 import { workspaceText } from './workspace-i18n.ts';
+import { handleKnowledgeSlack, type KnowledgeSlackActions } from './knowledge.ts';
 
 export interface Actions {
+  knowledge?: KnowledgeSlackActions;
   qa?: QaSlackActions;
   workspace?: WorkspaceData;
   enabled(): Promise<boolean>;
@@ -35,6 +37,10 @@ const safeError = (error: unknown) => error instanceof Error && error.name === '
 /** The transport never interprets commands. All ACK response payloads originate here. */
 export async function handleInteraction(p: Row, envelopeId: string, d: Actions): Promise<Row> {
   if (d.qa && isQaSlackPayload(p)) return handleQaSlack(p, envelopeId, d.qa);
+  if (d.knowledge) {
+    const knowledge = await handleKnowledgeSlack(p, d.knowledge);
+    if (knowledge !== undefined) return knowledge;
+  }
   try {
     const workspaceResponse = await handleWorkspaceInteraction(p, d, sourceOf(p));
     if (workspaceResponse !== undefined) return workspaceResponse;

@@ -8,7 +8,7 @@
 //   functions/*  → one handler per legacy Edge Function
 
 import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
+import type { Handler, MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import type { AppContext, Env } from './env';
 import { DEFAULT_WORKSPACE, DEMO_BLOCKED_MESSAGE, isCloudSignupEnabled, isDemoMember } from './env';
@@ -26,6 +26,9 @@ import { runQuery, roleRank } from './db';
 import { handleRpc } from './rpc';
 import { handleUpload, handleDownload, handleRemove, isKnowledgeStoragePath } from './storage';
 import { handleQa } from './qa';
+import { handleKnowledgeWorkflow } from './knowledgeWorkflow';
+import { handleKnowledgeImport } from './functions/knowledgeImport';
+import { ImportError } from './knowledgeImport';
 import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
 import {
@@ -124,7 +127,21 @@ app.post('/rest/v1/rpc/:fn', (c) => handleRpc(c, c.req.param('fn'))); // legacy 
 
 // ── Functions (Edge Function ports) ───────────────────────────────────────
 app.post('/api/functions/qa', requireMember, handleQa); // read/write demo and opt-in guards are action-aware
+app.post('/api/functions/knowledge-workflow', requireMember, handleKnowledgeWorkflow);
+const knowledgeImport: Handler<AppContext> = async (c) => {
+  try {
+    const raw = await c.req.text();
+    if (raw.length > 30 * 1024 * 1024) return c.json({ error: { code: 'file_too_large', message: 'file_too_large' } }, 413);
+    return c.json(await handleKnowledgeImport(c.env, c.executionCtx, c.get('auth'), JSON.parse(raw)));
+  } catch (error) {
+    const status = error instanceof ImportError ? error.status : error instanceof SyntaxError ? 400 : 500;
+    const code = error instanceof ImportError ? error.code : error instanceof SyntaxError ? 'invalid_request' : 'import_failed';
+    return c.json({ error: { code, message: code } }, status as 400);
+  }
+};
+app.post('/api/functions/knowledge-import', requireMember, knowledgeImport);
 app.post('/api/functions/qa-slack/:workspaceId', handleQaSlackHttp); // Slack HMAC + timestamp; actor/workspace checked by adapter
+app.post('/api/functions/slack-interact/:workspaceId', handleQaSlackHttp);
 app.post('/api/functions/manage-member', requireMember, demoGuard, handleManageMember);
 app.post('/api/functions/slack-notify', requireMember, handleSlackNotify);
 app.post('/api/functions/slack-channels', requireMember, handleSlackChannels);
@@ -151,6 +168,8 @@ app.get('/api/functions/cloud-waitlist-approve', cloudSignupOnly, handleCloudWai
 app.get('/api/functions/og-task', handleOgTask);
 
 // Legacy /functions/v1/* aliases (old hardcoded URLs)
+app.post('/functions/v1/knowledge-workflow', requireMember, handleKnowledgeWorkflow);
+app.post('/functions/v1/knowledge-import', requireMember, knowledgeImport);
 app.post('/functions/v1/manage-member', requireMember, demoGuard, handleManageMember);
 app.post('/functions/v1/slack-notify', requireMember, handleSlackNotify);
 app.post('/functions/v1/import-jira', requireMember, demoGuard, requireAdmin, handleImportJira);

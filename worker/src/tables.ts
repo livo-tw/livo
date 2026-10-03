@@ -22,6 +22,14 @@
 import type { TableRegistry } from './meta';
 
 export const TABLES: TableRegistry = {
+  kb_navigation_preferences: { pk: 'member_id', clientAccess: 'none', jsonCols: ['preferences'] },
+  kb_source_snapshots: { pk: 'id', clientAccess: 'none', jsonCols: ['provenance'] },
+  kb_checklist_items: { pk: 'id', clientAccess: 'none', boolCols: ['is_done'] },
+  kb_work_links: { pk: 'id', clientAccess: 'none' },
+  kb_workflow_commands: { pk: 'id', clientAccess: 'none', jsonCols: ['result_json'] },
+  knowledge_import_policy: { pk: 'workspace_id', clientAccess: 'none', jsonCols: ['data'] },
+  knowledge_import_jobs: { pk: 'id', clientAccess: 'none', jsonCols: ['data'] },
+  knowledge_import_sources: { pk: 'id', clientAccess: 'none', jsonCols: ['original', 'assets'] },
   // QA's guarded command API owns these tables. Query cannot bypass workflow/feature gates.
   qa_issues: { pk:'id', clientAccess:'none', jsonCols:['data'] },
   qa_commands: { pk:'id', clientAccess:'none', jsonCols:['issue_data','result_json'] },

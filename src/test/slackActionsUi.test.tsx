@@ -29,8 +29,8 @@ describe('Slack actions capability and feature switches', () => {
     const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock); render(<SlackActionsSection />);
     expect(screen.getByText('qa.slackCloud')).toBeTruthy(); expect(fetchMock).not.toHaveBeenCalled();
   });
-  it('offers manual mapping and lets an admin pick only plain members or themselves', async () => {
-    Object.assign(state, { on: true, cloud: false, role: 'admin', demo: false });
+  it('offers manual mapping only to the workspace owner', async () => {
+    Object.assign(state, { on: true, cloud: false, role: 'super_admin', demo: false });
     const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('slackUsers=1')
       ? json({ users: [{ id: 'UEXAMPLE', name: 'Slack Person', email: 'person@example.org' }] })
@@ -39,9 +39,20 @@ describe('Slack actions capability and feature switches', () => {
     fireEvent.click(screen.getByText('slackActions.manual.load'));
     const memberSelect = await waitFor(() => screen.getByLabelText('slackActions.manual.member')) as HTMLSelectElement;
     const options = [...memberSelect.options].map(o => o.value).filter(Boolean);
-    expect(options).toEqual(['admin-self', 'member-plain']);
+    expect(options).toEqual(['admin-self', 'member-plain', 'admin-other', 'super-one']);
     const slackSelect = screen.getByLabelText('slackActions.manual.slackUser') as HTMLSelectElement;
     expect([...slackSelect.options].map(o => o.value)).toContain('UEXAMPLE');
+  });
+  it('lets admins inspect status but cannot assign identities or unbind members', async () => {
+    Object.assign(state, { on: true, cloud: false, role: 'admin', demo: false });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ connected: false, lastSeen: null,
+      bindings: [{ id: 'example-id', display_name: 'Example Slack', memberName: 'Example member', active: true, verifiedBy: 'email' }] })));
+    vi.stubGlobal('fetch', fetchMock); render(<SlackActionsSection />);
+    expect(screen.getByText('slackActions.manual.ownerOnly')).toBeTruthy();
+    expect(screen.queryByText('slackActions.manual.load')).toBeNull();
+    const unbind = await waitFor(() => screen.getByText('slackActions.unbind')) as HTMLButtonElement;
+    expect(unbind.disabled).toBe(true);
+    expect(fetchMock.mock.calls.every((call: unknown[]) => !(call[1] as RequestInit)?.body)).toBe(true);
   });
   it('shows a clear demo state without touching a backend', () => {
     Object.assign(state, { on: true, cloud: false, role: 'admin', demo: true });

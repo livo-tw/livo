@@ -16,6 +16,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source: 'worker/src/knowledgeImport.ts', copies: ['docker/volumes/functions/knowledge-import/knowledgeImport.ts', 'supabase/functions/knowledge-import/knowledgeImport.ts'], denoAccess: true },
+  { source: 'worker/src/knowledgeAccess.ts', copies: ['docker/volumes/functions/knowledge-import/knowledgeAccess.ts', 'supabase/functions/knowledge-import/knowledgeAccess.ts'] },
+  { source: 'src/lib/knowledgeWorkflowDomain.ts', copies: ['worker/src/knowledgeWorkflow/domain.ts', 'docker/volumes/functions/knowledge-workflow/domain.ts', 'supabase/functions/knowledge-workflow/domain.ts'] },
+  { source: 'docker/volumes/functions/knowledge-import/index.ts', copies: ['supabase/functions/knowledge-import/index.ts'] },
+  { source: 'docker/volumes/functions/knowledge-workflow/index.ts', copies: ['supabase/functions/knowledge-workflow/index.ts'] },
+  { source: 'docker/volumes/functions/knowledge-workflow/service.ts', copies: ['supabase/functions/knowledge-workflow/service.ts'] },
+  { source: 'src/lib/knowledgeSlack.ts', copies: ['worker/src/knowledgeSlackCore.ts', 'docker/volumes/functions/slack-interact/knowledge.ts', 'supabase/functions/slack-interact/knowledge.ts'] },
   { source: 'src/lib/deploymentEnvironments.ts', copies: ['src/lib/qa/environments.ts', 'worker/src/qa/environments.ts', 'docker/volumes/functions/qa/environments.ts', 'supabase/functions/qa/environments.ts'] },
   { source: 'src/lib/projectGroups.ts', copies: ['src/lib/qa/projectGroups.ts', 'worker/src/qa/projectGroups.ts', 'docker/volumes/functions/qa/projectGroups.ts', 'supabase/functions/qa/projectGroups.ts', 'docker/volumes/functions/slack-interact/projectGroups.ts', 'supabase/functions/slack-interact/projectGroups.ts'] },
   { source: 'src/lib/qa/workflow.ts', copies: ['worker/src/qa/workflow.ts', 'docker/volumes/functions/qa/workflow.ts', 'supabase/functions/qa/workflow.ts'] },
@@ -61,8 +68,9 @@ const SHARED = [
 
 const check = process.argv.includes('--check');
 const stale = [];
-for (const { source, copies } of SHARED) {
-  const src = fs.readFileSync(path.join(ROOT, source));
+for (const { source, copies, denoAccess } of SHARED) {
+  const original = fs.readFileSync(path.join(ROOT, source));
+  const src = denoAccess ? Buffer.from(original.toString('utf8').replace("from './knowledgeAccess'", "from './knowledgeAccess.ts'")) : original;
   for (const copy of copies) {
     const dest = path.join(ROOT, copy);
     if (!fs.existsSync(path.dirname(dest))) continue;

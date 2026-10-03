@@ -1,5 +1,6 @@
 import { option, type Row } from './core.ts';
 import { workspaceText } from './workspace-i18n.ts';
+import { knowledgeSearchLabel } from './knowledge.ts';
 
 export const TASK_PAGE_SIZE = 8;
 export type TaskQuery = { kind: 'my' | 'review' | 'today' | 'overdue' | 'due' | 'search'; text?: string; page: number };
@@ -56,6 +57,7 @@ export function homeModal(source: Row = {}): Row {
     actions([button('livo_workspace_query', tr(source, '已逾期'), { kind: 'overdue', page: 0 })]),
     actions([button('livo_workspace_search', tr(source, '搜尋卡片'), {}),
       button('livo_workspace_new', tr(source, '建立卡片'), {})]),
+    actions([button('livo_kb_search', knowledgeSearchLabel(source.locale), {})]),
     context(tr(source, '查詢結果只有你看得到；可用範圍依你的 LIVO 帳號權限。到期清單包含你經辦或驗收的未完成任務，日期以台北時間計算。')),
     section('`/livo my` · `/livo review` · `/livo today` · `/livo due` · `/livo overdue`\n`/livo search ' +
       tr(source, '關鍵字') + '` · `/livo ABC-123` · `/livo edit ABC-123`\n`/livo new ` · `/livo comment ABC-123`'),

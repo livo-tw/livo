@@ -24,7 +24,7 @@ export async function knowledgeLockAllowed(env: Env, auth: AuthCtx, lockKey: str
 
 export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: QueryRequest): Promise<QueryResponse> {
   const ws=auth.member.workspaceId || DEFAULT_WORKSPACE, member=auth.member.id;
-  const liveActor=await env.DB.prepare('SELECT id,role,job_title,is_active FROM members WHERE workspace_id=? AND id=?').bind(ws,member).first<{id:string;role:string;job_title:string;is_active:number}>();
+  const liveActor=await env.DB.prepare('SELECT id,role,job_title,is_active FROM members WHERE workspace_id=? AND id=? AND auth_id=?').bind(ws,member,auth.userId).first<{id:string;role:string;job_title:string;is_active:number}>();
   if (!liveActor?.is_active) return fail('kb_forbidden');
   const admin=knowledgeAdmin(liveActor.role);
   const adminSql="EXISTS (SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND role IN ('admin','super_admin'))";
@@ -59,9 +59,9 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
       const parent=typeof values.parent_id==='string' ? knowledgePermissionSql(literal(values.parent_id),'edit',auth) : null;
       const needsAdmin=policy.mode==='custom' || values.admin_only!==undefined || values.is_archived!==undefined;
       statement=env.DB.prepare(`INSERT INTO kb_pages(id,workspace_id,title,body,project_id,parent_id,sort_order,admin_only,is_archived,category,access_policy,created_by,updated_by,created_at,updated_at)
-        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM members WHERE workspace_id=? AND id=? AND auth_id=? AND is_active=1)
         ${parent ? `AND ${parent.sql}` : ''} ${needsAdmin ? `AND ${adminSql}` : ''} RETURNING *`)
-        .bind(id,ws,values.title.trim(),values.body??'',values.project_id??null,values.parent_id??null,values.sort_order??0,values.admin_only?1:0,values.is_archived?1:0,values.category??'general',JSON.stringify(policy),member,member,stamp,stamp,ws,member,...(parent?.params??[]),...(needsAdmin?[ws,member]:[]));
+        .bind(id,ws,values.title.trim(),values.body??'',values.project_id??null,values.parent_id??null,values.sort_order??0,values.admin_only?1:0,values.is_archived?1:0,values.category??'general',JSON.stringify(policy),member,member,stamp,stamp,ws,member,auth.userId,...(parent?.params??[]),...(needsAdmin?[ws,member]:[]));
     } else if (req.op==='update') {
       const version=req.filters?.find(f=>f.col==='version')?.val;
       if (!Number.isSafeInteger(version)) return fail('kb_conflict');
