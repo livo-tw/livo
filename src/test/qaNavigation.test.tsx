@@ -92,6 +92,7 @@ describe('QA navigation preserves pending work', () => {
     const onRefresh = vi.fn(() => new Promise<void>(resolve => { resolveRefresh = resolve; })), onBack = vi.fn();
     const client = { upload: mocks.upload, versions: mocks.versions } as unknown as QaClient;
     render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={onBack} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.addAttachment' }));
     const attachmentInput = screen.getByLabelText('qa.attach');
     fireEvent.change(attachmentInput, { target: { files: [file()] } });
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));

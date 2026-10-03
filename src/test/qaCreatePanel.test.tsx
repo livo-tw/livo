@@ -27,7 +27,7 @@ describe('QA create with evidence', () => {
     const OriginalURL = globalThis.URL, revoke = vi.fn();
     vi.stubGlobal('URL', class extends OriginalURL { static createObjectURL = vi.fn(() => 'blob:local-preview'); static revokeObjectURL = revoke; });
     render(<QaCreatePanel {...props} />);
-    await screen.findByText('qa.versionEmpty');
+    await waitFor(() => expect(versions).toHaveBeenCalledTimes(1));
     const good = proof(), invalid = new File(['svg'], 'unsafe.svg', { type: 'image/svg+xml' });
     selectFiles([good, invalid]); expect(create).not.toHaveBeenCalled(); expect(upload).not.toHaveBeenCalled();
     expect(screen.getByRole('alert').textContent).toContain('qa.fileTypeError');

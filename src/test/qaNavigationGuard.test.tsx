@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
+const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('sonner', () => ({ toast: { info: mocks.toast } }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
@@ -13,7 +13,7 @@ vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProj
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow };
+  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow };
   return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: (): null => null }));
@@ -54,6 +54,7 @@ beforeEach(() => {
   mocks.create.mockImplementation(async (_input: QaCreateInput, id: string) => ({ ...issue, id }));
   mocks.get.mockImplementation(async (id: string) => ({ issue: { ...issue, id }, attachments: [], comments: [], events: [] }));
   mocks.upload.mockResolvedValue({ id: 'attachment1' });
+  mocks.command.mockResolvedValue(issue); mocks.comment.mockResolvedValue({ id: 'comment1' });
 });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); expect(hasQaNavigationGuard()).toBe(false); });
 
@@ -161,6 +162,7 @@ describe('real QA workspace across SPA views', () => {
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     window.history.replaceState({}, '', '/?qa=existing-bug');
     render(<Spa />); await screen.findByRole('heading', { name: input.title });
+    fireEvent.click(screen.getByRole('button', { name: 'qa.addAttachment' }));
     const attachment = screen.getByLabelText('qa.attach');
     fireEvent.change(attachment, { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
@@ -171,6 +173,36 @@ describe('real QA workspace across SPA views', () => {
     expect(window.location.search).toBe('?qa=existing-bug'); expect(mocks.get).toHaveBeenCalledTimes(1);
     await act(async () => resolveUpload({ id: 'attachment1' })); await waitFor(() => expect(hasQaNavigationGuard()).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: 'Task navigation' })); expect(screen.getByRole('heading', { name: 'Task board' })).toBeTruthy();
+  });
+  it.each(['command', 'comment'] as const)('keeps the same issue and pending %s mounted until saving finishes', async kind => {
+    let finish!: (value: unknown) => void;
+    mocks[kind].mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    mocks.get.mockImplementation(async (id: string) => ({ issue: { ...issue, id, state: 'triaged', assigneeId: 'admin', qaOwnerId: 'admin' }, attachments: [], comments: [], events: [] }));
+    window.history.replaceState({}, '', '/?qa=existing-bug');
+    render(<Spa />); await screen.findByRole('heading', { name: input.title });
+    if (kind === 'command') fireEvent.click(screen.getByRole('button', { name: 'qa.startFix' }));
+    else {
+      fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
+      fireEvent.change(screen.getByLabelText(/qa.commentBody/), { target: { value: 'Example verification note' } });
+    }
+    const send = screen.getByRole('button', { name: kind === 'command' ? 'qa.startFix' : 'qa.addComment' });
+    const form = send.closest('form');
+    if (kind === 'comment') fireEvent.click(send);
+    await waitFor(() => expect(mocks[kind]).toHaveBeenCalledTimes(1));
+    const commandId = mocks[kind].mock.calls[0][2];
+    expect(hasQaNavigationGuard()).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Task navigation', hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'My QA navigation', hidden: true }));
+    expect(screen.getByLabelText('Current view')).toHaveTextContent('qa');
+    expect(send.isConnected).toBe(true);
+    expect(screen.getByRole('button', { name: kind === 'command' ? 'qa.startFix' : 'qa.addComment' })).toBe(send);
+    if (kind === 'comment') { expect(send.closest('form')).toBe(form); expect(form?.isConnected).toBe(true); }
+    fireEvent.click(send);
+    expect(mocks[kind]).toHaveBeenCalledTimes(1); expect(mocks[kind].mock.calls[0][2]).toBe(commandId);
+    await act(async () => finish(kind === 'command' ? issue : { id: 'comment1' }));
+    await waitFor(() => expect(hasQaNavigationGuard()).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
+    expect(screen.getByRole('heading', { name: 'Task board' })).toBeTruthy();
   });
   it('immediately tears down and aborts a protected upload when QA capability is revoked', async () => {
     let resolveUpload!: (value: unknown) => void;

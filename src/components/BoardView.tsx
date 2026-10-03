@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { useState, useRef, useMemo, useCallback, type ReactNode } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useUIContext } from '@/context/UIContext';
@@ -74,6 +75,7 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
 /* ── BoardView ── */
 
 const BoardView = () => {
+  const getProjectColor = useProjectColor();
   const { t } = useTranslation();
   const { approvalsEnabled, featureTogglesReady, allTasks, setAllTasks, selectedProjectId, selectedLineId, standupMode, setStandupMode, standupUserId, allProjects, statuses, productLines, updateTaskInDb, sprintActive, currentSprint, users, currentMemberId, currentMember, completeSprint, renameSprint, startSprint, getDefaultSprintName, setSelectedProjectId, setSelectedLineId, setCurrentView, statusLogs, setSelectedTask, customFields, setShowCreateTask } = useAppContext();
   const isMobile = useIsMobile();
@@ -475,7 +477,7 @@ const BoardView = () => {
               <div
                 className="flex items-center gap-2.5 px-3 md:px-4 py-2.5 md:py-3 cursor-pointer hover:bg-accent/30 transition-colors"
                 onClick={() => toggleProject(project.id)}
-                style={{ borderLeft: `4px solid ${project.color}` }}
+                style={{ borderLeft: `4px solid ${getProjectColor(project)}` }}
               >
                 <span className="text-muted-foreground">
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}

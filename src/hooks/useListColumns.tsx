@@ -1,3 +1,4 @@
+import { createProjectColorResolver } from '@/lib/projectColors';
 /**
  * useListColumns — shared hook for all three list views (ListView, AllListView, MyTasksView).
  *
@@ -8,7 +9,7 @@
  * All renderCell logic lives here exactly once; each view just calls it.
  * Custom field columns (cf_*) are automatically included when the view opts in.
  */
-import { useMemo, useCallback } from 'react';
+import { useMemo } from 'react';
 import { AlertTriangle, ExternalLink, ListTree } from 'lucide-react';
 import { useTaskContext } from '@/context/TaskContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -59,6 +60,7 @@ export function buildRenderCell(
 ) {
   const { allTasks, statuses, users, allProjects, tags, sprints, taskDependencies, customFields, customFieldValues } = ctx;
 
+  const getProjectColor = createProjectColorResolver(allProjects);
   return function renderCell(task: Task, key: string): React.ReactNode {
     const status = statuses.find(s => s.id === task.statusId);
     const assignee = users.find(u => u.id === task.assigneeId);
@@ -81,7 +83,7 @@ export function buildRenderCell(
         );
 
       case 'project':
-        return project ? <ProjectBadge name={project.name} color={project.color} /> : null;
+        return project ? <ProjectBadge name={project.name} color={getProjectColor(project)} /> : null;
 
       case 'status':
         return <StatusBadge name={status?.name} color={status?.color} />;
@@ -303,12 +305,11 @@ export function useListColumns(options: UseListColumnsOptions) {
   );
 
   // Build renderCell — memoized, recreated only when context data changes
-  const renderCell = useCallback(
-    (task: Task, key: string) =>
-      buildRenderCell(
+  const renderCell = useMemo(
+    () => buildRenderCell(
         { allTasks, statuses, users, allProjects, tags, sprints, taskDependencies, customFields, customFieldValues },
         formatDate,
-      )(task, key),
+      ),
     [allTasks, statuses, users, allProjects, tags, sprints, taskDependencies, customFields, customFieldValues, formatDate],
   );
 

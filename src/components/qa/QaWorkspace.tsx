@@ -2,6 +2,7 @@ import { Bug, Plus, Settings2, LayoutGrid, List, Search, RefreshCw, SlidersHoriz
 import QaCreatePanel from './QaCreatePanel';
 import QaIssueCard from './QaIssueCard';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
+import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,8 +16,10 @@ import { qaId } from '@/lib/qa/client';
 import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 import { QaField, QaSelect, qaButton, qaPrimary } from './QaFields';
 import QaIssueDetail, { QaFailure } from './QaIssueDetail';
+import type { QaActionDefaults } from '@/lib/qa/boardInteraction';
 import QaKanban from './QaKanban';
 import QaWorkflowSettings from './QaWorkflowSettings';
+import { qaStateColors } from './QaBadges';
 
 export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
   const { t } = useTranslation();
@@ -48,6 +51,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const [workflowError, setWorkflowError] = useState<unknown>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [initialAction, setInitialAction] = useState<QaCommand['type'] | undefined>();
+  const [initialDefaults, setInitialDefaults] = useState<QaActionDefaults | undefined>();
   const canConfigure = actor.role === 'admin' || actor.role === 'super_admin';
   const filters = useMemo(() => ({ projectId: selectedProjectId || undefined, state: state || undefined, mine: owner || undefined, search }), [selectedProjectId, state, owner, search]);
   const createIds = useRef({ id: qaId(), commandId: qaId() });
@@ -55,17 +59,17 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const creatingRef = useRef(false); creatingRef.current = creating;
   const previousProject = useRef(selectedProjectId);
   const currentId = useRef(issueId); currentId.current = issueId;
-  const openIssue = useCallback((id: string, action?: QaCommand['type']) => {
+  const openIssue = useCallback((id: string, action?: QaCommand['type'], defaults?: QaActionDefaults) => {
     const url = new URL(window.location.href);
     if (id) url.searchParams.set('qa', id); else url.searchParams.delete('qa');
-    window.history.replaceState({}, '', url.toString()); setError(null); setIssueId(id); creatingRef.current = false; setCreating(false); setInitialAction(action);
+    window.history.replaceState({}, '', url.toString()); setError(null); setIssueId(id); creatingRef.current = false; setCreating(false); setInitialAction(action); setInitialDefaults(defaults);
   }, []);
   useEffect(() => {
     if (creatingRef.current || hasQaNavigationGuard()) return;
     if (previousProject.current !== selectedProjectId) { previousProject.current = selectedProjectId; setOffset(0); openIssue(''); }
   }, [selectedProjectId, openIssue]);
   useEffect(() => {
-    const pop = () => { if (creatingRef.current || hasQaNavigationGuard()) return; setIssueId(new URLSearchParams(window.location.search).get('qa') || ''); setCreating(false); setInitialAction(undefined); };
+    const pop = () => { if (creatingRef.current || hasQaNavigationGuard()) return; setIssueId(new URLSearchParams(window.location.search).get('qa') || ''); setCreating(false); setInitialAction(undefined); setInitialDefaults(undefined); };
     const createFromToolbar = () => {
       if (creatingBusy.current || creatingRef.current) return;
       const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); window.history.replaceState({}, '', url.toString());
@@ -106,7 +110,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     if (currentId.current === issueId) setDetail(value);
   }, [client, issueId]);
   const beginCreate = () => { if (creatingRef.current) return; creatingRef.current = true; createIds.current = { id: qaId(), commandId: qaId() }; setError(null); setCreating(true); };
-  if (detail && issueId && workflow) return <div key={`detail-${issueId}`} className="flex-1 overflow-y-auto bg-board"><QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} onRefresh={refreshDetail} onBack={() => openIssue('')} /></div>;
+  if (detail && issueId && workflow) return <div key={`detail-${issueId}`} className="flex-1 overflow-y-auto bg-board"><QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBack={() => openIssue('')} /></div>;
   return <div key={creating ? "create" : "workspace"} className="min-w-0 flex-1 overflow-y-auto bg-board p-3 md:p-5">
     <div className="w-full min-w-0 space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -126,7 +130,8 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
         <form className="grid items-end gap-3 p-3 sm:grid-cols-2 xl:grid-cols-[minmax(180px,1.5fr)_minmax(150px,1fr)_minmax(140px,1fr)_minmax(140px,1fr)_auto]" onSubmit={event => { event.preventDefault(); setSearch(searchDraft); setOffset(0); }}>
           <QaField label={t('qa.search')} placeholder={t('qa.searchPlaceholder')} value={searchDraft} onChange={event => setSearchDraft(event.target.value)} />
           <QaSelect label={t('qa.project')} value={selectedProjectId || ''} onChange={event => { setSelectedProjectId(event.target.value || null); setOffset(0); }}><option value="">{t('qa.allProjects')}</option><ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, { archived: 'all' })} /></QaSelect>
-          <QaSelect label={t('qa.allStates')} value={state} onChange={event => { setState(event.target.value as QaState | ''); setOffset(0); }}><option value="">{t('qa.allStates')}</option>{workflow.order.map(value => <option key={value} value={value}>{workflow.labels[value] || t(`qa.state.${value}`)}</option>)}</QaSelect>
+          <ColoredStatusSelect<QaState | ''> label={t('qa.allStates')} value={state} onValueChange={value => { setState(value); setOffset(0); }}
+            options={[{ value: '', label: t('qa.allStates') }, ...workflow.order.map(value => ({ value, label: workflow.labels[value] || t(`qa.state.${value}`), color: qaStateColors[value] }))]} />
           <QaSelect label={t('qa.myTitle')} value={owner} onChange={event => { setOwner(event.target.value as QaListInput['mine'] | ''); setOffset(0); }}><option value="">{t('qa.everyone')}</option>{['assigned', 'testing', 'reported'].map(value => <option key={value} value={value}>{t(`qa.${value}`)}</option>)}</QaSelect>
           <div className="flex gap-2"><button className={qaPrimary}><Search size={15} aria-hidden="true" />{t('qa.searchButton')}</button><button type="button" className={qaButton} onClick={() => setRevision(value => value + 1)} title={t('qa.refresh')} aria-label={t('qa.refresh')}><RefreshCw size={15} aria-hidden="true" /></button></div>
         </form>

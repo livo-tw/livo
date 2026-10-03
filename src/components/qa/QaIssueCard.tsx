@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { ArrowRight, Server, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ProjectBadge, UserBadge } from '@/components/ui/badges';
@@ -27,6 +28,7 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
   stateLabel?: string; list?: boolean;
 }) {
   const { t } = useTranslation();
+  const getProjectColor = useProjectColor();
   const { allProjects } = useProjectContext();
   const { users } = useMemberContext();
   const project = allProjects.find(row => row.id === issue.projectId);
@@ -37,15 +39,16 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
     <button type="button" onClick={() => onOpen(issue.id)} className={`block w-full rounded-lg p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary ${list ? 'md:grid md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] md:gap-x-6' : ''}`}>
       <div className="min-w-0">
         <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
-          <ProjectBadge name={project?.name || '—'} color={project?.color || '#6B778C'} size="xs" />
-          <QaPriorityBadge priority={issue.priority} issue={issue} />
+          <ProjectBadge name={project?.name || '—'} color={getProjectColor(project)} size="xs" />
         </div>
         <h3 className="line-clamp-3 break-words text-sm font-semibold leading-relaxed group-hover:text-primary">{issue.title}</h3>
-        <div className="mt-2 flex flex-wrap items-center gap-2">{stateLabel && <QaStateBadge state={issue.state} label={stateLabel} />}<QaSeverityBadge severity={issue.severity} /></div>
+        <p className="mt-1 text-xs text-muted-foreground" title={issue.id}>#{issue.id.slice(-8)}</p>
+        {stateLabel && <div className="mt-2"><QaStateBadge state={issue.state} label={stateLabel} /></div>}
       </div>
       <div className="min-w-0">
-        <div className="mt-3 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><Server size={12} className="shrink-0" aria-hidden="true" /><span className="truncate">{issue.observedEnvironment || '—'}{issue.observedVersion && ` · ${issue.observedVersion}`}</span></div>
-        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-2">
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><Server size={12} className="shrink-0" aria-hidden="true" /><span className="truncate">{issue.observedEnvironment || '—'}{issue.observedVersion && ` · ${issue.observedVersion}`}</span></div>
+        <div className="mt-2 flex flex-wrap items-center gap-2"><QaPriorityBadge priority={issue.priority} issue={issue} /><QaSeverityBadge severity={issue.severity} /></div>
+        <div className="mt-2 grid grid-cols-2 gap-2 pt-1">
           {[{ label: 'assignee', user: assignee }, { label: 'qaOwner', user: qaOwner }].map(({ label, user }) => <div key={label} className="min-w-0"><span className="mb-1 block text-[10px] text-muted-foreground">{t(`qa.${label}`)}</span>{user ? <UserBadge user={user} /> : <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><UserRound size={12} aria-hidden="true" />{t('qa.unassigned')}</span>}</div>)}
         </div>
       </div>
