@@ -11,7 +11,7 @@ import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useQa } from '@/hooks/useQa';
 import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
-import type { QaCommand, QaDetail, QaListInput, QaListResult, QaState } from '@/lib/qa/domain';
+import type { QaCommand, QaCoordination, QaDetail, QaListInput, QaListResult, QaState } from '@/lib/qa/domain';
 import type { QaWorkflow } from '@/lib/qa/workflow';
 import { qaId } from '@/lib/qa/client';
 import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
@@ -19,6 +19,7 @@ import { QaField, QaSelect, qaButton, qaPrimary } from './QaFields';
 import QaIssueDetail, { QaFailure } from './QaIssueDetail';
 import type { QaActionDefaults } from '@/lib/qa/boardInteraction';
 import QaKanban from './QaKanban';
+import QaCoordinatorSettings from './QaCoordinatorSettings';
 import QaSettingsPage from './QaSettingsPage';
 import { canManageQaConfiguration } from '@/lib/qa/fields';
 import { qaStateColors } from './QaBadges';
@@ -34,7 +35,7 @@ export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
 
 function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { t } = useTranslation();
-  const { client, actor } = useQa();
+  const { client, actor: baseActor } = useQa();
   const { taskDisplayMode = 'modal' } = useUIContext();
   const { allProjects, productLines, selectedProjectId, setSelectedProjectId } = useProjectContext();
   const [issueId, setIssueId] = useState(() => new URLSearchParams(window.location.search).get('qa') || '');
@@ -55,17 +56,28 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const [workflow, setWorkflow] = useState<QaWorkflow | null>(null);
   const [workflowError, setWorkflowError] = useState<unknown>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [coordinatorOpen, setCoordinatorOpen] = useState(false);
+  const [coordination, setCoordination] = useState<QaCoordination | null>(null);
+  const [coordinationError, setCoordinationError] = useState(false);
   const [initialAction, setInitialAction] = useState<QaCommand['type'] | undefined>();
   const [initialDefaults, setInitialDefaults] = useState<QaActionDefaults | undefined>();
+  const actor = coordination?.projectId === selectedProjectId && coordination.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [coordination.projectId] } : baseActor;
   const modalOpen = creating || (!!issueId && taskDisplayMode === 'modal');
   useEffect(() => { background.current?.toggleAttribute('inert', modalOpen); }, [modalOpen]);
   const canConfigure = canManageQaConfiguration(actor);
+  const canConfigureCoordinator = actor.role === 'admin' || actor.role === 'super_admin';
   const filters = useMemo(() => ({ projectId: selectedProjectId || undefined, state: state || undefined, mine: owner || undefined, search }), [selectedProjectId, state, owner, search]);
   const createIds = useRef({ id: qaId(), commandId: qaId() });
   const creatingBusy = useRef(false);
   const creatingRef = useRef(false); creatingRef.current = creating;
   const previousProject = useRef(selectedProjectId);
   const currentId = useRef(issueId); currentId.current = issueId;
+  useEffect(() => {
+    let current = true;
+    setCoordination(null); setCoordinationError(false); setCoordinatorOpen(false);
+    if (selectedProjectId) void client.getCoordination(selectedProjectId).then(value => { if (current) setCoordination(value); }).catch(() => { if (current) setCoordinationError(true); });
+    return () => { current = false; };
+  }, [client, baseActor.id, selectedProjectId, revision]);
   const openIssue = useCallback((id: string, action?: QaCommand['type'], defaults?: QaActionDefaults, completedCreate = false) => {
     if (!completedCreate && hasQaNavigationGuard()) { toast.info(t('qa.finishPending')); return; }
     const url = new URL(window.location.href);
@@ -123,11 +135,13 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     <div ref={background} aria-hidden={modalOpen || undefined} className="w-full min-w-0 space-y-4" hidden={(!!issueId || creating) && taskDisplayMode === 'page' && !creating}>
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3"><div className="rounded-xl border border-primary/15 bg-primary/10 p-2.5 text-primary"><Bug size={22} aria-hidden="true" /></div><div><h1 className="text-xl font-bold">{t(mine ? 'qa.myTitle' : 'qa.title')}</h1><p className="mt-0.5 text-xs text-muted-foreground">{t('qa.workspaceIntro')}</p>{USING_MOCK_BACKEND && <p className="mt-1 text-xs text-muted-foreground">{t('qa.demo')}</p>}</div></div>
-        {!creating && !issueId && <div className="flex flex-wrap gap-2">{canConfigure && <button className={qaButton} disabled={busy || !workflow} onClick={() => setSettingsOpen(value => !value)}><Settings2 size={15} aria-hidden="true" />{t('qa.settingsTitle')}</button>}<button className={qaPrimary} disabled={busy} onClick={beginCreate}><Plus size={16} aria-hidden="true" />{t('qa.report')}</button></div>}
+        {!creating && !issueId && <div className="flex flex-wrap gap-2">{canConfigure && <button className={qaButton} disabled={busy || !workflow} onClick={() => setSettingsOpen(value => !value)}><Settings2 size={15} aria-hidden="true" />{t('qa.settingsTitle')}</button>}{canConfigureCoordinator && <button className={qaButton} disabled={busy || !selectedProjectId} onClick={() => setCoordinatorOpen(value => !value)}>{t('qaHandoff.coordinatorTitle')}</button>}<button className={qaPrimary} disabled={busy} onClick={beginCreate}><Plus size={16} aria-hidden="true" />{t('qa.report')}</button></div>}
         {issueId && <button disabled={busy} className={qaButton} onClick={() => openIssue('')}>{t('qa.back')}</button>}
       </header>
       {error !== null && <><QaFailure error={error} />{!creating && <button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button>}</>}
       {workflowError !== null && <><QaFailure error={workflowError} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></>}
+      {coordinationError && <p role="alert" className="text-sm text-destructive">{t('qaHandoff.loadFailed')}</p>}
+      {coordinatorOpen && canConfigureCoordinator && selectedProjectId && !creating && !issueId && <QaCoordinatorSettings key={`${baseActor.id}:${selectedProjectId}`} projectId={selectedProjectId} client={client} onSaved={value => { setCoordination(value); setCoordinationError(false); }} onClose={() => setCoordinatorOpen(false)} />}
       {!workflow ? !workflowError && <p role="status">{t('qa.loading')}</p> : <>
         <div className="rounded-xl border border-border/80 bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5">

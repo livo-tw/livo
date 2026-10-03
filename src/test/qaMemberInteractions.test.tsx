@@ -77,7 +77,7 @@ describe('QA direct state selection', () => {
     props.onRefresh.mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
     fireEvent.click(await screen.findByRole('option', { name: 'qa.state.failed' }));
-    await screen.findByText('qa.failed');
+    await screen.findByText('qaHandoff.savedRefreshFailed');
     expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toHaveTextContent('qa.state.failed');
     expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
     expect(screen.getByRole('button', { name: 'qa.back' })).not.toBeDisabled();

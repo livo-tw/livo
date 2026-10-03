@@ -157,7 +157,7 @@ export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unk
       const issue = createQaIssue(input as unknown as QaCreateInput, targetId, {actor:{id:memberId,role:actor.role},workspaceId:ws,now,newId:()=>crypto.randomUUID(),memberIds:new Set([memberId]),projectIds:new Set([projectId]),taskIds:new Set(),environmentValues:environments.values});
       addGuard(qaEnabled, [ws]);
       const data = JSON.stringify(issue);
-      add('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,-1,?,?,?,?,?)', [ws, `kb_${commandId}`, targetId, memberId, actor.role, 'create', hash, data, data, now]);
+      add('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,-1,?,?,?,?,?)', [ws, `kb_${commandId}`, targetId, memberId, actor.role, auth.userId, 'create', hash, data, data, now]);
       add('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,1,?,?)', [ws, targetId, projectId, 'new', memberId, issue.title, now, data]);
       add('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,1,?)', [ws, crypto.randomUUID(), targetId, memberId, 'create', 'create', now]);
     } else addGuard(targetExists(kind, '?'), [...targetParams(kind), targetId]);

@@ -1,7 +1,7 @@
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug, Package } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -107,6 +107,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     setSelectedTask(null);
     const url = new URL(window.location.href);
     url.searchParams.delete('qa');
+    url.searchParams.delete('release');
     window.history.replaceState({}, '', url.toString());
     window.dispatchEvent(new Event('livo:qa-navigation'));
     action();
@@ -147,6 +148,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           <FolderOpen size={16} />{t('kb.title')}
         </button>
 
+        <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('releases'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'releases' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Package size={16} />{t('releaseWorkspace.title')}</button>
         {/* All Tasks */}
         {featureTogglesReady && featureToggles.qa && <>
           <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Bug size={16} />{t('qa.title')}</button>
@@ -162,7 +164,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
             }
           })}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-            selectedProjectId === null && selectedLineId === null && !['qa', 'my-qa', 'knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
+            selectedProjectId === null && selectedLineId === null && !['releases', 'qa', 'my-qa', 'knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
               ? 'text-sidebar-primary-foreground font-semibold bg-sidebar-primary/90 shadow-sm'
               : 'text-sidebar-foreground hover:bg-sidebar-hover'
           }`}

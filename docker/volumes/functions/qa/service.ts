@@ -12,7 +12,7 @@ export interface QaEnvironment { get(name: string): string | undefined }
 type Row = Record<string, any>;
 const WORKSPACE = 'default';
 const BUCKET = 'qa-evidence';
-export const QA_BACKUP_TABLES = ['qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links'] as const;
+export const QA_BACKUP_TABLES = ['qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links','qa_project_coordination','qa_coordination_commands'] as const;
 const MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'application/pdf', 'text/plain']);
 const fail = (code: string, status = 400): never => { throw new QaError(code, status); };
 const object = (v: unknown): Row => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : fail('qa_invalid_request');
@@ -33,7 +33,7 @@ function databaseError(body: Row, status: number): never {
   const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
   if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
   const known = ['qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
-    'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict'];
+    'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request'];
   const code = known.find(code => message.includes(code));
   if (code) fail(code.startsWith('qa_') ? code : `qa_${code}`, ['42501'].includes(body.code) ? 403
     : ['40001', '23505'].includes(body.code) ? 409 : body.code === 'P0002' ? 404 : 400);
@@ -89,15 +89,35 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     ]);
     if (members.length !== 1 || members[0].is_active !== true) fail('qa_forbidden', 403);
     if (settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
-    return { ...members[0], qaAdmin: members[0].is_qa_admin === true, authId: user.id };
+    let slackIdentity = null;
+    // Parse claims only after GoTrue has authenticated the complete token.
+    try {
+      const segment=sessionToken.split('.')[1];
+      if(segment){const encoded=segment.replace(/-/g,'+').replace(/_/g,'/');
+        const claims=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded.padEnd(Math.ceil(encoded.length/4)*4,'=')),c=>c.charCodeAt(0))));
+        if(Object.keys(claims).some(key=>key.startsWith('livo_slack_'))){
+          if(claims.sub!==user.id||!['livo_slack_binding','livo_slack_team','livo_slack_user'].every(key=>typeof claims[key]==='string'))fail('qa_forbidden',403);
+          slackIdentity={bindingId:claims.livo_slack_binding,teamId:claims.livo_slack_team,userId:claims.livo_slack_user};
+        }
+      }
+    }catch{fail('qa_forbidden',403);}
+    if(slackIdentity)await db.rpc('livo_qa_live_actor',{p_auth_id:user.id,p_identity:slackIdentity});
+    return { ...members[0], authId: user.id, qaAdmin: members[0].is_qa_admin === true, slackIdentity };
   }
   async function getIssue(issueId: string): Promise<QaIssue> {
     const row = (await db.qaRows('qa_issues', { select: 'data', id: `eq.${id(issueId)}`, limit: 1 }))[0];
     if (!row) return fail('qa_issue_not_found', 404);
     return row.data;
   }
+  async function coordination(projectId:string,includeArchived=false) {
+    const project=(await db.rows('projects',{select:'id',id:`eq.${id(projectId)}`,...(includeArchived?{}:{is_archived:'eq.false'}),limit:1}))[0];
+    if(!project)fail('qa_project_unavailable',404);
+    const row=(await db.qaRows('qa_project_coordination',{select:'coordinator_id,version',id:`eq.${projectId}`,limit:1}))[0];
+    return {projectId,coordinatorId:row?.coordinator_id??null,version:row?.version??0};
+  }
   async function context(actor: Row, projectId: string, issue?: QaIssue, command?: QaCommand): Promise<QaContext> {
     const candidateIds = new Set([actor.id, issue?.assigneeId, issue?.qaOwnerId]);
+    if (command?.type === 'request_handoff') candidateIds.add(id(command.nextOwnerId));
     if (command?.type === 'triage') { candidateIds.add(id(command.assigneeId)); candidateIds.add(id(command.qaOwnerId)); }
     const candidates = [...candidateIds].filter(Boolean).map(id);
     const linked = command?.type === 'link_tasks' ? command.taskIds : [];
@@ -110,9 +130,10 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
       !issue || command?.type === 'edit' ? db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }) : [],
     ]);
+    const config = await coordination(projectId);
     const environments = parseDeploymentEnvironments(environmentRows[0]?.value);
     if (!environments) return fail('qa_invalid_environment');
-    return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
+    return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin, qaCoordinatorProjectIds:config.coordinatorId===actor.id?[projectId]:[] }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
       memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
@@ -127,7 +148,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id);
     const result = await db.rpc('livo_qa_commit', { p_auth_id: actor.authId, p_issue_id: request.id,
       p_command_id: commandId(request.commandId), p_payload_hash: hash, p_expected_version: request.expectedVersion ?? null,
-      p_kind: kind, p_data: data, p_event: { id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
+      p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
     const sync = syncQaSlackIssue(env, kind === 'comment' ? issue : result).catch(() => console.error('QA Slack card refresh failed'));
     const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil?: (work: Promise<unknown>) => void } };
     if (runtime.EdgeRuntime?.waitUntil) runtime.EdgeRuntime.waitUntil(sync); else await sync;
@@ -144,6 +165,20 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const rows = await db.all('qa_issues', { project_id: `eq.${projectId}`,
           select: 'workspaceId:workspace_id,projectId:project_id,observedVersion:data->>observedVersion,targets:data->targets,runs:data->runs' });
         return qaVersionSuggestions(rows as Array<{workspaceId:string;projectId:string}>, WORKSPACE, projectId);
+      }
+      case 'get_coordination': return coordination(id(request.projectId));
+      case 'members': {
+        await coordination(id(request.projectId));
+        const offset=request.offset??0,search=typeof request.search==='string'?request.search.trim():'';
+        if(!Number.isSafeInteger(offset)||offset<0||offset>100000||search.length>100)fail('qa_invalid_request');
+        const rows=await db.rows('members',{select:'id,name',is_active:'eq.true',order:'name,id',offset,limit:100,...(search?{name:`ilike.*${search.replace(/[\\%_*]/g,'\\$&')}*`}:{})});
+        return {members:rows,hasMore:rows.length===100};
+      }
+      case 'save_coordination': {
+        const projectId=id(request.projectId),coordinatorId=request.coordinatorId===null?null:id(request.coordinatorId);
+        if(!Number.isSafeInteger(request.expectedVersion)||request.expectedVersion<0)fail('qa_invalid_version');
+        return db.rpc('livo_qa_save_coordination',{p_auth_id:actor.authId,p_project_id:projectId,p_coordinator_id:coordinatorId,
+          p_expected_version:request.expectedVersion,p_command_id:commandId(request.commandId),p_payload_hash:await qaPayloadHash(request),p_slack_identity:actor.slackIdentity});
       }
       case 'get_workflow': {
         const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_workflow', limit: 1 }))[0];
@@ -189,7 +224,9 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const issue = await getIssue(request.id);
         const [comments, events, attachments] = await Promise.all(['qa_comments', 'qa_events', 'qa_attachments'].map(table =>
           db.all(table, { issue_id: `eq.${issue.id}`, order: 'created_at,id' })));
-        return { issue, comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
+        const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter(Boolean))].map(id);
+        const names=people.length?await db.rows('members',{select:'id,name',id:`in.(${people.join(',')})`}):[];
+        return { issue, memberNames:Object.fromEntries(names.map(m=>[m.id,m.name])), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
           events: events.map(e => ({ id: e.id, issueId: e.issue_id, actorId: e.actor_id, type: e.type, detail: e.detail, version: e.version, createdAt: e.created_at })),
           attachments: attachments.map(attachment) };
       }

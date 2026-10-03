@@ -38,6 +38,7 @@ const TeamIntroView = lazy(() => import('@/components/TeamIntroView'));
 const KnowledgeBaseView = lazy(() => import('@/components/KnowledgeBaseView'));
 const BacklogView = lazy(() => import('@/components/BacklogView'));
 const QaWorkspace = lazy(() => import('@/components/qa/QaWorkspace'));
+const ReleaseWorkspaceView = lazy(() => import('@/components/releases/ReleaseWorkspaceView'));
 
 const ViewFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground text-sm">
@@ -70,6 +71,18 @@ const AppContent = () => {
   useEffect(() => {
     if (qaEnabled && new URLSearchParams(window.location.search).has('qa')) { setSelectedTask(null); setCurrentView('qa'); }
   }, [qaEnabled, setCurrentView, setSelectedTask]);
+
+  useEffect(() => {
+    const openRelease = () => { if (new URLSearchParams(window.location.search).has('release')) { setSelectedTask(null); setCurrentView('releases'); } };
+    openRelease(); window.addEventListener('popstate', openRelease);
+    return () => window.removeEventListener('popstate', openRelease);
+  }, [setCurrentView, setSelectedTask]);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('knowledge')) {
+      setSelectedTask(null); setCurrentView('knowledge-base');
+    }
+  }, [setCurrentView, setSelectedTask]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -157,6 +170,7 @@ const AppContent = () => {
               {currentView === 'system-admin' && permissions.canManageMembers && <Suspense fallback={<ViewFallback />}><SystemAdminView /></Suspense>}
               {currentView === 'team-intro' && <Suspense fallback={<ViewFallback />}><TeamIntroView /></Suspense>}
               {currentView === 'knowledge-base' && <Suspense fallback={<ViewFallback />}><KnowledgeBaseView /></Suspense>}
+              {currentView === 'releases' && <Suspense fallback={<ViewFallback />}><ReleaseWorkspaceView /></Suspense>}
               {currentView === 'activity-log' && (hasFeature('activity-log') ? <ActivityLogView /> : <UpgradePrompt feature="activity-log" />)}
               {currentView === 'my-settings' && <MySettingsView />}
               {currentView === 'my-tasks' && <MyTasksView />}

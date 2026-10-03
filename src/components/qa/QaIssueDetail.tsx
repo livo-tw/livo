@@ -29,6 +29,7 @@ import { QaField, QaSection, QaSelect, qaButton, qaPrimary } from './QaFields';
 import QaReportForm from './QaReportForm';
 import QaAttachments from './QaAttachments';
 import QaLegacyAttachments from './QaLegacyAttachments';
+import QaHandoffPanel from './QaHandoffPanel';
 import { useQaVersions } from '@/hooks/useQaVersions';
 import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
@@ -37,7 +38,7 @@ import { QaCustomFieldDisplay } from './QaCustomFieldInputs';
 import { toast } from 'sonner';
 
 type ActionType = QaCommand['type'];
-const actionLabels: Record<ActionType, string> = { edit: 'edit', triage: 'triage', start_fix: 'startFix', submit_fix: 'submitFix', record_deployment: 'deployment', record_verification: 'verification', set_state: 'changeState', close: 'close', reopen: 'reopen', hold: 'hold', link_tasks: 'taskLinks' };
+const actionLabels: Record<ActionType, string> = { edit: 'edit', triage: 'triage', start_fix: 'startFix', submit_fix: 'submitFix', record_deployment: 'deployment', record_verification: 'verification', set_state: 'changeState', close: 'close', reopen: 'reopen', hold: 'hold', link_tasks: 'taskLinks', request_handoff: 'actions', accept_handoff: 'actions', resolve_handoff: 'actions' };
 const displayDate = (value: string) => new Date(value).toLocaleString();
 export function QaFailure({ error }: { error: unknown }) {
   const { t } = useTranslation();
@@ -45,7 +46,7 @@ export function QaFailure({ error }: { error: unknown }) {
   return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{t(failure?.status === 409 ? 'qa.conflict' : 'qa.failed')}</p>{failure?.code && <p className="mt-1 font-mono text-xs">{t('qa.errorCode', { code: failure.code })}</p>}</div>;
 }
 
-export default function QaIssueDetail({ detail, client, actor, workflow, initialAction, initialDefaults, onRefresh, onBack, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onBusyChange?: (busy: boolean) => void }) {
+export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onBusyChange?: (busy: boolean) => void }) {
   const { t } = useTranslation();
   const environments = useDeploymentEnvironments();
   const getProjectColor = useProjectColor();
@@ -55,8 +56,9 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
   const { setSelectedTask } = useUIContext();
   const [acknowledgedIssue, setAcknowledgedIssue] = useState<QaDetail['issue'] | null>(null);
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
+  const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
-  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['record_verification', 'record_deployment'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
+  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
   const [commandBusy, setBusy] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [unknownCommand, setUnknownCommand] = useState(false);
@@ -76,6 +78,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
   const [targets, setTargets] = useState<QaTargetDraft[]>([{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
   const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
+  const commandSending = useRef(false);
   const pendingComment = useRef<{ body: string; id: string }>();
   const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import');
   const source = (issue as unknown as { legacySource?: { recordUrl?: string } }).legacySource;
@@ -94,27 +97,31 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
     else if (type === 'start_fix') void send({ type: 'start_fix' });
     else setAction(type);
   };
-  const send = async (command: QaCommand, retry = false) => {
-    if (commandBusy || attachmentBusy || (unknownCommand && !retry)) return;
+  const send = async (command: QaCommand, expectedVersion = issue.version, retry = false): Promise<boolean> => {
+    if (commandBusy || attachmentBusy || commandSending.current || (unknownCommand && !retry)) return false;
+    commandSending.current = true;
     setBusy(true); setError(null); setNotice('');
-    const signature = JSON.stringify({ version: issue.version, command });
-    if (!retry && pendingCommand.current?.signature !== signature) pendingCommand.current = { signature, id: qaId(), command, issue };
+    const signature = JSON.stringify({ version: expectedVersion, command });
+    if (!retry && pendingCommand.current?.signature !== signature) pendingCommand.current = { signature, id: qaId(), command, issue: { ...issue, version: expectedVersion } };
     const pending = pendingCommand.current;
-    if (!pending) { setBusy(false); return; }
+    if (!pending) { commandSending.current = false; setBusy(false); return false; }
+    let saved = false;
     try {
       const updated = await client.command(pending.issue, pending.command, pending.id);
-      setAcknowledgedIssue(updated); pendingCommand.current = undefined; setUnknownCommand(false); setAction(null);
-      if (command.type === 'set_state') toast.success(t('qa.stateChanged'));
+      saved = true; setAcknowledgedIssue(updated); pendingCommand.current = undefined; setUnknownCommand(false); setAction(null);
+      if (pending.command.type === 'set_state') toast.success(t('qa.stateChanged'));
       await onRefresh();
     } catch (failure) {
-      const status = (failure as { status?: number })?.status;
-      if (pendingCommand.current) {
+      if (saved) setNotice(t('qaHandoff.savedRefreshFailed'));
+      else {
+        const status = (failure as { status?: number })?.status;
         const unknown = !status || status >= 500;
         setUnknownCommand(unknown);
         if (!unknown) pendingCommand.current = undefined;
+        setError(failure); toast.error(t(status === 409 ? 'qa.conflict' : 'qa.failed'));
       }
-      setError(failure); toast.error(t(status === 409 ? 'qa.conflict' : 'qa.failed'));
-    } finally { setBusy(false); }
+    } finally { commandSending.current = false; setBusy(false); }
+    return saved;
   };
   const refresh = async () => {
     if (busy) return;
@@ -152,7 +159,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
       <div className="mt-3 flex flex-wrap items-center gap-3"><QaStateBadge state={issue.state} label={workflow?.labels[issue.state]} /><QaPriorityBadge priority={issue.priority} issue={issue} /><QaSeverityBadge severity={issue.severity} /><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: issue.fixCycle })}</span></div>
     </header>
     {error !== null && !action && <QaFailure error={error} />}
-    {unknownCommand && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div>}
+    {unknownCommand && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div>}
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     {busy && <p role="status" className="text-sm">{t('qa.saving')}</p>}
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -181,7 +188,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
         <QaSection title={t('qa.targets')}>
           {issue.fixSummary && <p className="mb-3 whitespace-pre-wrap break-words text-sm">{issue.fixSummary}</p>}
           {!issue.targets.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}
-          <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} canDeploy={can('record_deployment')} canVerify={can('record_verification')} busy={busy} onCommand={send} />
+          <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} canDeploy={can('record_deployment')} canVerify={can('record_verification')} busy={busy} onCommand={command => send(command).then(() => {})} />
         </QaSection>
         <QaSection title={t('qa.runs')}>
           {!issue.runs.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}
@@ -206,6 +213,7 @@ export default function QaIssueDetail({ detail, client, actor, workflow, initial
           {moreActions.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
           {!Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>
+        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
         <QaSection title={t('qa.properties')}>
           <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
             options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}

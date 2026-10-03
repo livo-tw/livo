@@ -25,5 +25,9 @@ describe('Cloudflare QA Slack project groups', () => {
     expect(JSON.stringify(groups)).not.toContain('Secret B');
     expect((await actions.projects(actor, '')).flatMap(group => group.projects)).toHaveLength(100);
     expect(await actions.projects(actor, 'missing')).toEqual([]);
+    const historyGroups=await actions.projects(actor,'Zebra',true);
+    expect(historyGroups.flatMap(group=>group.projects.map(project=>project.id))).toEqual(['a2','a3','a1','a4']);
+    expect(JSON.stringify(historyGroups)).not.toContain('Secret B');
+    expect((await actions.projects(actor,'Zebra')).flatMap(group=>group.projects.map(project=>project.id))).not.toContain('a3');
   });
 });

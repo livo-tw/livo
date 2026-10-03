@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 
 interface Props {
   approvalRequestId: string;
-  onAction?: (result?: { approvedToStatus?: string; taskId?: string }) => void;
+  onAction?: (result?: import('@/hooks/useApprovalWorkflow').ApprovalActionResult) => void;
 }
 
 function StatusIcon({ status }: { status: ProgressData['steps'][0]['status'] }) {
@@ -65,7 +65,8 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
   const getUserName = (id: string | null) => id ? (users.find(u => u.id === id)?.name ?? id) : null;
 
   const isCurrentApprover = (): boolean => {
-    if (!progress) return false;
+    if (!progress || progress.legacy) return false;
+    if (progress.ruleId === null && progress.requestStatus === 'pending') return ['admin','super_admin'].includes(currentMember?.role ?? '');
     const currentStepInfo = progress.steps.find(s => s.status === 'pending');
     if (!currentStepInfo) return false;
     if (currentStepInfo.approverType === 'user') {
@@ -81,10 +82,10 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
     if (!showActionDialog) return;
     setActioning(true);
     try {
-      const result = await performAction(approvalRequestId, showActionDialog, comment || undefined);
-      setShowActionDialog(null);
-      setComment('');
+      const result = await performAction(approvalRequestId, showActionDialog, comment || undefined, undefined, progress ? {version:progress.version,current_step:progress.currentStep} : undefined);
       if (result.ok) {
+        setShowActionDialog(null);
+        setComment('');
         await loadProgress();
         onAction?.(result);
       }
@@ -98,10 +99,9 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
 
   const handleCancel = async () => {
     try {
-      const ok = await cancelApproval(approvalRequestId);
+      const ok = await cancelApproval(approvalRequestId,{onResult:result => onAction?.(result)});
       if (ok) {
         await loadProgress();
-        onAction?.();
       }
     } catch (err: any) {
       toast.error(t('error.operationFailed'));
@@ -119,6 +119,7 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
 
   return (
     <div className="space-y-3">
+      {progress?.legacy && <p role="alert" className="text-sm text-amber-700">{t('approvalCommand.legacy')}</p>}
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('approval.progressTitle')}</span>
         <span className="text-[10px] text-muted-foreground">

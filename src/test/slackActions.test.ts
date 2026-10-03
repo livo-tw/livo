@@ -194,10 +194,11 @@ describe('backend security and effects', () => {
     expect(await constantTimeSecret('', '')).toBe(false);
   });
   it('issues a short-lived authenticated member JWT, never a service role', async () => {
-    const jwt = await memberJwt(env.get('JWT_SECRET')!, actor, { id: 'binding-example' });
+    const jwt = await memberJwt(env.get('JWT_SECRET')!, actor, { id: 'binding-example', platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE' });
     const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
-    expect(claims).toMatchObject({ role: 'authenticated', sub: actor.auth_id, livo_slack_binding: 'binding-example' });
+    expect(claims).toMatchObject({ role: 'authenticated', sub: actor.auth_id, livo_slack_binding: 'binding-example', livo_slack_team: 'TEXAMPLE', livo_slack_user: 'UEXAMPLE' });
     expect(claims.exp - claims.iat).toBe(120);
+    await expect(memberJwt(env.get('JWT_SECRET')!, actor, { id: 'binding-missing' }, { team: 'TEXAMPLE', user: 'UEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
   });
   it('searches with member RLS and limits results to twenty without filter injection', async () => {
     const fetchMock = vi.fn(async () => response([task])); vi.stubGlobal('fetch', fetchMock);
@@ -234,7 +235,7 @@ describe('backend security and effects', () => {
         writes.push({ url, body: JSON.parse(String(init.body)) });
         return response([{ id: 'binding-new', ...JSON.parse(String(init.body)) }]);
       }
-      if (path.endsWith('/external_account_bindings')) return response(binding ? [binding] : []);
+      if (path.endsWith('/external_account_bindings')) return response(binding ? [{ platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE', ...binding }] : []);
       if (path.endsWith('/members')) {
         const params = new URL(url).searchParams;
         const id = params.get('id')?.replace(/^eq\./, '');
@@ -246,7 +247,7 @@ describe('backend security and effects', () => {
   }
   it('uses an admin-assigned binding even when the Slack email differs', async () => {
     const writes = slackFake({ slackEmail: 'personal@example.org', members: [actor],
-      binding: { id: 'binding-admin', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+      binding: { id: 'binding-admin', platform_team_id:'TEXAMPLE', platform_user_id:'UEXAMPLE', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
     const resolved = await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' });
     expect(resolved).toMatchObject({ id: actor.id, binding_id: 'binding-admin' });
     expect(writes).toEqual([]);
@@ -258,7 +259,7 @@ describe('backend security and effects', () => {
   });
   it('still refuses a deactivated member behind an admin-assigned binding', async () => {
     slackFake({ slackEmail: 'personal@example.org', members: [{ ...actor, is_active: false }],
-      binding: { id: 'binding-admin', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+      binding: { id: 'binding-admin', platform_team_id:'TEXAMPLE', platform_user_id:'UEXAMPLE', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
     await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
   });
   it('marks a first-time email match as verified by email', async () => {

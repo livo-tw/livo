@@ -1,11 +1,13 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import i18n from '@/i18n';
 import { supabase } from '@/integrations/supabase/client';
 import { generateId } from '@/lib/generateId';
 import { toast } from 'sonner';
 import type { CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency } from '@/types';
+import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/client';
 
 interface TaskRelationsDeps {
+  currentMemberId?: string;
   taskDependencies: TaskDependency[];
   setTaskDependencies: React.Dispatch<React.SetStateAction<TaskDependency[]>>;
   customFieldValues: TaskCustomFieldValue[];
@@ -17,12 +19,15 @@ interface TaskRelationsDeps {
 }
 
 export function useTaskRelations({
+  currentMemberId = '',
   taskDependencies, setTaskDependencies,
   customFieldValues, setCustomFieldValues,
   setCustomFields,
   setTaskTemplates,
   refreshCustomFields, refreshTaskTemplates,
 }: TaskRelationsDeps) {
+  const currentActor = useRef(currentMemberId); currentActor.current = currentMemberId;
+  const runTaskWork = useMemo(() => createTaskWorkCommandRunner(supabase), [currentMemberId]);
 
   // ─── Custom Field CRUD ───
 
@@ -153,6 +158,7 @@ export function useTaskRelations({
   }, []);
 
   const addTaskDependency = useCallback(async (taskId: string, dependsOnTaskId: string): Promise<boolean> => {
+    if (!currentMemberId || currentActor.current !== currentMemberId) return false;
     if (taskId === dependsOnTaskId) {
       toast.error(i18n.t('taskDetail.dependency.selfReference'));
       return false;
@@ -165,27 +171,24 @@ export function useTaskRelations({
       toast.error(i18n.t('taskDetail.dependency.cyclicError'));
       return false;
     }
-    const id = generateId('dep');
-    const { error } = await supabase.from('task_dependencies').insert({
-      id,
-      task_id: taskId,
-      depends_on_task_id: dependsOnTaskId,
-      dependency_type: 'finish_to_start',
-    } as Record<string, unknown>);
-    if (error) {
-      toast.error(i18n.t('taskDetail.dependency.addFailed') + error.message);
-      return false;
-    }
-    const newDep: TaskDependency = { id, taskId, dependsOnTaskId, dependencyType: 'finish_to_start', createdAt: new Date().toISOString() };
-    setTaskDependencies(prev => [...prev, newDep]);
-    return true;
-  }, [taskDependencies, wouldCreateCycle, setTaskDependencies]);
+    try {
+      const result = await runTaskWork({ operation: 'add_dependency', taskId, dependsOnTaskId });
+      if (currentActor.current !== currentMemberId) return false;
+      const row = result.record!;
+      const newDep: TaskDependency = { id: String(row.id), taskId, dependsOnTaskId, dependencyType: 'finish_to_start', createdAt: String(row.created_at) };
+      setTaskDependencies(prev => [...prev.filter(item => item.id !== newDep.id), newDep]);
+      return true;
+    } catch (error) { if (currentActor.current === currentMemberId) toast.error(i18n.t(`taskWork.errors.${taskWorkErrorCode(error)}`)); return false; }
+  }, [taskDependencies, wouldCreateCycle, setTaskDependencies, currentMemberId, runTaskWork]);
 
   const removeTaskDependency = useCallback(async (dependencyId: string) => {
-    const { error } = await supabase.from('task_dependencies').delete().eq('id', dependencyId);
-    if (error) { toast.error(i18n.t('taskDetail.dependency.removeFailed') + error.message); return; }
-    setTaskDependencies(prev => prev.filter(d => d.id !== dependencyId));
-  }, [setTaskDependencies]);
+    const dependency = taskDependencies.find(item => item.id === dependencyId);
+    if (!dependency || !currentMemberId || currentActor.current !== currentMemberId) return;
+    try {
+      await runTaskWork({ operation: 'remove_dependency', taskId: dependency.taskId, dependencyId });
+      if (currentActor.current === currentMemberId) setTaskDependencies(prev => prev.filter(d => d.id !== dependencyId));
+    } catch (error) { if (currentActor.current === currentMemberId) toast.error(i18n.t(`taskWork.errors.${taskWorkErrorCode(error)}`)); }
+  }, [taskDependencies, setTaskDependencies, currentMemberId, runTaskWork]);
 
   return {
     createCustomField, updateCustomField, deleteCustomField, upsertCustomFieldValue,

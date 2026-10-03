@@ -22,6 +22,12 @@
 import type { TableRegistry } from './meta';
 
 export const TABLES: TableRegistry = {
+  kb_publications: { pk:'id', clientAccess:'none' },
+  kb_source_links: { pk:'id', clientAccess:'none' },
+  kb_work_receipts: { pk:'id', clientAccess:'none' },
+  kb_work_events: { pk:'id', clientAccess:'none' },
+  kb_work_contexts: { pk:'id', clientAccess:'none' },
+  kb_work_clock: { pk:'workspace_id', clientAccess:'none' },
   kb_navigation_preferences: { pk: 'member_id', clientAccess: 'none', jsonCols: ['preferences'] },
   kb_source_snapshots: { pk: 'id', clientAccess: 'none', jsonCols: ['provenance'] },
   kb_checklist_items: { pk: 'id', clientAccess: 'none', boolCols: ['is_done'] },
@@ -44,16 +50,27 @@ export const TABLES: TableRegistry = {
   qa_slack_links: { pk:'id', clientAccess:'none' },
   qa_slack_receipts: { pk:'id', clientAccess:'none' },
   qa_slack_inbox: { pk:'id', clientAccess:'none' },
+  qa_project_coordination: { pk:'id', clientAccess:'none' },
+  qa_coordination_commands: { pk:'id', clientAccess:'none', jsonCols:['response'] },
   qa_restore_batches: { pk:'id', clientAccess:'none' },
+  release_batches: { pk:'id', clientAccess:'none', jsonCols:['data'] },
+  release_commands: { pk:'id', clientAccess:'none', jsonCols:['command','data','result_json'] },
+  release_events: { pk:'id', clientAccess:'none' },
+  release_batch_projects: { pk:'batch_id', clientAccess:'none' },
+  release_batch_tasks: { pk:'batch_id', clientAccess:'none' },
+  release_outbox: { pk:'id', clientAccess:'none' },
+  release_slack_links: { pk:'id', clientAccess:'none' },
+  release_publications: { pk:'batch_id', clientAccess:'none' },
   // Mutations additionally pass the knowledge-base row/column guards in db.ts.
   kb_pages: {
     pk: 'id', clientAccess: 'full', boolCols: ['is_archived', 'admin_only'],
-    jsonCols: ['access_policy'],
+    jsonCols: ['access_policy','document_metadata'],
     autoId: true, autoNowCols: ['created_at', 'updated_at'],
     write: { insert: 'all', update: 'all', delete: 'own', ownerCol: 'created_by' },
   },
   kb_revisions: {
     pk: 'id', clientAccess: 'full',
+    jsonCols: ['document_metadata'],
     write: { insert: 'none', update: 'none', delete: 'none' },
   },
   kb_attachments: {
@@ -135,6 +152,8 @@ export const TABLES: TableRegistry = {
     autoNowCols: ['created_at'],
     write: { insert: 'all', update: 'all', delete: 'admin' },
   },
+  task_reminder_preferences: { pk: 'id', clientAccess: 'full', write: { insert: 'none', update: 'none', delete: 'none' } },
+  task_deadline_history: { pk: 'id', clientAccess: 'full', write: { insert: 'none', update: 'none', delete: 'none' } },
   task_deployments: {
     pk: 'id',
     clientAccess: 'full',
@@ -147,6 +166,10 @@ export const TABLES: TableRegistry = {
     clientAccess: 'full',
     write: { insert: 'all', update: 'all', delete: 'all' },
   },
+  task_work_contexts: { pk: 'id', clientAccess: 'none' },
+  task_work_receipts: { pk: 'id', clientAccess: 'none' },
+  task_work_internal_versions: { pk: 'row_id', clientAccess: 'none' },
+  task_work_events: { pk: 'id', clientAccess: 'full', jsonCols: ['before_value','after_value'], write: { insert: 'none', update: 'none', delete: 'none' } },
   task_checks: {
     pk: 'id',
     clientAccess: 'full',
@@ -391,17 +414,21 @@ export const TABLES: TableRegistry = {
     clientAccess: 'full',
     autoId: true,
     autoNowCols: ['created_at'],
-    // update stays 'all': any member may be a step approver on someone
-    // else's request (approve/reject mutates the request row).
-    write: { insert: 'own', update: 'all', delete: 'none', ownerCol: 'requested_by' },
+    jsonCols: ['steps_snapshot','rule_snapshot'],
+    write: { insert: 'none', update: 'none', delete: 'none' },
   },
   approval_actions: {
     pk: 'id',
     clientAccess: 'full',
     autoId: true,
     autoNowCols: ['acted_at'],
-    write: { insert: 'own', update: 'none', delete: 'none', ownerCol: 'action_by' },
+    write: { insert: 'none', update: 'none', delete: 'none' },
   },
+  approval_command_contexts: { pk: 'id', clientAccess: 'none' },
+  approval_command_receipts: { pk: 'id', clientAccess: 'none' },
+  approval_events: { pk: 'id', clientAccess: 'none' },
+  approval_delivery_outbox: { pk: 'id', clientAccess: 'none' },
+  approval_delivery_threads: { pk: 'task_id', clientAccess: 'none' },
 
   // ── External integrations ────────────────────────────────────────────────
   external_account_bindings: {

@@ -26,7 +26,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const auth = useAuthState(member.users, member.usersLoaded);
   const ui = useUIState(auth.currentMember?.role);
   const project = useProjectState();
-  const task = useTaskState();
+  const task = useTaskState(auth.currentMemberId);
   const sprint = useSprintState();
 
   // ─── Cross-domain wired functions ───

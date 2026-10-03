@@ -1,6 +1,14 @@
+import { createKnowledgeWorkData } from './knowledge-work-backend.ts';
+import { createWorkData, executeSlackWorkCommand } from './work-backend.ts';
+import { createReleaseData } from './release-backend.ts';
 import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, taskOption, UNAVAILABLE, type Row } from './core.ts';
+import { createApprovalData, executeSlackApprovalCommand } from './approval-backend.ts';
 import { sourceOf, type Actions } from './handler.ts';
 import { createWorkspaceData, WORKSPACE_ERRORS } from './workspace-backend.ts';
+import { createKnowledgeData } from './knowledge-workspace.ts';
+import { createTaskContextData } from './task-context.ts';
+import { createPlanningData } from './planning-backend.ts';
+import { TaskPlanningError } from './planning-core.ts';
 import { KNOWLEDGE_SEARCH_SIZE, normalizeKnowledgeSearch } from './knowledge.ts';
 export function fail(message: string): never { throw Object.assign(new Error(message), { name: 'ActionError' }); }
 export interface Environment { get(name: string): string | undefined }
@@ -17,10 +25,10 @@ export async function sign(secret: string, data: string) {
 }
 const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 export async function memberJwt(secret: string, member: Row, binding: Row, source: Row = {}) {
-  if (!secret || !member.auth_id) fail(NO_ACCOUNT);
+  if (!secret || !member.auth_id || !binding.id || !binding.platform_team_id || !binding.platform_user_id) fail(NO_ACCOUNT);
   const now = Math.floor(Date.now() / 1000);
   const content = [{ alg: 'HS256', typ: 'JWT' }, { sub: member.auth_id, role: 'authenticated', aud: 'authenticated',
-    email: member.email, iat: now, exp: now + 120, livo_slack_binding: binding.id, livo_slack_source: { channel: source.echoExistingMessage === false ? '' : source.channel || '', thread: source.thread || '' } }]
+    email: member.email, iat: now, exp: now + 120, livo_slack_binding: binding.id, livo_slack_team: binding.platform_team_id, livo_slack_user: binding.platform_user_id, livo_slack_source: { channel: source.echoExistingMessage === false ? '' : source.channel || '', thread: source.thread || '' } }]
     .map(value => base64(encoder.encode(JSON.stringify(value)))).join('.');
   return `${content}.${base64(await sign(secret, content))}`;
 }
@@ -38,6 +46,7 @@ export class Database {
       // database details, or arbitrary upstream error messages to Slack.
       if (path === '/rest/v1/rpc/livo_slack_update' && typeof error?.message === 'string' && Object.prototype.hasOwnProperty.call(WORKSPACE_ERRORS, error.message))
         fail(WORKSPACE_ERRORS[error.message]);
+      if (/^\/rest\/v1\/rpc\/livo_set_task_(deadline|reminder)$/.test(path) && typeof error?.message==='string' && /^planning_(forbidden|unavailable|conflict|invalid_input|invalid_date|invalid_kind|date_required|invalid_reason|reason_required|invalid_pause)$/.test(error.message)) throw new TaskPlanningError(error.message);
       throw new Error('Database operation failed');
     }
     return res.status === 204 ? null : res.json();
@@ -111,7 +120,8 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       if (!binding?.is_verified) binding = (await admin.write('external_account_bindings', { member_id: member.id, platform: 'slack',
         platform_user_id: user, platform_team_id: team, display_name: info.profile?.display_name || info.real_name || member.name,
         is_verified: true, verified_by: 'email' }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];
-      return { ...member, binding_id: binding.id, team, slack_user: user, locale: info.locale || 'zh-TW',
+      if(binding.platform_team_id!==team || binding.platform_user_id!==user) fail(NO_ACCOUNT);
+      return { ...member, timezone: info.tz || 'Asia/Taipei', binding_id: binding.id, team, slack_user: user, locale: info.locale || 'zh-TW',
         binding_verified_by: binding.verified_by, binding_verified_by_member_id: binding.verified_by_member_id,
         jwt: await memberJwt(env.get('JWT_SECRET') || '', member, binding, sourceOf(p)) };
     },
@@ -146,6 +156,13 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         ...(['assignee', 'reviewer'].includes(field) ? { is_active: 'eq.true' } : {}) })).map(r => option(r.id, r.name));
     },
     workspace: createWorkspaceData(memberDb),
+    knowledgeWork: createKnowledgeWorkData(env),
+    releases: createReleaseData(env, memberDb),
+    knowledge: createKnowledgeData(memberDb, env.get('APP_BASE_URL') || ''),
+    taskContext: createTaskContextData(memberDb),
+    approvals: createApprovalData(memberDb, (actor, command) => executeSlackApprovalCommand(env, actor, command)),
+    planning: createPlanningData(memberDb),
+    work: createWorkData(memberDb,(actor,command)=>executeSlackWorkCommand(env,actor,command)),
     task: getTask,
     mapped: async (actor, channel, ts) => {
       if (!channel || !ts) return;
@@ -206,7 +223,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
     background,
     link: task => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/?task=${encodeURIComponent(task.task_key)}`,
   };
-  actions.knowledge = {
+  actions.knowledgeSearch = {
     enabled: actions.enabled,
     actor: actions.actor,
     search: async (actor, input) => {

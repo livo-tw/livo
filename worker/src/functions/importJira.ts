@@ -518,12 +518,18 @@ export const handleImportJira = async (c: Context<AppContext>) => {
     }
 
     // ═══ Professional path: the real, DESTRUCTIVE import (writes begin here) ═══
+    if(await env.DB.prepare('SELECT id FROM release_batches WHERE workspace_id=? LIMIT 1').bind(ws).first())return c.json({error:'release_history_requires_restore',message:'發布批次與證據須透過完整伺服器備份還原，不能覆蓋匯入。'},409);
+    const pendingApproval=await env.DB.prepare(`SELECT id FROM approval_requests WHERE workspace_id=? AND status='pending'
+      UNION ALL SELECT id FROM tasks WHERE workspace_id=? AND (current_approval_id IS NOT NULL OR approval_status='pending_approval') LIMIT 1`).bind(ws,ws).first();
+    if(pendingApproval) return c.json({error:'approval_pending',message:'尚有簽核中的任務，請先撤回或完成簽核後再匯入。'},409);
 
     // ── Clear existing data (atomic batch, original table order) — only the
     //    caller's workspace; other tenants' rows are untouchable. ──
     console.log('Clearing existing data...');
     await env.DB.batch(
-      CLEAR_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${assertIdent(t)} WHERE workspace_id = ?`).bind(ws))
+      [env.DB.prepare('INSERT INTO task_planning_import_guard(workspace_id) VALUES(?)').bind(ws),
+        ...CLEAR_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${assertIdent(t)} WHERE workspace_id = ?`).bind(ws)),
+        env.DB.prepare('DELETE FROM task_planning_import_guard WHERE workspace_id=?').bind(ws)]
     );
     written.wiped = true;
     // Steps after the wipe that may only warn (the data itself is in place).
@@ -844,6 +850,9 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       warnings,
     });
   } catch (err) {
+    if(!written.wiped && err instanceof Error && err.message.includes('approval_pending'))return c.json({error:'approval_pending',message:'仍有待處理簽核，原有資料未變更。'},409);
+    if(!written.wiped && err instanceof Error && /work_history_requires_restore|qa_task_links_require_restore/.test(err.message))return c.json({error:err.message.includes('qa_task_links_require_restore')?'qa_task_links_require_restore':'work_history_requires_restore',message:'此工作區保留任務操作歷史，請使用完整伺服器備份還原。'},409);
+    if(!written.wiped && err instanceof Error && err.message.includes('planning_history_requires_restore'))return c.json({error:'planning_history_requires_restore',message:'此工作區保留期限異動或個人提醒設定，無法覆蓋匯入。請使用完整伺服器備份還原。'},409);
     console.error('Import error:', err);
     if (written.wiped) {
       // The wipe ran but the import did not finish: say so, with what landed

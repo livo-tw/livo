@@ -57,9 +57,9 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       if (!parsed) throw new Error('qa_invalid_environment');
       return parsed.values;
     },
-    projects: async (_actor, search) => {
+    projects: async (_actor, search, includeArchived = false) => {
       const [rows, lines] = await Promise.all([
-        env.DB.prepare('SELECT id,name,line_id FROM projects WHERE workspace_id=? AND is_archived=0 AND instr(lower(name),lower(?))>0 ORDER BY name,id LIMIT 100').bind(ws, search).all<{id:string;name:string;line_id:string}>(),
+        env.DB.prepare(`SELECT id,name,line_id FROM projects WHERE workspace_id=? ${includeArchived ? '' : 'AND is_archived=0'} AND instr(lower(name),lower(?))>0 ORDER BY name,id LIMIT 100`).bind(ws, search).all<{id:string;name:string;line_id:string}>(),
         env.DB.prepare('SELECT id,name,icon FROM product_lines WHERE workspace_id=? ORDER BY sort_order,id').bind(ws).all<{id:string;name:string;icon:string}>(),
       ]);
       return groupProjectsByLine(lines.results, rows.results.map(project => ({ ...project, lineId: project.line_id })));

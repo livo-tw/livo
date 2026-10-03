@@ -7,7 +7,7 @@ import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldCon
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
 import { applyQaCommand, createQaIssue, qaEventDetail, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
-import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload } from './domain';
+import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload, QaCoordination } from './domain';
 
 export class QaClientError extends Error {
   constructor(public readonly code: string, public readonly status: number, message = code) { super(message); this.name = 'QaClientError'; }
@@ -17,6 +17,9 @@ export class QaClientError extends Error {
 const demoIssues = new Map<string, QaDetail>();
 const demoFiles = new Map<string, Blob>();
 const demoCommands = new Map<string, unknown>();
+const demoCommandPayloads = new Map<string,string>();
+const demoCoordination = new Map<string, QaCoordination>();
+const demoCoordinationReceipts = new Map<string, {hash:string; result:QaCoordination}>();
 const demoWorkflows = new Map<string, QaWorkflow>();
 const demoFieldConfigurations = new Map<string, QaFieldConfiguration>();
 const clone = <T,>(value: T): T => structuredClone(value);
@@ -50,7 +53,8 @@ export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'f
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }
 export function createQaClient(options: QaClientOptions) {
   const mock = options.mock ?? USING_MOCK_BACKEND;
-  const ensureEnabled = () => { if (!options.enabled()) throw new QaClientError('qa_disabled', 403); };
+  const ensureEnabled = () => { if (!options.enabled()) throw new QaClientError('qa_disabled', 403);
+    if(mock){const ctx=options.context();if(!ctx.memberIds.has(ctx.actor.id))throw new QaClientError('qa_forbidden',403);} };
   const getDemo = (id: string) => {
     const detail = demoIssues.get(id);
     if (!detail || detail.issue.workspaceId !== options.context().workspaceId) throw new QaClientError('not_found', 404);
@@ -75,12 +79,34 @@ export function createQaClient(options: QaClientOptions) {
     const response = await checkResponse(await fetch(fnUrl('qa'), { method: 'POST', signal, headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...body }) }));
     return response.json();
   };
-  const demoOnce = <T,>(commandId: string, work: () => T): T => {
+  const demoOnce = <T,>(commandId: string, work: () => T, payload?:unknown): T => {
     const key = `${options.context().workspaceId}:${options.context().actor.id}:${commandId}`;
-    if (demoCommands.has(key)) return clone(demoCommands.get(key) as T);
-    const value = work(); demoCommands.set(key, clone(value)); return clone(value);
+    const hash=payload===undefined?undefined:JSON.stringify(payload);
+    if (demoCommands.has(key)) {if(hash!==undefined&&demoCommandPayloads.get(key)!==hash)throw new QaClientError('qa_command_id_reused',409);return clone(demoCommands.get(key) as T);}
+    const value = work(); if(hash!==undefined)demoCommandPayloads.set(key,hash); demoCommands.set(key, clone(value)); return clone(value);
+  };
+  const demoConfig = (projectId:string):QaCoordination => {
+    const ctx = options.context();
+    if (!ctx.memberIds.has(ctx.actor.id) || !ctx.projectIds.has(projectId)) throw new QaClientError('qa_forbidden',403);
+    return clone(demoCoordination.get(`${ctx.workspaceId}:${projectId}`) ?? {projectId,coordinatorId:null,version:0});
   };
   const api = {
+    async getCoordination(projectId:string, signal?:AbortSignal):Promise<QaCoordination> {
+      ensureEnabled(); return mock ? demoConfig(projectId) : request('get_coordination',{projectId},signal);
+    },
+    async saveCoordination(projectId:string, coordinatorId:string|null, expectedVersion:number, commandId=qaId()):Promise<QaCoordination> {
+      ensureEnabled();
+      if (!mock) return request('save_coordination',{projectId,coordinatorId,expectedVersion,commandId});
+      const ctx=options.context(), current=demoConfig(projectId);
+      if (!['admin','super_admin'].includes(ctx.actor.role)) throw new QaClientError('qa_forbidden',403);
+      if (coordinatorId!==null&&!ctx.memberIds.has(coordinatorId)) throw new QaClientError('qa_member_unavailable',400);
+      const key=`${ctx.workspaceId}:${ctx.actor.id}:${commandId}`,hash=JSON.stringify({projectId,coordinatorId,expectedVersion});
+      const prior=demoCoordinationReceipts.get(key);
+      if(prior){if(prior.hash!==hash)throw new QaClientError('qa_command_id_reused',409);return clone(prior.result);}
+      if(!Number.isSafeInteger(expectedVersion)||expectedVersion!==current.version)throw new QaClientError('qa_version_conflict',409);
+      const next={projectId,coordinatorId,version:current.version+1};
+      demoCoordination.set(`${ctx.workspaceId}:${projectId}`,next);demoCoordinationReceipts.set(key,{hash,result:clone(next)});return clone(next);
+    },
     async versions(projectId: string, signal?: AbortSignal): Promise<string[]> {
       ensureEnabled();
       if (!projectId) return [];
@@ -129,7 +155,8 @@ export function createQaClient(options: QaClientOptions) {
       return clone({ issues: issues.slice(offset, offset + limit), total: issues.length, hasMore: offset + limit < issues.length });
     },
     async get(id: string, signal?: AbortSignal): Promise<QaDetail> {
-      ensureEnabled(); return mock ? clone(getDemo(id)) : request('get', { id }, signal);
+      ensureEnabled(); if (!mock) return request('get', { id }, signal);
+      const detail=clone(getDemo(id)); detail.coordination=clone(demoCoordination.get(`${options.context().workspaceId}:${detail.issue.projectId}`)??{projectId:detail.issue.projectId,coordinatorId:null,version:0}); return detail;
     },
     async create(input: QaCreateInput, id = qaId(), commandId = qaId(), signal?: AbortSignal): Promise<QaIssue> {
       ensureEnabled();
@@ -149,11 +176,13 @@ export function createQaClient(options: QaClientOptions) {
         const detail = getDemo(issue.id);
         if (detail.issue.version !== issue.version) throw new QaClientError('conflict', 409);
         const ctx = { ...options.context(), fieldConfiguration: parseQaFieldConfiguration(demoFieldConfigurations.get(options.context().workspaceId)), duplicateIssueIds: new Set([...demoIssues.values()].filter(d => d.issue.workspaceId === issue.workspaceId).map(d => d.issue.id)) };
+        const coordinator=demoConfig(issue.projectId);
+        ctx.actor={...ctx.actor,qaCoordinatorProjectIds:coordinator.coordinatorId===ctx.actor.id?[issue.projectId]:[]};
         const before = detail.issue;
         detail.issue = applyQaCommand(before, command, ctx);
         detail.events.push({ id: qaId(), issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: qaEventDetail(detail.issue, command.type, before), createdAt: ctx.now, version: detail.issue.version });
         return detail.issue;
-      });
+      },{id:issue.id,version:issue.version,command});
     },
     async comment(id: string, body: string, commandId = qaId()): Promise<QaComment> {
       ensureEnabled();

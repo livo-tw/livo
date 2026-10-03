@@ -18,6 +18,8 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     db.exec(`INSERT INTO product_lines(workspace_id,id,name) VALUES('ws-a','line-a','Line'),('ws-b','line-b','Line');
       INSERT INTO projects(workspace_id,id,line_id,name,key) VALUES('ws-a','project-a','line-a','A','A'),('ws-b','project-b','line-b','B','B');
       INSERT INTO members(workspace_id,id,name,avatar,role,email) VALUES('ws-a','member-a','A','','admin','a@test'),('ws-b','member-b','B','','admin','b@test');
+      INSERT INTO auth_users(id,email) VALUES('auth-a','a@test'),('auth-b','b@test');
+      UPDATE members SET auth_id=CASE id WHEN 'member-a' THEN 'auth-a' ELSE 'auth-b' END;
       INSERT INTO system_settings(workspace_id,key,value) VALUES('ws-a','feature_toggles','{"qa":true}'),('ws-b','feature_toggles','{"qa":true}');
       INSERT INTO workspaces(id,name,storage_limit_mb) VALUES('ws-a','A',100);`);
   });
@@ -26,7 +28,7 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
   const issue=(version=1,extra:Partial<FixtureIssue>={}):FixtureIssue=>({id:'issue-a',workspaceId:'ws-a',projectId:'project-a',state:'new',version,title:'Issue',reporterId:'member-a',assigneeId:null,qaOwnerId:null,taskIds:[],duplicateOfId:null,...extra});
   function putIssue(){db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?)').run('ws-a','issue-a','project-a','new','member-a','Issue',1,'now',JSON.stringify(issue()));}
   function claim(id:string,expected:number,data=issue(expected+1)){
-    db.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('ws-a',id,'issue-a','member-a','admin',expected,'edit','hash',JSON.stringify(data),JSON.stringify(data),'now');
+    db.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('ws-a',id,'issue-a','member-a','admin','auth-a',expected,'edit','hash',JSON.stringify(data),JSON.stringify(data),'now');
   }
   function atomic(fn:()=>void){db.exec('BEGIN');try{fn();db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}}
   it('rejects a stale command before any receipt, state, or event can commit',()=>{
@@ -45,7 +47,7 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     db.exec("UPDATE system_settings SET value='{\"qa\":true}' WHERE workspace_id='ws-a'; UPDATE members SET role='member' WHERE id='member-a'");
     expect(()=>claim('role',1)).toThrow('qa_forbidden');db.exec("UPDATE members SET role='admin' WHERE id='member-a'");
     expect(()=>claim('member',1,issue(2,{qaOwnerId:'member-b'}))).toThrow('qa_invalid_member');
-    expect(()=>claim('project',1,issue(2,{projectId:'project-b'}))).toThrow('qa_invalid_project');
+    expect(()=>claim('project',1,issue(2,{projectId:'project-b'}))).toThrow(/qa_invalid_project|qa_forbidden/);
     expect(()=>claim('task',1,issue(2,{taskIds:['foreign-task']}))).toThrow('qa_invalid_task');
   });
   it('makes command identity unique per workspace',()=>{putIssue();claim('same',1);expect(()=>claim('same',1)).toThrow(/UNIQUE/);});

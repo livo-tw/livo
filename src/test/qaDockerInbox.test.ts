@@ -40,6 +40,15 @@ describe('Docker QA Slack durable inbox adapter', () => {
     expect(mocks.rows).toHaveBeenCalledWith('product_lines',expect.objectContaining({order:'sort_order,id'}));
     expect(mocks.session).toHaveBeenLastCalledWith('member-session');
   });
+  it('includes archived projects only when read filters opt in, still using the member session', async () => {
+    mocks.rows.mockResolvedValue([]);
+    const actor = {id:'m',role:'member' as const,team:'T-allowed',slack_user:'U1',jwt:'member-session'};
+    await adapter().projects(actor,'Old*_%',true);
+    const query=mocks.rows.mock.calls.find(call=>call[0]==='projects')?.[1];
+    expect(query).not.toHaveProperty('is_archived');
+    expect(query).toEqual(expect.objectContaining({name:'ilike.%Old\\*\\_\\%%',limit:'100'}));
+    expect(mocks.session).toHaveBeenLastCalledWith('member-session');
+  });
   it('rejects wrong Slack team before persisting the payload', async () => {
     await expect(adapter().enqueueEvent({ event_id: 'event-1', team_id: 'T-other' })).rejects.toThrow('workspace mismatch');
     expect(mocks.request).not.toHaveBeenCalled();
@@ -88,8 +97,7 @@ describe('Docker QA inbox/release persistence contract', () => {
     expect(release).toContain("path.join(TEMPLATE_DIR, 'slack-qa-manifest.json')");
     expect(release).toContain("path.join(APP_ROOT, 'QA-WORKFLOW.md')");
     expect(release).toContain('`volumes/functions/qa/${file}`');
-    expect(release).toContain("'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'");
-    for (const file of ['domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts']) {
+    for (const file of ['restore.ts', 'slack.ts', 'slackWorkspace.ts', 'slackHandoff.ts', 'slackAdapter.ts', 'slackSync.ts', 'domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts']) {
       expect(release).toContain(`'${file}'`);
     }
   });

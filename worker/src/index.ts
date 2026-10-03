@@ -1,3 +1,5 @@
+import { handleKnowledgeWork } from './knowledgeWork';
+import { handleTaskWorkCommand } from './taskWork';
 // LIVO API Worker — entrypoint & routing. Module contracts:
 //   auth.ts      → registerAuthRoutes(app), requireMember (middleware),
 //                  verifyAccessToken(env, token): Promise<{sub, email} | null>
@@ -26,6 +28,9 @@ import { runQuery, roleRank } from './db';
 import { handleRpc } from './rpc';
 import { handleUpload, handleDownload, handleRemove, isKnowledgeStoragePath } from './storage';
 import { handleQa } from './qa';
+import { handleReleaseWorkspace } from './releases';
+import { handleApprovalCommand } from './approval';
+import { runApprovalDeliveries } from './approvalDelivery';
 import { handleKnowledgeWorkflow } from './knowledgeWorkflow';
 import { handleKnowledgeImport } from './functions/knowledgeImport';
 import { runKnowledgeImportCleanup } from './functions/knowledgeImportCleanup';
@@ -128,6 +133,10 @@ app.post('/rest/v1/rpc/:fn', (c) => handleRpc(c, c.req.param('fn'))); // legacy 
 
 // ── Functions (Edge Function ports) ───────────────────────────────────────
 app.post('/api/functions/qa', requireMember, handleQa); // read/write demo and opt-in guards are action-aware
+app.post('/api/functions/task-work-command', requireMember, handleTaskWorkCommand);
+app.post('/api/functions/approval-command', requireMember, handleApprovalCommand);
+app.post('/api/functions/knowledge-work', requireMember, handleKnowledgeWork);
+app.post('/api/functions/release-workspace', requireMember, handleReleaseWorkspace);
 app.post('/api/functions/knowledge-workflow', requireMember, handleKnowledgeWorkflow);
 const knowledgeImport: Handler<AppContext> = async (c) => {
   try {
@@ -173,6 +182,10 @@ app.post('/functions/v1/knowledge-workflow', requireMember, handleKnowledgeWorkf
 app.post('/functions/v1/knowledge-import', requireMember, knowledgeImport);
 app.post('/functions/v1/manage-member', requireMember, demoGuard, handleManageMember);
 app.post('/functions/v1/slack-notify', requireMember, handleSlackNotify);
+app.post('/functions/v1/task-work-command', requireMember, handleTaskWorkCommand);
+app.post('/functions/v1/approval-command', requireMember, handleApprovalCommand);
+app.post('/functions/v1/knowledge-work', requireMember, handleKnowledgeWork);
+app.post('/functions/v1/release-workspace', requireMember, handleReleaseWorkspace);
 app.post('/functions/v1/import-jira', requireMember, demoGuard, requireAdmin, handleImportJira);
 app.post('/functions/v1/scheduled-backup', requireMember, demoGuard, requireSuperAdmin, handleBackup);
 app.get('/functions/v1/og-task', handleOgTask);
@@ -245,6 +258,7 @@ export default {
         runKnowledgeImportCleanup(env), // system retention: all tenants, including disabled importers
         runScheduledBackup(env, ctx),
         runQaSlackInbox(env, ctx),
+        runApprovalDeliveries(env),
         runSlackDigest(env, ctx),
         runDueReminders(env), // due-soon notifications+emails, daily 09:00 台灣 self-gate
         runDemoReset(env), // hourly demo wipe+reseed when DEMO_RESET==="1" (T2b)

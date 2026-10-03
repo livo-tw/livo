@@ -37,6 +37,8 @@ export interface PendingChange {
   taskTitle: string;
   oldStart: string | undefined;
   oldEnd: string | undefined;
+  dueDateKind: 'estimated' | 'committed' | null;
+  dueDateVersion: number;
   newStart: string | undefined;
   newEnd: string | undefined;
 }

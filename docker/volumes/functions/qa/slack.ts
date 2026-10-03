@@ -1,7 +1,9 @@
+import { handleQaCoordinationSlack } from './slackHandoff.ts';
 /** Slack QA UI and intent routing shared by Socket Mode and HTTP transports. */
 import { canQaCommand, isHistoricalQaPass, isQaTerminal, type QaActor, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
 import { DEFAULT_QA_WORKFLOW, getQaStateLabel, type QaWorkflow } from './workflow.ts';
 import { slackProjectOptionGroups, type ProjectGroup } from './projectGroups.ts';
+import { handleQaWorkspace, parseQaWorkspaceCommand } from './slackWorkspace.ts';
 export type SlackBlock = Record<string, unknown>;
 type Selection = { value?: string; selected_option?: { value: string }; selected_options?: Array<{value:string}>; };
 export interface QaSlackPayload {
@@ -18,7 +20,7 @@ export interface QaSlackActions {
   enabled(): Promise<boolean>;
   actor(payload: QaSlackPayload): Promise<QaSlackActor>;
   api<T>(actor: QaSlackActor, body: Record<string, unknown>): Promise<T>;
-  projects(actor: QaSlackActor, search: string): Promise<ProjectGroup[]>;
+  projects(actor: QaSlackActor, search: string, includeArchived?: boolean): Promise<ProjectGroup[]>;
   environments(actor: QaSlackActor): Promise<string[]>;
   mapped(actor: QaSlackActor, source: QaSlackSource): Promise<string | undefined>;
   publish(actor: QaSlackActor, issue: QaIssue, source: QaSlackSource): Promise<void>;
@@ -55,6 +57,8 @@ export function isQaSlackPayload(p: QaSlackPayload): boolean {
     || p.type === 'event_callback' || p.type === 'block_suggestion' && p.view?.callback_id === 'livo_qa_submit';
 }
 export function parseQaSlackCommand(raw: string) {
+  const workspace = parseQaWorkspaceCommand(raw);
+  if (workspace) return workspace;
   const rest = raw.trim().replace(/^bug\s*/i, '');
   const match = /^(fix|pass|fail|blocked|deploy|close|reopen|comment|show|link)\s+(\S+)(?:\s+([\s\S]*))?$/i.exec(rest);
   if (match) return { intent: match[1].toLowerCase(), issueId: match[2], value: match[3] || '' };
@@ -93,8 +97,8 @@ export async function qaRequestId(value: string): Promise<string> {
 }
 const kindFor = (intent: string): QaCommand['type'] | undefined => ({ fix: 'submit_fix', deploy: 'record_deployment', pass: 'record_verification', fail: 'record_verification', blocked: 'record_verification', close: 'close', reopen: 'reopen' } as Record<string, QaCommand['type']>)[intent];
 async function openQaForm(p: QaSlackPayload, d: QaSlackActions, intent: string, issueId: string, draft: string) {
-  const opening = await d.slack('views.open', { trigger_id: p.trigger_id, view: qaMessageModal('正在載入 LIVO QA…') });
-  const opened = opening.view as { id: string };
+  const opening = await d.slack(p.view ? 'views.update' : 'views.open', { ...(p.view ? {view_id:p.view.id} : {trigger_id:p.trigger_id}), view: qaMessageModal('正在載入 LIVO QA…') });
+  const opened = p.view || opening.view as { id: string };
   try {
     const actor = await d.actor(p), source = sourceOf(p);
     source.team = actor.team; source.user = actor.slack_user; source.intent = intent;
@@ -187,6 +191,10 @@ export async function handleQaSlack(p: QaSlackPayload, _envelopeId: string, d: Q
     d.background(d.reply(p, 'QA 或 Slack 互動功能目前關閉，請洽管理員。').catch(() => {})); return {};
   }
   try {
+    const coordination = await handleQaCoordinationSlack(p,d);
+    if (coordination !== undefined) return coordination;
+    const workspace = await handleQaWorkspace(p,d);
+    if (workspace !== undefined) return workspace;
     if (p.type === 'view_closed') return {};
     if (p.type === 'block_suggestion') {
       let timer: ReturnType<typeof setTimeout> | undefined;

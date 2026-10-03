@@ -23,6 +23,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, opts
 } }) }));
 
 beforeEach(async () => {
+  await supabase.auth.signInWithPassword({email:'admin@livo.test',password:'test1234'});
   window.history.replaceState({}, '', window.location.pathname);
   state.role = 'super_admin'; state.projectId = null; state.acquire.mockResolvedValue({ acquired: true });
   const result = await supabase.from('projects').select('id');

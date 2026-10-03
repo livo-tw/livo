@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS kb_workflow_commands (
   PRIMARY KEY(workspace_id,id)
 );
 -- Preserve existing keys; reject only new collisions, including legacy clients.
-CREATE TRIGGER IF NOT EXISTS kb_task_key_insert BEFORE INSERT ON tasks WHEN EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND task_key=NEW.task_key)
+DROP TRIGGER IF EXISTS kb_task_key_insert;
+CREATE TRIGGER kb_task_key_insert BEFORE INSERT ON tasks WHEN EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND task_key=NEW.task_key AND id<>NEW.id)
 BEGIN SELECT RAISE(ABORT,'kb_workflow_task_key_conflict'); END;
 CREATE TRIGGER IF NOT EXISTS kb_task_key_update BEFORE UPDATE OF task_key ON tasks WHEN OLD.task_key<>NEW.task_key AND EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND task_key=NEW.task_key AND id<>NEW.id)
 BEGIN SELECT RAISE(ABORT,'kb_workflow_task_key_conflict'); END;

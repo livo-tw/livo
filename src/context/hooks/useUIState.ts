@@ -5,6 +5,7 @@ import { DEFAULT_REQUIRED_FIELDS, type RequiredFieldsConfig, type ViewType, type
 import { canManageFeatureToggles, resolveFeatureToggles, type FeatureKey, type FeatureToggles } from '@/lib/featureToggles';
 import { loadFeatureToggles, persistFeatureToggle } from '@/lib/featureToggleQueries';
 import { clearQaNavigationGuards, hasQaNavigationGuard, notifyQaNavigationBlocked } from '@/lib/qa/navigationGuard';
+import { hasReleaseNavigationGuard, notifyReleaseNavigationBlocked } from '@/components/releases/navigation';
 
 export function useUIState(role?: string) {
   const [featureToggles, setFeatureToggles] = useState<FeatureToggles>(() =>
@@ -41,6 +42,7 @@ export function useUIState(role?: string) {
     const previous = navigationState.current.currentView;
     const next = typeof value === 'function' ? value(previous) : value;
     if (next === previous) return;
+    if (hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
     // Capability revocation has priority over preserving pending UI work.
     if (!navigationState.current.qaEnabled) clearQaNavigationGuards();
@@ -52,11 +54,13 @@ export function useUIState(role?: string) {
   taskNavigation.current = { selectedTask, taskDisplayMode };
   const setSelectedTask = useCallback<Dispatch<SetStateAction<Task | null>>>(value => {
     const next = typeof value === 'function' ? value(taskNavigation.current.selectedTask) : value;
+    if (next && taskNavigation.current.taskDisplayMode === 'page' && hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (next && taskNavigation.current.taskDisplayMode === 'page' && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
     taskNavigation.current.selectedTask = next; setSelectedTaskState(next);
   }, []);
   const setTaskDisplayMode = useCallback<Dispatch<SetStateAction<TaskDisplayMode>>>(value => {
     const next = typeof value === 'function' ? value(taskNavigation.current.taskDisplayMode) : value;
+    if (next === 'page' && taskNavigation.current.selectedTask && hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (next === 'page' && taskNavigation.current.selectedTask && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
     taskNavigation.current.taskDisplayMode = next; setTaskDisplayModeState(next);
   }, []);

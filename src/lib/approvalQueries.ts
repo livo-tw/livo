@@ -40,6 +40,9 @@ export interface ApprovalRequest {
   status: 'pending' | 'approved' | 'rejected' | 'returned' | 'cancelled';
   created_at: string;
   completed_at: string | null;
+  version: number;
+  steps_snapshot: import('./approval/core').ApprovalStepSnapshot[] | null;
+  rule_snapshot?: Record<string, unknown> | null;
 }
 
 export interface ApprovalAction {
@@ -100,9 +103,6 @@ export const stepQueries = {
 };
 
 export const requestQueries = {
-  create: (db: DB, data: Omit<ApprovalRequest, 'id' | 'created_at' | 'completed_at'>) =>
-    q(db, 'approval_requests').insert(data).select().single(),
-
   fetchByTask: (db: DB, taskId: string) =>
     q(db, 'approval_requests')
       .select('*')
@@ -129,43 +129,12 @@ export const requestQueries = {
       .eq('status', 'pending')
       .order('created_at', { ascending: false }),
 
-  updateStatus: (db: DB, id: string, status: ApprovalRequest['status'], completedAt?: string) =>
-    q(db, 'approval_requests')
-      .update({ status, completed_at: completedAt ?? null })
-      .eq('id', id)
-      .eq('status', 'pending')
-      .select()
-      .single(),
 };
 
 export const actionQueries = {
-  create: (db: DB, data: Omit<ApprovalAction, 'id' | 'acted_at'>) =>
-    q(db, 'approval_actions').insert(data).select().single(),
-
   fetchByRequest: (db: DB, requestId: string) =>
     q(db, 'approval_actions')
       .select('*')
       .eq('request_id', requestId)
       .order('acted_at'),
-};
-
-/** Task-side approval status helpers — centralises all writes to tasks.approval_status */
-export const taskApprovalQueries = {
-  /** Mark a task as awaiting approval */
-  setPendingApproval: (db: DB, taskId: string, requestId: string) =>
-    q(db, 'tasks')
-      .update({ approval_status: 'pending_approval', current_approval_id: requestId })
-      .eq('id', taskId),
-
-  /** Clear approval fields when a request is cancelled, rejected, or returned */
-  clearApprovalStatus: (db: DB, taskId: string) =>
-    q(db, 'tasks')
-      .update({ approval_status: null, current_approval_id: null })
-      .eq('id', taskId),
-
-  /** Apply the approved status transition and clear approval fields */
-  applyStatusChange: (db: DB, taskId: string, newStatusId: string, extra?: { started_at?: string; completed_at?: string | null }) =>
-    q(db, 'tasks')
-      .update({ status_id: newStatusId, approval_status: null, current_approval_id: null, ...extra })
-      .eq('id', taskId),
 };

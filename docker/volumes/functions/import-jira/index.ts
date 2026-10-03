@@ -486,16 +486,16 @@ Deno.serve(async (req) => {
 
     // ── Clear existing data (children before parents) ──
     console.log('Clearing existing data...');
-    await supabase.from('comments').delete().neq('id', '___none___');
-    await supabase.from('task_checks').delete().neq('id', '___none___');
-    await supabase.from('task_todos').delete().neq('id', '___none___');
-    await supabase.from('task_specs').delete().neq('id', '___none___');
-    await supabase.from('task_deployments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('task_attachments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('status_logs').delete().neq('id', '___none___');
-    await supabase.from('notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('tasks').delete().neq('id', '___none___');
-    await supabase.from('sprints').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    // Both approval and planning guards run before child writes in one transaction.
+    const { error: clearError } = await supabase.rpc('livo_jira_clear_tasks');
+    if (clearError) {
+      const pending = clearError.message === 'approval_pending';
+      const planning = clearError.message === 'planning_history_requires_restore';
+      const work = clearError.message === 'work_history_requires_restore' || clearError.message === 'release_history_requires_restore';
+      return json({ error: pending ? 'approval_pending' : planning ? 'planning_history_requires_restore' : work ? 'work_history_requires_restore' : 'import_clear_failed',
+        message: pending ? '尚有簽核中的任務，請先撤回或完成簽核後再匯入。' : planning || work ?
+          '此工作區保留任務操作歷史、期限異動或個人提醒設定，無法覆蓋匯入。請使用完整伺服器備份還原。' : '資料清除失敗，原資料已保留。' }, pending || planning || work ? 409 : 500);
+    }
     written.wiped = true;
     // Steps after the wipe that may only warn (the data itself is in place).
     const warnings: string[] = [];

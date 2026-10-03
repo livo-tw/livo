@@ -100,6 +100,8 @@ Deno.serve(async (req) => {
     const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
     for (const task of dueTasks) {
+      const {data:paused,error:pauseError}=await supabase.rpc('livo_task_reminder_paused',{p_task:task.id,p_member:task.assignee_id});
+      if(pauseError || paused) continue;
       // Skip when a due_soon notification for this task+recipient is still
       // unread or was already created within the last 24h.
       const { data: existing, error: existErr } = await supabase
@@ -119,19 +121,19 @@ Deno.serve(async (req) => {
       // Same shape as the frontend's due_soon insert (useSideEffects.ts):
       // sender = recipient, zh-TW content = notification.types.dueSoon + title.
       // The livo_notify_email_dispatch trigger picks this up and emails it.
-      const { error: insErr } = await supabase.from('notifications').insert({
+      const { data: inserted, error: insErr } = await supabase.from('notifications').insert({
         recipient_id: task.assignee_id,
         sender_id: task.assignee_id,
         type: 'due_soon',
         task_id: task.id,
         content: `提醒：任務即將到期：${task.title}`,
         is_read: false,
-      });
+      }).select('id');
       if (insErr) {
         console.error('[due-reminders] notification insert failed:', insErr.message);
         continue;
       }
-      notified++;
+      notified+=inserted?.length||0;
     }
 
     return json({ ok: true, checked: dueTasks.length, notified });

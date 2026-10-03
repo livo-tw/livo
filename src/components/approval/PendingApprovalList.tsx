@@ -9,6 +9,9 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useUIContext } from '@/context/UIContext';
+import { approvalTaskPatch } from '@/lib/approvalCommands';
+import { approvalSnapshotSteps } from '@/lib/approval/core';
+import type { ApprovalActionResult } from '@/hooks/useApprovalWorkflow';
 import type { ApprovalRequest } from '@/lib/approvalQueries';
 import { useTranslation } from 'react-i18next';
 
@@ -64,29 +67,17 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
     setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(r => r.id)));
   };
 
-  const applyApprovalResult = (result: { ok: boolean; approvedToStatus?: string; taskId?: string }) => {
-    if (result.approvedToStatus && result.taskId) {
-      const toStatus = statuses.find(s => s.id === result.approvedToStatus);
-      const task = allTasks.find(t => t.id === result.taskId);
-      if (task) {
-        const oldStatus = statuses.find(s => s.id === task.statusId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const updates: Record<string, any> = {
-          statusId: result.approvedToStatus,
-          approvalStatus: undefined,
-          currentApprovalId: undefined,
-        };
-        if (toStatus?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-        if (toStatus?.isDone && !oldStatus?.isDone) updates.completedAt = new Date().toISOString();
-        if (!toStatus?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
-        setAllTasks(prev => prev.map(t => t.id === result.taskId ? { ...t, ...updates } : t));
-      }
+  const applyApprovalResult = (result: ApprovalActionResult) => {
+    if (result.ok && result.task) {
+      const saved = result.task;
+      setAllTasks(prev => prev.map(task => task.id === saved.id ? {...task,...approvalTaskPatch(saved)} : task));
     }
   };
 
   const handleBulkApprove = async () => {
     for (const id of selected) {
-      const result = await performAction(id, 'approve');
+      if (!approvalSnapshotSteps(pendingApprovals.find(request => request.id === id) ?? {steps_snapshot:null})) continue;
+      const result = await performAction(id, 'approve', undefined, undefined, pendingApprovals.find(request => request.id === id));
       applyApprovalResult(result);
     }
     setSelected(new Set());
@@ -94,6 +85,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
   };
 
   const openActionDialog = (request: ApprovalRequest, action: 'approve' | 'reject' | 'return') => {
+    if (!approvalSnapshotSteps(request)) return;
     setActionDialog({ request, action });
     setComment('');
   };
@@ -101,10 +93,10 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
   const handleConfirmAction = useCallback(async () => {
     if (!actionDialog) return;
     setActioning(true);
-    const result = await performAction(actionDialog.request.id, actionDialog.action, comment || undefined);
+    const result = await performAction(actionDialog.request.id, actionDialog.action, comment || undefined, undefined, actionDialog.request);
     applyApprovalResult(result);
     setActioning(false);
-    setActionDialog(null);
+    if (result.ok) {setActionDialog(null);setComment('');}
     fetchPendingApprovals();
   }, [actionDialog, comment, performAction, fetchPendingApprovals]);
 
@@ -120,6 +112,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
 
   return (
     <div className="flex flex-col h-full">
+      {pendingApprovals.some(request => !approvalSnapshotSteps(request)) && <p role="alert" className="text-sm text-amber-700">{t('approvalCommand.legacy')}</p>}
       {/* Toolbar */}
       <div className="flex items-center gap-2 pb-3 border-b border-border flex-wrap">
         {projectOptions.length > 1 && (
@@ -175,7 +168,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
                 return (
                   <tr key={req.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                     <td className="py-2 pr-3">
-                      <input type="checkbox" checked={selected.has(req.id)} onChange={() => toggleSelect(req.id)} />
+                      <input type="checkbox" disabled={!approvalSnapshotSteps(req)} checked={selected.has(req.id)} onChange={() => toggleSelect(req.id)} />
                     </td>
                     <td className="py-2 pr-3">
                       <button
@@ -202,6 +195,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
                     <td className="py-2">
                       <div className="flex items-center gap-1">
                         <button
+                          disabled={!approvalSnapshotSteps(req)}
                           onClick={() => openActionDialog(req, 'approve')}
                           title={t('approval.approve')}
                           aria-label={t('approval.approve')}
@@ -210,6 +204,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
                           <CheckCheck size={13} />
                         </button>
                         <button
+                          disabled={!approvalSnapshotSteps(req)}
                           onClick={() => openActionDialog(req, 'return')}
                           title={t('approval.returnAction')}
                           aria-label={t('approval.returnAction')}
@@ -218,6 +213,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
                           <CornerUpLeft size={13} />
                         </button>
                         <button
+                          disabled={!approvalSnapshotSteps(req)}
                           onClick={() => openActionDialog(req, 'reject')}
                           title={t('approval.reject')}
                           aria-label={t('approval.reject')}

@@ -29,12 +29,18 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, opts
 const empty = (): KnowledgeRule => ({ roles: [], positions: [], member_ids: [] });
 const pmPolicy = (): KnowledgePolicy => ({ mode: 'custom', view: { ...empty(), positions: ['PM'] }, edit: { ...empty(), positions: ['PM'] }, comment: { ...empty(), positions: ['PM'] } });
 const ids = ['kb-test-private', 'kb-test-child', 'kb-test-discussion'];
+async function liveActor() { await client.from('members' as never).update({role:state.role,job_title:state.jobTitle,is_active:state.active} as never).eq('id','m-001'); }
 async function page(id: string, title: string, policy: KnowledgePolicy, parent_id: string | null = null) {
+  await client.from('members' as never).update({role:'super_admin',job_title:'PM',is_active:true} as never).eq('id','m-001');
   await client.from('kb_pages').insert({ id, title, body: '<p>Confidential planning detail</p>', parent_id, access_policy: policy, created_by: 'm-001', updated_by: 'm-001' });
+  await liveActor();
 }
 
 beforeEach(async () => {
+  await client.auth.signInWithPassword({email:'admin@livo.test',password:'test1234'});
+  await client.from('members' as never).update({role:'super_admin',job_title:'PM',is_active:true} as never).eq('id','m-001');
   state.role = 'member'; state.jobTitle = 'Engineer'; state.active = true;
+  window.history.replaceState({}, '', '/');
   await client.from('kb_pages').delete().in('id', ids);
   await client.from('kb_comments').delete().in('page_id', ids);
   vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -43,6 +49,23 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('knowledge permissions and meeting notes', () => {
+  it('opens an accessible document from the Slack link after permission data is ready', async () => {
+    state.jobTitle = 'PM';
+    await page(ids[0], 'Linked planning', pmPolicy());
+    window.history.replaceState({}, '', '/?knowledge=' + ids[0]);
+    render(<KnowledgeBaseView />);
+    await screen.findByText('Confidential planning detail');
+    await waitFor(() => expect(window.location.search).not.toContain('knowledge='));
+  });
+  it('does not open an administrator-restricted document from a forged Slack link', async () => {
+    state.role = 'super_admin';
+    await page(ids[0], 'Private linked planning', pmPolicy());
+    window.history.replaceState({}, '', '/?knowledge=' + ids[0]);
+    render(<KnowledgeBaseView />);
+    await waitFor(() => expect(window.location.search).not.toContain('knowledge='));
+    expect(screen.queryByText('Confidential planning detail')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Private linked planning' })).toBeNull();
+  });
   it('hides restricted parent and inherited child from search, including from administrators', async () => {
     await page(ids[0], 'Private planning', pmPolicy());
     await page(ids[1], 'Private follow-up', { mode: 'inherit' }, ids[0]);
@@ -51,7 +74,7 @@ describe('knowledge permissions and meeting notes', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search titles and content' }), { target: { value: 'Confidential' } });
     expect(screen.queryByRole('button', { name: /Private/ })).not.toBeInTheDocument();
     expect(screen.getByText(en.kb.noResults)).toBeInTheDocument();
-    state.role = 'super_admin'; rerender(<KnowledgeBaseView />);
+    state.role = 'super_admin'; await liveActor(); rerender(<KnowledgeBaseView />);
     await waitFor(() => expect(screen.getByText(en.kb.noResults)).toBeInTheDocument());
     expect(screen.queryByText('Confidential planning detail')).not.toBeInTheDocument();
   });
@@ -82,14 +105,14 @@ describe('knowledge permissions and meeting notes', () => {
     await screen.findByText('Confidential planning detail');
     fireEvent.click(screen.getByRole('button', { name: 'Revision history' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Leave a comment' }), { target: { value: 'Unsent private note' } });
-    state.jobTitle = 'Engineer'; rerender(<KnowledgeBaseView />);
+    state.jobTitle = 'Engineer'; await liveActor(); rerender(<KnowledgeBaseView />);
     expect(screen.queryByText('Confidential planning detail')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Leave a comment' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Restricted minutes' })).not.toBeInTheDocument());
   });
 
   it('creates meeting notes with their restriction in the initial insert', async () => {
-    state.role = 'super_admin'; state.jobTitle = 'PM';
+    state.role = 'super_admin'; state.jobTitle = 'PM'; await liveActor();
     render(<KnowledgeBaseView />);
     fireEvent.click(screen.getByRole('button', { name: 'New page' }));
     const form = within(screen.getByRole('dialog', { name: 'New page' }));
@@ -140,7 +163,9 @@ describe('knowledge permissions and meeting notes', () => {
     render(<KnowledgeBaseView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Revocable minutes' }));
     await screen.findByText('Confidential planning detail');
+    await client.from('members' as never).update({role:'super_admin'} as never).eq('id','m-001');
     await client.from('kb_pages').update({ access_policy: { mode: 'custom', view: { ...empty(), positions: ['Engineer'] }, edit: empty(), comment: empty() } }).eq('id', ids[0]);
+    await liveActor();
     fireEvent.focus(window);
     await waitFor(() => expect(screen.queryByText('Confidential planning detail')).not.toBeInTheDocument());
     expect(screen.queryByRole('textbox', { name: 'Leave a comment' })).not.toBeInTheDocument();
@@ -150,6 +175,7 @@ describe('knowledge permissions and meeting notes', () => {
     const create = vi.fn(() => 'blob:private-download');
     vi.stubGlobal('URL', class extends URL { static createObjectURL = create; static revokeObjectURL = vi.fn(); });
     const file = new File(['private note'], 'meeting.txt', { type: 'text/plain' });
+    state.jobTitle='PM'; await page(ids[0],'File parent',pmPolicy());
     await uploadKnowledgeFile(ids[0], 'm-001', file);
     const { data } = await client.from('kb_attachments').select('*').eq('page_id', ids[0]).single();
     expect(data?.storage_bucket).toBe('kb-files');

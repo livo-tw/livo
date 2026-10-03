@@ -11,7 +11,8 @@ export interface DeliveryStore {
   project(taskId: string): Promise<Row | undefined>;
   binding(memberId: string, teamId: string): Promise<string | undefined>;
   thread(taskId: string, teamId: string, channelId: string): Promise<string | undefined>;
-  currentTask(taskId: string): Promise<Row | undefined>;
+  currentTask(taskId: string, requestId?: string, memberId?: string): Promise<Row | undefined>;
+  reminderPaused?(taskId:string,memberId:string):Promise<boolean>;
   queueWeekly(): Promise<number>;
   weeklyTasks(memberId: string, weekStart: string): Promise<Row[]>;
   canSend(job: Job, owner: string): Promise<boolean>;
@@ -46,23 +47,48 @@ const reasonText: Record<string, string> = {
 /** Recheck responsibilities after queueing; a delayed send must not alert a former owner. */
 export function currentPersonalPayload(job: Job, task: Row | undefined): Row | undefined {
   if (!task) return undefined;
+  if (job.payload.kind === 'approval') {
+    const event = job.payload.approval, request = task.approval_request, actor = task.approval_member;
+    if (!event || !request || !actor || actor.id !== job.target_id || actor.is_active !== true ||
+      request.task_id !== job.task_id || request.id !== event.requestId || request.version !== event.version || request.status !== event.status) return undefined;
+    if (job.payload.approvalRecipient === 'requester') {
+      return request.status !== 'pending' && request.status !== 'cancelled' && request.requested_by === actor.id ? job.payload : undefined;
+    }
+    if (job.payload.approvalRecipient !== 'approver' || request.status !== 'pending' ||
+      task.current_approval_id !== request.id || task.approval_status !== 'pending_approval' || task.status_id !== request.from_status ||
+      request.current_step !== event.currentStep || !Array.isArray(request.steps_snapshot)) return undefined;
+    const step = request.steps_snapshot[request.current_step - 1];
+    if (!step || step.step_order !== request.current_step) return undefined;
+    const allowed = request.rule_id === null ? request.current_step === 1 && ['admin', 'super_admin'].includes(actor.role)
+      : step.approver_type === 'user' ? step.approver_user_id === actor.id && step.approver_role === null
+      : step.approver_type === 'role' && step.approver_role === actor.role && step.approver_user_id === null;
+    return allowed ? job.payload : undefined;
+  }
   const rules = job.payload.recipientRules;
   if (!Array.isArray(rules)) {
     if (job.payload.reason === 'due_soon' && (task.assignee_id !== job.target_id || task.completed_at ||
       task.statuses?.is_done || task.due_date !== job.payload.dueDate)) return undefined;
     if (job.payload.reason === 'comment' && task.assignee_id !== job.target_id && task.reviewer_id !== job.target_id) return undefined;
-    return job.payload;
+    return { ...job.payload, responsibilities: [] };
   }
   const current = rules.filter((r: Row) => ['assignee', 'reviewer'].includes(r.role) &&
-    task[`${r.role}_id`] === job.target_id && (!r.statusId || r.statusId === task.status_id));
-  return current.length ? { ...job.payload, recipientRules: current } : undefined;
+    task[`${r.role}_id`] === job.target_id && (!r.statusId || r.statusId === task.status_id) &&
+    (r.assignmentRevision === undefined || r.assignmentRevision === task[`${r.role}_revision`]));
+  const responsibilities = Array.isArray(job.payload.responsibilities) ? job.payload.responsibilities.filter((r:Row) =>
+    ['assignee','reviewer'].includes(r.role) && Number.isSafeInteger(r.expectedRevision) && r.expectedRevision >= 0 &&
+    current.some((rule:Row) => rule.role === r.role && rule.assignmentRevision === r.expectedRevision && ['assigned','reviewer_assigned','handoff'].includes(rule.code)) &&
+    task[`${r.role}_id`] === job.target_id && task[`${r.role}_revision`] === r.expectedRevision && !task[`${r.role}_acknowledged_at`]) : [];
+  return current.length ? { ...job.payload, recipientRules: current, responsibilities } : undefined;
 }
 export function notificationMessage(payload: Row, appBase: string) {
   const base = new URL(appBase);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password) throw new DeliveryError('invalid_app_url');
   const url = `${base.origin}${base.pathname.replace(/\/$/, '')}/?task=${encodeURIComponent(payload.taskKey)}`;
   const safe = (v: unknown, limit = 240) => escapeSlack(String(v ?? '').slice(0, limit));
+  const approval = payload.kind === 'approval' ? payload.approval : undefined;
+  const approvalLabels: Record<string, string> = { requested: '待簽核', step_approved: '下一層待簽核', approved: '簽核通過', rejected: '簽核拒絕', returned: '簽核退回' };
   const lines = [payload.kind === 'created' ? '🆕 新任務建立' : payload.kind === 'comment' ? '💬 新評論'
+    : approval ? `${payload.approvalRecipient ? '[個人通知] ' : ''}📝 ${approvalLabels[approval.eventType] || '簽核更新'}`
     : payload.kind === 'personal' ? `[個人通知] ${payload.eventKind === 'created' ? '🆕 新任務建立' : payload.eventKind === 'updated' ? '🔄 任務更新' : '🔔 任務提醒'}` : '🔄 任務更新',
     `<${url}|${safe(payload.taskKey)} - ${safe(payload.taskTitle)}>`];
   if (payload.kind === 'created') {
@@ -71,6 +97,11 @@ export function notificationMessage(payload: Row, appBase: string) {
       payload.dueDate && `📅 ${safe(payload.dueDate)}`].filter(Boolean);
     if (details.length) lines.push(details.join(' | '));
     lines.push(`✏️ 建立者: ${safe(payload.actorName)}`);
+  }
+  if (approval) {
+    lines.push(`📋 ${safe(approval.fromStatusName)} → ${safe(approval.toStatusName)}`,
+      `✏️ 操作者: ${safe(payload.actorName)}`);
+    if (approval.status === 'pending') lines.push(`簽核步驟：${safe(approval.currentStep)}`);
   }
   if (payload.kind === 'updated' || (payload.kind === 'personal' && payload.changes?.length)) {
     const changes = (payload.changes || []).slice(0, 8).map((c: Row) => {
@@ -95,10 +126,22 @@ export function notificationMessage(payload: Row, appBase: string) {
   }
   lines.push(`📂 項目: ${safe(payload.projectName || payload.projectKey)}`);
   const text = lines.join('\n').slice(0, 2900);
+  const approvalValue = approval && typeof approval.requestId === 'string' && Number.isSafeInteger(approval.version) && approval.version > 0 &&
+    Number.isSafeInteger(approval.currentStep) && approval.currentStep > 0
+    ? { requestId: approval.requestId, version: approval.version, step: approval.currentStep } : undefined;
   return { text, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } },
     { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: '開啟 LIVO 卡片' }, url },
-      ...(payload.taskKey ? [{ type: 'button', action_id: 'livo_task_open', text: { type: 'plain_text', text: '處理任務' },
-        value: JSON.stringify({ key: payload.taskKey }) }] : [])] }],
+      ...(approvalValue ? [{ type: 'button', action_id: 'livo_approval_open', text: { type: 'plain_text', text: '查看簽核' }, value: JSON.stringify({ ...approvalValue, operation: 'open' }) },
+        ...(approval.status === 'pending' && payload.approvalActionable !== false ? [['approve', '同意'], ['reject', '拒絕'], ['return', '退回']].map(([operation, label]) => ({
+          type: 'button', action_id: `approval_${operation}`, text: { type: 'plain_text', text: label }, value: JSON.stringify({ ...approvalValue, operation }),
+        })) : [])] : []),
+      ...(!approval && payload.taskKey ? [{ type: 'button', action_id: 'livo_task_open', text: { type: 'plain_text', text: '處理任務' },
+        value: JSON.stringify({ key: payload.taskKey }) }] : [])] },
+      ...(payload.kind === 'personal' && typeof payload.taskId === 'string' && Array.isArray(payload.responsibilities) ?
+        payload.responsibilities.filter((r:Row,i:number,all:Row[]) => ['assignee','reviewer'].includes(r.role) && Number.isSafeInteger(r.expectedRevision) && r.expectedRevision >= 0 && all.findIndex(x=>x.role===r.role)===i).slice(0,2).map((r:Row)=>({
+          type:'actions',block_id:`livo_work_ack_${r.role}`,elements:[{
+            type:'button',action_id:'livo_work_ack',text:{type:'plain_text',text:r.role==='reviewer'?'確認接手驗收':'確認接手任務'},
+            value:JSON.stringify({taskId:payload.taskId,role:r.role,expectedRevision:r.expectedRevision})}]})) : [])],
     unfurl_links: false, unfurl_media: false };
 }
 export function matchingChannels(config: Row | undefined, project: Row | undefined): string[] {
@@ -193,7 +236,7 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
       config?.weekly?.enabled === true && Number.isFinite(weekTime) && now >= weekTime && now < weekTime + 7 * 86400000
       : routeAllowed(config, project, job);
     const payload = allowed && !weekly && job.target_type === 'member'
-      ? currentPersonalPayload(job, await store.currentTask(job.task_id)) : job.payload;
+      ? currentPersonalPayload(job, await store.currentTask(job.task_id, job.payload.approval?.requestId, job.target_id)) : job.payload;
     let tasks = allowed && weekly ? await store.weeklyTasks(job.target_id, job.payload.weekStart) : [];
     if (!allowed) result = { status: 'skipped', error: 'route_no_longer_allowed' };
     else if (!payload || (weekly && !tasks.length)) result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
@@ -204,9 +247,11 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
       const auth = await slack('auth.test', {});
       if (auth.team_id !== job.team_id) throw new DeliveryError('slack_workspace_mismatch');
       let channel = job.target_id;
+      let recipientUser: string | undefined;
       if (job.target_type === 'member') {
         const user = await store.binding(job.target_id, job.team_id);
         if (!user) throw new DeliveryError('recipient_not_verified');
+        recipientUser = user;
         const info = (await slack('users.info', { user })).user;
         if (!info || info.deleted || info.is_bot || info.team_id !== job.team_id) throw new DeliveryError('recipient_unavailable');
         const membership = new Map<string, boolean>();
@@ -227,11 +272,34 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         if (!channel) throw new DeliveryError('dm_channel_unavailable');
       }
       const thread = job.target_type === 'channel' ? activeThread(await store.thread(job.task_id, job.team_id, channel), now) : undefined;
-      const message = weekly ? weeklyMessage(tasks, job.payload.weekStart, appBase) : notificationMessage(payload, appBase);
+      if (job.target_type==='member' && payload.reason==='due_soon' && (!store.reminderPaused || await store.reminderPaused(job.task_id,job.target_id))) {
+        if (!(await store.finish(job,owner,{status:'skipped',error:'reminder_paused'}))) throw new DeliveryError('delivery_lease_lost',false,true);
+        return 'skipped';
+      }
+      if (weekly) { const fresh=new Set((await store.weeklyTasks(job.target_id,job.payload.weekStart)).map(t=>t.taskId)); tasks=tasks.filter(t=>fresh.has(t.taskId));
+        if(!tasks.length) { if(!(await store.finish(job,owner,{status:'skipped',error:'no_due_tasks'}))) throw new DeliveryError('delivery_lease_lost',false,true); return 'skipped'; } }
+      let message = weekly ? weeklyMessage(tasks, job.payload.weekStart, appBase) : notificationMessage(payload, appBase);
       if (!(await store.canSend(job, owner))) throw new DeliveryError('delivery_lease_lost', false, true);
-      const sent = await slack('chat.postMessage', { channel, ...message, ...(thread ? { thread_ts: thread } : {}) });
-      if (!/^\d+\.\d+$/.test(sent.ts || '')) throw new DeliveryError('missing_slack_receipt', false, true);
-      result = { status: 'sent', channel, messageTs: sent.ts, threadTs: thread || sent.ts };
+      if (job.target_type === 'channel' && job.payload.kind === 'approval') {
+        const live = await store.currentTask(job.task_id, job.payload.approval?.requestId), request = live?.approval_request;
+        const current = request && request.id === payload.approval?.requestId && request.version === payload.approval?.version &&
+          request.status === 'pending' && request.current_step === payload.approval?.currentStep &&
+          live?.current_approval_id === request.id && live?.approval_status === 'pending_approval' && live?.status_id === request.from_status;
+        message = notificationMessage({ ...payload, approvalActionable: !!current }, appBase);
+      }
+      const freshPersonal = job.target_type === 'member' && !weekly
+        ? currentPersonalPayload(job, await store.currentTask(job.task_id,job.payload.approval?.requestId,job.target_id)) : undefined;
+      if (job.target_type === 'member' && !weekly && !freshPersonal) {
+        result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
+      } else {
+        if (freshPersonal) message = notificationMessage(freshPersonal,appBase);
+        // A binding changed while opening the DM must not deliver to the old identity.
+        if (job.target_type === 'member' && await store.binding(job.target_id, job.team_id) !== recipientUser)
+          throw new DeliveryError('recipient_not_verified');
+        const sent = await slack('chat.postMessage', { channel, ...message, ...(thread ? { thread_ts: thread } : {}) });
+        if (!/^\d+\.\d+$/.test(sent.ts || '')) throw new DeliveryError('missing_slack_receipt', false, true);
+        result = { status: 'sent', channel, messageTs: sent.ts, threadTs: thread || sent.ts };
+      }
     }
   } catch (error) { result = failureResult(error, job.attempts); }
   // A database failure after posting must never be converted into a blind retry.

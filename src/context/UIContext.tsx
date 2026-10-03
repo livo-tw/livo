@@ -1,8 +1,9 @@
 import { createContext, useContext } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type { Task, Project } from '@/types';
 import type { FeatureKey, FeatureToggles } from '@/lib/featureToggles';
 
-export type ViewType = 'qa' | 'my-qa' | 'knowledge-base' | 'board' | 'backlog' | 'dashboard' | 'gantt' | 'all-list' | 'my-tasks' | 'work-report' | 'status-manage' | 'member-manage' | 'team-manage' | 'team-intro' | 'system-admin' | 'activity-log' | 'my-settings' | 'team-settings' | 'template-manage' | 'integrations' | 'approvals';
+export type ViewType = 'releases' | 'qa' | 'my-qa' | 'knowledge-base' | 'board' | 'backlog' | 'dashboard' | 'gantt' | 'all-list' | 'my-tasks' | 'work-report' | 'status-manage' | 'member-manage' | 'team-manage' | 'team-intro' | 'system-admin' | 'activity-log' | 'my-settings' | 'team-settings' | 'template-manage' | 'integrations' | 'approvals';
 export type TaskDisplayMode = 'modal' | 'side' | 'page';
 
 export interface RequiredFieldsConfig {
@@ -53,7 +54,7 @@ export interface UIContextType {
   currentView: ViewType;
   setCurrentView: (v: ViewType) => void;
   selectedTask: Task | null;
-  setSelectedTask: (t: Task | null) => void;
+  setSelectedTask: Dispatch<SetStateAction<Task | null>>;
   standupMode: boolean;
   setStandupMode: (v: boolean) => void;
   standupUserId: string | null;

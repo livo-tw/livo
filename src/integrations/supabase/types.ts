@@ -570,6 +570,7 @@ export type Database = {
         Row: {
           id: string
           is_done: boolean
+          version: number
           sort_order: number
           task_id: string
           text: string
@@ -666,6 +667,7 @@ export type Database = {
         Row: {
           id: string
           is_done: boolean
+          version: number
           sort_order: number
           task_id: string
           text: string
@@ -694,15 +696,33 @@ export type Database = {
           },
         ]
       }
+      task_reminder_preferences: {
+        Row: { id: string; task_id: string; member_id: string; snoozed_until: string | null; version: number; updated_at: string }
+        Insert: { id?: string; task_id: string; member_id: string; snoozed_until?: string | null; version?: number; updated_at?: string }
+        Update: { snoozed_until?: string | null; version?: number; updated_at?: string }
+        Relationships: []
+      }
+      task_deadline_history: {
+        Row: { id: string; task_id: string; actor_id: string | null; previous_due_date: string | null; next_due_date: string | null; previous_kind: 'estimated' | 'committed' | null; next_kind: 'estimated' | 'committed' | null; reason: string | null; version: number; changed_at: string }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       tasks: {
         Row: {
           assignee_id: string | null
+          assignee_revision: number
+          reviewer_revision: number
+          assignee_acknowledged_at: string | null
+          reviewer_acknowledged_at: string | null
           comment_count: number
           completed_at: string | null
           created_at: string
           creator_id: string
           department: string | null
           due_date: string | null
+          due_date_kind: 'estimated' | 'committed' | null
+          due_date_version: number
           gitlab_url: string | null
           id: string
           priority: Database["public"]["Enums"]["task_priority"]
@@ -723,6 +743,9 @@ export type Database = {
           creator_id: string
           department?: string | null
           due_date?: string | null
+          due_date_kind?: 'estimated' | 'committed' | null
+          due_date_version?: number
+          due_date_change_reason?: string | null
           gitlab_url?: string | null
           id: string
           priority?: Database["public"]["Enums"]["task_priority"]
@@ -743,6 +766,9 @@ export type Database = {
           creator_id?: string
           department?: string | null
           due_date?: string | null
+          due_date_kind?: 'estimated' | 'committed' | null
+          due_date_version?: number
+          due_date_change_reason?: string | null
           gitlab_url?: string | null
           id?: string
           priority?: Database["public"]["Enums"]["task_priority"]
@@ -829,7 +855,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      livo_set_task_reminder: {
+        Args: { p_task_id: string; p_expected_version: number; p_until: string | null }
+        Returns: { id: string; task_id: string; member_id: string; snoozed_until: string | null; version: number; updated_at: string }
+      }
+      livo_set_task_deadline: {
+        Args: { p_task_id: string; p_expected_version: number; p_due_date: string | null; p_kind: 'estimated' | 'committed' | null; p_reason?: string | null; p_change_start?: boolean; p_expected_started_at?: string | null; p_started_at?: string | null }
+        Returns: { id: string; due_date: string | null; due_date_kind: 'estimated' | 'committed' | null; due_date_version: number; started_at: string | null }
+      }
     }
     Enums: {
       app_member_role: "admin" | "member" | "super_admin"

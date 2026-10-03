@@ -1,3 +1,4 @@
+import { taskWorkGenericPatch, taskWorkReadback } from './taskWork';
 // db.ts — the /api/query engine: translates QueryRequest (PostgREST-subset)
 // into D1 SQL. Every identifier interpolated into SQL is validated against
 // IDENT_RE; every value is a bound parameter. Rows leaving the Worker pass
@@ -26,6 +27,7 @@ import type { TableMeta, WriteRule } from './meta';
 import { notifyChanges } from './notify';
 import { sendNotificationEmails } from './functions/emailNotify';
 import { dispatchWebhooks } from './functions/webhooks';
+import { deadlinePatch, deadlineVersionSql, livePlanningMember } from './taskPlanning';
 
 // Structural tables the hourly demo reset cannot heal — writes from demo
 // users are blocked on these (see the demo write-guard in runQuery).
@@ -592,8 +594,15 @@ export async function runQuery(
     const ws = auth?.member?.workspaceId || DEFAULT_WORKSPACE;
     const withWs = (filters?: QueryFilter[]): QueryFilter[] => [
       { col: 'workspace_id', op: 'eq', val: ws },
+      ...(table==='external_account_bindings'&&req.op!=='select'?[{col:'platform',op:'neq' as const,val:'slack'}]:[]),
+      ...(table === 'task_reminder_preferences' ? [{ col: 'member_id', op: 'eq', val: auth.member.id } as QueryFilter] : []),
       ...(filters || []),
     ];
+    if(table==='external_account_bindings'&&req.op!=='select'){
+      const values=Array.isArray(req.values)?req.values:[req.values];
+      if(values.some(value=>value&&typeof value==='object'&&
+        ((value as Row).platform==='slack'||(value as Row).verified_by!=null)))return permissionDenied(table);
+    }
 
     // Demo write-guard (contract T3): demo users may browse and move tasks,
     // but must not rewrite STRUCTURAL tables — the hourly demo reset only
@@ -618,6 +627,15 @@ export async function runQuery(
         .bind(ws,auth.member.id).first<{role:string;is_active:number}>();
       if (!live?.is_active) return permissionDenied(table);
       auth = { ...auth, member: { ...auth.member, role: live.role } };
+    }
+    if (['tasks','task_checks','task_todos'].includes(table) && ['insert','update','upsert'].includes(req.op)) {
+      const prepareWork=(row:unknown)=>taskWorkGenericPatch(table,row as Row);
+      req={...req,values:Array.isArray(req.values)?req.values.map(prepareWork):prepareWork(req.values)};
+    }
+    if (table === 'tasks' && ['insert','update','upsert'].includes(req.op)) {
+      await livePlanningMember(env,auth);
+      const prepare = (row: unknown) => deadlinePatch(row as Row,auth.member.id);
+      req = { ...req, values: Array.isArray(req.values) ? req.values.map(prepare) : prepare(req.values) };
     }
     const denied = enforceWritePolicy(req, table, meta, auth);
     if (denied) return denied;
@@ -704,14 +722,15 @@ export async function runQuery(
         );
         // The DO UPDATE guard turns a conflict against ANOTHER workspace's
         // row (ids are client-suppliable) into a no-op instead of a hijack.
+        const deadlineVersion = table === 'tasks' ? deadlineVersionSql(Object.fromEntries(columns.map(c=>[c,true])),true) : {sql:''};
         const doClause =
           req.ignoreDuplicates || updateCols.length === 0
             ? ' DO NOTHING'
-            : ` DO UPDATE SET ${updateCols.map((c) => `${c} = excluded.${c}`).join(', ')}` +
-              ' WHERE workspace_id = excluded.workspace_id';
+            : ` DO UPDATE SET ${[...updateCols.map((c) => `${c} = excluded.${c}`), ...(deadlineVersion.sql ? [deadlineVersion.sql] : [])].join(', ')}` +
+              ' WHERE workspace_id = excluded.workspace_id'+(table==='external_account_bindings'?" AND external_account_bindings.platform <> 'slack'":'');
         const conflictSql = ` ON CONFLICT (${target.join(', ')})${doClause}`;
         const stmts = buildInsertStatements(env, table, rows, columns, meta, conflictSql);
-        const returned = (await runStatements(env, stmts)).map((r) => rowToWire(r, meta));
+        const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
         // Insert-vs-update is indistinguishable post-hoc; UPDATE is the safe
         // choice for the app's handlers (idempotent overwrite / refetch).
         emitChanges(env, ctx, updateEvents(table, returned, meta.pk), ws);
@@ -737,7 +756,7 @@ export async function runQuery(
           .map((k) => ident(k));
         if (!setCols.length) throw new Error('update requires at least one column');
         const setParams: unknown[] = [];
-        const setSql = setCols.map((column) => {
+        const assignments = setCols.map((column) => {
           if (table === 'members' && column === 'is_qa_admin') {
             // Permission must remain live when the capability is actually granted.
             setParams.push(ws, auth.member.id, valueToDb(column, patch[column], meta));
@@ -745,7 +764,11 @@ export async function runQuery(
           }
           setParams.push(valueToDb(column, patch[column], meta));
           return `${column} = ?`;
-        }).join(', ');
+        });
+        const deadlineVersion = table === 'tasks' ? deadlineVersionSql(patch) : {sql:'',params:[]};
+        if (deadlineVersion.sql) assignments.push(deadlineVersion.sql);
+        setParams.push(...deadlineVersion.params);
+        const setSql = assignments.join(', ');
 
         const stmts = buildFilteredWriteStatements(
           env,
@@ -754,7 +777,7 @@ export async function runQuery(
           withWs(req.filters),
           meta
         );
-        const returned = (await runStatements(env, stmts)).map((r) => rowToWire(r, meta));
+        const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
         if (returned.length) {
           emitChanges(env, ctx, updateEvents(table, returned, meta.pk), ws);
         }

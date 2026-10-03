@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useUIContext } from '@/context/UIContext';
-import { supabase } from '@/integrations/supabase/client';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
@@ -22,7 +21,7 @@ export interface UseTaskStatusChangeParams {
   canTransitionTo: (taskId: string, newStatusId: string, statusLogs: StatusLog[]) => { allowed: boolean; missingStatusIds: string[] };
   triggerNotification: (task: Task, fromStatus: string, toStatus: string) => void;
   getRuleForTransition: (projectId: string, fromStatusId: string, toStatusId: string) => Promise<{ rule: { id: string } } | null>;
-  requestApproval: (taskId: string, ruleId: string, fromStatusId: string, toStatusId: string, task: Task) => Promise<{ id: string } | null>;
+  requestApproval: (taskId: string, ruleId: string, fromStatusId: string, toStatusId: string, task: Task, enableRequirement?: boolean) => Promise<{ id: string } | null>;
 }
 
 export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
@@ -126,9 +125,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
     if (!approvalsEnabled || !featureTogglesReady || !advisoryState || !task) return;
     const { fromStatusId, toStatusId, ruleId } = advisoryState;
     setAdvisoryState(null);
-    await supabase.from('tasks').update({ requires_approval: true }).eq('id', task.id);
-    setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, requiresApproval: true } : t));
-    const req = await requestApproval(task.id, ruleId, fromStatusId, toStatusId, task);
+    const req = await requestApproval(task.id, ruleId, fromStatusId, toStatusId, task, true);
     if (req) {
       setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, requiresApproval: true, approvalStatus: 'pending_approval', currentApprovalId: req.id } : t));
       setSelectedTask({ ...task, requiresApproval: true, approvalStatus: 'pending_approval', currentApprovalId: req.id });

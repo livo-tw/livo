@@ -1,5 +1,6 @@
 import { useUIContext } from '@/context/UIContext';
 import { isEventEnabled } from '@/lib/featureToggles';
+import { taskWorkActivityDetail } from '@/lib/taskWork/feedback';
 import { FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
@@ -34,7 +35,7 @@ const TaskActivityTab = ({ detail }: Props) => {
         taskActivityLogs.map(log => {
           const user = users.find(u => u.id === log.user_id);
           const actionKey = ACTION_KEYS[log.action];
-          const actionLabel = actionKey ? t(actionKey) : log.action;
+          const actionLabel = log.action === 'task_work' ? t('taskWork.activity') : actionKey ? t(actionKey) : log.action;
           const d = new Date(log.created_at);
           const timeStr = isNaN(d.getTime())
             ? log.created_at
@@ -49,7 +50,7 @@ const TaskActivityTab = ({ detail }: Props) => {
                   <span className="text-sm font-medium text-foreground">{user?.name || log.user_id}</span>
                   <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">{actionLabel}</span>
                 </div>
-                {log.detail && <p className="text-xs text-muted-foreground mt-0.5">{log.detail}</p>}
+                {log.detail && <p className="text-xs text-muted-foreground mt-0.5">{log.action === 'task_work' ? taskWorkActivityDetail(log.detail, t) : log.detail}</p>}
                 <span className="text-[10px] text-muted-foreground/60">{timeStr}</span>
               </div>
             </div>

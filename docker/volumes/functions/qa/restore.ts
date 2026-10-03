@@ -1,4 +1,4 @@
-import { QaError, QA_MAX_FILE_BYTES, QA_STATES, type QaIssue } from './domain.ts';
+import { QaError, validateQaHandoff, QA_MAX_FILE_BYTES, QA_STATES, type QaIssue } from './domain.ts';
 
 const bad = (): never => { throw new QaError('qa_invalid_backup'); };
 const record = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : bad();
@@ -21,6 +21,7 @@ export function validateQaBackup(input: unknown): Record<string, any> {
       if (table !== 'qa_commands') id(row.id);
       if (table === 'qa_issues') {
         const issue = record(row.data) as QaIssue;
+        validateQaHandoff(issue.handoff);
         id(issue.id); id(issue.projectId); id(issue.reporterId);
         if (issue.assigneeId !== null) id(issue.assigneeId);
         if (issue.qaOwnerId !== null) id(issue.qaOwnerId);
@@ -79,6 +80,13 @@ export function validateQaBackup(input: unknown): Record<string, any> {
         }
       }
     }
+  }
+  for(const table of ['qa_project_coordination','qa_coordination_commands']) {
+    const rows=tables[table]??[]; if(!Array.isArray(rows)||rows.length>100000)bad();const ids=new Set<string>();
+    for(const raw of rows){const row=record(raw);id(row.id);if(row.workspace_id!=='default'||ids.has(row.id))bad();ids.add(row.id);
+      if(table==='qa_project_coordination'){if(row.coordinator_id!==null)id(row.coordinator_id);integer(row.version,1);id(row.updated_by);date(row.updated_at);}
+      else{id(row.project_id);id(row.actor_id);str(row.payload_hash,64,true);record(row.response);date(row.created_at);}
+    }tables[table]=rows;
   }
   return tables;
 }

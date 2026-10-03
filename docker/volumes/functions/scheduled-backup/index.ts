@@ -143,23 +143,32 @@ Deno.serve(async (req) => {
 
     // Perform backup - fetch ALL tables
     const tables = [
+      'release_batches', 'release_commands', 'release_events', 'release_batch_projects', 'release_batch_tasks', 'release_outbox', 'release_slack_links', 'release_publications',
+      'approval_rules', 'approval_rule_steps', 'approval_requests', 'approval_actions', 'approval_command_receipts',
       'tasks', 'members', 'projects', 'statuses', 'sprints',
+      'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts',
       'product_lines', 'comments', 'task_specs', 'task_checks',
       'task_todos', 'status_logs', 'task_deployments',
       'member_manuals', 'notifications', 'backup_settings',
       'activity_logs', 'task_attachments', 'user_column_configs', 'profiles',
-      'qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links',
+      'qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links', 'qa_project_coordination','qa_coordination_commands',
     ];
 
     const backup: Record<string, any[]> = {};
+    backup.kb_backup_manifest=[{status:'excluded_requires_server_backup',scope:'knowledge_pages_revisions_permissions_private_storage',complete_workspace_backup:false}];
     for (const table of tables) {
-      if (table.startsWith('qa_')) {
+      if (table.startsWith('qa_') || table.startsWith('approval_') || table.startsWith('release_') || ['task_deadline_history', 'task_reminder_preferences','task_work_events','task_work_receipts'].includes(table)) {
         // QA tables are service-only. Include every metadata page; storage
         // objects remain in the separately backed-up Docker storage volume.
         backup[table] = [];
         for (let offset = 0; ; offset += 500) {
-          const { data, error } = await supabase.from(table).select('*').eq('workspace_id', 'default').order('id').range(offset, offset + 499);
-          if (error) throw new Error(`QA backup failed: ${table}`);
+          const sort = ['release_batch_projects','release_batch_tasks','release_publications'].includes(table) ? 'batch_id' : ['approval_command_receipts','task_work_receipts'].includes(table) ? 'command_id' : 'id';
+          let query = supabase.from(table).select('*').order(sort).range(offset, offset + 499);
+          if (table==='release_batch_projects') query=query.order('project_id');
+          if (table==='release_batch_tasks') query=query.order('task_id');
+          if (table.startsWith('qa_')) query=query.eq('workspace_id','default');
+          const { data, error } = await query;
+          if (error) throw new Error(`Protected history backup failed: ${table}`);
           backup[table].push(...(data || []));
           if (!data || data.length < 500) break;
         }

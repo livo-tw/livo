@@ -6,6 +6,9 @@ import { getDepartment } from '@/lib/department';
 import { getWebhookConfig, triggerWebhook, type WebhookConfig } from '@/lib/webhook';
 import type { Task, Status, StatusLog, User, Project } from '@/types';
 import { randomUUID } from '@/lib/generateId';
+import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/taskPlanning/client';
+import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/client';
+import { mapTask, type TaskRow } from '@/context/mappers';
 
 interface TaskCRUDDeps {
   allTasks: Task[];
@@ -21,6 +24,8 @@ export function useTaskCRUD({
 }: TaskCRUDDeps) {
   const allTasksRef = useRef(allTasks);
   allTasksRef.current = allTasks;
+  const subtaskRunners = useRef(new Map<string, ReturnType<typeof createTaskWorkCommandRunner>>());
+  const subtaskActor = useRef('');
 
   const createTaskInDb = useCallback(async (task: Task) => {
     const { error } = await supabase.from('tasks').insert({
@@ -34,6 +39,7 @@ export function useTaskCRUD({
       assignee_id: task.assigneeId || null,
       reviewer_id: task.reviewerId || null,
       due_date: task.dueDate || null,
+      due_date_kind: task.dueDate ? task.dueDateKind ?? null : null,
       started_at: task.startedAt || null,
       completed_at: task.completedAt || null,
       gitlab_url: task.gitlabUrl || null,
@@ -123,6 +129,24 @@ export function useTaskCRUD({
         if ('approvalStatus' in updates) dbUpdates.approval_status = updates.approvalStatus ?? null;
         if ('currentApprovalId' in updates) dbUpdates.current_approval_id = updates.currentApprovalId ?? null;
         if ('requiresApproval' in updates) dbUpdates.requires_approval = updates.requiresApproval ?? false;
+
+        if ('dueDate' in updates || 'dueDateKind' in updates) {
+          const before = allTasksRef.current.find(task => task.id === taskId);
+          if (!before) { await refreshTasks(); return; }
+          try {
+            const date = 'dueDate' in updates ? updates.dueDate || null : before.dueDate || null;
+            const row = await setTaskDeadline(taskId,
+              { dueDate: before.dueDate || null, kind: before.dueDateKind ?? null, version: updates.dueDateVersion ?? before.dueDateVersion ?? 0 },
+              date, date ? ('dueDateKind' in updates ? updates.dueDateKind ?? null : before.dueDateKind ?? null) : null,
+              updates.dueDateChangeReason ?? null,
+              'startedAt' in updates ? { before: before.startedAt || null, next: updates.startedAt || null } : undefined);
+            updates = { ...updates, ...deadlineTaskFields(row) };
+            delete dbUpdates.due_date; delete dbUpdates.started_at;
+          } catch (error) {
+            toast.error(i18n.t(`taskPlanning.errors.${planningErrorCode(error)}`));
+            await refreshTasks(); return;
+          }
+        }
 
         // Optimistic update
         if (Object.keys(updates).length > 0) {
@@ -222,45 +246,29 @@ export function useTaskCRUD({
   );
 
   const createCreateSubtask = useCallback(
-    (allProjects: Project[], currentMemberId: string) =>
-      async (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task): Promise<Task | null> => {
+    (allProjects: Project[], currentMemberId: string) => {
+      subtaskActor.current = currentMemberId;
+      let run = subtaskRunners.current.get(currentMemberId);
+      if (!run) { run = createTaskWorkCommandRunner(supabase); subtaskRunners.current.set(currentMemberId, run); }
+      return async (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task): Promise<Task | null> => {
         const parent = parentTaskOverride ?? allTasks.find(t => t.id === parentTaskId);
-        if (!parent) return null;
+        if (!parent || !currentMemberId || subtaskActor.current !== currentMemberId || !title.trim() || parent.projectId !== projectId) return null;
         if (parent.parentTaskId) {
           toast.error(i18n.t('task.noNestedSubtasks', { defaultValue: 'Nested subtasks are not allowed' }));
           return null;
         }
         const project = allProjects.find(p => p.id === projectId);
         if (!project) return null;
-        const projectTasks = allTasks.filter(t => t.projectId === projectId);
-        const maxNum = projectTasks.reduce((max, t) => {
-          const parts = t.taskKey.split('-');
-          const num = parseInt(parts[parts.length - 1], 10);
-          return isNaN(num) ? max : Math.max(max, num);
-        }, 0);
-        const taskKey = `${project.key}-${maxNum + 1}`;
-        const taskId = `task_${randomUUID()}`;
-        const newTask: Task = {
-          id: taskId,
-          taskKey,
-          projectId,
-          title: title.trim(),
-          statusId,
-          priority: 'medium',
-          creatorId: currentMemberId,
-          sortOrder: 0,
-          createdAt: new Date().toISOString(),
-          commentCount: 0,
-          attachmentCount: 0,
-          deployments: [],
-          parentTaskId,
-          sprintId: parent.sprintId,
-        };
-        setAllTasks(prev => [...prev, newTask]);
-        await createTaskInDb(newTask);
-        return newTask;
-      },
-    [allTasks, createTaskInDb],
+        try {
+          const result = await run!({ operation: 'create_subtask', taskId: parentTaskId, title: title.trim(), statusId, priority: 'medium', assigneeId: null, reviewerId: null, dueDate: null });
+          if (subtaskActor.current !== currentMemberId) return null;
+          const newTask = mapTask(result.record as TaskRow);
+          setAllTasks(prev => [...prev.filter(item => item.id !== newTask.id), newTask]);
+          return newTask;
+        } catch (error) { if (subtaskActor.current === currentMemberId) toast.error(i18n.t(`taskWork.errors.${taskWorkErrorCode(error)}`)); return null; }
+      };
+    },
+    [allTasks, setAllTasks],
   );
 
   return { createUpdateTaskInDb, createTaskInDb, createCreateSubtask };

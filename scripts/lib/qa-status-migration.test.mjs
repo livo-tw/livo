@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 const read = path => readFileSync(new URL('../../'+path,import.meta.url),'utf8');
-const schema=read('worker/schema.sql');
+// This fixture predates coordination; future cross-table triggers are installed by the later upgrade.
+const schema=read('worker/schema.sql').split('-- Server-only QA project settings')[0];
 const migration=read('worker/migrate/qa-status-semantics.sql');
 const snapshot=db=>JSON.stringify(['qa_issues','qa_comments','qa_events','qa_upload_sessions','qa_attachments','qa_slack_links'].map(table=>db.prepare(`SELECT * FROM ${table} ORDER BY workspace_id,id`).all()));
 const objects=db=>db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE type IN ('trigger','index') AND sql IS NOT NULL ORDER BY name").all().map(row=>({...row,sql:row.sql.replace(/IF NOT EXISTS /g,'').replace(/\s+/g,' ')}));

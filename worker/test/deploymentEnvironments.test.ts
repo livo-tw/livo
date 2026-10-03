@@ -14,9 +14,10 @@ describe('shared deployment environments in real SQLite', () => {
     db = new DatabaseSync(':memory:');
     db.exec(schema);
     for (const ws of ['a', 'b']) {
+      db.prepare('INSERT INTO auth_users(id,email) VALUES(?,?)').run(`auth-${ws}`, `${ws}@example.com`);
       db.prepare('INSERT INTO product_lines(workspace_id,id,name) VALUES(?,?,?)').run(ws, `line-${ws}`, 'Example line');
       db.prepare('INSERT INTO projects(workspace_id,id,line_id,name,key) VALUES(?,?,?,?,?)').run(ws, `project-${ws}`, `line-${ws}`, 'Example project', ws);
-      db.prepare('INSERT INTO members(workspace_id,id,name,avatar,role,email) VALUES(?,?,?,?,?,?)').run(ws, `member-${ws}`, 'Example member', '', 'admin', `${ws}@example.com`);
+      db.prepare('INSERT INTO members(workspace_id,id,name,avatar,role,email,auth_id) VALUES(?,?,?,?,?,?,?)').run(ws, `member-${ws}`, 'Example member', '', 'admin', `${ws}@example.com`, `auth-${ws}`);
       db.prepare('INSERT INTO statuses(workspace_id,id,name) VALUES(?,?,?)').run(ws, `status-${ws}`, 'Open');
       db.prepare('INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,creator_id) VALUES(?,?,?,?,?,?,?)')
         .run(ws, `task-${ws}`, `${ws}-1`, `project-${ws}`, 'Example task', `status-${ws}`, `member-${ws}`);
@@ -41,9 +42,9 @@ describe('shared deployment environments in real SQLite', () => {
     db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?)')
       .run('a', 'issue', 'project-a', 'new', 'member-a', 'Example issue', 1, 'now', JSON.stringify(issue(environment)));
   }
-  function claim(id: string, operation: string, expected: number, data = issue('QA', expected + 1), restoredBy: string | null = null) {
-    db.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at,restored_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run('a', id, 'issue', 'member-a', 'admin', expected, operation, 'hash', JSON.stringify(data), JSON.stringify(data), 'now', restoredBy);
+  function claim(id: string, operation: string, expected: number, data = issue('QA', expected + 1), restoredBy: string | null = null, authId: string | null = 'auth-a') {
+    db.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at,restored_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('a', id, 'issue', 'member-a', 'admin', authId, expected, operation, 'hash', JSON.stringify(data), JSON.stringify(data), 'now', restoredBy);
   }
   it('accepts defaults before configuration and supports ordered custom values per workspace', () => {
     defaults.forEach((value, i) => insert(value, `default-${i}`));
@@ -118,6 +119,15 @@ describe('shared deployment environments in real SQLite', () => {
     expect(db.prepare('SELECT count(*) n FROM qa_commands').get()?.n).toBe(0);
     claim('create-current', 'create', -1, issue('Preview'));
   });
+  it.each(['missing', 'foreign', 'banned', 'inactive'] as const)('rejects %s QA identity even for a valid environment', kind => {
+    set(['Preview']);
+    if (kind === 'banned') db.exec("UPDATE auth_users SET banned=1 WHERE id='auth-a'");
+    if (kind === 'inactive') db.exec("UPDATE members SET is_active=0 WHERE id='member-a'");
+    const authId = kind === 'missing' ? null : kind === 'foreign' ? 'auth-b' : 'auth-a';
+    expect(() => claim('denied', 'create', -1, issue('Preview'), null, authId)).toThrow('qa_forbidden');
+    expect(db.prepare('SELECT count(*) n FROM qa_commands').get()?.n).toBe(0);
+    expect(db.prepare('SELECT count(*) n FROM qa_issues').get()?.n).toBe(0);
+  });
   it('allows a QA edit retaining its historical observation and rejects a newly inactive value', () => {
     putIssue(); set(['Preview']);
     claim('retained', 'edit', 1);
@@ -140,13 +150,21 @@ describe('D1 deployment schema upgrade probes', () => {
   let db: DatabaseSync;
   beforeEach(() => {
     db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE tasks(workspace_id TEXT,id TEXT PRIMARY KEY);
-      INSERT INTO tasks VALUES('a','task-a'),('b','task-b');
-      CREATE TABLE task_deployments(workspace_id TEXT NOT NULL DEFAULT 'default',id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        environment TEXT NOT NULL CHECK (environment IN ('Dev','QA','Stage','Live Staging','Prod')),
-        status TEXT NOT NULL DEFAULT 'scheduled' CHECK(status IN ('deployed','scheduled')),deploy_date TEXT);
-      INSERT INTO task_deployments VALUES('a','old-a','task-a','Dev','deployed','2026-01-01'),('b','old-b','task-b','QA','scheduled',NULL);`);
+    // Exercise the real sibling tables/probes too: only planning columns and
+    // the deployment environment CHECK are rolled back to their legacy form.
+    const legacySchema = schema.slice(0, schema.indexOf('-- Atomic approval commands.'))
+      .replace(/^  due_date_(kind|version|change_reason|changed_by) .*\r?\n/gm, '')
+      .replace('  environment TEXT NOT NULL,', "  environment TEXT NOT NULL CHECK (environment IN ('Dev','QA','Stage','Live Staging','Prod')),");
+    db.exec(legacySchema);
+    for (const ws of ['a', 'b']) {
+      db.prepare('INSERT INTO product_lines(workspace_id,id,name) VALUES(?,?,?)').run(ws, `line-${ws}`, 'Example line');
+      db.prepare('INSERT INTO projects(workspace_id,id,line_id,name,key) VALUES(?,?,?,?,?)').run(ws, `project-${ws}`, `line-${ws}`, 'Example project', ws);
+      db.prepare('INSERT INTO members(workspace_id,id,name,avatar,role,email) VALUES(?,?,?,?,?,?)').run(ws, `member-${ws}`, 'Example member', '', 'admin', `${ws}@example.com`);
+      db.prepare('INSERT INTO statuses(workspace_id,id,name) VALUES(?,?,?)').run(ws, `status-${ws}`, 'Open');
+      db.prepare('INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,creator_id) VALUES(?,?,?,?,?,?,?)')
+        .run(ws, `task-${ws}`, `${ws}-1`, `project-${ws}`, 'Example task', `status-${ws}`, `member-${ws}`);
+    }
+    db.exec("INSERT INTO task_deployments VALUES('a','old-a','task-a','Dev','deployed','2026-01-01'),('b','old-b','task-b','QA','scheduled',NULL)");
   });
   afterEach(() => db.close());
   const rows = () => db.prepare('SELECT * FROM task_deployments ORDER BY id').all();
@@ -154,17 +172,19 @@ describe('D1 deployment schema upgrade probes', () => {
     return {
       queryRows: (sql: string) => db.prepare(sql).all(),
       applyFile: (name: string) => {
-        expect(name).toBe('deployment-environments.sql');
+        expect(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']).toContain(name);
         db.exec('BEGIN');
-        try { db.exec(migration); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
+        try { db.exec(readFileSync(new URL(`../migrate/${name}`,import.meta.url),'utf8')); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
       },
     };
   }
   it('upgrades all rows unchanged, retains FK/index/status checks and safely skips reruns', async () => {
     const before = rows();
-    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['deployment-environments.sql']);
+    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']);
     expect(rows()).toEqual(before);
-    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual([]);
+    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['approval-commands.sql','task-reminder-preferences.sql','task-work-commands.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']);
+    expect(db.prepare('PRAGMA table_info(tasks)').all().map(column=>column.name)).toEqual(expect.arrayContaining(['due_date_kind','due_date_version','due_date_change_reason','due_date_changed_by']));
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='task_work_receipts'").get()).toBeTruthy();
     db.exec("INSERT INTO task_deployments VALUES('a','custom','task-a','Canary','scheduled',NULL)");
     expect(() => db.exec("INSERT INTO task_deployments VALUES('a','invalid','task-a','Canary','invalid',NULL)")).toThrow(/CHECK/);
     expect(() => db.exec("INSERT INTO task_deployments VALUES('a','missing','absent','Canary','scheduled',NULL)")).toThrow(/FOREIGN KEY/);
@@ -175,7 +195,8 @@ describe('D1 deployment schema upgrade probes', () => {
     const before = rows();
     await expect(applyPostTenantSchemaUpgrades(adapter())).rejects.toThrow('Unexpected task_deployments columns');
     expect(rows()).toEqual(before);
-    db.exec('ALTER TABLE tasks DROP COLUMN workspace_id');
+    db.close(); db = new DatabaseSync(':memory:');
+    db.exec('CREATE TABLE tasks(id TEXT PRIMARY KEY)');
     await expect(applyPostTenantSchemaUpgrades(adapter())).rejects.toThrow('completed tenancy');
   });
   it('rolls back a failed rebuild without leaving a staging table or losing rows', () => {

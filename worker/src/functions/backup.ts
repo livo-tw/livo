@@ -15,12 +15,15 @@ import { resolveSlackToken } from './slack';
 
 // Exact table list from the original function (19 tables).
 const BACKUP_TABLES = [
+  'release_batches', 'release_commands', 'release_events', 'release_batch_projects', 'release_batch_tasks', 'release_outbox', 'release_slack_links', 'release_publications',
+  'approval_rules', 'approval_rule_steps', 'approval_requests', 'approval_actions', 'approval_events', 'approval_command_receipts',
   'tasks', 'members', 'projects', 'statuses', 'sprints',
+      'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts',
   'product_lines', 'comments', 'task_specs', 'task_checks',
   'task_todos', 'status_logs', 'task_deployments',
   'member_manuals', 'notifications', 'backup_settings',
   'activity_logs', 'task_attachments', 'user_column_configs', 'profiles',
-  'qa_issues', 'qa_commands', 'qa_comments', 'qa_events', 'qa_attachments', 'qa_slack_links', 'qa_restore_batches',
+  'qa_issues', 'qa_commands', 'qa_comments', 'qa_events', 'qa_attachments', 'qa_slack_links', 'qa_restore_batches', 'qa_project_coordination','qa_coordination_commands',
 ] as const;
 
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -47,6 +50,7 @@ interface BackupResult {
 
 async function performBackup(env: Env, ws: string, isManual: boolean): Promise<BackupResult> {
   const backup: Record<string, Record<string, unknown>[]> = {};
+  backup.kb_backup_manifest=[{status:'excluded_requires_server_backup',scope:'knowledge_pages_revisions_permissions_private_storage',complete_workspace_backup:false}];
   for (const table of BACKUP_TABLES) {
     if (!IDENT_RE.test(table)) continue; // defense in depth (list is static)
     const meta = TABLES[table] ?? FALLBACK_META;

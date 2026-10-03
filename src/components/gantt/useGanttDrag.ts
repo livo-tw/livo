@@ -144,6 +144,8 @@ export function useGanttDrag({ cellW, pxToDate, snapToPx, allTasks, isMobile }: 
             taskTitle: task.title,
             oldStart,
             oldEnd,
+            dueDateKind: task.dueDateKind ?? null,
+            dueDateVersion: task.dueDateVersion ?? 0,
             newStart: effectiveNewStart,
             newEnd: effectiveNewEnd,
           });

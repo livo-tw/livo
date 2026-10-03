@@ -1,3 +1,7 @@
+import { approvalErrorText } from '@/lib/approval/feedback';
+import { useState, useMemo, useRef } from 'react';
+import { toast } from 'sonner';
+import { createApprovalCommandRunner, approvalTaskPatch } from '@/lib/approvalCommands';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
@@ -16,6 +20,10 @@ import { Priority } from '@/types';
 import TaskDeploymentSection from './TaskDeploymentSection';
 import { CustomFieldInput } from './fields/CustomFieldInput';
 import DatePickerField from './fields/DatePickerField';
+import TaskPlanningFields from './fields/TaskPlanningFields';
+import TaskResponsibilityFields from './fields/TaskResponsibilityFields';
+import { responsibilityTaskPatch, type TaskResponsibility } from '@/lib/taskWork/client';
+import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import ApprovalHistory from './ApprovalHistory';
 
 type Props = { detail: TaskDetailState };
@@ -23,6 +31,7 @@ type Props = { detail: TaskDetailState };
 const TaskSidebarFields = ({ detail }: Props) => {
   const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
+  const [approvalSaving,setApprovalSaving] = useState(false);
   const {
     task, allProjects, productLines, users, statuses, tags, permissions,
     currentMemberId, customFields, customFieldValues, upsertCustomFieldValue,
@@ -59,7 +68,14 @@ const TaskSidebarFields = ({ detail }: Props) => {
     setAllTasks,
   } = detail;
 
+  const runApproval = useMemo(() => createApprovalCommandRunner(supabase), [currentMemberId]);
+  const visibleTask = useRef(task); visibleTask.current = task;
   if (!task) return null;
+  const saveResponsibility = (row: TaskResponsibility) => {
+    const merge = (card: typeof task) => card.id !== row.id ? card : { ...card, ...responsibilityTaskPatch(row, card) };
+    setAllTasks(previous => previous.map(merge));
+    setSelectedTask(previous => previous ? merge(previous) : previous);
+  };
 
   const project = allProjects.find(p => p.id === task.projectId);
   const creator = users.find(u => u.id === task.creatorId);
@@ -164,7 +180,18 @@ const TaskSidebarFields = ({ detail }: Props) => {
         <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.requiresApproval', '需要簽核')}</span>
         <button
           type="button"
-          onClick={() => updateTask({ requiresApproval: !task.requiresApproval })}
+          disabled={approvalSaving || task.approvalStatus === 'pending_approval' || !!task.currentApprovalId}
+          onClick={async () => {
+            if (approvalSaving) return;
+            setApprovalSaving(true);
+            try {
+              const result = await runApproval({operation:'set_requirement',taskId:task.id,expectedRequiresApproval:!!task.requiresApproval,enabled:!task.requiresApproval});
+              const patch = approvalTaskPatch(result.task);
+              setAllTasks(prev => prev.map(card => card.id === task.id ? {...card,...patch} : card));
+              if (visibleTask.current?.id === task.id) setSelectedTask({...visibleTask.current,...patch});
+            } catch (error) {toast.error(approvalErrorText(error));}
+            finally {setApprovalSaving(false);}
+          }}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${task.requiresApproval ? 'bg-purple-500' : 'bg-muted-foreground/30'}`}
         >
           <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${task.requiresApproval ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
@@ -175,21 +202,10 @@ const TaskSidebarFields = ({ detail }: Props) => {
           <ApprovalProgress
             approvalRequestId={task.currentApprovalId}
             onAction={(result) => {
-              if (result?.approvedToStatus && result?.taskId) {
-                const toStatus = statuses.find(s => s.id === result.approvedToStatus);
-                const updatedTask = {
-                  ...task,
-                  statusId: result.approvedToStatus,
-                  approvalStatus: undefined,
-                  currentApprovalId: undefined,
-                  ...(toStatus?.autoStart && !task.startedAt ? { startedAt: new Date().toISOString().split('T')[0] } : {}),
-                  ...(toStatus?.isDone ? { completedAt: new Date().toISOString() } : {}),
-                };
-                setAllTasks(prev => prev.map(t => t.id === task.id ? updatedTask : t));
-                setSelectedTask(updatedTask);
-              } else {
-                setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, approvalStatus: undefined, currentApprovalId: undefined } : t));
-                setSelectedTask({ ...task, approvalStatus: undefined, currentApprovalId: undefined });
+              if (result?.task) {
+                const patch = approvalTaskPatch(result.task);
+                setAllTasks(prev => prev.map(card => card.id === task.id ? {...card,...patch} : card));
+                if (visibleTask.current?.id === task.id) setSelectedTask({...visibleTask.current,...patch});
               }
             }}
           />
@@ -221,6 +237,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
           if (autoDept) updates.department = autoDept;
           updateTask(updates);
         }} allowEmpty emptyLabel={t('common.unassigned', '未指定')} />
+        <TaskResponsibilityFields task={task} memberId={currentMemberId} role="assignee" onSaved={saveResponsibility} />
       </div>
     </div>
   );
@@ -242,6 +259,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.reviewer', '驗收人')}</label>
       <div className="mt-1">
         <UserSelect value={task.reviewerId || ''} onChange={v => updateTask({ reviewerId: v || undefined })} allowEmpty emptyLabel={t('common.unassigned', '未指定')} />
+        <TaskResponsibilityFields task={task} memberId={currentMemberId} role="reviewer" onSaved={saveResponsibility} />
       </div>
     </div>
   );
@@ -356,13 +374,11 @@ const TaskSidebarFields = ({ detail }: Props) => {
   fieldJsx['dueDate'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.dueDate', '截止日')}</label>
-      <DatePickerField
-        value={task.dueDate}
-        onChange={v => updateTask({ dueDate: v })}
-        mode="due"
-        startDate={task.startedAt}
-        minDate={task.startedAt}
-      />
+      <TaskPlanningFields task={task} memberId={currentMemberId} users={users} onSaved={row => {
+        const merge = (card: typeof task) => card.id !== row.id || (card.dueDateVersion ?? 0) > row.due_date_version ? card : { ...card, ...deadlineTaskFields(row) };
+        setAllTasks(previous => previous.map(merge));
+        setSelectedTask(previous => previous ? merge(previous) : previous);
+      }} />
     </div>
   );
 

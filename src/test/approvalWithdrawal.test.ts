@@ -1,93 +1,40 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/integrations/supabase/types';
-import { withdrawApproval, withdrawAllAndDisable } from '@/lib/withdrawApproval';
-
-type Row = Record<string, unknown>;
-function fixture(failTable?: string) {
-  const rows: Record<string, Row[]> = {
-    approval_requests: [{ id: 'request-1', task_id: 'task-1', requested_by: 'member-1', status: 'pending' }],
-    tasks: [{ id: 'task-1', approval_status: 'pending_approval', current_approval_id: 'request-1' }],
-  };
-  const from = (table: string) => {
-    const filters: [string, unknown][] = [];
-    let update: Row | undefined;
-    const result = (single = false): { data: Row | Row[] | null; error: Error | null } => {
-      if (table === failTable) return { data: null, error: new Error('Write failed') };
-      const selected = rows[table].filter(row => filters.every(([key, value]) => row[key] === value));
-      if (update) selected.forEach(row => Object.assign(row, update));
-      return { data: single ? selected[0] ?? null : selected, error: null };
-    };
-    const query = {
-      select: () => query,
-      eq: (key: string, value: unknown) => { filters.push([key, value]); return query; },
-      update: (value: Row) => { update = value; return query; },
-      single: async () => result(true),
-      maybeSingle: async () => result(true),
-      then: (resolve: (value: ReturnType<typeof result>) => unknown) => Promise.resolve(result()).then(resolve),
-    };
-    return query;
-  };
-  return { rows, db: { from } as unknown as SupabaseClient<Database> };
+import {describe,expect,it,vi} from 'vitest';
+import {withdrawApproval,withdrawAllAndDisable} from '@/lib/withdrawApproval';
+type DB=Parameters<typeof withdrawApproval>[0];
+const request={id:'request-1',version:3};
+function fixture() {
+ const query={select:vi.fn(()=>query),eq:vi.fn(()=>query),single:vi.fn(async()=>({data:request,error:null}))};
+ const from=vi.fn(()=>query);
+ return {db:{from} as unknown as DB,query,from};
 }
-
-describe('shared approval withdrawal', () => {
-  it.each([
-    { id: 'member-1', role: 'member' },
-    { id: 'admin-1', role: 'admin' },
-    { id: 'admin-2', role: 'super_admin' },
-  ])('clears both task fields and records history for $role', async actor => {
-    const { rows, db } = fixture();
-    const record = vi.fn(async () => {});
-    await withdrawApproval(db, 'request-1', actor, record);
-    expect(rows.approval_requests[0].status).toBe('cancelled');
-    expect(rows.tasks[0]).toMatchObject({ approval_status: null, current_approval_id: null });
-    expect(record).toHaveBeenCalledOnce();
-  });
-  it('rejects a member withdrawing another requester', async () => {
-    const { rows, db } = fixture();
-    await expect(withdrawApproval(db, 'request-1', { id: 'member-2', role: 'member' }, vi.fn()))
-      .rejects.toThrow('Not allowed');
-    expect(rows.approval_requests[0].status).toBe('pending');
-  });
-  it('never clears a newer request linked to the same task', async () => {
-    const { rows, db } = fixture();
-    rows.tasks[0].current_approval_id = 'request-new';
-    await withdrawApproval(db, 'request-1', { id: 'admin-1', role: 'admin' }, vi.fn());
-    expect(rows.tasks[0].current_approval_id).toBe('request-new');
-  });
-  it('retries interrupted task cleanup without duplicating activity', async () => {
-    const { rows, db } = fixture();
-    rows.approval_requests[0].status = 'cancelled';
-    const record = vi.fn();
-    await withdrawApproval(db, 'request-1', { id: 'member-1' }, record);
-    expect(rows.tasks[0].approval_status).toBeNull();
-    expect(record).not.toHaveBeenCalled();
-  });
-  it('withdraws all through the shared path before saving OFF', async () => {
-    const { rows, db } = fixture();
-    const record = vi.fn();
-    const withdraw = vi.fn(async (id: string) => {
-      await withdrawApproval(db, id, { id: 'admin-1', role: 'admin' }, record);
-      return true;
-    });
-    const disable = vi.fn(async () => {
-      expect(rows.tasks.every(task => task.approval_status !== 'pending_approval')).toBe(true);
-    });
-    await withdrawAllAndDisable([{ id: 'request-1' }], withdraw,
-      async () => rows.approval_requests.filter(request => request.status === 'pending'), disable);
-    expect(withdraw).toHaveBeenCalledWith('request-1');
-    expect(disable).toHaveBeenCalledOnce();
-    expect(record).toHaveBeenCalledOnce();
-  });
-  it('does not turn OFF after a failed withdrawal or a concurrent new request', async () => {
-    const disable = vi.fn();
-    await expect(withdrawAllAndDisable([{ id: 'request-1' }], async () => false, async () => [], disable)).rejects.toThrow();
-    await expect(withdrawAllAndDisable([], async () => true, async () => [{ id: 'new' }], disable)).rejects.toThrow();
-    expect(disable).not.toHaveBeenCalled();
-  });
-  it('propagates task cleanup errors instead of claiming completion', async () => {
-    const { db } = fixture('tasks');
-    await expect(withdrawApproval(db, 'request-1', { id: 'admin-1', role: 'admin' }, vi.fn())).rejects.toThrow('Write failed');
-  });
+describe('atomic approval withdrawal client',()=>{
+ it('only reads the observed request then submits a versioned command',async()=>{
+  const {db,from}=fixture();
+  const run=vi.fn(async()=>({})) as unknown as NonNullable<Parameters<typeof withdrawApproval>[2]>;
+  await withdrawApproval(db,'request-1',run);
+  expect(from).toHaveBeenCalledOnce();expect(from).toHaveBeenCalledWith('approval_requests');
+  expect(run).toHaveBeenCalledWith({operation:'withdraw',requestId:'request-1',expectedVersion:3});
+ });
+ it('propagates server failure instead of clearing task fields',async()=>{
+  const {db,from}=fixture();
+  const run=vi.fn(async()=>{throw new Error('approval_forbidden');});
+  await expect(withdrawApproval(db,'request-1',run)).rejects.toThrow('approval_forbidden');
+  expect(from).toHaveBeenCalledOnce();
+ });
+ it('refuses to submit when the current request cannot be read',async()=>{
+  const {db,query}=fixture();query.single.mockResolvedValueOnce({data:null as never,error:null});
+  const run=vi.fn(async()=>{throw new Error('should not call');});
+  await expect(withdrawApproval(db,'request-1',run)).rejects.toThrow('approval_unavailable');expect(run).not.toHaveBeenCalled();
+ });
+ it('withdraws every request and rechecks before OFF',async()=>{
+  const order:string[]=[];
+  await withdrawAllAndDisable([{id:'r1'},{id:'r2'}],async id=>{order.push(id);return true;},async()=>{order.push('recheck');return[];},async()=>{order.push('disable');});
+  expect(order).toEqual(['r1','r2','recheck','disable']);
+ });
+ it('never turns OFF after failure or concurrent new request',async()=>{
+  const disable=vi.fn();
+  await expect(withdrawAllAndDisable([{id:'r'}],async()=>false,async()=>[],disable)).rejects.toThrow();
+  await expect(withdrawAllAndDisable([],async()=>true,async()=>[{id:'new'}],disable)).rejects.toThrow();
+  expect(disable).not.toHaveBeenCalled();
+ });
 });
