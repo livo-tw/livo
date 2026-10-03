@@ -13,6 +13,12 @@ export interface QaRun {
   id: string; sequence: number; fixCycle: number; targetId: string; environment: string;
   component: string; build: string; result: QaResult; note: string; testerId: string; createdAt: string;
 }
+export interface QaCoordination { projectId: string; coordinatorId: string | null; version: number; }
+export interface QaHandoff {
+  id: string; reason: string; nextOwnerId: string; replyBy: string | null; externalDependency: string;
+  requestedBy: string; requestedAt: string; acceptedBy: string | null; acceptedAt: string | null;
+  resolvedBy: string | null; resolvedAt: string | null; resolutionEvidence: string;
+}
 export interface QaIssue {
   id: string; workspaceId: string; projectId: string; title: string; steps: string; expected: string;
   actual: string; observedEnvironment: string; observedVersion: string; component: string;
@@ -21,6 +27,7 @@ export interface QaIssue {
   resolution: QaResolution | null; resolutionReason: string; duplicateOfId: string | null;
   fixCycle: number; version: number; fixSummary: string; holdReason: string;
   targets: QaTarget[]; runs: QaRun[]; taskIds: string[];
+  handoff?: QaHandoff | null;
   createdAt: string; updatedAt: string; closedAt: string | null; reopenedAt: string | null;
   /** Actual closing actor. Optional for records saved before this field existed. */
   closedBy?: string | null;
@@ -44,8 +51,11 @@ export type QaCommand =
   | { type: 'close'; resolution: QaResolution; reason: string; duplicateOfId?: string; acknowledgeHistoricalPass?: boolean }
   | { type: 'reopen'; reason: string }
   | { type: 'hold'; reason: string }
+  | { type: 'request_handoff'; reason: string; nextOwnerId: string; replyBy: string | null; externalDependency: string }
+  | { type: 'accept_handoff'; handoffId: string }
+  | { type: 'resolve_handoff'; handoffId: string; evidence: string }
   | { type: 'link_tasks'; taskIds: string[] };
-export interface QaActor { id: string; role: string; qaAdmin?: boolean; }
+export interface QaActor { id: string; role: string; qaCoordinatorProjectIds?: readonly string[]; qaAdmin?: boolean; }
 export interface QaContext {
   actor: QaActor; workspaceId: string; now: string; newId: () => string;
   /** Trusted same-workspace, active entities resolved by the backend. */
@@ -57,7 +67,7 @@ export interface QaContext {
 export interface QaComment { id: string; issueId: string; actorId: string; body: string; createdAt: string; }
 export interface QaEvent { id: string; issueId: string; actorId: string; type: string; detail: string; createdAt: string; version: number; }
 export interface QaAttachment { id: string; issueId: string; fileName: string; mimeType: string; size: number; uploadedBy: string; createdAt: string; }
-export interface QaDetail { issue: QaIssue; comments: QaComment[]; events: QaEvent[]; attachments: QaAttachment[]; }
+export interface QaDetail { memberNames?: Record<string,string>; coordination?: QaCoordination; issue: QaIssue; comments: QaComment[]; events: QaEvent[]; attachments: QaAttachment[]; }
 export interface QaListInput { projectId?: string; state?: QaState; states?: QaState[]; search?: string; mine?: 'assigned' | 'testing' | 'reported'; offset?: number; limit?: number; }
 export interface QaListResult { issues: QaIssue[]; total: number; hasMore: boolean; }
 export interface QaUpload { id: string; provider: 'r2' | 'supabase'; partSize: number; bucket?: string; path?: string; token?: string; }
@@ -114,6 +124,25 @@ function activeEnvironment(value: string, ctx: QaContext): string {
   return value;
 }
 
+/** Restore preserves evidence verbatim; malformed or invented partial shapes fail closed. */
+export function validateQaHandoff(value: unknown): QaHandoff | null | undefined {
+  if(value===undefined)return undefined;
+  if(value===null)return null;
+  const h=record(value);keys(h,['id','reason','nextOwnerId','replyBy','externalDependency','requestedBy','requestedAt','acceptedBy','acceptedAt','resolvedBy','resolvedAt','resolutionEvidence']);
+  for(const key of ['id','nextOwnerId','requestedBy'])id(h[key]);
+  str(h.reason,8000,true);str(h.externalDependency,2000);str(h.resolutionEvidence,8000);
+  for(const key of ['replyBy','requestedAt','acceptedAt','resolvedAt']){
+    const v=h[key];if(v===null&&key!=='requestedAt')continue;
+    if(typeof v!=='string'||!Number.isFinite(Date.parse(v))||new Date(v).toISOString()!==v)fail('qa_invalid_date');
+  }
+  for(const [person,stamp] of [['acceptedBy','acceptedAt'],['resolvedBy','resolvedAt']]){
+    if((h[person]===null)!==(h[stamp]===null))fail('qa_invalid_request');if(h[person]!==null)id(h[person]);
+  }
+  if(h.acceptedBy!==null&&h.acceptedBy!==h.nextOwnerId)fail('qa_invalid_request');
+  if(h.resolvedAt!==null&&!String(h.resolutionEvidence).trim())fail('qa_required');
+  return h as unknown as QaHandoff;
+}
+
 function customFields(value: unknown, ctx: QaContext, previous?: QaCustomFieldValues): QaCustomFieldValues {
   try { return validateQaCustomFieldValues(value, ctx.fieldConfiguration ?? DEFAULT_QA_FIELD_CONFIGURATION, previous); }
   catch (error) { if (error instanceof QaFieldError) return fail(error.code); throw error; }
@@ -124,19 +153,24 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
   const lead = admin(actor) || issue.qaOwnerId === actor.id;
   const developer = admin(actor) || issue.assigneeId === actor.id;
   const participant = lead || developer || issue.reporterId === actor.id;
+  const coordinator = actor.qaCoordinatorProjectIds?.includes(issue.projectId) === true;
   // Status editing uses the existing participant scope, including completed issues.
   if (type === 'set_state') return participant;
   if (type === 'reopen') return participant && (isQaTerminal(issue.state) || ['verification', 'verified'].includes(issue.state));
   if (isQaTerminal(issue.state)) return false;
   switch (type) {
-    case 'triage': return lead;
+    case 'triage': return lead || coordinator;
+    case 'request_handoff': return participant || coordinator;
+    case 'accept_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && !issue.handoff.acceptedAt && issue.handoff.nextOwnerId === actor.id;
+    case 'resolve_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && (admin(actor) || issue.handoff.nextOwnerId === actor.id);
     case 'start_fix': return developer && ['triaged', 'in_progress', 'failed'].includes(issue.state);
     case 'submit_fix': return developer && ['triaged', 'in_progress', 'verification', 'verified', 'failed'].includes(issue.state);
     case 'record_deployment': return (developer || lead) && ['verification', 'verified'].includes(issue.state);
     case 'record_verification': return lead && ['verification', 'verified'].includes(issue.state);
     case 'close': return lead;
     case 'link_tasks': return lead || developer;
-    case 'edit': case 'hold': return participant;
+    case 'hold': return participant || coordinator;
+    case 'edit': return participant;
     default: return false;
   }
 }
@@ -288,6 +322,23 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.duplicateOfId = null; next.closedAt = null; next.closedBy = null; next.reopenedAt = ctx.now; break;
     case 'hold':
       keys(command, ['type', 'reason']); next.holdReason = str(command.reason, 8000); break;
+    case 'request_handoff': {
+      keys(command, ['type', 'reason', 'nextOwnerId', 'replyBy', 'externalDependency']);
+      const replyBy = command.replyBy;
+      if (replyBy !== null && (typeof replyBy !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(replyBy) || !Number.isFinite(Date.parse(replyBy)) || new Date(replyBy).toISOString() !== replyBy)) return fail('qa_invalid_date');
+      next.handoff = { id: ctx.newId(), reason: str(command.reason, 8000, true), nextOwnerId: member(command.nextOwnerId, ctx),
+        replyBy, externalDependency: str(command.externalDependency, 2000), requestedBy: ctx.actor.id, requestedAt: ctx.now,
+        acceptedBy: null, acceptedAt: null, resolvedBy: null, resolvedAt: null, resolutionEvidence: '' };
+      break;
+    }
+    case 'accept_handoff': case 'resolve_handoff': {
+      keys(command, command.type === 'accept_handoff' ? ['type','handoffId'] : ['type','handoffId','evidence']);
+      if (!issue.handoff || id(command.handoffId) !== issue.handoff.id) return fail('qa_handoff_conflict', 409);
+      next.handoff = command.type === 'accept_handoff'
+        ? { ...issue.handoff, acceptedBy: ctx.actor.id, acceptedAt: ctx.now }
+        : { ...issue.handoff, resolvedBy: ctx.actor.id, resolvedAt: ctx.now, resolutionEvidence: str(command.evidence, 8000, true) };
+      break;
+    }
     case 'link_tasks': {
       keys(command, ['type', 'taskIds']);
       if (!Array.isArray(command.taskIds) || command.taskIds.length > 50) return fail('qa_invalid_tasks');
@@ -315,6 +366,11 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
     return run ? `第 ${run.fixCycle} 輪 · 第 ${run.sequence} 次驗證\n${run.environment} · ${run.component || '-'} · ${run.build}\n${run.result.toUpperCase()}\n${run.note}` : '';
   }
   if (type === 'close') return `${issue.resolution}\n${issue.resolution === 'fixed' && issue.fixCycle === 0 && issue.legacySource?.originalStatus === 'PASS' ? '依既有歷史 PASS 證據明確結案；未新增 LIVO 驗證紀錄。\n' : ''}${issue.resolutionReason}${issue.duplicateOfId ? '\n' + issue.duplicateOfId : ''}`;
+  if (['request_handoff','accept_handoff','resolve_handoff'].includes(type) && issue.handoff) {
+    const h = issue.handoff;
+    return JSON.stringify({ handoffId:h.id,reason:h.reason,nextOwnerId:h.nextOwnerId,replyBy:h.replyBy,externalDependency:h.externalDependency,
+      requestedBy:h.requestedBy,requestedAt:h.requestedAt,acceptedBy:h.acceptedBy,acceptedAt:h.acceptedAt,resolvedBy:h.resolvedBy,resolvedAt:h.resolvedAt,resolutionEvidence:h.resolutionEvidence });
+  }
   if (type === 'hold' || type === 'reopen') return issue.holdReason;
   if (type === 'triage') return `RD: ${issue.assigneeId} · QA: ${issue.qaOwnerId}\n${issue.severity} · P${issue.priority}${issue.dueDate ? '\n' + issue.dueDate : ''}`;
   if (type === 'link_tasks') return issue.taskIds.join('\n');
@@ -324,7 +380,9 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
 
 /** Notifications are generated from committed transitions, never from UI guesses. */
 export function qaNotificationRecipients(issue: QaIssue, type: QaCommand['type'] | 'create' | 'comment', actorId: string): string[] {
-  const ids = type === 'set_state' ? [issue.reporterId, issue.assigneeId, issue.qaOwnerId]
+  const ids = type === 'request_handoff' ? [issue.handoff?.nextOwnerId]
+    : type === 'accept_handoff' || type === 'resolve_handoff' ? [issue.handoff?.requestedBy,issue.assigneeId,issue.qaOwnerId]
+    : type === 'set_state' ? [issue.reporterId, issue.assigneeId, issue.qaOwnerId]
     : type === 'record_deployment' || type === 'submit_fix' ? [issue.qaOwnerId]
     : type === 'record_verification' || type === 'triage' || type === 'reopen' ? [issue.assigneeId, issue.qaOwnerId]
     : type === 'close' ? [issue.reporterId, issue.assigneeId] : [issue.assigneeId, issue.qaOwnerId];

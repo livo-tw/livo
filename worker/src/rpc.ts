@@ -20,6 +20,7 @@ import { nowIso, rowToWire, type TableMeta } from './meta';
 import { TABLES } from './tables';
 import { knowledgeLockAllowed } from './knowledge';
 import { handleKnowledgePreferences } from './knowledgePreferences';
+import { PLANNING_FNS, taskPlanningRpc, planningError } from './taskPlanning';
 
 // ─── Small helpers ────────────────────────────────────────────────────────
 
@@ -174,6 +175,22 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
         { data: null, error: { message: DEMO_BLOCKED_MESSAGE } } satisfies RpcResponse,
         403
       );
+    }
+
+    if (PLANNING_FNS.has(fn)) {
+      let authed=false;
+      const failure=await requireMember(c,async()=>{authed=true;});
+      if (!authed) return failure instanceof Response ? failure : c.json({data:null,error:{message:'planning_forbidden'}},403);
+      try {
+        const data=await taskPlanningRpc(c.env,c.get('auth'),fn,args);
+        if (fn==='livo_set_task_deadline') {
+          notifyChanges(c.env,c.executionCtx,[{table:'tasks',eventType:'UPDATE',new:data,old:{id:data.id}}],c.get('auth').member.workspaceId || DEFAULT_WORKSPACE);
+        }
+        return c.json({data,error:null});
+      } catch(error) {
+        const message=planningError(error);
+        return c.json({data:null,error:{message}},message==='planning_forbidden'?403:message==='planning_conflict'?409:400);
+      }
     }
 
     // ── Public license functions ──

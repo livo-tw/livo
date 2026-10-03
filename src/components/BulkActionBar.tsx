@@ -7,6 +7,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useAuthContext } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLog';
+import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import { priorityConfig } from '@/components/ui/badges';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -121,14 +122,20 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
             if (task.assigneeId) row.assignee_id = task.assigneeId;
             if (task.reviewerId) row.reviewer_id = task.reviewerId;
             if (task.dueDate) row.due_date = task.dueDate;
+            row.due_date_kind = task.dueDate ? task.dueDateKind ?? null : null;
             if (task.startedAt) row.started_at = task.startedAt;
             if (task.completedAt) row.completed_at = task.completedAt;
             if (task.sprintId) row.sprint_id = task.sprintId;
             if (task.department) row.department = task.department;
             return row;
           });
-          await supabase.from('tasks').insert(rows);
-          setAllTasks(prev => [...prev, ...tasksToDelete]);
+          const restored = await supabase.from('tasks').insert(rows).select('id,due_date,due_date_kind,due_date_version,started_at');
+          if (restored.error || !restored.data || restored.data.length !== tasksToDelete.length) throw new Error(t('taskPlanning.errors.planning_unavailable'));
+          const restoredRows = restored.data;
+          setAllTasks(prev => [...prev, ...tasksToDelete.map(task => {
+            const saved = restoredRows.find(row => row.id === task.id);
+            return saved ? { ...task, ...deadlineTaskFields(saved) } : task;
+          })]);
         },
       });
     });

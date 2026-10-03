@@ -8,7 +8,7 @@ import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
-  applyQaCommand, canQaCommand, createQaIssue, qaEventDetail, QaError, QA_STATES,
+  applyQaCommand, canQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
   type QaCommand, type QaContext, type QaIssue, type QaComment, type QaEvent,
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
@@ -56,6 +56,12 @@ export async function qaHash(value: string | Uint8Array): Promise<string> {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
+async function coordination(env:Env,ws:string,projectId:string,includeArchived=false){
+  const project=await env.DB.prepare(`SELECT id FROM projects WHERE workspace_id=? AND id=? ${includeArchived?'':'AND is_archived=0'}`).bind(ws,projectId).first();
+  if(!project)throw new QaError('qa_project_unavailable',404);
+  const row=await env.DB.prepare('SELECT coordinator_id,version FROM qa_project_coordination WHERE workspace_id=? AND id=?').bind(ws,projectId).first<{coordinator_id:string|null;version:number}>();
+  return {projectId,coordinatorId:row?.coordinator_id??null,version:row?.version??0};
+}
 async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: string[], duplicateId?: string, loadFields = false): Promise<QaContext & { fieldConfigurationRaw?: string | null }> {
   const ws=auth.member.workspaceId;
   const [members, project, tasks, duplicate, environmentRow, fieldRow] = await Promise.all([
@@ -66,9 +72,10 @@ async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: stri
     env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>(),
     loadFields ? env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'").bind(ws).first<{value:string}>() : Promise.resolve(null),
   ]);
+  const config=await coordination(env,ws,projectId);
   const environments = parseDeploymentEnvironments(environmentRow ? JSON.parse(environmentRow.value) : undefined);
   if (!environments) throw new QaError('qa_invalid_environment');
-  return {...(loadFields ? {fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),fieldConfigurationRaw:fieldRow?.value??null}:{}),environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
+  return {...(loadFields ? {fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),fieldConfigurationRaw:fieldRow?.value??null}:{}),environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role,qaCoordinatorProjectIds:config.coordinatorId===auth.member.id?[projectId]:[]},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
     memberIds:new Set(members.results.map(r=>r.id)),projectIds:new Set(project?[project.id]:[]),taskIds:new Set(tasks.results.map(r=>r.id)),duplicateIssueIds:new Set(duplicate?[duplicate.id]:[])};
 }
 async function receipt(env: Env, ws: string, commandId: string, hash: string, actor: string): Promise<unknown | undefined> {
@@ -97,7 +104,7 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   // NOT NULL request_hash deliberately turns a stale snapshot into a SQL error.
   const hashSql=fieldConfigurationRaw===undefined?'?':"CASE WHEN (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ? THEN ? ELSE NULL END";
   const hashArgs=fieldConfigurationRaw===undefined?[hash]:[ws,fieldConfigurationRaw,hash];
-  const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now)];
+  const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at,actor_auth_id) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now,auth.userId)];
   const fields=[after.projectId,after.state,after.assigneeId,after.qaOwnerId,after.reporterId,after.title,after.version,after.updatedAt,JSON.stringify(after)];
   if(!before) statements.push(env.DB.prepare('INSERT INTO qa_issues(project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data,workspace_id,id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(...fields,ws,after.id));
   else statements.push(env.DB.prepare('UPDATE qa_issues SET project_id=?,state=?,assignee_id=?,qa_owner_id=?,reporter_id=?,title=?,version=?,updated_at=?,data=? WHERE workspace_id=? AND id=? AND version=?').bind(...fields,ws,after.id,before.version));
@@ -112,8 +119,16 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   else if(type==='close') recipients.add(after.reporterId);
   else if(type==='comment') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
   else if(type==='set_state') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
+  if(['request_handoff','accept_handoff','resolve_handoff','hold'].includes(type)) qaNotificationRecipients(after,type as QaCommand['type'],auth.member.id).forEach(id=>recipients.add(id));
   recipients.delete(auth.member.id);
   for(const recipient of recipients) statements.push(env.DB.prepare("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at) SELECT ?,?,?,?,'qa_update',NULL,?,0,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)").bind(ws,crypto.randomUUID(),recipient,auth.member.id,JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type}),now,ws,recipient));
+  if(type==='create'){
+    const content=JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type});
+    statements.push(env.DB.prepare(`INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at)
+      SELECT ?,?,m.id,?,'qa_update',NULL,?,0,? FROM qa_project_coordination p JOIN members m ON m.workspace_id=p.workspace_id AND m.id=p.coordinator_id AND m.is_active=1
+      WHERE p.workspace_id=? AND p.id=? AND m.id<>? AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.workspace_id=? AND n.recipient_id=m.id AND n.content=?)`)
+      .bind(ws,crypto.randomUUID(),auth.member.id,content,now,ws,after.projectId,auth.member.id,ws,content));
+  }
   try { await env.DB.batch(statements); }
   catch(err) {const prior=await receipt(env,ws,commandId,hash,auth.member.id);if(prior!==undefined)return prior;throw sqlError(err);}
   // Never make the client retry a committed command because the transport wake-up failed.
@@ -145,10 +160,12 @@ const RESTORE_COLUMNS:Record<string,string[]>={
   qa_comments:['workspace_id','id','issue_id','actor_id','body','created_at'],
   qa_events:['workspace_id','id','issue_id','actor_id','type','detail','version','created_at'],
   qa_attachments:['workspace_id','id','issue_id','uploaded_by','file_name','mime_type','size','storage_key','created_at'],
-  qa_commands:['workspace_id','id','issue_id','actor_id','actor_role','expected_version','operation','request_hash','issue_data','result_json','created_at'],
+  qa_commands:['workspace_id','id','issue_id','actor_id','actor_role','actor_auth_id','expected_version','operation','request_hash','issue_data','result_json','created_at'],
+  qa_project_coordination:['workspace_id','id','coordinator_id','version','updated_by','updated_at'],
+  qa_coordination_commands:['workspace_id','id','project_id','actor_id','actor_auth_id','payload_hash','expected_version','response','created_at'],
   qa_slack_links:['workspace_id','id','issue_id','team_id','channel_id','thread_ts','card_ts','created_at'],
 };
-const RESTORE_JSON=new Set(['data','issue_data','result_json']);
+const RESTORE_JSON=new Set(['data','issue_data','result_json','response']);
 async function restore(c:C,body:Body):Promise<unknown>{
   const auth=c.get('auth'),ws=auth.member.workspaceId;
   if(auth.member.role!=='super_admin')throw new QaError('qa_forbidden',403);
@@ -171,16 +188,24 @@ async function restore(c:C,body:Body):Promise<unknown>{
       if(table==='qa_issues'){
         const issue=JSON.parse(String(row.data)) as QaIssue;
         if(!issue||issue.id!==row.id||issue.workspaceId!==ws||issue.projectId!==row.project_id||issue.state!==row.state||issue.version!==row.version||issue.title!==row.title||issue.assigneeId!==row.assignee_id||issue.qaOwnerId!==row.qa_owner_id||issue.reporterId!==row.reporter_id||issue.updatedAt!==row.updated_at||!QA_STATES.includes(issue.state)||!Number.isSafeInteger(issue.version)||issue.version<1||!Number.isSafeInteger(issue.fixCycle)||issue.fixCycle<0||!Array.isArray(issue.targets)||!Array.isArray(issue.runs)||!Array.isArray(issue.taskIds)||issue.targets.length>30||issue.runs.length>2000||issue.taskIds.length>50||typeof issue.title!=='string'||typeof issue.actual!=='string'||JSON.stringify(issue).length>1500000)throw new QaError('qa_invalid_backup_issue');
+        validateQaHandoff(issue.handoff);
         const ctx=await context(c.env,auth,qaId(issue.projectId),issue.taskIds);
         if(!ctx.projectIds.has(issue.projectId)||issue.taskIds.some(id=>!ctx.taskIds.has(id))||[issue.assigneeId,issue.qaOwnerId].some(id=>id!==null&&!ctx.memberIds.has(id)))throw new QaError('qa_backup_reference_unavailable');
+        for(const person of [issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter(Boolean))if(!await c.env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND id=?').bind(ws,person!).first())throw new QaError('qa_backup_reference_unavailable');
         if(sourceIssues.has(issue.id))throw new QaError('qa_duplicate_backup_row');sourceIssues.set(issue.id,issue);
+      }
+      if(table==='qa_project_coordination'||table==='qa_coordination_commands'){
+        const pid=table==='qa_project_coordination'?String(row.id):String(row.project_id);await coordination(c.env,ws,qaId(pid),true);
+        const ids=[row.coordinator_id,row.updated_by,row.actor_id].filter(x=>x!=null);
+        for(const person of ids)if(!await c.env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND id=?').bind(ws,qaId(person)).first())throw new QaError('qa_backup_reference_unavailable');
+        if(table==='qa_project_coordination'&&(!Number.isSafeInteger(row.version)||Number(row.version)<1||!row.updated_by||!row.updated_at))throw new QaError('qa_invalid_backup');
       }
       rows.push({table,row});if(rows.length>5000)throw new QaError('qa_backup_batch_too_large',413);
     }
   }
   // References can target an existing issue or one restored earlier in the same transaction.
   for(const {table,row} of rows){
-    if(table==='qa_issues')continue;
+    if(table==='qa_issues'||table==='qa_project_coordination'||table==='qa_coordination_commands')continue;
     if(!sourceIssues.has(String(row.issue_id)))await getQaIssue(c.env,ws,String(row.issue_id));
   }
   const pending:Array<{table:string;row:Record<string,unknown>}>=[];
@@ -206,7 +231,7 @@ async function restore(c:C,body:Body):Promise<unknown>{
   const statements=[c.env.DB.prepare('INSERT INTO qa_restore_batches(workspace_id,id,actor_id,created_at) VALUES(?,?,?,?)').bind(ws,crypto.randomUUID(),auth.member.id,new Date().toISOString())];
   for(const {table,row} of pending){
     const columns=[...RESTORE_COLUMNS[table]];
-    if(table==='qa_commands'||table==='qa_attachments'){columns.push('restored_by');row.restored_by=auth.member.id;}
+    if(table==='qa_commands'||table==='qa_attachments'||table==='qa_coordination_commands'){columns.push('restored_by');row.restored_by=auth.member.id;}
     statements.push(c.env.DB.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).bind(...columns.map(col=>row[col] as string|number|null)));
   }
   await c.env.DB.batch(statements);
@@ -243,6 +268,27 @@ export async function handleQa(c:C):Promise<Response> {
         if(sources.length>100000)throw new QaError('qa_too_many_versions',413);
       }
       return c.json(qaVersionSuggestions(sources,ws,projectId));
+    }
+    if(action==='get_coordination')return c.json(await coordination(c.env,ws,qaId(body.projectId)));
+    if(action==='members'){
+      await coordination(c.env,ws,qaId(body.projectId));
+      const offset=body.offset??0,search=typeof body.search==='string'?body.search.trim():'';
+      if(!Number.isSafeInteger(offset)||Number(offset)<0||Number(offset)>100000||search.length>100)throw new QaError('qa_invalid_request');
+      const rows=await c.env.DB.prepare('SELECT id,name FROM members WHERE workspace_id=? AND is_active=1 AND instr(lower(name),lower(?))>0 ORDER BY name,id LIMIT 100 OFFSET ?').bind(ws,search,offset as number).all();
+      return c.json({members:rows.results,hasMore:rows.results.length===100});
+    }
+    if(action==='save_coordination'){
+      const projectId=qaId(body.projectId),coordinatorId=body.coordinatorId===null?null:qaId(body.coordinatorId),expectedVersion=body.expectedVersion;
+      if(!Number.isSafeInteger(expectedVersion)||Number(expectedVersion)<0)throw new QaError('qa_invalid_version');
+      if(!['admin','super_admin'].includes(auth.member.role))throw new QaError('qa_forbidden',403);
+      const cid=qaId(body.commandId),hash=await qaHash(canonicalQaJson(body)),result={projectId,coordinatorId,version:Number(expectedVersion)+1},now=new Date().toISOString();
+      const prior=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();
+      if(prior){if(prior.actor_id!==auth.member.id||prior.payload_hash!==hash)throw new QaError('qa_command_id_reused',409);return c.json(JSON.parse(prior.response));}
+      try{await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO qa_coordination_commands(workspace_id,id,project_id,actor_id,actor_auth_id,payload_hash,expected_version,response,created_at) VALUES(?,?,?,?,?,?,?,?,?)').bind(ws,cid,projectId,auth.member.id,auth.userId,hash,expectedVersion as number,JSON.stringify(result),now),
+        c.env.DB.prepare('INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET coordinator_id=excluded.coordinator_id,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(ws,projectId,coordinatorId,result.version,auth.member.id,now)
+      ]);}catch(error){const retry=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();if(retry&&retry.actor_id===auth.member.id&&retry.payload_hash===hash)return c.json(JSON.parse(retry.response));throw sqlError(error);}
+      return c.json(result);
     }
     if(action==='get_workflow') {
       const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_workflow'").bind(ws).first<{value:string}>();
@@ -285,7 +331,9 @@ export async function handleQa(c:C):Promise<Response> {
         c.env.DB.prepare('SELECT id,issue_id AS issueId,actor_id AS actorId,type,detail,version,created_at AS createdAt FROM qa_events WHERE workspace_id=? AND issue_id=? ORDER BY version,created_at,id').bind(ws,id).all<QaEvent>(),
         c.env.DB.prepare('SELECT * FROM qa_attachments WHERE workspace_id=? AND issue_id=? ORDER BY created_at,id').bind(ws,id).all(),
       ]);
-      return c.json({issue,comments:comments.results,events:events.results,attachments:attachments.results.map(qaAttachmentWire)});
+      const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter((v):v is string=>!!v))];
+      const names=people.length?await c.env.DB.prepare(`SELECT id,name FROM members WHERE workspace_id=? AND id IN (${people.map(()=>'?').join(',')})`).bind(ws,...people).all<{id:string;name:string}>():{results:[]};
+      return c.json({issue,memberNames:Object.fromEntries(names.results.map(m=>[m.id,m.name])),coordination:await coordination(c.env,ws,issue.projectId,true),comments:comments.results,events:events.results,attachments:attachments.results.map(qaAttachmentWire)});
     }
     if(['upload_init','upload_complete','download'].includes(action))return await handleQaStorage(c,action,body);
     if(!['create','command','comment'].includes(action))throw new QaError('qa_invalid_action');

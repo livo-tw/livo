@@ -77,7 +77,7 @@ describe('status changes respect team approval switches', () => {
   it('blocks stale board approval actions when OFF', async () => {
     const dependencies = params();
     const { result } = renderHook(() => useBoardApproval({
-      ...dependencies, allTasks: [dependencies.task], updateTaskInDb: vi.fn(), t: key => key,
+      ...dependencies, requestApproval: vi.fn(async () => null), allTasks: [dependencies.task], updateTaskInDb: vi.fn(), t: key => key,
     }));
     const payload = { taskId: 'task-1', fromStatusId: 'todo', toStatusId: 'done', projectId: 'project-1', toStatusName: 'Done' };
     await act(async () => {
@@ -87,4 +87,17 @@ describe('status changes respect team approval switches', () => {
     expect(dependencies.requestApproval).not.toHaveBeenCalled();
     expect(dependencies.getRuleForTransition).not.toHaveBeenCalled();
   });
+  it('does not enable the requirement or show pending after a failed advisory submit', async () => {
+    state.approvalsEnabled = true;
+    const dependencies = params(false);
+    dependencies.requestApproval = vi.fn(async () => null);
+    const {result} = renderHook(() => useTaskStatusChange(dependencies));
+    await act(async () => {await result.current.handleStatusChange('done');});
+    await act(async () => {await result.current.handleAdvisorySubmitApproval();});
+    expect(dependencies.requestApproval).toHaveBeenCalledWith('task-1','rule-1','todo','done',dependencies.task,true);
+    expect(dependencies.setAllTasks).not.toHaveBeenCalled();
+    expect(dependencies.setSelectedTask).not.toHaveBeenCalled();
+    expect(dependencies.updateTask).not.toHaveBeenCalled();
+  });
+
 });

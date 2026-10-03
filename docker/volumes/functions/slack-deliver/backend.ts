@@ -25,7 +25,16 @@ export function deliveryStore(env: Environment): DeliveryStore {
     },
     thread: async (taskId, teamId, channelId) => (await db.rows('slack_thread_mappings', { select: 'slack_thread_ts',
       task_id: `eq.${taskId}`, slack_team_id: `eq.${teamId}`, slack_channel_id: `eq.${channelId}`, order: 'created_at.desc,slack_thread_ts.desc', limit: '1' }))[0]?.slack_thread_ts,
-    currentTask: async taskId => (await db.rows('tasks', { select: 'id,assignee_id,reviewer_id,status_id,due_date,completed_at,statuses(is_done)', id: `eq.${taskId}`, limit: '1' }))[0],
+    currentTask: async (taskId, requestId, memberId) => {
+      const task = (await db.rows('tasks', { select: 'id,assignee_id,reviewer_id,assignee_revision,reviewer_revision,assignee_acknowledged_at,reviewer_acknowledged_at,status_id,due_date,completed_at,current_approval_id,approval_status,statuses(is_done)', id: `eq.${taskId}`, limit: '1' }))[0];
+      if (!task || !requestId) return task;
+      const [requests, members] = await Promise.all([
+        db.rows('approval_requests', { select: 'id,task_id,rule_id,requested_by,from_status,status,version,current_step,steps_snapshot', id: `eq.${requestId}`, task_id: `eq.${taskId}`, limit: '1' }),
+        memberId ? db.rows('members', { select: 'id,role,is_active', id: `eq.${memberId}`, is_active: 'eq.true', limit: '1' }) : Promise.resolve([]),
+      ]);
+      return { ...task, approval_request: requests[0], approval_member: members[0] };
+    },
+    reminderPaused: (taskId,memberId) => db.request('/rest/v1/rpc/livo_task_reminder_paused','POST',{p_task:taskId,p_member:memberId}),
     queueWeekly: () => db.request('/rest/v1/rpc/livo_slack_queue_weekly', 'POST', {}),
     weeklyTasks: (memberId, weekStart) => db.request('/rest/v1/rpc/livo_slack_weekly_tasks', 'POST', { p_member: memberId, p_week: weekStart }),
     canSend: (job, owner) => db.request('/rest/v1/rpc/livo_slack_delivery_lease_valid', 'POST', { p_id: job.id, p_owner: owner }),

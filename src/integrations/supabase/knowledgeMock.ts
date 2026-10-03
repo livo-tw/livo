@@ -28,9 +28,12 @@ export function knowledgeMockDefaults(table: string, row: Row): Row {
 export function knowledgeMockUpdate(db: Record<string, Row[]>, previous: Row, patch: Row): Row {
   const next: Row = { ...previous, ...patch, version: Number(previous.version) + 1, updated_at: new Date().toISOString() };
   validateKnowledgeTree(db.kb_pages.map(p => p.id === next.id ? next : p) as unknown as KnowledgeLink[]);
-  const revision = { id: randomUUID(), page_id: previous.id, body: previous.body,
+  const revision = { id: randomUUID(), page_id: previous.id, title:previous.title, body: previous.body, document_metadata:previous.document_metadata,
     created_by: previous.updated_by, created_at: previous.updated_at, version: Number(previous.version) };
   const same = [...db.kb_revisions.filter(r => r.page_id === previous.id), revision];
-  db.kb_revisions = [...db.kb_revisions.filter(r => r.page_id !== previous.id), ...latestKnowledgeRevisions(same as (Row & { version: number })[])];
+  const kept=latestKnowledgeRevisions(same as (Row & { version: number })[]);
+  const pinned=same.filter(r=>(db.kb_publications||[]).some(p=>p.page_id===r.page_id&&p.page_version===r.version)
+    ||(db.kb_source_links||[]).some(l=>l.source_kind==='knowledge'&&l.source_id===r.page_id&&l.source_page_version===r.version));
+  db.kb_revisions = [...db.kb_revisions.filter(r => r.page_id !== previous.id), ...[...new Map([...kept,...pinned].map(r=>[r.version,r])).values()]];
   return next;
 }

@@ -5,11 +5,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const schema = readFileSync(new URL('../../worker/schema.sql', import.meta.url), 'utf8');
 const boundary = schema.indexOf('-- Feature switches:');
+// These are pre-command upgrade fixtures. Full current schema authorization,
+// atomic decisions and OFF/withdrawal behavior are covered by the native
+// scripts/lib/approval-command-d1.test.mjs suite with all command guards active.
+const legacyFeatureSchema = schema.slice(0,schema.indexOf('-- Atomic approval commands.'));
 const databases: DatabaseSync[] = [];
 function database(withFeatures = true) {
   const db = new DatabaseSync(':memory:');
   databases.push(db);
-  db.exec(withFeatures ? schema : schema.slice(0, boundary));
+  db.exec(withFeatures ? legacyFeatureSchema : legacyFeatureSchema.slice(0, boundary));
   // These fixtures exercise switch guards independently of unrelated foreign keys.
   db.exec('PRAGMA foreign_keys = OFF');
   return db;
@@ -32,26 +36,26 @@ function link(db: DatabaseSync, ws = 'default') {
 }
 afterEach(() => { databases.splice(0).forEach(db => db.close()); });
 
-describe('D1 feature switch guards', () => {
+describe('D1 legacy feature switch compatibility', () => {
   it('seeds fresh installs OFF and tolerates repeated schema application', () => {
     const db = database();
-    db.exec(schema);
+    db.exec(legacyFeatureSchema);
     expect(db.prepare("SELECT value FROM system_settings WHERE workspace_id='default' AND key='feature_toggles'").get())
       .toMatchObject({ value: '{"approvals":false}' });
   });
   it.each(['pending', 'approved', 'cancelled'])('preserves legacy installs with %s request history', status => {
     const db = database(false);
     task(db); request(db, 'default', status);
-    db.exec(schema.slice(boundary));
+    db.exec(legacyFeatureSchema.slice(boundary));
     const value = db.prepare("SELECT value FROM system_settings WHERE workspace_id='default' AND key='feature_toggles'").get();
     expect(value).toMatchObject({ value: '{"approvals":true}' });
   });
   it('preserves inactive legacy rules and explicit OFF across reruns', () => {
     const db = database(false);
     db.exec("INSERT INTO approval_rules (id,from_status,to_status,is_active,created_by) VALUES ('rule-1','todo','done',0,'example-member')");
-    db.exec(schema.slice(boundary));
+    db.exec(legacyFeatureSchema.slice(boundary));
     expect(db.prepare("SELECT value FROM system_settings WHERE workspace_id='default' AND key='feature_toggles'").get()).toMatchObject({ value: '{"approvals":true}' });
-    setting(db, false); db.exec(schema);
+    setting(db, false); db.exec(legacyFeatureSchema);
     expect(db.prepare("SELECT value FROM system_settings WHERE workspace_id='default' AND key='feature_toggles'").get()).toMatchObject({ value: '{"approvals":false}' });
     expect(db.prepare('SELECT COUNT(*) AS count FROM approval_rules').get()).toMatchObject({ count: 1 });
   });

@@ -1,7 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
+import { useRef } from 'react';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { toast } from 'sonner';
 import { logActivity } from '@/lib/activityLog';
+import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import i18n from '@/i18n';
 import { createNotification, type EnvName } from '../utils';
 import type { Task, Status, User, Project, TaskCustomFieldValue } from '@/types';
@@ -29,7 +31,7 @@ export interface UseTaskActionsParams {
   checkItems: string[];
   todoItems: string[];
   createTaskTemplate: (template: Record<string, unknown>) => Promise<void>;
-  createSubtask: (parentId: string, title: string, projectId: string, statusId: string) => Promise<void>;
+  createSubtask: (parentId: string, title: string, projectId: string, statusId: string) => Promise<Task | null>;
   sidebarNewSubtaskTitle: string;
   setSidebarNewSubtaskTitle: (v: string) => void;
   setSidebarAddingSubtask: (v: boolean) => void;
@@ -41,6 +43,10 @@ export interface UseTaskActionsParams {
 }
 
 export function useTaskActions(params: UseTaskActionsParams) {
+  const subtaskScope = `${params.currentMemberId}:${params.task?.id || ''}`;
+  const activeSubtaskScope = useRef(subtaskScope); activeSubtaskScope.current = subtaskScope;
+  const activeSubtaskTitle = useRef(params.sidebarNewSubtaskTitle); activeSubtaskTitle.current = params.sidebarNewSubtaskTitle;
+  const pendingSubtasks = useRef(new Set<string>());
   const {
     task, project, statuses, users, allProjects,
     currentMemberId, currentMember, status, assignee,
@@ -154,14 +160,16 @@ export function useTaskActions(params: UseTaskActionsParams) {
         if (rest.assigneeId) dbRow.assignee_id = rest.assigneeId;
         if (rest.reviewerId) dbRow.reviewer_id = rest.reviewerId;
         if (rest.dueDate) dbRow.due_date = rest.dueDate;
+        dbRow.due_date_kind = rest.dueDate ? rest.dueDateKind ?? null : null;
         if (rest.startedAt) dbRow.started_at = rest.startedAt;
         if (rest.completedAt) dbRow.completed_at = rest.completedAt;
         if (rest.gitlabUrl) dbRow.gitlab_url = rest.gitlabUrl;
         if (rest.sprintId) dbRow.sprint_id = rest.sprintId;
         if (rest.department) dbRow.department = rest.department;
         if (rest.parentTaskId) dbRow.parent_task_id = rest.parentTaskId;
-        await supabase.from('tasks').insert(dbRow);
-        setAllTasks(prev => [...prev, deletedTask]);
+        const restored = await supabase.from('tasks').insert(dbRow).select('id,due_date,due_date_kind,due_date_version,started_at').single();
+        if (restored.error || !restored.data) throw new Error(i18n.t('taskPlanning.errors.planning_unavailable'));
+        setAllTasks(prev => [...prev, { ...deletedTask, ...deadlineTaskFields(restored.data) }]);
       },
     });
   };
@@ -169,11 +177,13 @@ export function useTaskActions(params: UseTaskActionsParams) {
   const handleCreateSubtask = async () => {
     if (!task) return;
     const title = sidebarNewSubtaskTitle.trim();
-    if (!title) return;
-    await createSubtask(task.id, title, task.projectId, task.statusId);
-    setSidebarNewSubtaskTitle('');
-    setSidebarAddingSubtask(false);
-    logActivity(currentMemberId, 'create_task', i18n.t('activity.subtaskCreated', { title }), task.id, task.taskKey);
+    if (!title || activeSubtaskScope.current !== subtaskScope || pendingSubtasks.current.has(subtaskScope)) return;
+    pendingSubtasks.current.add(subtaskScope);
+    try {
+      const created = await createSubtask(task.id, title, task.projectId, task.statusId);
+      if (!created || activeSubtaskScope.current !== subtaskScope) return;
+      if (activeSubtaskTitle.current.trim() === title) { setSidebarNewSubtaskTitle(''); setSidebarAddingSubtask(false); }
+    } finally { pendingSubtasks.current.delete(subtaskScope); }
   };
 
   const handleUnlinkParent = async () => {

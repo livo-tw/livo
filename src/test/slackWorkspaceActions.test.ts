@@ -135,7 +135,7 @@ describe('Slack daily task workspace', () => {
   });
   it('omits source-channel suppression from fresh comment JWTs but retains it for actual Slack message imports', async () => {
     const claims = async (echoExistingMessage: boolean) => JSON.parse(atob((await memberJwt('example-secret',
-      { auth_id: '00000000-0000-4000-8000-000000000001' }, { id: 'binding' }, { ...source, echoExistingMessage })).split('.')[1]));
+      { auth_id: '00000000-0000-4000-8000-000000000001' }, { id: 'binding', platform_team_id: source.team, platform_user_id: source.user }, { ...source, echoExistingMessage })).split('.')[1]));
     expect((await claims(false)).livo_slack_source.channel).toBe('');
     expect((await claims(true)).livo_slack_source.channel).toBe(source.channel);
   });

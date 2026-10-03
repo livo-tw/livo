@@ -300,8 +300,20 @@ if (skippedUntracked.length) {
   log(`  ℹ docker/ 略過 ${skippedUntracked.length} 個未進版控的檔案：${skippedUntracked.join(', ')}`);
 }
 for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql',
+  ...['core.ts','index.ts'].map(file => `volumes/functions/approval-command/${file}`),
+  ...['index.ts','knowledgeImportCleanup.ts'].map(file => `volumes/functions/knowledge-import-cleanup/${file}`),
+  ...['core.ts','index.ts'].map(file => `volumes/functions/task-work-command/${file}`),
+  ...['core.ts','engine.ts','access.ts','index.ts'].map(file => `volumes/functions/knowledge-work/${file}`),
+  ...['knowledge-work-core.ts','knowledge-work-handler.ts','knowledge-work-backend.ts','knowledge-work-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
+  ...['core.ts','environments.ts','service.ts','index.ts'].map(file => `volumes/functions/release-workspace/${file}`),
+  ...['release-core.ts','release-backend.ts'].map(file => `volumes/functions/slack-deliver/${file}`),
+  ...['release-core.ts','release-ui.ts','release-backend.ts','release-handler.ts'].map(file => `volumes/functions/slack-interact/${file}`),
+  ...['work-core.ts','work-handler.ts','work-backend.ts','work-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
+  ...['approval-handler.ts','approval-backend.ts','approval-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
   'volumes/functions/slack-interact/projectGroups.ts',
-  ...['index.ts', 'environments.ts', 'versions.ts', 'projectGroups.ts', 'domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
+  'volumes/functions/slack-interact/knowledge-workspace.ts',
+  'volumes/functions/slack-interact/task-context.ts',
+  ...['index.ts', 'environments.ts', 'versions.ts', 'projectGroups.ts', 'domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackWorkspace.ts', 'slackHandoff.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
   if (!fs.existsSync(path.join(DOCKER_DEST, rel))) die(`docker/${rel} 沒有進交付包，請檢查 docker/ 的複製規則。`);
 }
 // 確保 storage 目錄存在且非空（空目錄不一定每種壓縮／解壓工具都會保留；Docker bind mount 需要它）

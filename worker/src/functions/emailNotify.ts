@@ -287,6 +287,7 @@ async function sendWorkspaceNotificationEmails(env: Env, ws: string, rows: Row[]
       const summary = target.content || TYPE_LABEL[target.type] || '你有一則新通知';
       const subject = `LIVO 通知：${summary.slice(0, 40)}`;
       const html = buildNotificationHtml(env, target.type, target.content, task);
+      if(target.type==='due_soon' && await env.DB.prepare("SELECT 1 FROM task_reminder_preferences WHERE workspace_id=? AND task_id=? AND member_id=? AND julianday(snoozed_until)>julianday('now')").bind(ws,target.taskId,target.recipientId).first()) continue;
       if (await sendResendEmail(cfg, member.email, subject, html)) sent++;
     }
     if (sent > 0) console.log(`[email-notify] ws=${ws} sent=${sent}/${targets.length}`);
@@ -323,13 +324,14 @@ export async function runDueReminders(env: Env): Promise<void> {
 
     const res = await env.DB.prepare(
       `SELECT t.id, t.title, t.assignee_id, t.workspace_id FROM tasks t
-       JOIN statuses s ON s.id = t.status_id
+       JOIN statuses s ON s.id = t.status_id AND s.workspace_id=t.workspace_id
        WHERE t.assignee_id IS NOT NULL
          AND s.is_done = 0
+         AND NOT EXISTS(SELECT 1 FROM task_reminder_preferences p WHERE p.workspace_id=t.workspace_id AND p.task_id=t.id AND p.member_id=t.assignee_id AND julianday(p.snoozed_until)>julianday('now'))
          AND t.due_date >= ? AND t.due_date <= ?
          AND NOT EXISTS (
            SELECT 1 FROM notifications n
-           WHERE n.task_id = t.id AND n.recipient_id = t.assignee_id
+           WHERE n.workspace_id=t.workspace_id AND n.task_id = t.id AND n.recipient_id = t.assignee_id
              AND n.type = 'due_soon' AND n.is_read = 0 AND n.created_at >= ?
          )
        LIMIT 200`
@@ -358,16 +360,18 @@ export async function runDueReminders(env: Env): Promise<void> {
     }));
     const stmt = env.DB.prepare(
       `INSERT INTO notifications (workspace_id, id, recipient_id, sender_id, type, task_id, content, is_read, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
     );
-    await env.DB.batch(
+    const results=await env.DB.batch<{id:string}>(
       inserted.map((r) =>
         stmt.bind(r.workspace_id, r.id, r.recipient_id, r.sender_id, r.type, r.task_id, r.content, r.is_read, r.created_at)
       )
     );
 
-    await sendNotificationEmails(env, inserted);
-    console.log(`[due-reminders] inserted=${inserted.length}`);
+    const stored=new Set(results.flatMap(result=>(result.results||[]).map(row=>row.id)));
+    const created=inserted.filter(row=>stored.has(String(row.id)));
+    await sendNotificationEmails(env, created);
+    console.log(`[due-reminders] inserted=${created.length}`);
   } catch (err) {
     console.error('[due-reminders] error:', err);
   }

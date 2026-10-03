@@ -24,6 +24,40 @@ function setup() {
   return { store, sent, results, fetcher };
 }
 describe('durable Slack notification delivery', () => {
+  it('rechecks a pause after opening the DM while keeping assignment notifications enabled', async () => {
+    const t=setup(); let paused=false,posts=0;
+    t.store.config=async()=>({...config,dmEnabled:true});
+    t.store.currentTask=async()=>({assignee_id:'member-example',due_date:'2026-10-10',statuses:{is_done:false}});
+    t.store.reminderPaused=vi.fn(async()=>paused);
+    const fetcher=vi.fn(async(input:string|URL|Request)=>{
+      const endpoint=String(input);
+      if(endpoint.includes('/auth.test'))return Response.json({ok:true,team_id:'TEXAMPLE'});
+      if(endpoint.includes('/users.info'))return Response.json({ok:true,user:{team_id:'TEXAMPLE'}});
+      if(endpoint.includes('/conversations.members'))return Response.json({ok:true,members:['UEXAMPLE']});
+      if(endpoint.includes('/conversations.open')){paused=true;return Response.json({ok:true,channel:{id:'DEXAMPLE'}});}
+      posts++;return Response.json({ok:true,ts:'1791158400.000001'});
+    }) as unknown as typeof fetch;
+    const due:Job={...job,target_type:'member',target_id:'member-example',payload:{...job.payload,kind:'personal',reason:'due_soon',dueDate:'2026-10-10'}};
+    expect(await deliverJob(due,'owner',t.store,'https://example.com',fetcher)).toBe('skipped');expect(posts).toBe(0);
+    expect(await deliverJob({...due,id:2,payload:{...due.payload,reason:'assigned'}},'owner',t.store,'https://example.com',fetcher)).toBe('sent');
+    expect(posts).toBe(1);expect(t.store.reminderPaused).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, 'UREBOUND'])('does not post to an old DM after binding changes to %s', async changedUser => {
+    const t = setup(); let user: string | undefined = 'UEXAMPLE', posts = 0;
+    t.store.config = async () => ({ ...config, dmEnabled: true });
+    t.store.binding = async () => user;
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const endpoint = String(input);
+      if (endpoint.includes('/auth.test')) return Response.json({ ok: true, team_id: 'TEXAMPLE' });
+      if (endpoint.includes('/users.info')) return Response.json({ ok: true, user: { team_id: 'TEXAMPLE' } });
+      if (endpoint.includes('/conversations.members')) return Response.json({ ok: true, members: ['UEXAMPLE'] });
+      if (endpoint.includes('/conversations.open')) { user = changedUser; return Response.json({ ok: true, channel: { id: 'DEXAMPLE' } }); }
+      posts++; return Response.json({ ok: true, ts: '1791158400.000001' });
+    }) as unknown as typeof fetch;
+    const assigned: Job = { ...job, target_type: 'member', target_id: 'member-example', payload: { ...job.payload, kind: 'personal', reason: 'assigned' } };
+    expect(await deliverJob(assigned, 'owner', t.store, 'https://example.com', fetcher)).toBe('failed');
+    expect(posts).toBe(0); expect(t.results[0].error).toBe('recipient_not_verified');
+  });
   it('keeps later updates and comments in the current card thread within one hour', async () => {
     const t = setup();
     await deliverJob(job, 'owner', t.store, 'https://example.com', t.fetcher);

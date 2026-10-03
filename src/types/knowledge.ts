@@ -16,6 +16,7 @@ export type KnowledgePage = {
   updated_at: string;
   version: number;
   category?: 'general' | 'meeting';
+  private_draft_owner_id?: string | null;
   access_policy?: KnowledgePolicy;
 }
 

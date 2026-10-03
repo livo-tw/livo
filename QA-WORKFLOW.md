@@ -56,3 +56,23 @@ QA 資料、留言、驗證歷史、附件 metadata 與 Slack 關聯納入備份
 還原期間請暫停團隊寫入。QA 部分有自己的原子驗證與提交；整份既有備份的普通業務表仍沿用逐表還原，並非所有表共同一個交易。
 
 自動測試涵蓋流程權限、多環境驗證、版本衝突、事件去重、功能關閉、私人附件與還原預檢。正式 Slack App scopes、Event Subscriptions 與實際部署環境需設定後再做真人 RD → QA 往返驗收；本次程式變更不會自行修改既有 Slack App 或匯入歷史 Bug。
+
+
+## 專案協調與跨部門交接（可選）
+
+管理員可在 QA 工作區選定專案後指定一位協調人，或清除設定。協調人可分流、記錄卡關、建立交接；這項任命不授予驗證 PASS 或結案權。RD 與 QA 負責人仍由分流表單明確指定，其他驗證與修復規則不變。
+
+交接是 Bug 內的獨立紀錄，包含原因、下一位內部責任人、可選回覆時間、外部依賴、接收時間及解除證據。接收者必須本人接收；接收交接不同於任務指派確認。接收者或管理員可附證據解除，協調人不代替接收者確認完成。以上操作都不會自動產生 PASS、部署、結案或改派 RD／QA。回覆時間不會自動觸發懲罰、升級或週期提醒。
+
+Slack 私密面板可從 Bug 詳情按鈕或以下指令開啟：
+
+- `/livo bug triage ISSUE_ID`：指定 RD／QA、嚴重程度、優先級及可選期限。
+- `/livo bug start_fix ISSUE_ID`：開始修復。
+- `/livo bug hold ISSUE_ID`：記錄卡關原因。
+- `/livo bug request_handoff ISSUE_ID`：建立或替換交接，舊內容保留在事件歷史。
+- `/livo bug accept_handoff ISSUE_ID`：由下一位責任人接收。
+- `/livo bug resolve_handoff ISSUE_ID`：附解除證據。
+
+表單保留開啟時的 Bug 版本；衝突時需重新開啟。重送相同命令不重複寫事件或通知。專案協調設定也採版本與命令識別碼控制；後端會在交易內重新檢查成員、授權、封存與 Slack 身分。
+
+新增 PostgreSQL migration `20261012_qa_coordination.sql` 與 D1 coordination upgrades。完整 QA／排程備份包含協調設定、設定收據及 issue JSON 中的交接。舊備份沒有交接時不推測或補造紀錄。舊 PG→D1 搬移器尚不轉換完整 QA 歷史，偵測到 QA 資料會停止，應改用 QA 完整備份還原。Jira 全清重匯若會刪除 QA 已連結的任務，會在刪除子資料前停止。

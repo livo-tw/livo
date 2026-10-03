@@ -190,7 +190,8 @@ describe('Slack task edit form contract', () => {
     const view = editModal(task, source);
     expect(input(view, 'priority').initial_option.value).toBe('high');
     expect(input(view, 'reviewer').initial_option.value).toBe('member-b');
-    expect(input(view, 'due').initial_date).toBe('2026-10-10');
+    expect(input(view, 'due')).toBeUndefined();
+    expect(JSON.stringify(view)).toContain('livo_deadline_open');
     expect(JSON.parse(view.private_metadata).expected).toEqual({ status_id: 'todo', assignee_id: 'member-a',
       reviewer_id: 'member-b', priority: 'high', due_date: '2026-10-10' });
     expect(JSON.parse(editModal({ ...task, assignee_id: null, reviewer_id: null, due_date: null }, source).private_metadata).expected)

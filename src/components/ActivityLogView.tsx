@@ -1,4 +1,5 @@
 import { isEventEnabled } from '@/lib/featureToggles';
+import { taskWorkActivityDetail } from '@/lib/taskWork/feedback';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useMemberContext } from '@/context/MemberContext';
 import { useTaskContext } from '@/context/TaskContext';
@@ -133,7 +134,7 @@ const ActivityLogView = () => {
   const renderLogItem = (log: ActivityLog) => {
     const user = users.find(u => u.id === log.user_id);
     const actionLabelKey = ACTION_LABEL_KEYS[log.action];
-    const actionLabel = actionLabelKey ? t(actionLabelKey) : log.action;
+    const actionLabel = log.action === 'task_work' ? t('taskWork.activity') : actionLabelKey ? t(actionLabelKey) : log.action;
     return (
       <div key={log.id} className="flex items-start gap-3 py-2.5 border-b border-border last:border-0">
         <div
@@ -161,7 +162,7 @@ const ActivityLogView = () => {
             )}
           </div>
           {log.detail && (
-            <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.detail}</p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{log.action === 'task_work' ? taskWorkActivityDetail(log.detail, t) : log.detail}</p>
           )}
           <span className="text-[10px] text-muted-foreground/60">{formatTime(log.created_at)}</span>
         </div>

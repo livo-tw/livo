@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { handleKnowledgePreferences } from '../src/knowledgePreferences';
 import { applyNavigation, emptyNavigation, navigationScope, orderedNavigation, visibleNavigation } from '../src/knowledgePreferenceModel';
 import type { AuthCtx, Env } from '../src/env';
@@ -10,13 +12,19 @@ const actor = (id='reader',workspaceId='alpha',role='member'):AuthCtx => ({userI
 const page = (id:string,parent_id:string|null=null,sort_order=0) => ({id,parent_id,project_id:null,sort_order,title:id});
 beforeEach(()=>{
   db=new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE members(workspace_id TEXT,id TEXT,is_active INTEGER,role TEXT,job_title TEXT);
-    CREATE TABLE kb_pages(workspace_id TEXT,id TEXT,parent_id TEXT,project_id TEXT,sort_order INTEGER,title TEXT,access_policy TEXT,admin_only INTEGER DEFAULT 0,is_archived INTEGER DEFAULT 0,PRIMARY KEY(workspace_id,id));
-    CREATE TABLE kb_navigation_preferences(workspace_id TEXT,member_id TEXT,preferences TEXT,version INTEGER DEFAULT 0,updated_at TEXT,PRIMARY KEY(workspace_id,member_id));
-    INSERT INTO members VALUES('alpha','reader',1,'member','Engineer'),('alpha','other',1,'super_admin','Engineer'),('beta','reader',1,'member','Engineer');
-    ALTER TABLE members ADD COLUMN auth_id TEXT; UPDATE members SET auth_id=id;`);
-  const insert=db.prepare('INSERT INTO kb_pages(workspace_id,id,parent_id,project_id,sort_order,title,access_policy) VALUES(?,?,?,NULL,0,?,?)');
-  for(const ws of ['alpha','beta'])for(const [id,parent]of [['a',null],['b',null],['c',null],['child','a']]as const)insert.run(ws,id,parent,id,'{"mode":"inherit"}');
+  // Exercise the actual merged schema, including private-draft ACL columns and guards.
+  db.exec('PRAGMA foreign_keys=ON');
+  db.exec(readFileSync(path.resolve(__dirname, '../schema.sql'), 'utf8'));
+  db.exec(`INSERT INTO auth_users(id,email) VALUES('reader','reader@example.com'),('other','other@example.com'),('beta-reader','beta-reader@example.com');
+    INSERT INTO members(workspace_id,id,name,avatar,is_active,role,job_title,email,auth_id) VALUES
+      ('alpha','reader','Reader','',1,'member','Engineer','reader@example.com','reader'),
+      ('alpha','other','Other','',1,'super_admin','Engineer','other@example.com','other'),
+      ('beta','beta-reader','Beta reader','',1,'member','Engineer','beta-reader@example.com','beta-reader');`);
+  const insert=db.prepare('INSERT INTO kb_pages(workspace_id,id,parent_id,project_id,sort_order,title,access_policy,created_by,updated_by) VALUES(?,?,?,NULL,0,?,?,?,?)');
+  for(const ws of ['alpha','beta'])for(const [id,parent]of [['a',null],['b',null],['c',null],['child','a']]as const){
+    const prefix=ws==='beta'?'beta-':'',owner=ws==='beta'?'beta-reader':'reader';
+    insert.run(ws,prefix+id,parent?prefix+parent:null,id,'{"mode":"inherit"}',owner,owner);
+  }
   env={DB:{prepare:(sql:string)=>({bind:(...values:(string|number)[])=>({first:async()=>db.prepare(sql).get(...values)||null,all:async()=>({results:db.prepare(sql).all(...values)})})})}} as unknown as Env;
 });
 afterEach(()=>db.close());
@@ -33,7 +41,7 @@ describe('persistent knowledge navigation',()=>{
     expect(first.error).toBeNull(); expect(first.data?.items.a).toEqual({favorite:true,pinned:true});
     expect((await handleKnowledgePreferences(env,actor(),{p_action:'read'})).data?.pins).toEqual(['a']);
     expect((await handleKnowledgePreferences(env,actor('other'),{p_action:'read'})).data?.pins).toEqual([]);
-    expect((await handleKnowledgePreferences(env,actor('reader','beta'),{p_action:'read'})).data?.pins).toEqual([]);
+    expect((await handleKnowledgePreferences(env,actor('beta-reader','beta'),{p_action:'read'})).data?.pins).toEqual([]);
     const unpin=await handleKnowledgePreferences(env,actor(),{p_action:'pin',p_page_id:'a',p_value:false,p_version:1});
     expect(unpin.data?.items.a).toEqual({favorite:true,pinned:false});
     expect((await handleKnowledgePreferences(env,actor(),{p_action:'favorite',p_page_id:'a',p_value:false,p_version:2})).data?.items.a).toEqual({favorite:false,pinned:false});
@@ -56,6 +64,13 @@ describe('persistent knowledge navigation',()=>{
     expect((await handleKnowledgePreferences(env,actor('other'),{p_action:'favorite',p_page_id:'child',p_value:true,p_version:1})).error?.message).toBe('kb_forbidden');
     db.exec("UPDATE members SET is_active=0 WHERE workspace_id='alpha' AND id='other'");
     expect((await handleKnowledgePreferences(env,actor('other'),{p_action:'read'})).error?.message).toBe('kb_forbidden');
+  });
+  it('keeps owner-only draft preferences hidden even from a different super administrator',async()=>{
+    db.exec("BEGIN; INSERT INTO kb_work_contexts(workspace_id,id,actor_id,auth_id,page_id,operation,expected_generation,lease_pages) SELECT 'alpha','seed-draft','reader','reader','draft','save_draft',generation,'[]' FROM kb_work_clock WHERE workspace_id='alpha'; INSERT INTO kb_pages(workspace_id,id,title,created_by,updated_by,private_draft_owner_id) VALUES('alpha','draft','Private draft','reader','reader','reader'); DELETE FROM kb_work_contexts WHERE workspace_id='alpha' AND id='seed-draft'; COMMIT;");
+    expect((await handleKnowledgePreferences(env,actor(),{p_action:'pin',p_page_id:'draft',p_value:true,p_version:0})).error).toBeNull();
+    expect((await handleKnowledgePreferences(env,actor(),{p_action:'read'})).data?.pins).toEqual(['draft']);
+    expect((await handleKnowledgePreferences(env,actor('other'),{p_action:'favorite',p_page_id:'draft',p_value:true,p_version:0})).error?.message).toBe('kb_forbidden');
+    expect((await handleKnowledgePreferences(env,actor('reader','beta'),{p_action:'read'})).error?.message).toBe('kb_forbidden');
   });
   it('checks current permission inside the mutation statement',async()=>{
     const base=env.DB.prepare.bind(env.DB);

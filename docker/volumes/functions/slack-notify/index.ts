@@ -11,7 +11,7 @@
 // other docker/volumes/functions. Mirrors worker/src/functions/slack.ts.
 //
 // Upstream bug FIXED (parity with the worker): the old handler silently no-op'd
-// on type 'report' / 'approval_request' / 'approval_completed' (client sends
+// on type 'report' (client sends
 // prebuilt Block Kit blocks). This posts those to the configured channel.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -353,6 +353,14 @@ Deno.serve(async (req) => {
         .eq('auth_id', auth.user.id).eq('is_active', true).maybeSingle() : { data: null };
       if (error || !member) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: corsHeaders });
     }
+    const payload: NotifyPayload = await req.json();
+    // Approval notices are produced by the committed command's durable outbox.
+    // A client cannot fabricate a notice or repeat a successful decision.
+    if (payload.type?.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
+      return new Response(JSON.stringify({ error:'approval_command_required' }), {
+        status:409,headers:{...corsHeaders,'Content-Type':'application/json'},
+      });
+    }
     const { data: deliveryRow } = await supabase.from('system_settings').select('value').eq('key', 'slack_delivery').maybeSingle();
     const delivery = deliveryRow?.value;
     const token = await resolveSlackToken(supabase);
@@ -362,21 +370,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    const payload: NotifyPayload = await req.json();
     // The database trigger already committed the durable event. Old UI and Slack
     // callers must not post it a second time or supply a different recipient.
     if (delivery?.enabled === true && TASK_EVENT_TYPES.includes(payload.type)) {
       return new Response(JSON.stringify({ accepted: true, managedBy: 'database' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
-    }
-    if (payload.type.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
-      const { data: enabled, error } = await supabase.rpc('livo_approvals_enabled');
-      if (error || enabled !== true) {
-        return new Response(JSON.stringify({ skipped: 'approvals_disabled' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
     }
     const sc: SlackCtx = { token, usersCache: null };
 
@@ -417,22 +416,6 @@ Deno.serve(async (req) => {
       const res = await postMessage(sc, channelId, title, blocks, 'LIVO');
       if (!res.ok) {
         console.error('[slack] report post error:', res.error);
-        return json({ error: res.error || 'slack_error' });
-      }
-      return json({ success: true });
-    }
-
-    // ── approval types (upstream no-op bug FIXED) ─────────────────────────
-    if (payload.type === 'approval_request' || payload.type === 'approval_completed') {
-      if (!taskNotifyChannel) return json({ error: 'no_channel_configured' });
-
-      const blocks: any[] = Array.isArray(payload.blocks) ? payload.blocks : [];
-      const fallbackText = `${payload.taskKey || ''} ${payload.taskTitle || ''}`.trim() || '簽核通知';
-
-      const channelId = await resolveChannelId(sc, taskNotifyChannel);
-      const res = await postMessage(sc, channelId, fallbackText, blocks, 'LIVO');
-      if (!res.ok) {
-        console.error('[slack] approval post error:', res.error);
         return json({ error: res.error || 'slack_error' });
       }
       return json({ success: true });

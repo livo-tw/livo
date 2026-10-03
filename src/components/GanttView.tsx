@@ -8,6 +8,8 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useLicense } from '@/context/LicenseContext';
 import { logActivity } from '@/lib/activityLog';
+import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/taskPlanning/client';
+import { deadlineReasonRequired } from '@/lib/taskPlanning/core';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
 import { getDepartment, type Department } from '@/lib/department';
@@ -36,7 +38,7 @@ const GanttView = () => {
   const { users } = useMemberContext();
   const { setSelectedTask } = useUIContext();
   const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
-  const { allTasks, statuses, setAllTasks, updateTaskInDb, taskDependencies } = useTaskContext();
+  const { allTasks, statuses, setAllTasks, taskDependencies } = useTaskContext();
   const { sprints, currentSprint } = useSprintContext();
   const { hasFeature } = useLicense();
   const isMobile = useIsMobile();
@@ -48,6 +50,9 @@ const GanttView = () => {
   const [collapsedSubtaskParents, setCollapsedSubtaskParents] = useState<Set<string>>(new Set());
   const [filterDept, setFilterDept] = useState<Department[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('current');
+  const [planningReason, setPlanningReason] = useState('');
+  const [planningError, setPlanningError] = useState('');
+  const [planningSaving, setPlanningSaving] = useState(false);
 
   // ─── Timeline Computation (with dynamic date range) ───
   const timelineWithTasks = useGanttTimeline(viewMode, allTasks);
@@ -59,6 +64,9 @@ const GanttView = () => {
   // ─── Drag Logic ───
   const drag = useGanttDrag({ cellW, pxToDate: timelineWithTasks.pxToDate, snapToPx: timelineWithTasks.snapToPx, allTasks, isMobile });
   const { dragInfo, pendingChange, setPendingChange, dragActivatedRef, handlePointerDown, handleTouchStart, dragPreviewDates, getDragBarPos } = drag;
+  useEffect(() => { setPlanningReason(''); setPlanningError(''); }, [pendingChange]);
+  const planningReasonRequired = !!pendingChange && deadlineReasonRequired(
+    { dueDate: pendingChange.oldEnd || null, kind: pendingChange.dueDateKind }, pendingChange.newEnd || null);
 
   // ─── Enrichment & Grouping ───
   const enrichTask = useCallback((task: typeof allTasks[0]): EnrichedTask => {
@@ -191,18 +199,23 @@ const GanttView = () => {
   }, [viewMode, todayPx]);
 
   // ─── Confirm / Cancel Change ───
-  const confirmChange = () => {
-    if (!pendingChange) return;
+  const confirmChange = async () => {
+    if (!pendingChange || planningSaving) return;
     const task = allTasks.find(t => t.id === pendingChange.taskId);
     if (!task) { setPendingChange(null); return; }
 
-    const updates: Record<string, string | undefined> = {};
-    if (pendingChange.newStart !== undefined) updates.startedAt = pendingChange.newStart;
-    if (pendingChange.newEnd !== undefined) updates.dueDate = pendingChange.newEnd;
-
-    const updated = { ...task, ...updates };
-    setAllTasks(prev => prev.map(t => t.id === task.id ? updated : t));
-    updateTaskInDb(task.id, updates);
+    setPlanningSaving(true); setPlanningError('');
+    try {
+      const row = await setTaskDeadline(task.id,
+        { dueDate: pendingChange.oldEnd || null, kind: pendingChange.dueDateKind, version: pendingChange.dueDateVersion },
+        pendingChange.newEnd || null, pendingChange.newEnd ? pendingChange.dueDateKind : null, planningReason,
+        pendingChange.newStart !== pendingChange.oldStart ? { before: pendingChange.oldStart || null, next: pendingChange.newStart || null } : undefined);
+      const merge = (card: typeof task) => card.id !== row.id || (card.dueDateVersion ?? 0) > row.due_date_version ? card : { ...card, ...deadlineTaskFields(row) };
+      setAllTasks(previous => previous.map(merge));
+      setSelectedTask(previous => previous ? merge(previous) : previous);
+    } catch (failure) {
+      setPlanningError(planningErrorCode(failure)); setPlanningSaving(false); return;
+    }
 
     if (currentMemberId) {
       const details: string[] = [];
@@ -217,9 +230,10 @@ const GanttView = () => {
       }
     }
     setPendingChange(null);
+    setPlanningSaving(false);
   };
 
-  const cancelChange = () => setPendingChange(null);
+  const cancelChange = () => { if (!planningSaving) setPendingChange(null); };
   const fmtDisplay = (d?: string) => d ? format(new Date(d), 'yyyy/MM/dd') : t('common.none');
 
   // ─── Render ───
@@ -366,9 +380,14 @@ const GanttView = () => {
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {pendingChange?.oldEnd !== pendingChange?.newEnd && <label className="block text-sm">
+          {t(planningReasonRequired ? 'taskPlanning.reasonRequired' : 'taskPlanning.reason')}
+          <textarea className="mt-1 block w-full rounded border bg-background p-2" value={planningReason} maxLength={2000} disabled={planningSaving} onChange={event => setPlanningReason(event.target.value)} />
+        </label>}
+        {planningError && <p role="alert">{t(`taskPlanning.errors.${planningError}`)}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={cancelChange}>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={confirmChange}>{t('button.confirmChange')}</AlertDialogAction>
+          <AlertDialogCancel disabled={planningSaving} onClick={cancelChange}>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction disabled={planningSaving || (planningReasonRequired && !planningReason.trim())} onClick={event => { event.preventDefault(); void confirmChange(); }}>{t('button.confirmChange')}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

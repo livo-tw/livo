@@ -3,7 +3,7 @@ export type KnowledgeAction = 'view' | 'edit' | 'comment';
 export type KnowledgeRule = { roles: string[]; positions: string[]; member_ids: string[] };
 export type KnowledgePolicy = { mode: 'inherit' } | { mode: 'custom'; view: KnowledgeRule; edit: KnowledgeRule; comment: KnowledgeRule };
 export type KnowledgeActor = { id: string; role: string; job_title?: string; jobTitle?: string; is_active?: boolean | number };
-export type KnowledgeAclPage = { id: string; parent_id: string | null; access_policy?: unknown; admin_only?: boolean | number; is_archived?: boolean | number };
+export type KnowledgeAclPage = { id: string; parent_id: string | null; access_policy?: unknown; private_draft_owner_id?: string | null; admin_only?: boolean | number; is_archived?: boolean | number };
 export const DEFAULT_KNOWLEDGE_POLICY: KnowledgePolicy = { mode: 'inherit' };
 export const knowledgeIsAdmin = (role: string) => role === 'admin' || role === 'super_admin';
 
@@ -40,6 +40,7 @@ export function knowledgeCan(pages: KnowledgeAclPage[], pageId: string, actor: K
   while (page) {
     if (seen.has(page.id) || seen.size >= 3) return false;
     seen.add(page.id);
+    if (page.private_draft_owner_id && page.private_draft_owner_id !== actor.id) return false;
     const policy = parseKnowledgePolicy(page.access_policy);
     if (!policy) return false;
     if (policy.mode === 'custom' && (!knowledgeRuleMatches(policy.view, actor) || (action !== 'view' && !knowledgeRuleMatches(policy[action], actor)))) return false;

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {executeKnowledgeWorkflow} from '../../worker/src/knowledgeWorkflow';
 import {notifyChanges} from '../../worker/src/notify';
+import {executeApprovalCommand} from '../../worker/src/approval';
 vi.mock('../../worker/src/notify',()=>({notifyChanges:vi.fn()}));
 let db,env,beforeBatch;
 const actor=(id='pm',role='member')=>({userId:id,email:`${id}@example.com`,member:{id,role,workspaceId:'default',name:id,email:`${id}@example.com`}});
@@ -15,7 +16,8 @@ beforeEach(()=>{
  db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
  db.exec(fs.readFileSync(path.resolve(__dirname,'../../worker/schema.sql'),'utf8'));
  db.exec(fs.readFileSync(path.resolve(__dirname,'../../worker/knowledge-workflow.schema.sql'),'utf8'));
- db.exec(`INSERT INTO members(id,name,avatar,role,job_title,email,auth_id) VALUES('pm','PM','','member','PM','pm@example.com','pm'),('admin','Admin','','admin','Engineer','admin@example.com','admin'),('super','Super','','super_admin','Engineer','super@example.com','super');
+ db.exec(`INSERT INTO auth_users(id,email) VALUES('pm','pm@example.com'),('admin','admin@example.com'),('super','super@example.com');
+ INSERT INTO members(id,name,avatar,role,job_title,email,auth_id) VALUES('pm','PM','','member','PM','pm@example.com','pm'),('admin','Admin','','admin','Engineer','admin@example.com','admin'),('super','Super','','super_admin','Engineer','super@example.com','super');
  INSERT INTO product_lines(id,name) VALUES('line','Example'); INSERT INTO projects(id,line_id,name,key) VALUES('project','line','Example','EX');
  INSERT INTO statuses(id,name,is_done) VALUES('open','Open',0),('done','Done',1);
  INSERT INTO tasks(id,task_key,project_id,title,status_id,creator_id) VALUES('task','EX-1','project','Existing','open','pm');
@@ -76,17 +78,23 @@ describe('knowledge workflow D1 transactions and live ACL',()=>{
   expect(()=>db.exec("UPDATE kb_source_snapshots SET body='Rewrite'")).toThrow('kb_workflow_immutable');
  });
  it('creates QA through the existing command guards with no fabricated verification',async()=>{
-  const request={action:'create_qa',commandId:'qa-create',expectedPageVersion:1,input:{projectId:'project',title:'Investigate result',actual:'Observed failure',observedEnvironment:'QA'}};
+  const request={action:'create_qa',commandId:'qa-create',expectedPageVersion:1,actor_auth_id:'super',authId:'super',input:{projectId:'project',title:'Investigate result',actual:'Observed failure',observedEnvironment:'QA'}};
   const result=await run(request);expect(await run(request)).toEqual(result);
   const issue=JSON.parse(db.prepare('SELECT data FROM qa_issues WHERE id=?').get(result.targetId).data);
   expect(issue).toMatchObject({state:'new',targets:[],runs:[],fixCycle:0,closedAt:null});
   expect(db.prepare('SELECT count(*) n FROM qa_commands WHERE issue_id=?').get(result.targetId).n).toBe(1);
+  expect(db.prepare('SELECT actor_id,actor_auth_id FROM qa_commands WHERE issue_id=?').get(result.targetId)).toMatchObject({actor_id:'pm',actor_auth_id:'pm'});
   expect(db.prepare('SELECT snapshot_id FROM kb_work_links WHERE target_id=?').get(result.targetId).snapshot_id).toBeTruthy();
   db.exec(`UPDATE system_settings SET value='{"qa":false}' WHERE key='feature_toggles'`);
   await expect(run({...request,commandId:'qa-disabled'})).rejects.toThrow('kb_workflow_conflict');
   expect((await run({action:'list'})).links[0]).toMatchObject({unavailable:true,title:''});
   expect(notifyChanges).toHaveBeenCalledTimes(1);
   expect(vi.mocked(notifyChanges).mock.calls[0][2]).toEqual([{table:'qa_issues',eventType:'INSERT',new:{id:result.targetId,workspace_id:'default',project_id:'project',version:1},old:null}]);
+ });
+ it.each(["UPDATE auth_users SET banned=1 WHERE id='pm'", "DELETE FROM auth_users WHERE id='pm'"])('rejects QA creation when verified login is revoked before transaction (%s)',async sql=>{
+  beforeBatch=()=>db.exec(sql);
+  await expect(run({action:'create_qa',commandId:'qa-revoked',expectedPageVersion:1,input:{projectId:'project',title:'Investigate result',actual:'Observed failure',observedEnvironment:'QA'}})).rejects.toThrow('qa_forbidden');
+  for(const table of ['qa_commands','qa_issues','qa_events','kb_workflow_commands','kb_source_snapshots','kb_work_links']) expect(db.prepare(`SELECT count(*) n FROM ${table}`).get().n).toBe(0);
  });
  it('keeps source deletion independent of task deletion',async()=>{
   const item=await add();await run({action:'link',commandId:'link',targetKind:'task',targetId:'task',checklistId:item.id,expectedVersion:1});
@@ -105,10 +113,23 @@ describe('knowledge workflow D1 transactions and live ACL',()=>{
  });
 
  it('sends task booleans with the same wire types as regular task writes',async()=>{
-  db.exec("CREATE TRIGGER fixture_requires_approval AFTER INSERT ON tasks BEGIN UPDATE tasks SET requires_approval=1 WHERE id=NEW.id; END");
+  const ordinary=await run({action:'create_task',commandId:'ordinary',expectedPageVersion:1,input:{projectId:'project',statusId:'open',title:'Ordinary task'}});
+  expect(db.prepare('SELECT requires_approval FROM tasks WHERE id=?').get(ordinary.targetId).requires_approval).toBe(0);
+  expect(vi.mocked(notifyChanges).mock.calls[0][2][0].new.requires_approval).toBe(false);
+  vi.mocked(notifyChanges).mockClear();
+  // A legitimate command can commit after creation and before notification readback.
+  // Exercise that boundary without bypassing the production approval guard.
+  const originalBatch=env.DB.batch;
+  env.DB.batch=async statements=>{
+   const result=await originalBatch(statements);
+   const task=db.prepare("SELECT id FROM tasks WHERE title='Approval task'").get();
+   await executeApprovalCommand(env,actor(),{commandId:'approval-flag-before-notify',operation:'set_requirement',taskId:task.id,expectedRequiresApproval:false,enabled:true});
+   return result;
+  };
   const created=await run({action:'create_task',commandId:'approval',expectedPageVersion:1,input:{projectId:'project',statusId:'open',title:'Approval task'}});
   expect(db.prepare('SELECT requires_approval FROM tasks WHERE id=?').get(created.targetId).requires_approval).toBe(1);
   expect(vi.mocked(notifyChanges).mock.calls[0][2][0].new.requires_approval).toBe(true);
+  expect(db.prepare("SELECT count(*) n FROM approval_command_receipts WHERE id='approval-flag-before-notify'").get().n).toBe(1);
  });
 
 });

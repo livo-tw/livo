@@ -27,6 +27,9 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import KnowledgePermissionsDialog from '@/components/KnowledgePermissionsDialog';
 import KnowledgeComments from '@/components/KnowledgeComments';
+import KnowledgeWorkPanel from '@/components/knowledge-work/KnowledgeWorkPanel';
+import KnowledgeWorkSpace from '@/components/knowledge-work/KnowledgeWorkSpace';
+import { createKnowledgeWorkClient, type KnowledgeSearchItem } from '@/lib/knowledgeWork/client';
 import { knowledgeCan, parseKnowledgePolicy } from '../../worker/src/knowledgeAccess';
 import type { KnowledgePage, KnowledgeRevision, KnowledgePolicy } from '@/types/knowledge';
 
@@ -52,6 +55,9 @@ export default function KnowledgeBaseView() {
   const [showHistory, setShowHistory] = useState(false);
   const [preview, setPreview] = useState<KnowledgeRevision | null>(null);
   const [creating, setCreating] = useState(false);
+  const [workOpen, setWorkOpen] = useState(false);
+  const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  const workClient = useMemo(() => createKnowledgeWorkClient(supabase), [currentMemberId]);
   const [importOpen, setImportOpen] = useState(false);
   const [importTargetId, setImportTargetId] = useState<string | undefined>(undefined);
   const [newTitle, setNewTitle] = useState('');
@@ -64,7 +70,7 @@ export default function KnowledgeBaseView() {
   const locks = usePresenceLock('knowledge-base');
   const activeLock = useRef<string | null>(null);
   const admin = actor?.role === 'admin' || actor?.role === 'super_admin';
-  const page = pages.find(p => p.id === selectedId);
+  const page = pages.find(p => p.id === selectedId && knowledgeCan(pages, p.id, actor, 'view'));
   const lockedBy = page ? locks.isLockedBy(`kb:${page.id}`) : null;
   const hasEditAccess = !!page && knowledgeCan(pages, page.id, actor, 'edit');
   const canEdit = hasEditAccess && !lockedBy;
@@ -73,7 +79,7 @@ export default function KnowledgeBaseView() {
   const canDelete = !!page && canEdit && (admin || page.created_by === currentMemberId);
   const pagePolicy = useMemo(() => parseKnowledgePolicy(page?.access_policy) || { mode: 'inherit' } as KnowledgePolicy, [page?.access_policy]);
   const scopeName = (id: string | null) => id ? allProjects.find(p => p.id === id)?.name || t('kb.unknownProject') : t('kb.shared');
-  const visible = pages.filter(p => (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category));
+  const visible = pages.filter(p => knowledgeCan(pages, p.id, actor, 'view') && (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category));
   const navigation = useKnowledgeNavigation(currentMemberId || '', pages);
   const groups = [{ id: 'shared', name: t('kb.shared') }, ...allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, name: p.name }))];
   const projectGroups = useMemo(() => groupProjectsByLine(productLines, allProjects), [productLines, allProjects]);
@@ -83,6 +89,19 @@ export default function KnowledgeBaseView() {
   </>;
 
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (loading || error || !actor) return;
+    const url = new URL(window.location.href), requestedId = url.searchParams.get('knowledge');
+    if (!requestedId) return;
+    const target = pages.find(candidate => candidate.id === requestedId && !candidate.is_archived);
+    if (target && knowledgeCan(pages, target.id, actor, 'view')) {
+      setScope('all'); setCategory('all'); setQuery(''); setSelectedId(target.id);
+    }
+    // Do not retain a restricted document id in the URL or reveal its existence.
+    url.searchParams.delete('knowledge');
+    window.history.replaceState({}, '', url.toString());
+  }, [loading, error, pages, actor]);
 
   useEffect(() => {
     const pop = () => {
@@ -246,6 +265,7 @@ export default function KnowledgeBaseView() {
         <h1 className="font-bold text-lg">{t('kb.title')}</h1><p className="text-xs text-muted-foreground">{t('kb.subtitle')}</p>
       </div></div>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2 max-w-full">
+        <Button variant="outline" disabled={busy || !!draft || !actor} onClick={() => setWorkOpen(true)}>{t('knowledgeWork.workspaceTitle')}</Button>
         {importCapability.allowed && <Button variant="outline" disabled={busy || !!draft} onClick={() => { setImportTargetId(undefined); setImportOpen(true); }}>{t('kb.navigation.importFile', { defaultValue: 'Import document' })}</Button>}
         <Button disabled={busy || !!draft} onClick={() => { setNewScope(scope === 'all' ? 'shared' : scope); setNewCategory(category === 'meeting' ? 'meeting' : 'general'); setNewPolicy({ mode: 'inherit' }); setCreating(true); }} className="shadow-sm gap-2"><Plus size={16} />{t('kb.newPage')}</Button>
       </div>
@@ -288,6 +308,7 @@ export default function KnowledgeBaseView() {
               {!draft && <KnowledgePageActions page={page} navigation={navigation} busy={busy} />}
               {draft ? <><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></> : <>
                 <Button variant="outline" onClick={() => { setShowHistory(!showHistory); setPreview(null); }} className="gap-2"><History size={15} />{t('kb.history')}</Button>
+                <Button variant="outline" onClick={() => setWorkPanelOpen(value => !value)}>{t('knowledgeWork.documentStatus')}</Button>
                 {canEdit && <Button disabled={busy} onClick={() => void edit()}>{t('kb.edit')}</Button>}
                 {canEdit && importCapability.allowed && <Button variant="outline" disabled={busy} onClick={() => { setImportTargetId(page.id); setImportOpen(true); }}>{t('kb.navigation.importVersion', { defaultValue: 'Import source revision' })}</Button>}
                 {admin && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => setPermissionTarget('page')} className="gap-2"><ShieldCheck size={15} />{t('kb.permissions.title')}</Button>}
@@ -300,6 +321,9 @@ export default function KnowledgeBaseView() {
           {page.is_archived && <p className="text-sm text-muted-foreground">{t('kb.archivedHint')}</p>}
           {page.access_policy?.mode === 'custom' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck size={14} />{t('kb.permissions.restricted')}</p>}
           {page.admin_only && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Lock size={14} />{t('kb.adminOnly')}</p>}
+          {page.private_draft_owner_id && <p className="text-sm text-muted-foreground">{t('knowledgeWork.privateDraft')}</p>}
+          {!draft && <p className="text-xs text-muted-foreground">{t('knowledgeWork.workingCopyHint')}</p>}
+          {workPanelOpen && <KnowledgeWorkPanel key={`${currentMemberId}:${page.id}`} client={workClient} pageId={page.id} pageVersion={page.version} parents={pages.filter(candidate => knowledgeCan(pages, candidate.id, actor, 'edit'))} disabled={busy || !!draft || !!lockedBy} onChanged={refresh} />}
           {draft ? <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
             <label className="block text-sm space-y-1"><span>{t('kb.pageTitle')}</span><Input value={draft.title} maxLength={200} disabled={busy} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
             <div className="grid sm:grid-cols-3 gap-3">
@@ -364,5 +388,9 @@ export default function KnowledgeBaseView() {
     </DialogContent></Dialog>
     {importOpen && member && <KnowledgeImportDialog open={importOpen} onOpenChange={setImportOpen} pages={pages} users={users} actor={member} initialTargetId={importTargetId} onImported={ids => { void refresh().then(() => { if (ids[0]) void selectPage(ids[0]); }); }} />}
     <KnowledgePermissionsDialog open={!!permissionTarget} onOpenChange={open => { if (!open) setPermissionTarget(null); }} policy={permissionTarget === 'new' ? newPolicy : pagePolicy} users={users} hasParent={permissionTarget === 'page' && !!page?.parent_id} busy={busy} onSave={savePolicy} />
+    {workOpen && actor && <KnowledgeWorkSpace key={currentMemberId} client={workClient} projectId={scope === 'all' || scope === 'shared' ? undefined : scope} onClose={() => setWorkOpen(false)} onSaved={async id => { setSelectedId(id); setWorkPanelOpen(true); await refresh(); }} onOpen={async (item: KnowledgeSearchItem) => {
+      if (item.kind === 'knowledge' || item.kind === 'knowledge_file') { await selectPage(item.pageId || item.id); setWorkPanelOpen(true); setWorkOpen(false); }
+      else { const target = new URL(window.location.href); target.search = ''; if (item.issueId) target.searchParams.set('qa', item.issueId); else if (item.taskKey) target.searchParams.set('task', item.taskKey); else { toast.error(t('knowledgeWork.errors.knowledge_source_unavailable')); return; } window.location.assign(target.toString()); }
+    }} />}
   </section>;
 }

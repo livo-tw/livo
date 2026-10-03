@@ -13,3 +13,5 @@ Native attachments use the private `kb-files` bucket and authenticated downloads
 Only super_admin can assign positions or administrative roles when creating accounts, manage another member's login, or change another member's login binding. Members retain normal self-linking and their own authentication flows. A super_admin can deliberately grant a position or access; this administrative authority is distinct from an implicit page read bypass.
 
 `20261007_knowledge_permissions.sql` is an additive, repeatable upgrade. Do not roll it back after storing private records, even if the frontend must be reverted. The isolated PostgreSQL fixtures are `scripts/lib/knowledge-pg-fixture.sql` and `scripts/lib/knowledge-pg-security.sql`, relative to the application source root; never run the fixture against a real workspace database.
+
+Owner-only drafts add an ancestor owner check to the same ACL. Explicit knowledge commands, publication pins and sharing closure are described in [Knowledge work commands](knowledge-work-commands.md). No administrative read bypass is added.

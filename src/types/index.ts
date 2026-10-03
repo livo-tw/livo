@@ -56,7 +56,14 @@ export interface Task {
   creatorId: string;
   assigneeId?: string;
   reviewerId?: string;
+  assigneeRevision?: number;
+  reviewerRevision?: number;
+  assigneeAcknowledgedAt?: string;
+  reviewerAcknowledgedAt?: string;
   dueDate?: string;
+  dueDateKind?: 'estimated' | 'committed' | null;
+  dueDateVersion?: number;
+  dueDateChangeReason?: string | null;
   startedAt?: string;
   completedAt?: string;
   gitlabUrl?: string;
@@ -88,6 +95,7 @@ export interface TaskCheck {
   text: string;
   isDone: boolean;
   sortOrder: number;
+  version?: number;
 }
 
 export interface TaskTodo {
@@ -96,6 +104,7 @@ export interface TaskTodo {
   text: string;
   isDone: boolean;
   sortOrder: number;
+  version?: number;
 }
 
 export interface TaskDeployment {

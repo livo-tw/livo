@@ -1,3 +1,7 @@
+import { containsApprovalRestoreData } from '@/lib/approval/restoreGuard';
+import { containsTaskWorkRestoreData } from '@/lib/taskWork/restoreGuard';
+import { assertKnowledgeRestoreSafe } from '@/lib/knowledgeWork/restoreGuard';
+import { fromTable } from '@/lib/supabaseQuery';
 import { missingRestoreEnvironments, parseDeploymentEnvironments } from '@/lib/deploymentEnvironments';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { fnUrl } from '@/lib/apiBase';
 import { logActivity } from '@/lib/activityLog';
 import { toast } from 'sonner';
@@ -116,11 +120,22 @@ const AdminBackupSection = ({
     loadBackupHistory();
   };
 
-  const handleRestoreClick = () => jsonRestoreRef.current?.click();
+  const handleRestoreClick = () => {
+    if (!USING_MOCK_BACKEND) { toast.error(t('approvalCommand.serverRestore')); return; }
+    jsonRestoreRef.current?.click();
+  };
 
   const handleRestoreSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // This multi-request browser restore cannot protect a live backend against
+    // concurrent submissions. Real databases require an administrator's full
+    // database restore; license/auth-local modes do not imply a mock backend.
+    if (!USING_MOCK_BACKEND) {
+      toast.error(t('approvalCommand.serverRestore'));
+      if (jsonRestoreRef.current) jsonRestoreRef.current.value = '';
+      return;
+    }
     if (!(await confirm({ description: t('adminBackup.confirmRestore'), title: t('adminBackup.confirmTitle'), destructive: true }))) {
       if (jsonRestoreRef.current) jsonRestoreRef.current.value = '';
       return;
@@ -130,6 +145,31 @@ const AdminBackupSection = ({
       setRestoring(true);
       const jsonText = await file.text();
       const backup = JSON.parse(jsonText) as Record<string, Record<string, unknown>[]>;
+      if (containsApprovalRestoreData(backup)) throw new Error(t('approvalCommand.serverRestore'));
+      if (containsTaskWorkRestoreData(backup)) throw new Error(t('taskWork.restoreWorkData'));
+      try {
+        assertKnowledgeRestoreSafe(backup);
+        const check = await supabase.functions.invoke('knowledge-restore-check', { body: {} });
+        if (check.error || check.data?.available !== true) throw new Error('knowledge_requires_server_restore');
+      } catch {
+        throw new Error(t('knowledgeWork.errors.knowledge_requires_server_restore'));
+      }
+      const liveWork = await Promise.all([
+        fromTable(supabase, 'task_work_events').select('id').limit(1),
+        fromTable(supabase, 'task_work_receipts').select('id').limit(1),
+        fromTable(supabase, 'tasks').select('id').or('assignee_revision.neq.0,reviewer_revision.neq.0,assignee_acknowledged_at.not.is.null,reviewer_acknowledged_at.not.is.null').limit(1),
+        fromTable(supabase, 'task_checks').select('id').neq('version', 0).limit(1),
+        fromTable(supabase, 'task_todos').select('id').neq('version', 0).limit(1),
+      ]);
+      if (liveWork.some(result => result.error || !Array.isArray(result.data))) throw new Error(t('taskWork.errors.work_unavailable'));
+      if (liveWork.some(result => result.data?.length)) throw new Error(t('taskWork.restoreWorkData'));
+      if (backup.task_deadline_history?.length || backup.task_reminder_preferences?.length) throw new Error(t('taskPlanning.restorePlanningData'));
+      const livePlanning = await Promise.all([
+        supabase.from('task_deadline_history').select('id').limit(1),
+        supabase.from('task_reminder_preferences').select('id').limit(1),
+      ]);
+      if (livePlanning.some(result => result.error)) throw new Error(t('taskPlanning.errors.planning_unavailable'));
+      if (livePlanning.some(result => result.data?.length)) throw new Error(t('taskPlanning.restorePlanningData'));
 
       const requiredTables = ['tasks', 'members', 'projects', 'statuses', 'sprints', 'product_lines'];
       const missingTables = requiredTables.filter(t => !backup[t]);
@@ -137,6 +177,16 @@ const AdminBackupSection = ({
         toast.error(t('adminBackup.missingTables') + ' ' + missingTables.join(', '));
         return;
       }
+
+      // An old JSON backup can omit approval tables while the live database has
+      // history. Check both before deleting even the first task child record.
+      const liveApprovals = await fromTable(supabase, 'approval_requests').select('id').limit(1);
+      if (liveApprovals.error || !Array.isArray(liveApprovals.data) || liveApprovals.data.length)
+        throw new Error(t('approvalCommand.serverRestore'));
+      const livePointers = await supabase.from('tasks').select('id')
+        .or('current_approval_id.not.is.null,approval_status.not.is.null').limit(1);
+      if (livePointers.error || !Array.isArray(livePointers.data) || livePointers.data.length)
+        throw new Error(t('approvalCommand.serverRestore'));
 
       // Ordinary restore does not replace system_settings. Check the live catalog
       // before its first destructive step, including when the backup has old settings.
@@ -170,11 +220,13 @@ const AdminBackupSection = ({
         'tasks', 'member_manuals', 'sprints',
       ];
       for (const table of deleteOrder) {
+        let deletion;
         if (table === 'sprints') {
-          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          deletion = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
         } else {
-          await supabase.from(table as 'comments').delete().neq('id', '___none___');
+          deletion = await supabase.from(table as 'comments').delete().neq('id', '___none___');
         }
+        if (deletion.error) throw new Error(t('approvalCommand.serverRestore'));
       }
 
       const insertOrder = [
@@ -306,6 +358,7 @@ const AdminBackupSection = ({
               <RefreshCw size={16} className={manualBackingUp ? 'animate-spin' : ''} />
               {manualBackingUp ? t('adminBackup.backingUp') : t('adminBackup.manualBackup')}
             </Button>
+            <p className="text-xs text-muted-foreground">{t('knowledgeWork.teamBackupHint')}</p>
           </CardContent>
         </Card>
 
@@ -349,10 +402,11 @@ const AdminBackupSection = ({
             </CardHeader>
             <CardContent className="space-y-3">
               <input ref={jsonRestoreRef} type="file" accept=".json" onChange={handleRestoreSelect} className="hidden" />
-              <Button onClick={handleRestoreClick} disabled={restoring} variant="outline" className="gap-2">
+              <Button onClick={handleRestoreClick} disabled={restoring || !USING_MOCK_BACKEND} variant="outline" className="gap-2">
                 <RotateCcw size={16} className={restoring ? 'animate-spin' : ''} />
                 {restoring ? t('adminBackup.restoring') : t('adminBackup.restoreButton')}
               </Button>
+              {!USING_MOCK_BACKEND && <p className="text-sm text-muted-foreground">{t('approvalCommand.serverRestore')}</p>}
               <p className="text-xs text-destructive flex items-center gap-1.5">
                 <AlertTriangle size={12} className="flex-shrink-0" />
                 {t('adminBackup.restoreWarning')}

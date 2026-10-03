@@ -1,9 +1,16 @@
+import { taskWorkMockCommand, workMockPatch } from './taskWorkMock';
+import { TaskWorkError, taskWorkError } from '@/lib/taskWork/core';
+import { mockApprovalCommand } from './mockApprovalCommands';
 // Mock Supabase Client for local development without Docker/Supabase
 // Stores all data in-memory. Pre-seeded with statuses, members, and demo data.
 
 import { seedAllDemoData } from './seedData';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { seedKnowledgeMock, knowledgeMockDefaults, knowledgeMockUpdate } from './knowledgeMock';
+import { knowledgeWorkMock, knowledgeMockVisible, knowledgeMockWriteGuard, knowledgeMockRestoreAvailable, knowledgeMockHasData } from './knowledgeWorkMock';
+import { KnowledgeWorkError, knowledgeWorkError } from '@/lib/knowledgeWork/core';
+import { planningMockActor, planningMockRpc, planningMockUpdate, planningMockSuppressed } from './taskPlanningMock';
+import { TaskPlanningError, calendarDate, dueDateKind } from '@/lib/taskPlanning/core';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -91,7 +98,7 @@ function initializeData() {
     'task_checks','task_todos','comments','status_logs','notifications',
     'sprints','activity_logs','member_manuals','backup_settings',
     'backup_history','task_attachments','user_column_configs','profiles',
-    'tags','task_tags','task_dependencies',
+    'tags','task_tags','task_dependencies','task_reminder_preferences','task_deadline_history',
   ]) {
     if (!db[t]) db[t] = [];
   }
@@ -208,7 +215,14 @@ function withInsertDefaults(t: string, row: DbRow): DbRow {
   if (!row.id) row.id = uuid();
   if (!row.created_at) row.created_at = new Date().toISOString();
   if (!row.started_at && t === 'sprints') row.started_at = new Date().toISOString();
-  return knowledgeMockDefaults(t, row);
+  if (t==='tasks') { row.due_date=calendarDate(row.due_date??null); row.due_date_kind=dueDateKind(row.due_date_kind??null); if(!row.due_date && row.due_date_kind) throw new TaskPlanningError('planning_date_required'); row.due_date_kind ??= null; row.due_date_version=0; row.due_date_change_reason=null; row.due_date_changed_by=null; }
+  return knowledgeMockDefaults(t, workMockPatch(db,t,null,row));
+}
+
+function withWorkTaskUpdate(before:DbRow,patch:DbRow,actor:string) {
+  const work=workMockPatch(db,'tasks',before,patch),changed=planningMockUpdate(before,patch,actor,db);
+  for(const key of ['assignee_revision','reviewer_revision','assignee_acknowledged_at','reviewer_acknowledged_at'])changed.row[key]=work[key];
+  return changed;
 }
 
 // ─── MockQuery ───────────────────────────────────────────────────────────
@@ -231,7 +245,7 @@ abstract class MockQuery {
     ok?: ((res: ThenableResult) => A | PromiseLike<A>) | null,
     fail?: ((e: unknown) => B | PromiseLike<B>) | null,
   ): Promise<A | B> {
-    return new Promise<ThenableResult>(resolve => resolve(this.respond(this.run()))).then(ok, fail);
+    return new Promise<ThenableResult>((resolve,reject) => { try { resolve(this.respond(this.run())); } catch(e) { if(e instanceof TaskPlanningError || e instanceof TaskWorkError || e instanceof KnowledgeWorkError) resolve({data:null,error:{message:e.code}}); else reject(e); } }).then(ok, fail);
   }
 
   private respond(rows: DbRow[]): ThenableResult {
@@ -259,10 +273,14 @@ class InsertBuilder extends MockQuery {
   select(_cols?: string) { return this; }
 
   protected run(): DbRow[] {
+    if(this.t.startsWith('task_work_'))throw new TaskWorkError('work_forbidden');
+    if (['task_deadline_history','task_reminder_preferences'].includes(this.t)) throw new TaskPlanningError('planning_forbidden');
     const arr = tbl(this.t);
     const inserted: DbRow[] = [];
     for (const r of this.rows) {
+      knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,null,r);
       const row = withInsertDefaults(this.t, clone(r));
+      if(this.t==='notifications' && planningMockSuppressed(db,row)) continue;
       arr.push(row);
       inserted.push(row);
     }
@@ -303,6 +321,7 @@ class SelectBuilder extends FilterBuilder {
   private cols: string[] | null;
   private _order: { col: string; asc: boolean } | null = null;
   private _limit: number | null = null;
+  private _offset=0;
 
   constructor(t: string, cols?: string) {
     super();
@@ -315,9 +334,13 @@ class SelectBuilder extends FilterBuilder {
     return this;
   }
   limit(n: number) { this._limit = n; return this; }
+  range(from:number,to:number) { this._offset=from; this._limit=to-from+1; return this; }
 
   protected run(): DbRow[] {
+    if(['task_work_receipts','task_work_contexts','task_work_internal_versions'].includes(this.t))throw new TaskWorkError('work_forbidden');
     let rows = clone(tbl(this.t)).filter(r => matches(r, this.filters));
+    if(this.t.startsWith('kb_')||this.t==='field_locks')rows=rows.filter(r=>knowledgeMockVisible(db,currentSession?.user.id,this.t,r));
+    if(this.t==='task_reminder_preferences') { const actor=planningMockActor(db,currentSession?.user.id); rows=rows.filter(r=>r.member_id===actor); }
     if (this._order) {
       const { col, asc } = this._order;
       rows.sort((a: DbRow, b: DbRow) => {
@@ -326,7 +349,7 @@ class SelectBuilder extends FilterBuilder {
         return 0;
       });
     }
-    if (this._limit) rows = rows.slice(0, this._limit);
+    if (this._offset || this._limit!==null) rows = rows.slice(this._offset,this._limit===null?undefined:this._offset+this._limit);
     if (this.cols) {
       rows = rows.map((r: DbRow) => {
         const o: DbRow = {};
@@ -352,9 +375,18 @@ class UpdateBuilder extends FilterBuilder {
   protected run(): DbRow[] {
     const arr = tbl(this.t);
     const updated: DbRow[] = [];
+    if(this.t.startsWith('task_work_'))throw new TaskWorkError('work_forbidden');
+    if (['task_deadline_history','task_reminder_preferences'].includes(this.t)) throw new TaskPlanningError('planning_forbidden');
+    if (this.t==='tasks') {
+      const actor=planningMockActor(db,currentSession?.user.id);
+      const prepared=arr.map((r,i)=>matches(r,this.filters)?{i,...withWorkTaskUpdate(r,clone(this.vals),actor)}:null).filter(x=>x!==null);
+      for(const change of prepared) { arr[change.i]=change.row; updated.push(change.row); if(change.history) tbl('task_deadline_history').push(change.history); }
+      return updated;
+    }
     arr.forEach((row, i) => {
       if (matches(row, this.filters)) {
-        arr[i] = this.t === 'kb_pages' ? knowledgeMockUpdate(db, row, clone(this.vals)) : { ...row, ...clone(this.vals) };
+        knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,row,this.vals);
+        arr[i] = this.t === 'kb_pages' ? knowledgeMockUpdate(db, row, clone(this.vals)) : workMockPatch(db,this.t,row,clone(this.vals));
         updated.push(arr[i]);
       }
     });
@@ -374,9 +406,12 @@ class DeleteBuilder extends FilterBuilder {
 
   protected run(): DbRow[] {
     const arr = tbl(this.t);
+    if(this.t.startsWith('task_work_'))throw new TaskWorkError('work_forbidden');
+    if (['task_deadline_history','task_reminder_preferences'].includes(this.t)) throw new TaskPlanningError('planning_forbidden');
+    if(['tasks','members','projects','comments','checks','todos','task_specs','task_attachments','qa_issues'].includes(this.t) && !this.filters.some(f=>f.op==='eq'||f.op==='in') && knowledgeMockHasData(db)) throw new KnowledgeWorkError('knowledge_requires_server_restore',409);
     const deleted: DbRow[] = [];
     for (let i = arr.length - 1; i >= 0; i--) {
-      if (matches(arr[i], this.filters)) deleted.push(...arr.splice(i, 1));
+      if (matches(arr[i], this.filters)) {knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,arr[i],{},true);deleted.push(...arr.splice(i, 1));}
     }
     return deleted;
   }
@@ -424,6 +459,9 @@ class TableRef {
    * leaving it out of the result.
    */
   upsert(data: DbRow | DbRow[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+    if(this.t.startsWith('kb_'))throw new KnowledgeWorkError('knowledge_forbidden');
+    if(this.t.startsWith('task_work_'))throw new TaskWorkError('work_forbidden');
+    if (['task_deadline_history','task_reminder_preferences'].includes(this.t)) throw new TaskPlanningError('planning_forbidden');
     const keys = opts?.onConflict
       ? opts.onConflict.split(',').map(s => s.trim())
       : [PRIMARY_KEYS[this.t] ?? 'id'];
@@ -438,7 +476,8 @@ class TableRef {
         arr.push(withInsertDefaults(this.t, row));
         result.push(row);
       } else if (!opts?.ignoreDuplicates) {
-        arr[idx] = { ...arr[idx], ...row, id: arr[idx].id };
+        if(this.t==='tasks') { const change=withWorkTaskUpdate(arr[idx],row,planningMockActor(db,currentSession?.user.id)); arr[idx]=change.row; if(change.history) tbl('task_deadline_history').push(change.history); }
+        else arr[idx] = workMockPatch(db,this.t,arr[idx],{...row,id:arr[idx].id});
         result.push(arr[idx]);
       }
     }
@@ -519,6 +558,15 @@ interface ManageMemberBody {
 class MockFunctions {
   async invoke(fnName: string, opts?: { body?: Record<string, unknown> }) {
     const body = opts?.body || {};
+    if(fnName==='knowledge-restore-check'){try{return {data:{available:knowledgeMockRestoreAvailable(db,currentSession?.user.id)},error:null};}catch(error){return {data:null,error:{message:knowledgeWorkError(error).code}};}}
+    if(fnName==='knowledge-work'){try{return {data:await knowledgeWorkMock(db,currentSession?.user.id,body),error:null};}
+      catch(error){return {data:{error:knowledgeWorkError(error).code},error:null};}}
+    if(fnName==='task-work-command') {try{return {data:taskWorkMockCommand(db,currentSession?.user.id,body),error:null as null};}
+      catch(error){return {data:{error:taskWorkError(error).code},error:null as null};}}
+    if (fnName === 'approval-command') {
+      try { return {data:mockApprovalCommand(db,currentSession?.user.id,body,uuid),error:null}; }
+      catch (error) { return {data:{error:error instanceof Error ? error.message : 'approval_invalid_input'},error:null}; }
+    }
 
     if (fnName === 'manage-member') {
       return this.manageMember(body as unknown as ManageMemberBody);
@@ -593,7 +641,7 @@ class MockBucket {
     }
     return { data: paths, error: null };
   }
-  async list(_path?: string) { return { data: [] as DbRow[], error: null }; }
+  async list(_path?: string): Promise<{data:DbRow[];error:null}> { return { data: [] as DbRow[], error: null }; }
 }
 
 class MockStorage {
@@ -645,6 +693,10 @@ export class MockSupabaseClient {
   // granted by LicenseContext's demo path, NOT by faking activation,
   // so the real HMAC path stays completely untouched.
   async rpc(fnName: string, _params?: Record<string, unknown>): Promise<ThenableResult> {
+    if (['livo_set_task_reminder','livo_set_task_deadline'].includes(fnName)) {
+      try { return {data:planningMockRpc(db,currentSession?.user.id,fnName,_params||{}),error:null}; }
+      catch(e) { return {data:null,error:{message:e instanceof TaskPlanningError?e.code:'planning_failed'}}; }
+    }
     switch (fnName) {
       case 'check_license':
         return {

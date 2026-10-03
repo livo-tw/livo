@@ -1,4 +1,7 @@
+import { workButton } from './work-ui.ts';
+import { planningButton } from './planning-ui.ts';
 import { option, type Row } from './core.ts';
+import { approvalText, approvalSubmitButton } from './approval-ui.ts';
 import { workspaceText } from './workspace-i18n.ts';
 import { knowledgeSearchLabel } from './knowledge.ts';
 
@@ -50,14 +53,20 @@ export function parseWorkspaceCommand(value: string): WorkspaceCommand | undefin
 export function homeModal(source: Row = {}): Row {
   return modal('livo_workspace_home', 'LIVO', [
     section(tr(source, '*在 Slack 處理日常任務*\n查任務、搜尋卡片、修改狀態與人員、期限和優先級，或新增留言。')),
+    actions([planningButton('livo_reminders','我的到期提醒',{page:0},source.locale)]),
     actions([button('livo_workspace_query', tr(source, '我的任務'), { kind: 'my', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '待我驗收'), { kind: 'review', page: 0 })]),
+    actions([button('livo_approvals_page', approvalText('title', source.locale), { cursor: 0 })]),
     actions([button('livo_workspace_query', tr(source, '今天到期'), { kind: 'today', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '未來 7 天到期'), { kind: 'due', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '已逾期'), { kind: 'overdue', page: 0 })]),
     actions([button('livo_workspace_search', tr(source, '搜尋卡片'), {}),
       button('livo_workspace_new', tr(source, '建立卡片'), {})]),
-    actions([button('livo_kb_search', knowledgeSearchLabel(source.locale), {})]),
+    actions([button('livo_qa_workspace_list', tr(source, 'QA 清單'), {}),
+      button('livo_qa_workspace_my', tr(source, '我的 QA'), {}),
+      button('livo_qa_workspace_search', tr(source, '搜尋 Bug'), {})]),
+    actions([button('livo_knowledge_search', tr(source, '搜尋文件'), {}),
+      button('livo_kb_search', knowledgeSearchLabel(source.locale), {})]),
     context(tr(source, '查詢結果只有你看得到；可用範圍依你的 LIVO 帳號權限。到期清單包含你經辦或驗收的未完成任務，日期以台北時間計算。')),
     section('`/livo my` · `/livo review` · `/livo today` · `/livo due` · `/livo overdue`\n`/livo search ' +
       tr(source, '關鍵字') + '` · `/livo ABC-123` · `/livo edit ABC-123`\n`/livo new ` · `/livo comment ABC-123`'),
@@ -124,6 +133,10 @@ export function detailModal(task: Row, url: string, source: Row = {}, comments?:
     button('livo_task_comment', tr(source, '新增留言'), { taskId: task.id }),
     ...(/^https?:\/\//i.test(url) ? [{ type: 'button', text: { type: 'plain_text', text: tr(source, '開啟 LIVO') }, url }] : []),
   ]));
+  blocks.push(actions([button('livo_task_context', tr(source, '查看任務內容'), { taskId: task.id, kind: 'requirement', page: 0 })]));
+  blocks.push(actions([approvalSubmitButton(task.id, source.locale)]));
+  blocks.push(actions([workButton('livo_work_open','title',{taskId:task.id,section:'responsibility',page:0},source.locale)]));
+  blocks.push(actions([planningButton('livo_deadline_open','修改期限',{taskId:task.id},source.locale),planningButton('livo_reminder_open','暫停到期提醒',{taskId:task.id},source.locale)]));
   if (comments) {
     blocks.push({ type: 'divider' });
     blocks.push(context(tr(source, '留言 · 第 {page} 頁（新到舊）', { page: clampPage(comments.page) + 1 })));
@@ -163,11 +176,11 @@ export function editModal(task: Row, source: Row = {}): Row {
     editInput('status', tr(source, '狀態'), external(task.status_id, task.status_name)),
     editInput('assignee', tr(source, '經辦人'), external(task.assignee_id, task.assignee_name), true),
     editInput('reviewer', tr(source, '驗收人'), external(task.reviewer_id, task.reviewer_name), true),
-    editInput('due', tr(source, '到期日'), { type: 'datepicker', ...(task.due_date ? { initial_date: task.due_date } : {}) }, true),
+    actions([planningButton('livo_deadline_open','修改期限',{taskId:task.id},source.locale)]),
     editInput('priority', tr(source, '優先級'), { type: 'static_select',
       ...(priority ? { initial_option: option(priority[0], tr(source, priority[1])) } : {}),
       options: PRIORITIES.map(row => option(row[0], tr(source, row[1]))) }),
-    context(tr(source, '清除經辦人、驗收人或日期會取消該設定。團隊必填規則仍適用；若卡片已被修改，請重新開啟表單。需要簽核的狀態請到 LIVO 處理。')),
+    context(tr(source, '清除經辦人、驗收人會取消該設定。團隊必填規則仍適用；若卡片已被修改，請重新開啟表單。需要簽核的狀態請到 LIVO 處理。')),
   ], source, { taskId: task.id, expected: snapshot(task) }, tr(source, '儲存變更'));
 }
 

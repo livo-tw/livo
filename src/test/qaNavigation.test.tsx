@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), command: vi.fn(), comment: vi.fn() }));
+const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, role: 'admin', qaAdmin: false, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), getCoordination: vi.fn(), command: vi.fn(), comment: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -16,8 +16,8 @@ vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] 
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command, comment: mocks.comment };
-  return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
+  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration, getCoordination: mocks.getCoordination, command: mocks.command, comment: mocks.comment };
+  return { useQa: () => ({ client, actor: { id: 'admin', role: mocks.role, qaAdmin: mocks.qaAdmin }, enabled: true }) };
 });
 // Kanban loading is unrelated to navigation protection. The Workspace, create
 // form, attachment queue and issue-detail busy logic remain real components.
@@ -39,8 +39,9 @@ const fillCreate = () => {
   fireEvent.change(screen.getByLabelText(/qa.environment/), { target: { value: input.observedEnvironment } });
 };
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.getFieldConfiguration.mockResolvedValue({ version: 1, fields: [] }); vi.stubEnv('VITE_API_URL', ''); mocks.selectedProjectId = null; window.history.replaceState({}, '', '/');
+  vi.clearAllMocks(); mocks.role = 'admin'; mocks.qaAdmin = false; mocks.getFieldConfiguration.mockResolvedValue({ version: 1, fields: [] }); vi.stubEnv('VITE_API_URL', ''); mocks.selectedProjectId = null; window.history.replaceState({}, '', '/');
   mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.versions.mockResolvedValue([]);
+  mocks.getCoordination.mockImplementation(async (projectId: string) => ({ projectId, coordinatorId: null, version: 0 }));
   mocks.list.mockResolvedValue({ issues: [], total: 0, hasMore: false });
   mocks.create.mockImplementation(async (_input: QaCreateInput, id: string) => ({ ...issue, id }));
   mocks.get.mockImplementation(async (id: string) => ({ ...detail, issue: { ...issue, id } }));
@@ -49,6 +50,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 describe('QA navigation preserves pending work', () => {
+  const handoffIssue = (): QaDetail['issue'] & { handoff: NonNullable<QaDetail['issue']['handoff']> } => ({ ...issue, version: 4, handoff: { id: 'handoff-one', reason: 'Need another owner', nextOwnerId: 'admin', replyBy: null, externalDependency: '', requestedBy: 'reporter', requestedAt: issue.createdAt, acceptedBy: null, acceptedAt: null, resolvedBy: null, resolvedAt: null, resolutionEvidence: '' } });
+  it('retries an uncertain handoff with its original issue version and command identity after incoming updates', async () => {
+    const current = handoffIssue(), accepted = { ...current, version: 5, handoff: { ...current.handoff, acceptedBy: 'admin', acceptedAt: issue.createdAt } };
+    mocks.command.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValueOnce(accepted);
+    const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
+    const props = { detail: { ...detail, issue: current }, client, actor: { id: 'admin', role: 'admin' }, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
+    const view = render(<QaIssueDetail {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qaHandoff.accept' }));
+    await screen.findByText('qa.commandRetryHint'); const original = mocks.command.mock.calls[0];
+    view.rerender(<QaIssueDetail {...props} detail={{ ...detail, issue: { ...current, version: 7 } }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.retryCommand' }));
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[1]).toEqual(original); expect(original[0].version).toBe(4);
+    expect(original[1]).toEqual({ type: 'accept_handoff', handoffId: 'handoff-one' });
+  });
+  it('keeps a confirmed handoff visible when only the refresh fails without offering a mutation retry', async () => {
+    const current = handoffIssue(), accepted = { ...current, version: 5, handoff: { ...current.handoff, acceptedBy: 'admin', acceptedAt: issue.createdAt } };
+    mocks.command.mockResolvedValue(accepted); const onRefresh = vi.fn().mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
+    const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
+    render(<QaIssueDetail detail={{ ...detail, issue: current }} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qaHandoff.accept' })); await screen.findByText('qaHandoff.savedRefreshFailed');
+    expect(screen.queryByRole('button', { name: 'qaHandoff.accept' })).toBeNull(); expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' })); await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2)); expect(mocks.command).toHaveBeenCalledTimes(1);
+  });
+  it('keeps QA configuration delegation separate from project coordinator appointment', async () => {
+    mocks.role = 'member'; mocks.qaAdmin = true; mocks.selectedProjectId = 'p1'; render(<QaWorkspace />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.settingsTitle' })).not.toBeDisabled());
+    expect(screen.queryByRole('button', { name: 'qaHandoff.coordinatorTitle' })).toBeNull();
+  });
   it('ignores a repeated toolbar create while retrying an unknown result, preserving both IDs and payload', async () => {
     mocks.create.mockRejectedValueOnce(new TypeError('connection lost'));
     render(<QaWorkspace />); await waitFor(() => expect(mocks.getWorkflow).toHaveBeenCalledTimes(1));

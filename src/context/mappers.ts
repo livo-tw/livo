@@ -23,7 +23,13 @@ export function mapTask(row: TaskRow): Task {
     creatorId: row.creator_id,
     assigneeId: row.assignee_id || undefined,
     reviewerId: row.reviewer_id || undefined,
+    assigneeRevision: row.assignee_revision ?? 0,
+    reviewerRevision: row.reviewer_revision ?? 0,
+    assigneeAcknowledgedAt: row.assignee_acknowledged_at || undefined,
+    reviewerAcknowledgedAt: row.reviewer_acknowledged_at || undefined,
     dueDate: row.due_date || undefined,
+    dueDateKind: row.due_date_kind ?? null,
+    dueDateVersion: row.due_date_version ?? 0,
     startedAt: row.started_at || undefined,
     completedAt: row.completed_at || undefined,
     gitlabUrl: row.gitlab_url || undefined,
@@ -63,11 +69,11 @@ export function mapTaskSpec(row: Tables<'task_specs'>): TaskSpec {
 }
 
 export function mapTaskCheck(row: Tables<'task_checks'>): TaskCheck {
-  return { id: row.id, taskId: row.task_id, text: row.text, isDone: row.is_done, sortOrder: row.sort_order };
+  return { id: row.id, taskId: row.task_id, text: row.text, isDone: row.is_done, sortOrder: row.sort_order, version: row.version ?? 0 };
 }
 
 export function mapTaskTodo(row: Tables<'task_todos'>): TaskTodo {
-  return { id: row.id, taskId: row.task_id, text: row.text, isDone: row.is_done, sortOrder: row.sort_order };
+  return { id: row.id, taskId: row.task_id, text: row.text, isDone: row.is_done, sortOrder: row.sort_order, version: row.version ?? 0 };
 }
 
 export function mapComment(row: Tables<'comments'>): Comment {

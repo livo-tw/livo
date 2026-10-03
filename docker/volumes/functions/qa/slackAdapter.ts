@@ -24,11 +24,11 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
       if (!parsed) throw new Error('qa_invalid_environment');
       return parsed.values;
     },
-    projects: async (actor, search) => {
+    projects: async (actor, search, includeArchived = false) => {
       const member = new Database(env, (actor as QaSlackActor & { jwt: string }).jwt);
-      const pattern = search.replace(/[\\%_]/g, character => '\\' + character);
+      const pattern = search.replace(/[\\%_*]/g, character => '\\' + character);
       const [rows, lines] = await Promise.all([
-        member.rows('projects', { select: 'id,name,line_id', is_archived: 'eq.false', order: 'name,id', limit: '100',
+        member.rows('projects', { select: 'id,name,line_id', ...(includeArchived ? {} : {is_archived: 'eq.false'}), order: 'name,id', limit: '100',
           ...(search ? { name: `ilike.%${pattern}%` } : {}) }),
         member.rows('product_lines', { select: 'id,name,icon', order: 'sort_order,id' }),
       ]);

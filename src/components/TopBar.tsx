@@ -395,7 +395,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                 return (
                   <button
                     key={item.id}
-                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-navigation')); setCurrentView(item.id); }}
+                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); url.searchParams.delete('release'); window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-navigation')); setCurrentView(item.id); }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
                       isActive
                         ? 'bg-sidebar-accent text-sidebar-foreground'

@@ -1,0 +1,33 @@
+// @vitest-environment node
+import {describe,it,expect,vi} from 'vitest';
+import {createReleaseService} from '../../docker/volumes/functions/release-workspace/service';
+import {canonicalReleaseJson} from '@/lib/releases/core';
+type Row=Record<string,any>;
+const authId='00000000-0000-0000-0000-000000000002';
+const claims={sub:authId,livo_slack_binding:'binding-synthetic',livo_slack_team:'TTEST',livo_slack_user:'UADMIN'};
+const token=(value:Row={sub:authId})=>`header.${btoa(JSON.stringify(value))}.signature`;
+const command={commandId:'synthetic-command',batchId:'synthetic-release',expectedVersion:0,operation:'create',manifest:{title:'Private synthetic release',ownerId:'admin',components:[{id:'component',name:'Server',projectId:'p',taskIds:['t'],targets:[{environment:'Stage',build:'v1',config:'same',data:'none'}]}]}};
+function fixture(jwt=token()){let role='admin',active=true,features=true,receipt:Row|undefined,rpcDenied=false,authDenied=false;const seen:Array<{url:URL,body:Row|undefined,authorization:string}>=[];
+ const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{const u=new URL(String(input)),body=init?.body?JSON.parse(String(init.body)):undefined;seen.push({url:u,body,authorization:new Headers(init?.headers).get('Authorization')||''});let data:unknown=[];let status=200;
+  if(u.pathname==='/auth/v1/user'){data=authDenied?{message:'private auth failure'}:{id:authId};status=authDenied?401:200;}
+  else if(u.pathname.endsWith('/members'))data=u.searchParams.has('auth_id')?(active?[{id:'admin',role,is_active:true,auth_id:authId}]:[]):[{id:'admin'}];
+  else if(u.pathname.endsWith('/external_account_bindings'))data=[{id:'binding-synthetic',verified_by:'admin'}];
+  else if(u.pathname.endsWith('/system_settings'))data=u.searchParams.get('key')==='eq.feature_toggles'?[{value:{slackActions:features}}]:[];
+  else if(u.pathname.endsWith('/projects'))data=[{id:'p'}];else if(u.pathname.endsWith('/tasks'))data=[{id:'t',project_id:'p'}];
+  else if(u.pathname.endsWith('/release_commands'))data=receipt?[receipt]:[];
+  else if(u.pathname.endsWith('/release_batches'))data=[{data:{id:'synthetic-release',title:'Fresh private title'}}];
+  else if(u.pathname.endsWith('/livo_release_commit')){data=rpcDenied?{message:'release_forbidden'}:{commandId:body.p_command.commandId,batch:body.p_after,event:body.p_event,replayed:!!receipt};status=rpcDenied?403:200;}
+  return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+ }) as typeof fetch;
+ const env={get:(k:string)=>({SUPABASE_URL:'https://example.com',SUPABASE_ANON_KEY:'anonymous-synthetic',SUPABASE_SERVICE_ROLE_KEY:'service-synthetic'}[k])};
+ return {api:createReleaseService(env,jwt,fetcher),seen,setRole:(v:string)=>{role=v;},revoke:()=>{active=false;},disable:()=>{features=false;},denyAuth:()=>{authDenied=true;},denyRpc:()=>{rpcDenied=true;},prior:async(owner='admin')=>{const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonicalReleaseJson(command))))].map(x=>x.toString(16).padStart(2,'0')).join('');receipt={actor_id:owner,batch_id:command.batchId,request_hash:hash,command,result_json:{commandId:command.commandId,batch:{id:command.batchId,title:'Old private title'},event:{id:'old-event'}}};}};
+}
+describe('release edge authentication and commit boundary',()=>{
+ it('verifies GoTrue and performs all actor/reference reads as the member token',async()=>{const f=fixture();await f.api.handle({action:'command',command});const rpc=f.seen.find(r=>r.url.pathname.endsWith('/livo_release_commit'))!;expect(rpc.authorization).toBe('Bearer service-synthetic');expect(rpc.body?.p_auth_id).toBe(authId);expect(rpc.body?.p_after.version).toBe(1);expect(f.seen.filter(r=>!r.url.pathname.endsWith('/release_commands')&&!r.url.pathname.endsWith('/livo_release_commit')).every(r=>r.authorization===`Bearer ${token()}`)).toBe(true);});
+ it('rejects client identities and inactive/member writes before native commit',async()=>{const f=fixture();await expect(f.api.handle({action:'command',command:{...command,actorId:'forged'}})).rejects.toThrow('release_invalid_input');f.setRole('member');await expect(f.api.handle({action:'command',command})).rejects.toThrow('release_forbidden');f.revoke();await expect(f.api.handle({action:'get',batchId:'synthetic-release'})).rejects.toThrow('release_forbidden');expect(f.seen.some(r=>r.url.pathname.endsWith('/livo_release_commit'))).toBe(false);});
+ it('fails closed for invalid partial signed Slack claims instead of becoming a browser session',async()=>{const f=fixture(token({sub:authId,livo_slack_binding:'binding-synthetic'}));await expect(f.api.handle({action:'get',batchId:'synthetic-release'})).rejects.toThrow('release_unauthorized');});
+ it('checks feature enablement on private reads and returns a safe expired-session error',async()=>{const f=fixture(token(claims));f.disable();await expect(f.api.handle({action:'get',batchId:'synthetic-release'})).rejects.toThrow('release_forbidden');const expired=fixture();expired.denyAuth();await expect(expired.api.handle({action:'get',batchId:'synthetic-release'})).rejects.toMatchObject({code:'release_unauthorized',status:401});expect(expired.seen).toHaveLength(1);});
+ it('revalidates a receipt through native commit so a binding revoked after lookup cannot replay private body',async()=>{const f=fixture(token(claims));await f.prior();f.denyRpc();await expect(f.api.handle({action:'command',command})).rejects.toThrow('release_forbidden');const rpc=f.seen.find(r=>r.url.pathname.endsWith('/livo_release_commit'))!;expect(rpc.body?.p_slack_identity).toEqual({bindingId:'binding-synthetic',teamId:'TTEST',userId:'UADMIN'});expect(f.seen.some(r=>r.url.pathname.endsWith('/release_batches'))).toBe(false);});
+ it('returns a freshly authorized batch after native receipt revalidation',async()=>{const f=fixture(token(claims));await f.prior();const result=await f.api.handle({action:'command',command}) as Row;expect(result.replayed).toBe(true);expect(result.batch.title).toBe('Fresh private title');});
+ it('recovers only the actor own receipt with fresh native binding validation and fresh body ACL',async()=>{const f=fixture(token(claims));await f.prior();const p={action:'receipt',commandId:command.commandId,batchId:command.batchId};expect(await f.api.handle(p)).toMatchObject({found:true,result:{replayed:true,batch:{title:'Fresh private title'}}});f.denyRpc();await expect(f.api.handle(p)).rejects.toThrow('release_forbidden');const other=fixture(token(claims));await other.prior('other-admin');await expect(other.api.handle(p)).rejects.toThrow('release_forbidden');expect(other.seen.some(r=>r.url.pathname.endsWith('/livo_release_commit'))).toBe(false);});
+});

@@ -2,7 +2,7 @@ import { useTaskQueries } from './useTaskQueries';
 import { useTaskCRUD } from './useTaskCRUD';
 import { useTaskRelations } from './useTaskRelations';
 
-export function useTaskState() {
+export function useTaskState(currentMemberId = '') {
   const queries = useTaskQueries();
 
   const crud = useTaskCRUD({
@@ -15,6 +15,7 @@ export function useTaskState() {
   });
 
   const relations = useTaskRelations({
+    currentMemberId,
     taskDependencies: queries.taskDependencies,
     setTaskDependencies: queries.setTaskDependencies,
     customFieldValues: queries.customFieldValues,

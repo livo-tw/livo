@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { assertQaCoordinationImportSafe } from './qa-coordination-import-guard.mjs';
 // Migrate data from the legacy local Docker Supabase (Postgres) into D1.
 //
 // Prereq: Docker Desktop running with the old supabase compose project up
@@ -15,8 +16,12 @@
 
 import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertPlanningImportSafe } from './task-planning-import-guard.mjs';
+import { assertTaskWorkImportSafe } from './task-work-import-guard.mjs';
+import { assertKnowledgeImportSafe, KNOWLEDGE_IMPORT_SOURCE_TABLES } from './knowledge-work-import-guard.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, 'data');
@@ -31,6 +36,9 @@ const OLD_URL_RE =
 const TABLES = [
   // ordered so FK parents import first
   'members', 'product_lines', 'projects', 'statuses', 'sprints', 'tags',
+  ...KNOWLEDGE_IMPORT_SOURCE_TABLES,
+  'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts',
+  'release_batches', 'release_commands', 'release_events', 'release_batch_projects', 'release_batch_tasks', 'release_outbox', 'release_slack_links', 'release_publications',
   'tasks', 'task_tags', 'task_specs', 'task_checks', 'task_todos',
   'task_deployments', 'task_attachments', 'task_dependencies', 'comments',
   'status_logs', 'notifications', 'activity_logs', 'member_manuals',
@@ -40,6 +48,8 @@ const TABLES = [
   'user_report_configs', 'user_notification_preferences', 'field_locks',
   'status_transition_rules', 'orders',
   'approval_rules', 'approval_rule_steps', 'approval_requests', 'approval_actions',
+  'approval_command_receipts',
+  'qa_issues','qa_project_coordination','qa_coordination_commands',
   'standup_sessions', 'standup_member_durations',
   'notification_rules', 'notification_templates', 'notification_delivery_logs',
   'report_send_targets', 'report_send_logs',
@@ -63,6 +73,8 @@ function psqlJson(container, sql) {
 
 function exportData() {
   fs.mkdirSync(DATA, { recursive: true });
+  // Preserve prior export files, but never let a failed refresh certify them.
+  fs.writeFileSync(path.join(DATA, 'knowledge-export-status.json'), JSON.stringify({status:'incomplete'}));
   const c = dbContainer();
   for (const t of TABLES) {
     try {
@@ -70,6 +82,16 @@ function exportData() {
       fs.writeFileSync(path.join(DATA, `${t}.json`), json || '[]');
       console.log(`${t}: ${JSON.parse(json || '[]').length} rows`);
     } catch (e) {
+      if(['qa_issues','qa_project_coordination','qa_coordination_commands'].includes(t) && psqlJson(c, `SELECT to_regclass('public.${t}')`) !== '') throw e;
+      if (KNOWLEDGE_IMPORT_SOURCE_TABLES.includes(t)) {
+        // An older PostgreSQL version may genuinely lack a newer table. Only
+        // explicit catalog confirmation can distinguish this from denied reads.
+        let absent = false;
+        try { absent = psqlJson(c, `SELECT to_regclass('public.${t}') IS NULL`) === 't'; } catch { /* fail closed */ }
+        if (!absent) throw new Error('Knowledge export could not be verified. Preserve the source backup; no migration output is safe to import.');
+        fs.writeFileSync(path.join(DATA, `${t}.json`), '[]');
+        continue;
+      }
       console.warn(`${t}: SKIP (${String(e.message).split('\n')[0]})`);
       fs.writeFileSync(path.join(DATA, `${t}.json`), '[]');
     }
@@ -82,6 +104,7 @@ function exportData() {
   } catch (e) {
     console.warn(`auth_users: SKIP (${String(e.message).split('\n')[0]})`);
   }
+  fs.writeFileSync(path.join(DATA, 'knowledge-export-status.json'), JSON.stringify({status:'complete'}));
 }
 
 function sqlLit(v) {
@@ -95,7 +118,24 @@ function sqlLit(v) {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
+function planningPreflight() {
+  assertPlanningImportSafe(table=>{const file=path.join(DATA,`${table}.json`);return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];});
+}
+
+function knowledgePreflight() {
+  const statusFile=path.join(DATA,'knowledge-export-status.json');
+  if(fs.existsSync(statusFile) && JSON.parse(fs.readFileSync(statusFile,'utf8'))?.status!=='complete') {
+    throw new Error('Knowledge export is incomplete. Preserve the source backup and complete export before migration.');
+  }
+  assertKnowledgeImportSafe(table=>{const file=path.join(DATA,table+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):undefined;});
+}
+
 function transform() {
+  assertApprovalMigrationSupported();
+  planningPreflight();
+  assertQaCoordinationImportSafe(table=>{const file=path.join(DATA,table+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];});
+  assertTaskWorkImportSafe(table=>{const file=path.join(DATA,table+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];});
+  knowledgePreflight();
   fs.mkdirSync(OUT, { recursive: true });
   const lines = ['PRAGMA defer_foreign_keys = on;'];
   for (const t of TABLES) {
@@ -126,15 +166,43 @@ function transform() {
     }
   }
   fs.writeFileSync(path.join(OUT, 'import.sql'), lines.join('\n'));
+  fs.writeFileSync(path.join(OUT,'import-manifest.json'),JSON.stringify({version:1,approvalHistory:false,
+    sqlSha256:createHash('sha256').update(lines.join('\n')).digest('hex')}));
   console.log(`Wrote ${path.join(OUT, 'import.sql')} (${lines.length} statements)`);
 }
 
 function importDb(where) {
+  assertApprovalMigrationSupported();
+  const sql=fs.readFileSync(path.join(OUT,'import.sql'));
+  const manifest=JSON.parse(fs.readFileSync(path.join(OUT,'import-manifest.json'),'utf8'));
+  if(manifest.version!==1||manifest.approvalHistory!==false||manifest.sqlSha256!==createHash('sha256').update(sql).digest('hex')) {
+    throw new Error('Unverified migration output; run transform again before importing. No database writes were attempted.');
+  }
+  planningPreflight();
+  assertQaCoordinationImportSafe(table=>{const file=path.join(DATA,table+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];});
+  assertTaskWorkImportSafe(table=>{const file=path.join(DATA,table+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];});
+  knowledgePreflight();
   const flag = where === 'remote' ? '--remote' : '--local';
   execSync(`npx wrangler d1 execute livo-db ${flag} --file=./migrate/out/import.sql -y`, {
     cwd: path.resolve(HERE, '..'),
     stdio: 'inherit',
   });
+}
+
+// A legacy full-database dump cannot use the public approval command boundary
+// to manufacture historic decisions. Keep the dump intact and refuse before
+// producing/importing SQL; never disable live guards or silently omit evidence.
+function assertApprovalMigrationSupported() {
+  for(const table of ['approval_requests','approval_actions','approval_command_receipts','approval_events']) {
+    const file=path.join(DATA,table+'.json');
+    if(fs.existsSync(file)&&JSON.parse(fs.readFileSync(file,'utf8')).length) {
+      throw new Error('Approval history requires a separately verified offline cross-database migration. Preserve the complete source backup; this importer made no database writes.');
+    }
+  }
+  const tasks=path.join(DATA,'tasks.json');
+  if(fs.existsSync(tasks)&&JSON.parse(fs.readFileSync(tasks,'utf8')).some(task=>task.current_approval_id!=null||task.approval_status!=null)) {
+    throw new Error('Pending approval pointers require a verified offline migration. No database writes were attempted.');
+  }
 }
 
 function walk(dir, base = '') {

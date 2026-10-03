@@ -8,14 +8,13 @@
 //   runSlackDigest(env,ctx)— hourly cron entrypoint (scheduled())
 //
 // Upstream bug FIXED here: the old slack-notify silently no-op'd on
-// type 'report' / 'approval_request' / 'approval_completed' (client sends
+// type 'report' (client sends
 // prebuilt blocks). This port posts those to the configured channel.
 
 import type { Context } from 'hono';
 import type { AppContext, Ctx, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoWorkspace } from '../env';
 import { TABLES } from '../tables';
-import { approvalsEnabled } from '../featureToggles';
 import { rowToWire, type TableMeta } from '../meta';
 import { checkProfessional } from '../license';
 
@@ -465,14 +464,13 @@ async function loadNotifySettings(env: Env, workspaceId: string): Promise<Notify
 export async function handleSlackNotify(c: Context<AppContext>): Promise<Response> {
   const env = c.env;
   const ws = c.get('auth').member.workspaceId;
-  const token = await resolveSlackToken(env, ws);
-  if (!token) return c.json({ error: 'slack_not_configured' });
-
   try {
     const payload = (await c.req.json()) as NotifyPayload;
-    if ((payload.type.startsWith('approval_') || payload.eventType?.startsWith('approval_')) && !await approvalsEnabled(env, ws)) {
-      return c.json({ skipped: 'approvals_disabled' });
+    if (payload.type?.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
+      return c.json({ error: 'approval_command_required' },409);
     }
+    const token = await resolveSlackToken(env, ws);
+    if (!token) return c.json({ error: 'slack_not_configured' });
 
     // License check — professional feature (caller's workspace)
     if (!(await checkProfessional(env, ws))) {
@@ -503,23 +501,6 @@ export async function handleSlackNotify(c: Context<AppContext>): Promise<Respons
       const res = await postMessage(sc, channelId, title, blocks, 'PM 任務通知', ':clipboard:');
       if (!res.ok) {
         console.error('[slack] report post error:', res.error);
-        return c.json({ error: res.error || 'slack_error' });
-      }
-      return c.json({ success: true });
-    }
-
-    // ── approval types (upstream no-op bug FIXED) ─────────────────────────
-    if (payload.type === 'approval_request' || payload.type === 'approval_completed') {
-      if (!settings.taskNotifyChannel) return c.json({ error: 'no_channel_configured' });
-
-      const blocks: SlackBlock[] = Array.isArray(payload.blocks) ? payload.blocks : [];
-      const fallbackText =
-        `${payload.taskKey || ''} ${payload.taskTitle || ''}`.trim() || '簽核通知';
-
-      const channelId = await resolveChannelId(sc, settings.taskNotifyChannel);
-      const res = await postMessage(sc, channelId, fallbackText, blocks, 'PM 任務通知', ':clipboard:');
-      if (!res.ok) {
-        console.error('[slack] approval post error:', res.error);
         return c.json({ error: res.error || 'slack_error' });
       }
       return c.json({ success: true });
