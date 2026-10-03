@@ -31,16 +31,17 @@ Deno.serve(async req => {
         return json({ users: users.sort((a, b) => a.name.localeCompare(b.name)) });
       }
       const heartbeat = await admin.setting('slack_socket_status');
-      const bindings = await admin.rows('external_account_bindings', { select: 'id,member_id,display_name,bound_at,verified_by',
+      const bindings = await admin.rows('external_account_bindings', { select: 'id,member_id,display_name,bound_at,verified_by,verified_by_member_id',
         platform: 'eq.slack', is_verified: 'eq.true', order: 'bound_at.desc' });
-      const ids = bindings.map(b => b.member_id);
-      const members = ids.length ? await admin.rows('members', { select: 'id,name,is_active', id: `in.(${ids.join(',')})` }) : [];
+      const ids = [...new Set(bindings.flatMap(b => [b.member_id, b.verified_by_member_id]).filter(Boolean))];
+      const members = ids.length ? await admin.rows('members', { select: 'id,name,is_active,role', id: `in.(${ids.join(',')})` }) : [];
       return json({ connected: heartbeat?.connected === true && Date.now() - Date.parse(heartbeat.at) < 90000,
         lastSeen: heartbeat?.at || null, bindings: bindings.map(b => ({ ...b, verifiedBy: b.verified_by || 'email',
-          memberName: members.find(m => m.id === b.member_id)?.name || '',
+          memberName: members.find(m => m.id === b.member_id)?.name || '', verifiedByOwner: members.some(m => m.id === b.verified_by_member_id && m.role === 'super_admin' && m.is_active),
           active: members.find(m => m.id === b.member_id)?.is_active === true })) });
     }
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    if (member.role !== 'super_admin') return json({ error: 'forbidden' }, 403);
     const body = await req.json();
     if (body.action === 'bind') {
       // An admin assigns a Slack user to a member whose LIVO email differs.
@@ -60,7 +61,7 @@ Deno.serve(async req => {
       }
       const name = info.profile?.display_name || info.real_name || info.name || info.id;
       await admin.write('external_account_bindings', { member_id: target.id, platform: 'slack', platform_user_id: info.id,
-        platform_team_id: team, display_name: name, is_verified: true, verified_by: 'admin' },
+        platform_team_id: team, display_name: name, is_verified: true, verified_by: 'admin', verified_by_member_id: member.id },
         { on_conflict: 'platform,platform_user_id,platform_team_id' });
       await admin.write('activity_logs', { user_id: member.id, action: 'slack_bind', target_type: 'system',
         detail: `[Slack] ${name} → ${target.name}` });

@@ -427,6 +427,15 @@ ensure_slack_secret() {
 rotate_keys
 rotate_s3_keys
 ensure_slack_secret
+ensure_knowledge_secrets() {
+  for _knowledge_key in KNOWLEDGE_PROCESSOR_TOKEN KNOWLEDGE_IMPORT_SECRET; do
+    [ -n "$(env_var "$_knowledge_key")" ] && continue
+    _knowledge_secret=$(docker run --rm node:22-alpine node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")
+    echo "$_knowledge_secret" | grep -Eq '^[0-9a-f]{64}$' || die "Knowledge import secret generation failed." "Please rerun the installer."
+    set_env_var "$_knowledge_key" "$_knowledge_secret"
+  done
+}
+ensure_knowledge_secrets
 sync_frontend_anon_key
 backup_env
 
@@ -441,6 +450,9 @@ if [ -r "$ROOT/installer/permissions.sh" ]; then
   normalize_package_permissions "$ROOT" || :
 else
   say "  [!] 找不到 installer/permissions.sh，略過程式檔權限檢查。"
+fi
+if ! dc build knowledge-processor </dev/null; then
+  die "Knowledge processor build failed." "Check the network and rerun the installer. Existing workspace data has not been changed."
 fi
 if ! dc up -d </dev/null; then
   die "docker compose 啟動失敗。" "常見原因：

@@ -1,6 +1,7 @@
 import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, taskOption, UNAVAILABLE, type Row } from './core.ts';
 import { sourceOf, type Actions } from './handler.ts';
 import { createWorkspaceData, WORKSPACE_ERRORS } from './workspace-backend.ts';
+import { KNOWLEDGE_SEARCH_SIZE, normalizeKnowledgeSearch } from './knowledge.ts';
 export function fail(message: string): never { throw Object.assign(new Error(message), { name: 'ActionError' }); }
 export interface Environment { get(name: string): string | undefined }
 const encoder = new TextEncoder();
@@ -86,7 +87,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       const auth = await slack('auth.test', {});
       if (auth.team_id !== team) fail(NO_ACCOUNT);
       const info = (await slack('users.info', { user, include_locale: true })).user;
-      if (!info || info.deleted || info.is_bot || (info.team_id && info.team_id !== team)) fail(NO_ACCOUNT);
+      if (!info || info.deleted || info.is_bot || info.is_restricted || info.is_ultra_restricted || (info.team_id && info.team_id !== team)) fail(NO_ACCOUNT);
       let binding = (await admin.rows('external_account_bindings', { select: '*', platform: 'eq.slack',
         platform_user_id: `eq.${user}`, platform_team_id: `eq.${team}`, limit: '1' }))[0];
       let member: Row | undefined;
@@ -111,6 +112,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         platform_user_id: user, platform_team_id: team, display_name: info.profile?.display_name || info.real_name || member.name,
         is_verified: true, verified_by: 'email' }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];
       return { ...member, binding_id: binding.id, team, slack_user: user, locale: info.locale || 'zh-TW',
+        binding_verified_by: binding.verified_by, binding_verified_by_member_id: binding.verified_by_member_id,
         jwt: await memberJwt(env.get('JWT_SECRET') || '', member, binding, sourceOf(p)) };
     },
     catalog: async actor => {
@@ -203,6 +205,20 @@ export function createActions(env: Environment, background: (work: Promise<unkno
     },
     background,
     link: task => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/?task=${encodeURIComponent(task.task_key)}`,
+  };
+  actions.knowledge = {
+    enabled: actions.enabled,
+    actor: actions.actor,
+    search: async (actor, input) => {
+      const query = normalizeKnowledgeSearch(input);
+      // The invoker RPC checks the live binding certificate as well as page RLS.
+      const result = await memberDb(actor).request('/rest/v1/rpc/kb_slack_search', 'POST', {
+        p_query: query.text, p_page: query.page, p_category: query.category,
+      });
+      return { pages: result.pages.slice(0, KNOWLEDGE_SEARCH_SIZE), hasMore: result.hasMore === true, page: query.page };
+    },
+    link: page => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/?kb=${encodeURIComponent(page.id)}`,
+    slack, background,
   };
   return actions;
 }

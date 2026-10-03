@@ -64,6 +64,10 @@ const AppContent = () => {
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('kb')) { setSelectedTask(null); setCurrentView('knowledge-base'); }
+  }, [setCurrentView, setSelectedTask]);
+
+  useEffect(() => {
     if (qaEnabled && new URLSearchParams(window.location.search).has('qa')) { setSelectedTask(null); setCurrentView('qa'); }
   }, [qaEnabled, setCurrentView, setSelectedTask]);
 

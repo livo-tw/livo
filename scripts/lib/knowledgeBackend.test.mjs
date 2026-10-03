@@ -37,7 +37,8 @@ beforeEach(() => {
     INSERT INTO members VALUES ('member-a','member','PM',1,'default'),('member-b','member','Engineer',1,'default'),('member-admin','admin','PM',1,'default'),('member-super','super_admin','Engineer',1,'default'),('other-admin','admin','Engineer',1,'default'),('member-b','admin','Engineer',1,'other');
     CREATE TABLE projects(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, is_archived INTEGER DEFAULT 0);
     CREATE TABLE field_locks(lock_key TEXT, locked_by TEXT, expires_at TEXT, workspace_id TEXT, PRIMARY KEY(workspace_id, lock_key));
-    INSERT INTO projects VALUES ('project-a','default',0),('project-b','other',0);`);
+    INSERT INTO projects VALUES ('project-a','default',0),('project-b','other',0);
+    ALTER TABLE members ADD COLUMN auth_id TEXT; UPDATE members SET auth_id=id;`);
   const schema = fs.readFileSync(path.resolve(__dirname, '../../worker/schema.sql'), 'utf8');
   const kb = schema.slice(schema.indexOf('-- Knowledge base:'), schema.indexOf('CREATE TABLE IF NOT EXISTS auth_users'));
   db.exec(kb); db.exec(kb); // Fresh install and safe re-apply.
@@ -55,6 +56,14 @@ const policy = (patch = {}) => ({ mode: 'custom', view: rule({ positions: ['PM']
 const adminActor = () => actor('member-admin','admin');
 
 describe('knowledge fine-grained ACL security', () => {
+  it('rejects a cached identity after its live authentication binding is changed',async()=>{
+    const page=await create({access_policy:policy()},adminActor());
+    db.prepare('UPDATE members SET auth_id=? WHERE id=?').run('replacement-user','member-a');
+    expect((await query({filters:[{col:'id',op:'eq',val:page.id}]})).data).toEqual([]);
+    expect(await knowledgeStorageAllowed(env,actor(),`kb/${page.id}/source.pdf`,'view')).toBe(false);
+    expect(await knowledgeLockAllowed(env,actor(),`kb:${page.id}`)).toBe(false);
+    expect((await query({op:'insert',values:{title:'New root'},single:true})).error?.message).toBe('kb_forbidden');
+  });
   it('filters each row independently in a mixed public/private workspace',async()=>{
     await create({access_policy:policy()},adminActor());
     const ordinary=await create({title:'Public guide'});

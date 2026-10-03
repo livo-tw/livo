@@ -9,7 +9,7 @@ import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { Button } from '@/components/ui/button';
 import { canManageFeatureToggles } from '@/lib/featureToggles';
 
-type Binding = { id: string; display_name: string; memberName: string; active: boolean; verifiedBy?: 'email' | 'admin' };
+type Binding = { id: string; display_name: string; memberName: string; active: boolean; verifiedBy?: 'email' | 'admin'; verifiedByOwner?: boolean };
 type SlackUser = { id: string; name: string; email: string };
 type Status = { connected: boolean; lastSeen: string | null; bindings: Binding[] };
 export default function SlackActionsSection() {
@@ -18,6 +18,7 @@ export default function SlackActionsSection() {
   const { currentMember } = useAuthContext();
   const { users } = useMemberContext();
   const visible = featureTogglesReady && featureToggles.slackActions && canManageFeatureToggles(currentMember?.role);
+  const canBind = currentMember?.role === 'super_admin';
   const [status, setStatus] = useState<Status | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -56,8 +57,7 @@ export default function SlackActionsSection() {
     try { await request({ action: 'unbind', id }); await refresh(); } catch { setFailed(true); }
     finally { setBusy(false); }
   };
-  // Same rule as the server (canAssignSlackMember): admins assign plain members or themselves.
-  const assignable = users.filter(u => u.isActive && (currentMember?.role === 'super_admin' || u.role === 'member' || u.id === currentMember?.id));
+  const assignable = canBind ? users.filter(u => u.isActive) : [];
   const loadSlackUsers = async () => {
     setBusy(true); setBindError('');
     try { setSlackUsers((await request(undefined, '?slackUsers=1')).users); } catch { setBindError(t('slackActions.manual.loadFailed')); }
@@ -92,10 +92,12 @@ export default function SlackActionsSection() {
       {status?.bindings.map(binding => <div key={binding.id} className="flex items-center justify-between gap-3 rounded border border-border p-2 text-sm">
         <span>{binding.display_name} → {binding.memberName}{!binding.active && ` (${t('slackActions.inactive')})`}
           <span className="ml-2 text-xs text-muted-foreground">{t(binding.verifiedBy === 'admin' ? 'slackActions.manual.byAdmin' : 'slackActions.manual.byEmail')}</span></span>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void unbind(binding.id)}>{t('slackActions.unbind')}</Button>
+        {binding.verifiedBy === 'admin' && !binding.verifiedByOwner && <span className="text-xs text-amber-700">{t('slackActions.manual.reconfirm')}</span>}
+        <Button size="sm" variant="outline" disabled={busy || !canBind} onClick={() => void unbind(binding.id)}>{t('slackActions.unbind')}</Button>
       </div>)}
     </div>}
-    {!IS_DEMO_PRO && <div className="space-y-2 border-t border-border pt-3">
+    {!IS_DEMO_PRO && !canBind && <p className="text-xs text-muted-foreground">{t('slackActions.manual.ownerOnly')}</p>}
+    {!IS_DEMO_PRO && canBind && <div className="space-y-2 border-t border-border pt-3">
       <h4 className="text-sm font-medium">{t('slackActions.manual.title')}</h4>
       <p className="text-xs text-muted-foreground">{t('slackActions.manual.hint')}</p>
       {slackUsers === null

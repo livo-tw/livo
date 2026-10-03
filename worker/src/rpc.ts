@@ -19,6 +19,7 @@ import { notifyChanges } from './notify';
 import { nowIso, rowToWire, type TableMeta } from './meta';
 import { TABLES } from './tables';
 import { knowledgeLockAllowed } from './knowledge';
+import { handleKnowledgePreferences } from './knowledgePreferences';
 
 // ─── Small helpers ────────────────────────────────────────────────────────
 
@@ -160,6 +161,12 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
 
   try {
     // ── Demo lock (contract T3): on the public demo instance nobody may
+    if (fn === 'kb_preferences') {
+      let authed = false;
+      const failure = await requireMember(c, async () => { authed = true; });
+      if (!authed) return c.json({ data: null, error: { message: 'kb_forbidden' } }, failure instanceof Response && failure.status === 403 ? 403 : 401);
+      return c.json(await handleKnowledgePreferences(c.env, c.get('auth'), args));
+    }
     //    activate or reset the license — keeps it permanently PRO. check_license
     //    (read-only) stays open. ──
     if ((fn === 'activate_license' || fn === 'reset_license') && isDemoLocked(c.env)) {

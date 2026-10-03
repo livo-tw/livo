@@ -6,6 +6,8 @@ import { executeQaAction } from './qa';
 import { drainQaSlackInbox, handleQaSlack, isQaSlackPayload, qaRequestId, qaSlackCard, type QaSlackActions, type QaSlackActor, type QaSlackPayload } from './qa/slack';
 import { qaSlackClient, qaSlackEnabled, qaSlackLink, syncQaSlackIssue, getQaSlackWorkflow } from './qaSlackSync';
 import { cleanupQaExpiredUploads } from './qaStorage';
+import { handleKnowledgeSlack, isKnowledgeSlackPayload } from './knowledgeSlackCore';
+import { createCloudKnowledgeSlackActions } from './knowledgeSlack';
 
 export async function verifyQaSlackSignature(secret: string | undefined, timestamp: string | null, signature: string | null, body: string, now = Date.now()): Promise<boolean> {
   if (!secret || !timestamp || !/^\d+$/.test(timestamp) || !signature || !/^v0=[a-f0-9]{64}$/.test(signature) || Math.abs(now / 1000 - Number(timestamp)) > 300) return false;
@@ -140,7 +142,8 @@ export async function handleQaSlackHttp(c: Context<AppContext>): Promise<Respons
     const form = new URLSearchParams(body);
     const payload = c.req.header('content-type')?.includes('application/json') ? JSON.parse(body) : form.has('payload') ? JSON.parse(form.get('payload')!) : Object.fromEntries(form);
     if (payload.type === 'url_verification') return c.json({challenge:payload.challenge});
-    if (!isQaSlackPayload(payload)) return c.json({response_type:'ephemeral',text:'QA 指令：/livo bug new，或 /livo bug show BUG_ID'});
+    if (isKnowledgeSlackPayload(payload)) return c.json(await handleKnowledgeSlack(payload, createCloudKnowledgeSlackActions(c.env,ws,c.executionCtx)) || {});
+    if (!isQaSlackPayload(payload)) return c.json({response_type:'ephemeral',text:'LIVO：/livo kb 搜尋知識庫；/livo bug new 或 /livo bug show BUG_ID'});
     const actions = createCloudQaSlackActions(c.env,ws,c.executionCtx);
     return c.json(await handleQaSlack(payload as QaSlackPayload, payload.event_id || c.req.header('x-slack-request-timestamp') || '', actions));
   } catch { return c.json({error:'qa_slack_failed'},500); }

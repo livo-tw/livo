@@ -1,7 +1,7 @@
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, Plus, Search, FileText, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { BookOpen, Plus, Search, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { renderKnowledgeHtml } from '@/lib/knowledgeHtml';
 import { toast } from 'sonner';
 import { useAuthContext } from '@/context/AuthContext';
@@ -9,7 +9,14 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile } from '@/hooks/useKnowledgeBase';
-import { buildKnowledgeTree, knowledgeSnippet, searchKnowledge, validateKnowledgeTree, type KnowledgeNode } from '@/lib/knowledge';
+import { validateKnowledgeTree } from '@/lib/knowledge';
+import KnowledgeNavigation, { KnowledgePageActions } from '@/components/knowledge/KnowledgeNavigation';
+import KnowledgeReadingBody, { KNOWLEDGE_READING_STYLE } from '@/components/knowledge/KnowledgeReadingBody';
+import { KnowledgeWorkflowPanel } from '@/components/knowledge/KnowledgeWorkflowPanel';
+import { useKnowledgeNavigation } from '@/hooks/useKnowledgeNavigation';
+import KnowledgeImportDialog from '@/components/KnowledgeImportDialog';
+import KnowledgeImportSources from '@/components/KnowledgeImportSources';
+import { useKnowledgeImportCapability } from '@/hooks/useKnowledgeImportCapability';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeClient';
@@ -30,7 +37,7 @@ export default function KnowledgeBaseView() {
   const { allProjects, productLines, selectedProjectId } = useProjectContext();
   const { users } = useMemberContext();
   const [scope, setScope] = useState(selectedProjectId || 'all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('kb'));
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<'all' | 'general' | 'meeting'>('all');
   const [newCategory, setNewCategory] = useState<'general' | 'meeting'>('general');
@@ -39,15 +46,20 @@ export default function KnowledgeBaseView() {
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState<KnowledgePage | null>(null);
   const [busy, setBusy] = useState(false);
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const lastLocation = useRef(window.location.href);
   const [showHistory, setShowHistory] = useState(false);
   const [preview, setPreview] = useState<KnowledgeRevision | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importTargetId, setImportTargetId] = useState<string | undefined>(undefined);
   const [newTitle, setNewTitle] = useState('');
   const [newScope, setNewScope] = useState(selectedProjectId || 'shared');
   const fileInput = useRef<HTMLInputElement>(null);
   const member = users.find(u => u.id === currentMemberId) || currentMember;
   const actor = member && currentMemberId ? { id: currentMemberId, role: member.role || currentMember?.role || '', jobTitle: member.jobTitle || '', is_active: member.isActive !== false } : null;
   const { pages, attachments, revisions, comments, loading, error, refresh } = useKnowledgeBase(selectedId, actor);
+  const importCapability = useKnowledgeImportCapability(JSON.stringify(actor));
   const locks = usePresenceLock('knowledge-base');
   const activeLock = useRef<string | null>(null);
   const admin = actor?.role === 'admin' || actor?.role === 'super_admin';
@@ -61,7 +73,7 @@ export default function KnowledgeBaseView() {
   const pagePolicy = useMemo(() => parseKnowledgePolicy(page?.access_policy) || { mode: 'inherit' } as KnowledgePolicy, [page?.access_policy]);
   const scopeName = (id: string | null) => id ? allProjects.find(p => p.id === id)?.name || t('kb.unknownProject') : t('kb.shared');
   const visible = pages.filter(p => (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category));
-  const results = searchKnowledge(visible, query);
+  const navigation = useKnowledgeNavigation(currentMemberId || '', pages);
   const groups = [{ id: 'shared', name: t('kb.shared') }, ...allProjects.filter(p => !p.isArchived).map(p => ({ id: p.id, name: p.name }))];
   const projectGroups = useMemo(() => groupProjectsByLine(productLines, allProjects), [productLines, allProjects]);
   const scopeOptions = <>
@@ -70,6 +82,28 @@ export default function KnowledgeBaseView() {
   </>;
 
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);
+
+  useEffect(() => {
+    const pop = () => {
+      if (draftRef.current && !window.confirm(t('kb.discard'))) { window.history.pushState({}, '', lastLocation.current); return; }
+      lastLocation.current = window.location.href; void stopEditing();
+      setSelectedId(new URLSearchParams(window.location.search).get('kb')); setPreview(null); setShowHistory(false);
+    };
+    window.addEventListener('popstate', pop);
+    return () => window.removeEventListener('popstate', pop);
+  }, []);
+
+  useEffect(() => {
+    if (!page) return;
+    const anchor = new URLSearchParams(window.location.search).get('anchor');
+    if (!anchor) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(anchor);
+      if (target) { target.closest('details')?.setAttribute('open', ''); target.scrollIntoView?.({ block: 'start' }); }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [page?.id, page?.body]);
+
 
   useEffect(() => {
     if (selectedId && !loading && !page) {
@@ -108,6 +142,8 @@ export default function KnowledgeBaseView() {
     if (busy || (draft && !window.confirm(t('kb.discard')))) return;
     await stopEditing();
     setSelectedId(id); setPreview(null); setShowHistory(false);
+    const location = new URL(window.location.href); location.searchParams.set('kb', id); location.searchParams.delete('anchor');
+    window.history.pushState({}, '', location); lastLocation.current = location.href;
   }
   async function takeLock(target: KnowledgePage) {
     const key = `kb:${target.id}`;
@@ -173,7 +209,7 @@ export default function KnowledgeBaseView() {
         project_id: newScope === 'shared' ? null : newScope, category: newCategory, access_policy: newPolicy, created_by: currentMemberId, updated_by: currentMemberId }).select('*').single();
       if (result.error || !result.data) throw result.error || new Error('kb_failed');
       setCreating(false); setNewTitle(''); setScope(newScope); setCategory(newCategory); setNewPolicy({ mode: 'inherit' }); setQuery('');
-      await refresh(); setSelectedId(result.data.id);
+      await refresh(); await selectPage(result.data.id);
     });
   }
   async function savePolicy(policy: KnowledgePolicy) {
@@ -202,25 +238,16 @@ export default function KnowledgeBaseView() {
       await refresh();
     }
   }
-  const renderTree = (nodes: KnowledgeNode[], depth = 0) => nodes.map(node => (
-    <li key={node.id}>
-      <button disabled={busy} onClick={() => void selectPage(node.id)} aria-current={node.id === selectedId ? 'page' : undefined}
-        className={`my-0.5 w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${node.id === selectedId ? 'bg-primary/15 text-primary font-semibold shadow-sm' : 'hover:bg-muted text-foreground'}`}
-        style={{ paddingLeft: `${12 + depth * 14}px` }}>
-        <FileText size={14} className="shrink-0 opacity-60" /><span className="truncate">{node.title}</span>
-        {(node.admin_only || node.access_policy?.mode === 'custom') && <Lock size={12} aria-hidden="true" />}
-        {node.is_archived && <span className="text-xs text-muted-foreground">{t('kb.archived')}</span>}
-      </button>
-      {node.children.length > 0 && <ul>{renderTree(node.children, depth + 1)}</ul>}
-    </li>
-  ));
 
   return <section className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-primary/[0.03] to-background">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 md:px-6 py-4">
       <div className="flex items-center gap-3"><BookOpen className="text-primary" size={22} /><div>
         <h1 className="font-bold text-lg">{t('kb.title')}</h1><p className="text-xs text-muted-foreground">{t('kb.subtitle')}</p>
       </div></div>
-      <Button disabled={busy || !!draft} onClick={() => { setNewScope(scope === 'all' ? 'shared' : scope); setNewCategory(category === 'meeting' ? 'meeting' : 'general'); setNewPolicy({ mode: 'inherit' }); setCreating(true); }} className="shadow-sm gap-2"><Plus size={16} />{t('kb.newPage')}</Button>
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-2 max-w-full">
+        {importCapability.allowed && <Button variant="outline" disabled={busy || !!draft} onClick={() => { setImportTargetId(undefined); setImportOpen(true); }}>{t('kb.navigation.importFile', { defaultValue: 'Import document' })}</Button>}
+        <Button disabled={busy || !!draft} onClick={() => { setNewScope(scope === 'all' ? 'shared' : scope); setNewCategory(category === 'meeting' ? 'meeting' : 'general'); setNewPolicy({ mode: 'inherit' }); setCreating(true); }} className="shadow-sm gap-2"><Plus size={16} />{t('kb.newPage')}</Button>
+      </div>
     </header>
     {error && <div role="alert" className="px-4 py-2 text-sm text-destructive">{t('kb.errors.kb_load_failed')} <button className="underline" onClick={() => void refresh()}>{t('kb.retry')}</button></div>}
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -236,23 +263,20 @@ export default function KnowledgeBaseView() {
           <label className="flex gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />{t('kb.showArchived')}</label>
         </div>
         <nav className="overflow-auto flex-1 p-2">
-          {loading ? <p className="p-3 text-sm">{t('kb.loading')}</p> : query.trim() ? <>
-            <p className="px-3 py-2 text-xs text-muted-foreground">{t('kb.searchAll')}</p>
-            {!results.length && <p className="p-3 text-sm text-muted-foreground">{t('kb.noResults')}</p>}
-            {results.map(p => <button key={p.id} disabled={busy} onClick={() => void selectPage(p.id)} className="block w-full rounded-lg p-3 text-left hover:bg-muted">
-              <span className="block text-sm font-semibold">{p.title}</span><span className="block text-xs text-primary my-1">{scopeName(p.project_id)}</span>
-              <span className="block text-xs text-muted-foreground break-words">{knowledgeSnippet(p.body, query)}</span>
-            </button>)}
-          </> : groups.filter(g => scope === 'all' || scope === g.id).map(g => <div key={g.id} className="mb-4">
-            <h2 className="px-3 py-2 text-xs font-bold text-muted-foreground">{g.name}</h2>
-            <ul>{renderTree(buildKnowledgeTree(visible.filter(p => (p.project_id || 'shared') === g.id)))}</ul>
-            {!visible.some(p => (p.project_id || 'shared') === g.id) && <p className="px-3 text-xs text-muted-foreground">{t('kb.emptyGroup')}</p>}
-          </div>)}
+          {loading ? <p className="p-3 text-sm">{t('kb.loading')}</p> : <KnowledgeNavigation
+            pages={visible} groups={groups.filter(g => scope === 'all' || scope === g.id)} query={query}
+            filtered={scope !== 'all' || category !== 'all'} selectedId={selectedId}
+            onSelect={id => void selectPage(id)} navigation={navigation} busy={busy} scopeName={scopeName} />}
+
         </nav>
       </aside>
       <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-auto p-4 md:p-7`}>
         {selectedId && <Button variant="ghost" className="md:hidden self-start mb-3 gap-2" disabled={busy} onClick={() => {
-          if (!draft || window.confirm(t('kb.discard'))) { void stopEditing(); setSelectedId(null); }
+          if (!draft || window.confirm(t('kb.discard'))) {
+            void stopEditing(); setSelectedId(null);
+            const location = new URL(window.location.href); location.searchParams.delete('kb'); location.searchParams.delete('anchor');
+            window.history.pushState({}, '', location); lastLocation.current = location.href;
+          }
         }}><ArrowLeft size={16} />{t('kb.pages')}</Button>}
         {!page ? <div className="m-auto text-center max-w-sm text-muted-foreground"><BookOpen size={36} className="mx-auto mb-4 text-primary/60" /><h2 className="font-semibold text-foreground">{t('kb.emptyTitle')}</h2><p className="text-sm mt-2">{t('kb.emptyHint')}</p></div> : <div className="w-full max-w-5xl mx-auto space-y-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -260,9 +284,11 @@ export default function KnowledgeBaseView() {
               <p className="text-xs text-muted-foreground mt-2">{t('kb.updated', { name: users.find(u => u.id === page.updated_by)?.name || t('kb.member'), date: new Date(page.updated_at).toLocaleString() })}</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              {!draft && <KnowledgePageActions page={page} navigation={navigation} busy={busy} />}
               {draft ? <><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></> : <>
                 <Button variant="outline" onClick={() => { setShowHistory(!showHistory); setPreview(null); }} className="gap-2"><History size={15} />{t('kb.history')}</Button>
                 {canEdit && <Button disabled={busy} onClick={() => void edit()}>{t('kb.edit')}</Button>}
+                {canEdit && importCapability.allowed && <Button variant="outline" disabled={busy} onClick={() => { setImportTargetId(page.id); setImportOpen(true); }}>{t('kb.navigation.importVersion', { defaultValue: 'Import source revision' })}</Button>}
                 {admin && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => setPermissionTarget('page')} className="gap-2"><ShieldCheck size={15} />{t('kb.permissions.title')}</Button>}
                 {canArchive && <Button variant="outline" disabled={busy || !!lockedBy} onClick={() => void archive()}>{page.is_archived ? t('kb.unarchive') : t('kb.archive')}</Button>}
                 {canDelete && <Button variant="ghost" disabled={busy} aria-label={t('kb.delete')} onClick={() => void remove()}><Trash2 size={16} /></Button>}
@@ -287,7 +313,9 @@ export default function KnowledgeBaseView() {
             {admin && <label className="flex items-center gap-2 text-sm"><input disabled={busy} type="checkbox" checked={draft.admin_only} onChange={e => setDraft({ ...draft, admin_only: e.target.checked })} />{t('kb.adminOnly')}</label>}
             <p className="text-xs text-muted-foreground">{t('kb.privateFilesHint')}</p>
             <RichTextEditor content={draft.body} onChange={body => setDraft(d => d ? { ...d, body } : d)} editable={!busy && !lockedBy && hasEditAccess} allowImageUpload={false} members={users} />
-          </div> : <article className="prose prose-sm dark:prose-invert max-w-none min-h-40 rounded-xl border bg-card p-5 shadow-sm break-words [&_img]:max-w-full" dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(page.body || `<p>${t('kb.emptyBody')}</p>`) }} />}
+          </div> : <KnowledgeReadingBody body={page.body || `<p>${t('kb.emptyBody')}</p>`} meeting={page.category === 'meeting'} />}
+          {!draft && <KnowledgeWorkflowPanel key={`${page.id}:workflow`} pageId={page.id} canEdit={canEdit} />}
+          {!draft && <KnowledgeImportSources key={`${page.id}:sources`} pageId={page.id} />}
           {showHistory && <section className="rounded-xl border bg-card shadow-sm p-4 space-y-3" aria-label={t('kb.history')}>
             <h3 className="font-semibold">{t('kb.history')}</h3><p className="text-xs text-muted-foreground">{t('kb.historyHint')}</p>
             {!revisions.length && <p className="text-sm text-muted-foreground">{t('kb.noHistory')}</p>}
@@ -295,7 +323,7 @@ export default function KnowledgeBaseView() {
               <button className="text-left hover:underline" onClick={() => setPreview(r)}>{t('kb.version', { version: r.version })} · {new Date(r.created_at).toLocaleString()} · {users.find(u => u.id === r.created_by)?.name || t('kb.member')}</button>
               {canEdit && !draft && <Button size="sm" variant="outline" disabled={busy} onClick={() => void restore(r)}>{t('kb.restore')}</Button>}
             </div>)}</div>
-            {preview && <article className="prose prose-sm dark:prose-invert max-w-none border-t pt-3 break-words" dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(preview.body) }} />}
+            {preview && <article className={`${KNOWLEDGE_READING_STYLE} border-t pt-3`} dangerouslySetInnerHTML={{ __html: renderKnowledgeHtml(preview.body) }} />}
           </section>}
           <section className="rounded-xl border bg-card p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-2"><h3 className="font-semibold flex items-center gap-2"><Paperclip size={16} />{t('kb.attachments')}</h3>
@@ -333,6 +361,7 @@ export default function KnowledgeBaseView() {
         <DialogFooter><Button type="submit" disabled={busy || !newTitle.trim()}>{busy ? t('kb.saving') : t('kb.create')}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
+    {importOpen && member && <KnowledgeImportDialog open={importOpen} onOpenChange={setImportOpen} pages={pages} users={users} actor={member} initialTargetId={importTargetId} onImported={ids => { void refresh().then(() => { if (ids[0]) void selectPage(ids[0]); }); }} />}
     <KnowledgePermissionsDialog open={!!permissionTarget} onOpenChange={open => { if (!open) setPermissionTarget(null); }} policy={permissionTarget === 'new' ? newPolicy : pagePolicy} users={users} hasParent={permissionTarget === 'page' && !!page?.parent_id} busy={busy} onSave={savePolicy} />
   </section>;
 }
