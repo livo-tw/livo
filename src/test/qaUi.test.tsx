@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: mocks.enabled }, featureTogglesReady: mocks.ready, setSelectedTask: mocks.selected }) }));
-vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Admin', role: 'admin', isActive: true }] }) }));
+const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
+// Keep initialization exports available when an import graph loads the real i18n singleton.
+vi.mock('react-i18next', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+import '@/i18n';
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: mocks.enabled }, featureTogglesReady: mocks.ready, taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn(), setSelectedTask: mocks.selected }) }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Admin', role: 'admin', isActive: true, jobTitle: '' }] }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Project', isArchived: false }], productLines: [] as import('@/types').ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as import('@/types').Task[] }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { list: mocks.list, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
+  const client = { list: mocks.list, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
   return { useQa: () => { mocks.useQa(); return { client, actor: { id: 'admin', role: mocks.role }, enabled: mocks.enabled }; } };
 });
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
@@ -20,13 +25,13 @@ import type { QaDetail } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 const issue = createQaIssue({ projectId: 'p1', title: 'Protected bug detail', actual: 'Broken', observedEnvironment: 'Stage' }, 'bug1', { actor: { id: 'admin', role: 'admin' }, workspaceId: 'default', now: '2026-10-02T00:00:00Z', newId: () => crypto.randomUUID(), memberIds: new Set(['admin']), projectIds: new Set(['p1']), taskIds: new Set() });
 const detail: QaDetail = { issue, comments: [], events: [], attachments: [] };
-beforeEach(() => { vi.clearAllMocks(); mocks.enabled = false; mocks.ready = true; mocks.role = 'admin'; window.history.replaceState({}, '', '/'); mocks.list.mockImplementation(async filters => ({ issues: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? [issue] : [], total: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? 1 : 0, hasMore: false })); mocks.get.mockResolvedValue(detail); mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.saveWorkflow.mockImplementation(async value => value); });
+beforeEach(() => { vi.clearAllMocks(); mocks.getFieldConfiguration.mockResolvedValue({ version: 1, fields: [] }); mocks.enabled = false; mocks.ready = true; mocks.role = 'admin'; window.history.replaceState({}, '', '/'); mocks.list.mockImplementation(async filters => ({ issues: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? [issue] : [], total: (!filters.states && !filters.state) || filters.state === 'new' || filters.states?.includes('new') ? 1 : 0, hasMore: false })); mocks.get.mockResolvedValue(detail); mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.saveWorkflow.mockImplementation(async value => value); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => { mocks.versions.mockResolvedValue([]); });
 describe('QA feature gate and conflict recovery', () => {
   it('shares project build suggestions across repair targets and keeps component optional', async () => {
     mocks.versions.mockResolvedValue(['known-build']);
-    const client = { versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
+    const client = { getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const repairing = { ...issue, state: 'in_progress' as const, assigneeId: 'admin', qaOwnerId: 'admin', component: 'Wallet screen' };
     render(<QaIssueDetail detail={{ ...detail, issue: repairing }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={vi.fn()} onBack={vi.fn()} />);
     const build = screen.getByLabelText(/qa.build/) as HTMLInputElement;
@@ -46,9 +51,9 @@ describe('QA feature gate and conflict recovery', () => {
   });
   it('unmounts an open detail immediately on disable without fetching it again', async () => {
     mocks.enabled = true; window.history.replaceState({}, '', '/?qa=bug1'); const view = render(<QaWorkspace />);
-    expect(await screen.findByRole('heading', { name: issue.title })).toBeTruthy(); const calls = mocks.get.mock.calls.length;
+    expect(await screen.findByRole('heading', { name: issue.title, level: 1 })).toBeTruthy(); const calls = mocks.get.mock.calls.length;
     mocks.enabled = false; view.rerender(<QaWorkspace />);
-    expect(screen.queryByRole('heading', { name: issue.title })).toBeNull(); expect(screen.getByText('qa.disabled')).toBeTruthy(); expect(mocks.get).toHaveBeenCalledTimes(calls);
+    expect(screen.queryByRole('heading', { name: issue.title, level: 1 })).toBeNull(); expect(screen.getByText('qa.disabled')).toBeTruthy(); expect(mocks.get).toHaveBeenCalledTimes(calls);
   });
   it('routes the QA toolbar create action into a bug form instead of the task form', async () => {
     mocks.enabled = true; render(<QaWorkspace />); await screen.findByText(issue.title);
@@ -62,10 +67,10 @@ describe('QA feature gate and conflict recovery', () => {
     const board = screen.getByLabelText('qa.board');
     expect(within(board).getAllByRole('heading', { level: 2 }).map(node => node.textContent)).toEqual([...QA_STATES].reverse().map(state => state === 'new' ? 'Incoming reports' : `qa.state.${state}`));
     fireEvent.click(screen.getByRole('button', { name: 'qa.list' }));
-    const title = await screen.findByRole('heading', { name: issue.title });
+    const title = await screen.findByRole('heading', { name: issue.title, level: 3 });
     expect(within(title.closest('button')!).getByText('Incoming reports')).toBeTruthy();
     fireEvent.click(title); await screen.findByRole('heading', { name: issue.title, level: 1 });
-    expect(screen.getByText('Incoming reports')).toBeTruthy();
+    expect(screen.getAllByText('Incoming reports').length).toBeGreaterThan(0);
   });
   it('opens the gated triage form from a card without directly changing its state', async () => {
     mocks.enabled = true; render(<QaWorkspace />); await screen.findByText(issue.title);
@@ -75,7 +80,7 @@ describe('QA feature gate and conflict recovery', () => {
   });
   it('allows administrators to rename and reorder the fixed semantic stages', async () => {
     mocks.enabled = true; render(<QaWorkspace />); await screen.findByText(issue.title);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.workflowTitle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'qa.settingsTitle' }));
     fireEvent.change(screen.getAllByLabelText('qa.workflowStage')[0], { target: { value: 'Incoming reports' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'qa.workflowMoveDown' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
@@ -85,7 +90,7 @@ describe('QA feature gate and conflict recovery', () => {
   });
   it('hides workflow configuration from ordinary members and aborts board requests on disable', async () => {
     mocks.enabled = true; mocks.role = 'member'; const view = render(<QaWorkspace />); await screen.findByText(issue.title);
-    expect(screen.queryByRole('button', { name: 'qa.workflowTitle' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'qa.settingsTitle' })).toBeNull();
     const calls = mocks.list.mock.calls.length, signals = mocks.list.mock.calls.map(call => call[1] as AbortSignal);
     mocks.enabled = false; view.rerender(<QaWorkspace />);
     expect(screen.queryByLabelText('qa.board')).toBeNull(); expect(signals.every(signal => signal.aborted)).toBe(true); expect(mocks.list).toHaveBeenCalledTimes(calls);
@@ -107,7 +112,7 @@ describe('QA feature gate and conflict recovery', () => {
   it('retains workflow edits when saving fails', async () => {
     mocks.enabled = true; mocks.saveWorkflow.mockRejectedValue({ status: 403, code: 'qa_forbidden' });
     render(<QaWorkspace />); await screen.findByText(issue.title);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.workflowTitle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'qa.settingsTitle' }));
     fireEvent.change(screen.getAllByLabelText('qa.workflowStage')[0], { target: { value: 'Pending triage' } });
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     await screen.findByRole('alert');
@@ -122,12 +127,13 @@ describe('QA feature gate and conflict recovery', () => {
   });
   it('keeps an unsent report after a conflict and after refreshing the record', async () => {
     mocks.command.mockRejectedValue({ status: 409, code: 'qa_version_conflict' }); const refresh = vi.fn().mockResolvedValue(undefined);
-    const client = { command: mocks.command, comment: mocks.comment } as unknown as QaClient;
+    const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const props = { detail, client, actor: { id: 'admin', role: 'admin' }, onRefresh: refresh, onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.edit' }));
     const title = screen.getByLabelText(/qa.titleField/) as HTMLInputElement; fireEvent.change(title, { target: { value: 'My unsent correction' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.save' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     expect(await screen.findByText('qa.conflict')).toBeTruthy(); expect(title.value).toBe('My unsent correction');
     fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' })); await waitFor(() => expect(refresh).toHaveBeenCalled());

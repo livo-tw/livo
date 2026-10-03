@@ -1,4 +1,5 @@
 import { Plus, Trash2, FileText } from 'lucide-react';
+import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
@@ -56,6 +57,14 @@ const TaskSubtasksTab = ({ detail }: Props) => {
               className="relative flex items-center gap-2 p-2 rounded border border-border hover:border-primary hover:bg-accent/50 transition-all group cursor-pointer"
             >
               <div className="relative flex-shrink-0" data-subtask-status-picker onClick={e => e.stopPropagation()}>
+                {statuses.length > 5 ? <ColoredStatusSelect variant="dot" label={t('taskDetail.subtasks.changeStatus')}
+                  value={sub.statusId} options={statuses.map(item => ({ value: item.id, label: item.name, color: item.color }))}
+                  onValueChange={statusId => {
+                    const updatedSub = { ...sub, statusId };
+                    setAllTasks(prev => prev.map(item => item.id === sub.id ? updatedSub : item));
+                    updateTaskInDb(sub.id, { statusId });
+                    setSubtaskStatusPickerId(null);
+                  }} /> : <>
                 <button
                   type="button"
                   onClick={() => setSubtaskStatusPickerId(isStatusPickerOpen ? null : sub.id)}
@@ -83,6 +92,7 @@ const TaskSubtasksTab = ({ detail }: Props) => {
                     ))}
                   </div>
                 )}
+                </>}
               </div>
               <div
                 className={`text-sm flex-1 text-left truncate transition-colors ${isDone ? 'line-through text-muted-foreground' : 'text-foreground group-hover:text-primary'}`}

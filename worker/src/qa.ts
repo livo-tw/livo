@@ -5,6 +5,7 @@ import { DEMO_BLOCKED_MESSAGE, isDemoMember } from './env';
 import { notifyChanges } from './notify';
 import { syncQaSlackIssue } from './qaSlackSync';
 import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
+import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
   applyQaCommand, canQaCommand, createQaIssue, qaEventDetail, QaError, QA_STATES,
@@ -55,18 +56,19 @@ export async function qaHash(value: string | Uint8Array): Promise<string> {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
-async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: string[], duplicateId?: string): Promise<QaContext> {
+async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: string[], duplicateId?: string, loadFields = false): Promise<QaContext & { fieldConfigurationRaw?: string | null }> {
   const ws=auth.member.workspaceId;
-  const [members, project, tasks, duplicate, environmentRow] = await Promise.all([
+  const [members, project, tasks, duplicate, environmentRow, fieldRow] = await Promise.all([
     env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND is_active=1').bind(ws).all<{id:string}>(),
     env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=? AND is_archived=0').bind(ws,projectId).first<{id:string}>(),
     taskIds.length ? env.DB.prepare(`SELECT id FROM tasks WHERE workspace_id=? AND project_id=? AND id IN (${taskIds.map(()=>'?').join(',')})`).bind(ws,projectId,...taskIds).all<{id:string}>() : Promise.resolve({results:[]}),
     duplicateId ? env.DB.prepare('SELECT id FROM qa_issues WHERE workspace_id=? AND project_id=? AND id=?').bind(ws,projectId,duplicateId).first<{id:string}>() : Promise.resolve(null),
     env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>(),
+    loadFields ? env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'").bind(ws).first<{value:string}>() : Promise.resolve(null),
   ]);
   const environments = parseDeploymentEnvironments(environmentRow ? JSON.parse(environmentRow.value) : undefined);
   if (!environments) throw new QaError('qa_invalid_environment');
-  return {environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
+  return {...(loadFields ? {fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),fieldConfigurationRaw:fieldRow?.value??null}:{}),environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
     memberIds:new Set(members.results.map(r=>r.id)),projectIds:new Set(project?[project.id]:[]),taskIds:new Set(tasks.results.map(r=>r.id)),duplicateIssueIds:new Set(duplicate?[duplicate.id]:[])};
 }
 async function receipt(env: Env, ws: string, commandId: string, hash: string, actor: string): Promise<unknown | undefined> {
@@ -77,6 +79,7 @@ async function receipt(env: Env, ws: string, commandId: string, hash: string, ac
 }
 function sqlError(err: unknown): QaError {
   const message=err instanceof Error?err.message:String(err);
+  if (/NOT NULL constraint failed: qa_commands\.request_hash/i.test(message)) return new QaError('qa_configuration_conflict',409);
   const code=message.match(/qa_[a-z_]+/)?.[0];
   if(code) return new QaError(code,code==='qa_disabled'||code==='qa_forbidden'?403:code.includes('conflict')?409:400);
   if(/UNIQUE constraint|constraint failed/i.test(message)) return new QaError('qa_conflict',409);
@@ -87,15 +90,19 @@ export function qaErrorResponse(c:C, err:unknown): Response {
   if(e.status>=500) console.error('[qa]',err);
   return c.json({error:{code:e.code,message:e.code}},e.status as 400);
 }
-async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, after:QaIssue, type:string, result:unknown, comment?:QaComment):Promise<unknown> {
+async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, after:QaIssue, type:string, result:unknown, comment?:QaComment, fieldConfigurationRaw?:string|null):Promise<unknown> {
   const env=c.env, auth=c.get('auth'), ws=auth.member.workspaceId, now=new Date().toISOString();
   const event:QaEvent={id:crypto.randomUUID(),issueId:after.id,actorId:auth.member.id,type,detail:type,version:after.version,createdAt:now};
-  const statements:D1PreparedStatement[]=[env.DB.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,hash,JSON.stringify(after),JSON.stringify(result),now)];
+  // A changed catalog must abort the complete D1 batch, including its receipt.
+  // NOT NULL request_hash deliberately turns a stale snapshot into a SQL error.
+  const hashSql=fieldConfigurationRaw===undefined?'?':"CASE WHEN (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ? THEN ? ELSE NULL END";
+  const hashArgs=fieldConfigurationRaw===undefined?[hash]:[ws,fieldConfigurationRaw,hash];
+  const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now)];
   const fields=[after.projectId,after.state,after.assigneeId,after.qaOwnerId,after.reporterId,after.title,after.version,after.updatedAt,JSON.stringify(after)];
   if(!before) statements.push(env.DB.prepare('INSERT INTO qa_issues(project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data,workspace_id,id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(...fields,ws,after.id));
   else statements.push(env.DB.prepare('UPDATE qa_issues SET project_id=?,state=?,assignee_id=?,qa_owner_id=?,reporter_id=?,title=?,version=?,updated_at=?,data=? WHERE workspace_id=? AND id=? AND version=?').bind(...fields,ws,after.id,before.version));
   if(comment) statements.push(env.DB.prepare('INSERT INTO qa_comments(workspace_id,id,issue_id,actor_id,body,created_at) VALUES(?,?,?,?,?,?)').bind(ws,comment.id,after.id,auth.member.id,comment.body,comment.createdAt));
-  statements.push(env.DB.prepare('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(ws,event.id,after.id,event.actorId,type,comment?'comment':qaEventDetail(after,type),after.version,now));
+  statements.push(env.DB.prepare('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(ws,event.id,after.id,event.actorId,type,comment?'comment':qaEventDetail(after,type,before),after.version,now));
   // Durable in-app notifications are inserted in this same transaction. Realtime is only a wake-up.
   const recipients=new Set<string>();
   if(type==='create') {
@@ -104,6 +111,7 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   else if(type==='record_deployment'||type==='submit_fix') {if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
   else if(type==='close') recipients.add(after.reporterId);
   else if(type==='comment') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
+  else if(type==='set_state') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
   recipients.delete(auth.member.id);
   for(const recipient of recipients) statements.push(env.DB.prepare("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at) SELECT ?,?,?,?,'qa_update',NULL,?,0,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)").bind(ws,crypto.randomUUID(),recipient,auth.member.id,JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type}),now,ws,recipient));
   try { await env.DB.batch(statements); }
@@ -208,7 +216,7 @@ export async function handleQa(c:C):Promise<Response> {
   try {
     const auth=c.get('auth'),ws=auth.member.workspaceId;
     await requireQaEnabled(c.env,ws);
-    const active=await c.env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND id=? AND role=? AND is_active=1').bind(ws,auth.member.id,auth.member.role).first();
+    const active=await c.env.DB.prepare('SELECT id,is_qa_admin FROM members WHERE workspace_id=? AND id=? AND role=? AND is_active=1').bind(ws,auth.member.id,auth.member.role).first<{id:string;is_qa_admin:number}>();
     if(!active)throw new QaError('qa_forbidden',403);
     if(c.req.query('action')==='upload_part') {
       if(isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
@@ -217,7 +225,7 @@ export async function handleQa(c:C):Promise<Response> {
     let body:Body;try{body=JSON.parse(new TextDecoder().decode(await qaReadBody(c,10*1024*1024)));}catch(e){if(e instanceof QaError)throw e;throw new QaError('qa_invalid_json');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new QaError('qa_invalid_request');
     const action=String(body.action??'');
-    if(!['list','get','download','get_workflow','versions'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(!['list','get','download','get_workflow','get_field_configuration','versions'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
     if(action==='versions') {
       const projectId=qaId(body.projectId);
       const project=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=?').bind(ws,projectId).first();
@@ -241,15 +249,32 @@ export async function handleQa(c:C):Promise<Response> {
       return c.json(parseQaWorkflow(row?.value));
     }
     if(action==='save_workflow') {
-      if(!['admin','super_admin'].includes(auth.member.role))throw new QaError('qa_forbidden',403);
+      if(!canManageQaConfiguration({role:auth.member.role,qaAdmin:active.is_qa_admin===1}))throw new QaError('qa_forbidden',403);
       const workflow=validateQaWorkflow(body.workflow);
       const result=await c.env.DB.prepare(`INSERT INTO system_settings(workspace_id,key,value,updated_at)
-        SELECT ?,'qa_workflow',?,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND role IN ('admin','super_admin'))
+        SELECT ?,'qa_workflow',?,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND (role IN ('admin','super_admin') OR is_qa_admin=1))
         AND EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=? AND key='feature_toggles' AND json_extract(value,'$.qa')=1)
         ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
         .bind(ws,JSON.stringify(workflow),new Date().toISOString(),ws,auth.member.id,ws).run();
       if(result.meta.changes!==1)throw new QaError('qa_forbidden',403);
       return c.json(workflow);
+    }
+    if(action==='get_field_configuration') {
+      const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'").bind(ws).first<{value:string}>();
+      return c.json(parseQaFieldConfiguration(row?.value));
+    }
+    if(action==='save_field_configuration') {
+      if(!canManageQaConfiguration({role:auth.member.role,qaAdmin:active.is_qa_admin===1}))throw new QaError('qa_forbidden',403);
+      const previous=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'").bind(ws).first<{value:string}>();
+      const configuration=validateQaFieldConfiguration(body.configuration,parseQaFieldConfiguration(previous?.value));
+      const result=await c.env.DB.prepare(`INSERT INTO system_settings(workspace_id,key,value,updated_at)
+        SELECT ?,'qa_custom_fields',?,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND (role IN ('admin','super_admin') OR is_qa_admin=1))
+        AND EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=? AND key='feature_toggles' AND json_extract(value,'$.qa')=1)
+        AND (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ?
+        ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+        .bind(ws,JSON.stringify(configuration),new Date().toISOString(),ws,auth.member.id,ws,ws,previous?.value??null).run();
+      if(result.meta.changes!==1)throw new QaError('qa_configuration_conflict',409);
+      return c.json(configuration);
     }
     if(action==='restore')return c.json(await restore(c,body));
     if(action==='list')return c.json(await list(c.env,ws,auth.member.id,(body.input??{}) as QaListInput));
@@ -268,8 +293,8 @@ export async function handleQa(c:C):Promise<Response> {
     const prior=await receipt(c.env,ws,commandId,hash,auth.member.id);if(prior!==undefined)return c.json(prior);
     if(action==='create') {
       const input=body.input as QaCreateInput;if(!input||typeof input!=='object')throw new QaError('qa_invalid_input');
-      const ctx=await context(c.env,auth,qaId(input.projectId),[]),issue=createQaIssue(input,id,ctx);
-      return c.json(await commit(c,commandId,hash,null,issue,'create',issue));
+      const ctx=await context(c.env,auth,qaId(input.projectId),[],undefined,true),issue=createQaIssue(input,id,ctx);
+      return c.json(await commit(c,commandId,hash,null,issue,'create',issue,undefined,ctx.fieldConfigurationRaw));
     }
     const before=await getQaIssue(c.env,ws,id);
     if(action==='comment') {
@@ -283,9 +308,9 @@ export async function handleQa(c:C):Promise<Response> {
     const command=body.command as QaCommand;if(!command||typeof command.type!=='string')throw new QaError('qa_invalid_command');
     const requestedTasks=command.type==='link_tasks'&&Array.isArray(command.taskIds)?command.taskIds:before.taskIds;
     if(requestedTasks.length>100)throw new QaError('qa_too_many_tasks');requestedTasks.forEach(qaId);
-    const ctx=await context(c.env,auth,before.projectId,requestedTasks,command.type==='close'?command.duplicateOfId:before.duplicateOfId??undefined);
+    const ctx=await context(c.env,auth,before.projectId,requestedTasks,command.type==='close'?command.duplicateOfId:before.duplicateOfId??undefined,command.type==='edit');
     const after=applyQaCommand(before,command,ctx);
-    return c.json(await commit(c,commandId,hash,before,after,command.type,after));
+    return c.json(await commit(c,commandId,hash,before,after,command.type,after,undefined,ctx.fieldConfigurationRaw));
   }catch(err){return qaErrorResponse(c,err);}
 }
 

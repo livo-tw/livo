@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generateId } from '@/lib/generateId';
@@ -137,13 +138,13 @@ const ProductLineManageModal = ({ open, onClose }: { open: boolean; onClose: () 
               <div key={line.id} className="flex items-center gap-2 py-1.5">
                 {editingId === line.id ? (
                   <>
-                    <select
+                    <SearchableSelect
                       value={editIcon}
                       onChange={e => setEditIcon(e.target.value)}
                       className="w-10 text-center border border-border rounded bg-card text-sm py-1"
                     >
                       {PRESET_ICONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}
-                    </select>
+                    </SearchableSelect>
                     <input
                       ref={inputRef}
                       value={editName}
@@ -174,13 +175,13 @@ const ProductLineManageModal = ({ open, onClose }: { open: boolean; onClose: () 
 
             {showNew ? (
               <div className="flex items-center gap-2 py-1.5 border-t border-border pt-3">
-                <select
+                <SearchableSelect
                   value={newIcon}
                   onChange={e => setNewIcon(e.target.value)}
                   className="w-10 text-center border border-border rounded bg-card text-sm py-1"
                 >
                   {PRESET_ICONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}
-                </select>
+                </SearchableSelect>
                 <input
                   value={newName}
                   onChange={e => setNewName(e.target.value)}

@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS members (
   name       TEXT NOT NULL,
   avatar     TEXT NOT NULL,
   role       TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('super_admin','admin','member')),
+  is_qa_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_qa_admin IN (0,1)),
   job_title  TEXT NOT NULL DEFAULT '',
   color      TEXT NOT NULL DEFAULT '#6B778C',
   email      TEXT NOT NULL DEFAULT '',

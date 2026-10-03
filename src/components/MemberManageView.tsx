@@ -86,6 +86,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
           <div className="mb-4 p-3 md:p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground space-y-1">
             <p><strong className="text-foreground">{t('role.superAdmin')}</strong>：{t('role.superAdminDesc')}</p>
             <p><strong className="text-foreground">{t('role.admin')}</strong>：{t('role.adminDesc')}</p>
+            <p><strong className="text-foreground">{t('role.qaAdmin')}</strong>：{t('role.qaAdminDesc')}</p>
             <p><strong className="text-foreground">{t('role.member')}</strong>：{t('role.memberDesc')}</p>
           </div>
         )}

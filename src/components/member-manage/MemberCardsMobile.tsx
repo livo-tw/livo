@@ -1,12 +1,13 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
+import { MEMBER_ROLE_OPTIONS, selectedMemberRole, selectionRoleLabel, getMemberRoleLabel, getMemberRoleColor, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 import { isPlaceholderEmail } from '@/lib/memberEmail';
 
 interface MemberStat {
   user: {
     id: string; name: string; avatar: string; color: string;
-    email?: string; jobTitle?: string; role: string; isActive?: boolean;
+    email?: string; jobTitle?: string; role: string; isActive?: boolean; qaAdmin?: boolean;
   };
   assignedCount: number;
   completedCount: number;
@@ -30,7 +31,7 @@ interface MemberCardsMobileProps {
   onTouchStart: (index: number, e: React.TouchEvent) => void;
   onTouchMove: (e: React.TouchEvent) => void;
   onTouchEnd: () => void;
-  onRoleChange: (memberId: string, role: MemberRole) => void;
+  onRoleChange: (memberId: string, role: MemberRoleSelection) => void;
   onToggleActive: (memberId: string, currentActive: boolean) => void;
   onDelete: (memberId: string, name: string) => void;
   onResetPassword: (memberId: string, name: string) => void;
@@ -39,7 +40,7 @@ interface MemberCardsMobileProps {
   onEditJobTitle: (memberId: string) => void;
 }
 
-const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
+const ROLES = MEMBER_ROLE_OPTIONS;
 
 const MemberCardsMobile = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
@@ -77,8 +78,8 @@ const MemberCardsMobile = ({
               <div className="text-[10px] text-muted-foreground truncate">{user.jobTitle || '—'} · {isPlaceholderEmail(user.email) ? t('memberList.noLogin') : user.email}</div>
               {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} className="mt-1 text-xs text-primary hover:underline disabled:opacity-50">{t('memberJobTitle.edit')}</button>}
             </div>
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
-              {getRoleLabel(user.role as MemberRole)}
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getMemberRoleColor(user) }}>
+              {getMemberRoleLabel(user)}
             </span>
           </div>
           <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
@@ -93,14 +94,14 @@ const MemberCardsMobile = ({
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                   {isActive ? t('memberList.statusActive') : t('memberList.statusInactive')}
                 </span>
-                <select
-                  value={user.role}
-                  onChange={e => onRoleChange(user.id, e.target.value as MemberRole)}
+                <SearchableSelect
+                  value={selectedMemberRole(user)}
+                  onChange={e => onRoleChange(user.id, e.target.value as MemberRoleSelection)}
                   disabled={user.id === currentMemberId}
                   className="text-xs border border-border rounded px-1.5 py-0.5 bg-card text-foreground outline-none disabled:opacity-50"
                 >
-                  {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
-                </select>
+                  {ROLES.map(r => <option key={r} value={r}>{selectionRoleLabel(r)}</option>)}
+                </SearchableSelect>
               </div>
               {user.id !== currentMemberId && (
                 <div className="flex items-center gap-1">

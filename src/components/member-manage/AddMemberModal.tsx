@@ -1,10 +1,11 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getRoleLabel, type MemberRole } from '@/lib/permissions';
+import { MEMBER_ROLE_OPTIONS, selectionRoleLabel, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 
-const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
+const ROLES = MEMBER_ROLE_OPTIONS;
 
-type AddMemberForm = { email: string; name: string; role: MemberRole; jobTitle: string; password: string };
+type AddMemberForm = { email: string; name: string; role: MemberRoleSelection; jobTitle: string; password: string };
 
 interface AddMemberModalProps {
   show: boolean;
@@ -101,13 +102,13 @@ const AddMemberModal = ({
           </div> : <p className="text-xs text-muted-foreground">{t('memberJobTitle.superAdminOnly')}</p>}
           <div>
             <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.roleLabel')}</label>
-            <select
+            <SearchableSelect
               value={form.role}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value as MemberRole }))}
+              onChange={e => setForm(f => ({ ...f, role: e.target.value as MemberRoleSelection }))}
               className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background text-foreground outline-none focus:ring-2 focus:ring-ring"
             >
-              {ROLES.filter(role => canEditJobTitle || role === 'member').map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
-            </select>
+              {ROLES.filter(role => canEditJobTitle || role === 'member').map(r => <option key={r} value={r}>{selectionRoleLabel(r)}</option>)}
+            </SearchableSelect>
           </div>
           <div className="flex gap-2 pt-2">
             <button

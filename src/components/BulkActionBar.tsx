@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Trash2, Loader2 } from 'lucide-react';
@@ -144,7 +145,7 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
         </span>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          <select
+          <SearchableSelect
             value={statusVal}
             onChange={e => handleBulkStatus(e.target.value)}
             disabled={isLoading}
@@ -154,9 +155,9 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
             {statuses.map(s => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
-          <select
+          <SearchableSelect
             value={assigneeVal}
             onChange={e => handleBulkAssign(e.target.value)}
             disabled={isLoading}
@@ -167,9 +168,9 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
             {users.filter(u => u.isActive).map(u => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
-          <select
+          <SearchableSelect
             value={priorityVal}
             onChange={e => handleBulkPriority(e.target.value)}
             disabled={isLoading}
@@ -179,7 +180,7 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
             {(Object.entries(priorityConfig) as [Priority, typeof priorityConfig[Priority]][]).map(([k, v]) => (
               <option key={k} value={k}>{v.label}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
           {permissions.canDeleteTask && (
             <button

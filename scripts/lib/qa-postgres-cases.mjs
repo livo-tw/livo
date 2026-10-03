@@ -1,4 +1,5 @@
 // Generates SQL assertions against the real QA RPCs, without a client/HTTP mock.
+import { appendQaFieldCases } from './qa-fields-postgres-cases.mjs';
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
 const json = value => `${literal(JSON.stringify(value))}::jsonb`;
 const auth = { member: '00000000-0000-0000-0000-000000000001', admin: '00000000-0000-0000-0000-000000000002', super: '00000000-0000-0000-0000-000000000003', assignee: '00000000-0000-0000-0000-000000000004', qa: '00000000-0000-0000-0000-000000000005' };
@@ -7,7 +8,8 @@ const backup = Object.fromEntries(tables.slice(0,7).map(t => [t, []]));
 const workflow = { version: 2, order: ['new','triaged','in_progress','verification','verified','failed','closed','dismissed'], labels: { new: '待判斷', triaged: '', in_progress: '', verification: '', verified:'', failed:'', closed: '', dismissed:'' }, groups:[] };
 const base = { id:'issue-main',workspaceId:'default',projectId:'p-test',state:'new',reporterId:'m-member',assigneeId:null,qaOwnerId:null,title:'PostgreSQL QA fixture',version:1,createdAt:'2026-10-02T00:00:00.000Z',updatedAt:'2026-10-02T00:00:00.000Z',actual:'Actual result',observedEnvironment:'test',severity:'untriaged',priority:3,fixCycle:0,targets:[],runs:[],taskIds:[] };
 
-export function buildQaPostgresCases() {
+export function buildQaPostgresCases({ migrationCount = 7, permissionFloorSql = '' } = {}) {
+  if (!Number.isInteger(migrationCount) || migrationCount < 1) throw new Error('Invalid migration count');
   const sql = []; const labels = [];
   const check = (name, expression) => { labels.push(name); sql.push(`SELECT qa_test.check((${expression}),${literal(name)});`); };
   const error = (name, statement, code, message='') => { labels.push(name); sql.push(`SELECT qa_test.expect_error(${literal(name)},${literal(statement)},${literal(code)},${literal(message)});`); };
@@ -21,6 +23,7 @@ export function buildQaPostgresCases() {
   const rpcSignatures = [
     'livo_qa_commit(uuid,text,text,text,integer,text,jsonb,jsonb)', 'livo_qa_finalize_upload(uuid,text)',
     'livo_qa_restore(uuid,jsonb,boolean)', 'livo_qa_save_workflow(uuid,jsonb)',
+    'livo_qa_save_field_configuration(uuid,jsonb)',
     'livo_qa_slack_enqueue(text,jsonb)', 'livo_qa_slack_pending()', 'livo_qa_slack_complete(text)',
   ];
   for (const signature of rpcSignatures) {
@@ -171,12 +174,81 @@ export function buildQaPostgresCases() {
   check('admin can save six display columns without collapsing canonical states',`(${save('admin',grouped)}->'groups')=${json(grouped.groups)}`);
   error('cannot merge PASS with completed in display settings',`SELECT ${save('admin',{...workflow,groups:[{id:'verified',label:'Done',states:['verified','closed']}]})}`,'22023','qa_invalid_workflow');
   error('cannot put a state in two display groups',`SELECT ${save('admin',{...workflow,groups:[{id:'new',label:'A',states:['new','triaged']},{id:'triaged',label:'B',states:['triaged','verification']}]})}`,'22023','qa_invalid_workflow');
+
+  // set_state is an independent audit event, not a fabricated verification run.
+  // All active edit participants may cross terminal states without deployments.
+  const manualStates = ['failed','closed','dismissed','new','triaged','in_progress','verification','verified'];
+  const manualBase = {...base,state:'verified',assigneeId:'m-assignee',qaOwnerId:'m-qa'};
+  let manualReplay;
+  let manualLatest;
+  for (const actor of ['member','assignee','qa','admin','super']) {
+    let current = {...manualBase,id:`manual-${actor}`};
+    check(`${actor} manual fixture starts as PASS without evidence`,`${commit('member',current)}=${json(current)}`);
+    for (const state of manualStates) {
+      const next = {...current,state,version:current.version+1};
+      const command = `manual-${actor}-${state}`;
+      const request = commit(actor,next,'set_state','command',current.version,command);
+      check(`${actor} may manually set ${state}`,`${request}=${json(next)}`);
+      if (actor === 'member' && state === 'failed') manualReplay = {request,data:next,command};
+      current = next;
+    }
+    check(`${actor} manual changes preserve empty runs targets and fix cycle`,
+      `(SELECT data->'runs'='[]'::jsonb AND data->'targets'='[]'::jsonb AND data->>'fixCycle'='0' FROM qa_issues WHERE id=${literal(current.id)})`);
+    check(`${actor} manual changes have eight distinct audit events`,
+      `(SELECT count(*) FROM qa_events WHERE issue_id=${literal(current.id)} AND type='set_state')=8`);
+    if (actor === 'member') manualLatest = current;
+  }
+  check('manual PASS to FAIL replay returns its original response',`${manualReplay.request}=${json(manualReplay.data)}`);
+  check('manual replay leaves the latest aggregate and audit history unchanged',
+    `(SELECT data FROM qa_issues WHERE id='manual-member')=${json(manualLatest)} AND (SELECT count(*) FROM qa_events WHERE issue_id='manual-member')=9`);
+  error('manual receipt rejects a different actor',`SELECT ${commit('qa',manualReplay.data,'set_state','command',1,manualReplay.command)}`,'23505','command_id_reused');
+  error('manual receipt rejects a different payload hash',`SELECT ${commit('member',manualReplay.data,'set_state','command',1,manualReplay.command,'b'.repeat(64))}`,'23505','command_id_reused');
+  const manualNext = {...manualLatest,state:'failed',version:manualLatest.version+1};
+  error('manual state update rejects stale version',`SELECT ${commit('member',manualNext,'set_state','command',1)}`,'40001','version_conflict');
+  const outsiderIssue = {...base,id:'manual-outsider',reporterId:'m-assignee',state:'verified'};
+  check('manual outsider fixture is owned by another member',`${commit('assignee',outsiderIssue)}=${json(outsiderIssue)}`);
+  error('unrelated active member cannot manually change state',`SELECT ${commit('member',{...outsiderIssue,state:'failed',version:2},'set_state','command',1)}`,'42501','member_inactive');
+  for (const actor of ['member','assignee','qa','admin','super']) {
+    sql.push(`UPDATE members SET is_active=false WHERE id=${literal(`m-${actor}`)};`);
+    error(`inactive ${actor} cannot manually change state`,`SELECT ${commit(actor,manualNext,'set_state','command',manualLatest.version)}`,'42501','member_inactive');
+    sql.push(`UPDATE members SET is_active=true WHERE id=${literal(`m-${actor}`)};`);
+  }
+  sql.push("UPDATE members SET role='member' WHERE id='m-admin';");
+  error('demoted unrelated admin cannot manually change state',`SELECT ${commit('admin',manualNext,'set_state','command',manualLatest.version)}`,'42501','member_inactive');
+  sql.push("UPDATE members SET role='admin' WHERE id='m-admin';");
+  for (const dbRole of ['anon','authenticated']) {
+    role(dbRole);
+    sql.push(`SET "request.jwt.claim.sub"=${literal(auth.super)};`);
+    error(`${dbRole} cannot directly submit manual state`, `SELECT ${commit('super',manualNext,'set_state','command',manualLatest.version)}`,'42501');
+  }
+  role('service_role');
+  sql.push("UPDATE system_settings SET value='{\"qa\":false,\"slackActions\":true}' WHERE key='feature_toggles';");
+  error('disabled QA rejects manual state',`SELECT ${commit('member',manualNext,'set_state','command',manualLatest.version)}`,'42501','qa_disabled');
+  sql.push("UPDATE system_settings SET value='{\"qa\":true,\"slackActions\":true}' WHERE key='feature_toggles';");
+  error('manual state rejects another workspace',`SELECT ${commit('member',{...manualNext,workspaceId:'other'},'set_state','command',manualLatest.version)}`,'22023','invalid_issue');
+  error('manual state rejects changing reporter',`SELECT ${commit('member',{...manualNext,reporterId:'m-qa'},'set_state','command',manualLatest.version)}`,'22023','invalid_issue');
+  error('manual state rejects unknown canonical value',`SELECT ${commit('member',{...manualNext,state:'unknown'},'set_state','command',manualLatest.version)}`,'23514');
+  sql.push("UPDATE projects SET is_archived=true WHERE id='p-test';");
+  error('manual state retains archived project guard',`SELECT ${commit('member',manualNext,'set_state','command',manualLatest.version)}`,'22023','invalid_issue');
+  sql.push("UPDATE projects SET is_archived=false WHERE id='p-test';");
+  check('manual migration retains the atomic environment validator',
+    `(SELECT pg_get_functiondef('public.livo_qa_commit(uuid,text,text,text,integer,text,jsonb,jsonb)'::regprocedure)) LIKE '%livo_deployment_environment_values%'`);
+  error('manual migration retains create environment guard',`SELECT ${commit('member',{...base,id:'manual-invalid-env',observedEnvironment:'not-configured'})}`,'22023','qa_invalid_environment');
+  error('manual migration retains edit environment guard',`SELECT ${commit('member',{...manualNext,observedEnvironment:'not-configured'},'edit','command',manualLatest.version)}`,'22023','qa_invalid_environment');
+  error('manual migration retains submit fix environment guard',`SELECT ${commit('assignee',{...manualNext,targets:[{environment:'not-configured'}]},'submit_fix','command',manualLatest.version)}`,'22023','qa_invalid_environment');
+  const manualDump = `jsonb_build_object(${tables.slice(0,7).flatMap(t => [literal(t),`(SELECT COALESCE(jsonb_agg(to_jsonb(r)),'[]'::jsonb) FROM ${t} r WHERE ${t==='qa_issues'?'id':'issue_id'}='manual-member')`]).join(',')})`;
+  check('manual states and audit events pass restore validation without fabricated evidence',
+    `public.livo_qa_restore(${literal(auth.super)}::uuid,${manualDump},true)->>'pending'='0'`);
+  check('manual state restore is idempotent for exact existing rows',
+    `public.livo_qa_restore(${literal(auth.super)}::uuid,${manualDump},false)->>'inserted'='0'`);
+  check('manual transitions leave task deployments untouched',`(SELECT count(*) FROM task_deployments)=0`);
+  appendQaFieldCases({sql,check,error,role,commit,save,base,auth,workflow,permissionFloorSql});
   role('postgres');
   // Snapshot all persistent QA rows and display settings before migration rerun.
-  const snapshot = `jsonb_build_object(${tables.flatMap(t => [literal(t),`(SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY id),'[]') FROM public.${t} r)`]).join(',')},'workflow',(SELECT value FROM system_settings WHERE key='qa_workflow'))`;
+  const snapshot = `jsonb_build_object(${tables.flatMap(t => [literal(t),`(SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY id),'[]') FROM public.${t} r)`]).join(',')},'workflow',(SELECT value FROM system_settings WHERE key='qa_workflow'),'fields',(SELECT value FROM system_settings WHERE key='qa_custom_fields'),'members',(SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM members m))`;
   sql.push(`CREATE TABLE qa_test.before_rerun AS SELECT ${snapshot} AS data;`);
   const after = `SELECT qa_test.check((SELECT data FROM qa_test.before_rerun)=${snapshot},'second migration pass preserves every QA row and company workflow');
-SELECT qa_test.check((SELECT count(*) FROM public.livo_schema_migrations)=3,'release migration ledger stays deduplicated');
+SELECT qa_test.check((SELECT count(*) FROM public.livo_schema_migrations)=${migrationCount},'release migration ledger stays deduplicated');
 SELECT json_build_object('status','passed','assertions',count(*),'migrationPasses',2) FROM qa_test.results;`;
   return { sql: sql.join('\n'), after, assertionCount: labels.length+2, labels };
 }

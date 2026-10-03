@@ -1,5 +1,6 @@
 /** Shared QA contract. Canonical source copied to both backend runtimes. */
 import { DEFAULT_DEPLOYMENT_ENVIRONMENTS } from './environments.ts';
+import { validateQaCustomFieldValues, QaFieldError, DEFAULT_QA_FIELD_CONFIGURATION, type QaCustomFieldValues, type QaFieldConfiguration } from './fields.ts';
 export type QaState = 'new' | 'triaged' | 'in_progress' | 'verification' | 'verified' | 'failed' | 'closed' | 'dismissed';
 export type QaSeverity = 'untriaged' | 'low' | 'medium' | 'high';
 export type QaResult = 'pass' | 'fail' | 'blocked';
@@ -21,15 +22,20 @@ export interface QaIssue {
   fixCycle: number; version: number; fixSummary: string; holdReason: string;
   targets: QaTarget[]; runs: QaRun[]; taskIds: string[];
   createdAt: string; updatedAt: string; closedAt: string | null; reopenedAt: string | null;
+  /** Actual closing actor. Optional for records saved before this field existed. */
+  closedBy?: string | null;
+  customFields?: QaCustomFieldValues;
   /** Preserved by privileged historical restore only; never accepted by create/edit. */
   legacySource?: { system: string; originalStatus: string; recordId: string; snapshotSha256: string; [key: string]: unknown };
 }
 export interface QaCreateInput {
   projectId: string; title: string; actual: string; observedEnvironment: string;
+  customFields?: QaCustomFieldValues;
   observedVersion?: string; steps?: string; expected?: string; component?: string; severity?: QaSeverity;
 }
 export type QaCommand =
-  | { type: 'edit'; title: string; actual: string; steps: string; expected: string; observedEnvironment: string; observedVersion: string; component: string }
+  | { type: 'set_state'; state: QaState }
+  | { type: 'edit'; customFields?: QaCustomFieldValues; title: string; actual: string; steps: string; expected: string; observedEnvironment: string; observedVersion: string; component: string }
   | { type: 'triage'; assigneeId: string; qaOwnerId: string; severity: QaSeverity; priority: number; dueDate: string | null }
   | { type: 'start_fix' }
   | { type: 'submit_fix'; summary: string; targets: Array<Pick<QaTarget, 'environment' | 'component' | 'build' | 'required'>> }
@@ -39,13 +45,14 @@ export type QaCommand =
   | { type: 'reopen'; reason: string }
   | { type: 'hold'; reason: string }
   | { type: 'link_tasks'; taskIds: string[] };
-export interface QaActor { id: string; role: string; }
+export interface QaActor { id: string; role: string; qaAdmin?: boolean; }
 export interface QaContext {
   actor: QaActor; workspaceId: string; now: string; newId: () => string;
   /** Trusted same-workspace, active entities resolved by the backend. */
   memberIds: ReadonlySet<string>; projectIds: ReadonlySet<string>; taskIds: ReadonlySet<string>;
   duplicateIssueIds?: ReadonlySet<string>;
   environmentValues?: readonly string[];
+  fieldConfiguration?: QaFieldConfiguration;
 }
 export interface QaComment { id: string; issueId: string; actorId: string; body: string; createdAt: string; }
 export interface QaEvent { id: string; issueId: string; actorId: string; type: string; detail: string; createdAt: string; version: number; }
@@ -107,11 +114,18 @@ function activeEnvironment(value: string, ctx: QaContext): string {
   return value;
 }
 
+function customFields(value: unknown, ctx: QaContext, previous?: QaCustomFieldValues): QaCustomFieldValues {
+  try { return validateQaCustomFieldValues(value, ctx.fieldConfiguration ?? DEFAULT_QA_FIELD_CONFIGURATION, previous); }
+  catch (error) { if (error instanceof QaFieldError) return fail(error.code); throw error; }
+}
+
 /** Permissions are checked again inside both server adapters; UI is advisory. */
 export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['type']): boolean {
   const lead = admin(actor) || issue.qaOwnerId === actor.id;
   const developer = admin(actor) || issue.assigneeId === actor.id;
   const participant = lead || developer || issue.reporterId === actor.id;
+  // Status editing uses the existing participant scope, including completed issues.
+  if (type === 'set_state') return participant;
   if (type === 'reopen') return participant && (isQaTerminal(issue.state) || ['verification', 'verified'].includes(issue.state));
   if (isQaTerminal(issue.state)) return false;
   switch (type) {
@@ -130,7 +144,7 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
 export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaContext): QaIssue {
   validContext(ctx);
   record(input);
-  keys(input, ['projectId', 'title', 'actual', 'observedEnvironment', 'observedVersion', 'steps', 'expected', 'component', 'severity']);
+  keys(input, ['projectId', 'title', 'actual', 'observedEnvironment', 'observedVersion', 'steps', 'expected', 'component', 'severity', 'customFields']);
   const projectId = id(input.projectId);
   if (!ctx.projectIds.has(projectId)) return fail('qa_project_unavailable');
   return {
@@ -140,6 +154,7 @@ export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaCont
     observedEnvironment: activeEnvironment(str(input.observedEnvironment, 120, true), ctx), observedVersion: str(input.observedVersion ?? '', 200),
     component: str(input.component ?? '', 120), reporterId: ctx.actor.id, assigneeId: null, qaOwnerId: null,
     severity: enumValue(input.severity ?? 'untriaged', ['untriaged', 'low', 'medium', 'high']),
+    customFields: customFields(input.customFields, ctx),
     priority: 3, dueDate: null, state: 'new', resolution: null, resolutionReason: '', duplicateOfId: null,
     fixCycle: 0, version: 1, fixSummary: '', holdReason: '', targets: [], runs: [], taskIds: [],
     createdAt: ctx.now, updatedAt: ctx.now, closedAt: null, reopenedAt: null,
@@ -167,8 +182,20 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
   if (!canQaCommand(issue, ctx.actor, command.type)) return fail('qa_forbidden', 403);
   const next: QaIssue = { ...issue, targets: issue.targets.map(target => ({ ...target })), runs: [...issue.runs], taskIds: [...issue.taskIds], version: issue.version + 1, updatedAt: ctx.now };
   switch (command.type) {
+    case 'set_state': {
+      keys(command, ['type', 'state']);
+      const state = enumValue(command.state, QA_STATES);
+      if (state === issue.state) break;
+      next.state = state;
+      next.resolution = null; next.resolutionReason = ''; next.duplicateOfId = null;
+      next.closedAt = isQaTerminal(state) ? ctx.now : null;
+      next.closedBy = isQaTerminal(state) ? ctx.actor.id : null;
+      if (isQaTerminal(issue.state) && !isQaTerminal(state)) next.reopenedAt = ctx.now;
+      break;
+    }
     case 'edit': {
-      keys(command, ['type', 'title', 'actual', 'steps', 'expected', 'observedEnvironment', 'observedVersion', 'component']);
+      keys(command, ['type', 'title', 'actual', 'steps', 'expected', 'observedEnvironment', 'observedVersion', 'component', 'customFields']);
+      next.customFields = customFields(command.customFields, ctx, issue.customFields);
       next.title = str(command.title, 200, true); next.actual = str(command.actual, 20000, true);
       next.steps = str(command.steps); next.expected = str(command.expected);
       next.observedEnvironment = str(command.observedEnvironment, 120, true);
@@ -252,13 +279,13 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
         if (command.duplicateOfId) return fail('qa_invalid_request');
         next.duplicateOfId = null;
       }
-      next.state = resolution === 'fixed' ? 'closed' : 'dismissed'; next.resolution = resolution; next.closedAt = ctx.now;
+      next.state = resolution === 'fixed' ? 'closed' : 'dismissed'; next.resolution = resolution; next.closedAt = ctx.now; next.closedBy = ctx.actor.id;
       break;
     }
     case 'reopen':
       keys(command, ['type', 'reason']); next.holdReason = str(command.reason, 8000, true);
       next.state = issue.assigneeId ? 'in_progress' : 'new'; next.resolution = null; next.resolutionReason = '';
-      next.duplicateOfId = null; next.closedAt = null; next.reopenedAt = ctx.now; break;
+      next.duplicateOfId = null; next.closedAt = null; next.closedBy = null; next.reopenedAt = ctx.now; break;
     case 'hold':
       keys(command, ['type', 'reason']); next.holdReason = str(command.reason, 8000); break;
     case 'link_tasks': {
@@ -277,7 +304,8 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
 }
 
 /** Immutable audit snapshots survive replacement of the current fix targets. */
-export function qaEventDetail(issue: QaIssue, type: string): string {
+export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | null): string {
+  if (type === 'set_state') return JSON.stringify({ message: '狀態已變更', mode: 'manual', from: before?.state ?? null, to: issue.state });
   const target = (item: QaTarget) => `${item.environment} · ${item.component || '-'} · ${item.build} · ${item.required ? '必要' : '選填'}`;
   if (type === 'submit_fix') return `修復輪次 ${issue.fixCycle}\n${issue.fixSummary}\n${issue.targets.map(target).join('\n')}`;
   if (type === 'record_deployment') return issue.targets.filter(item => item.deployedAt).map(item =>
@@ -296,7 +324,8 @@ export function qaEventDetail(issue: QaIssue, type: string): string {
 
 /** Notifications are generated from committed transitions, never from UI guesses. */
 export function qaNotificationRecipients(issue: QaIssue, type: QaCommand['type'] | 'create' | 'comment', actorId: string): string[] {
-  const ids = type === 'record_deployment' || type === 'submit_fix' ? [issue.qaOwnerId]
+  const ids = type === 'set_state' ? [issue.reporterId, issue.assigneeId, issue.qaOwnerId]
+    : type === 'record_deployment' || type === 'submit_fix' ? [issue.qaOwnerId]
     : type === 'record_verification' || type === 'triage' || type === 'reopen' ? [issue.assigneeId, issue.qaOwnerId]
     : type === 'close' ? [issue.reporterId, issue.assigneeId] : [issue.assigneeId, issue.qaOwnerId];
   return [...new Set(ids.filter((value): value is string => !!value && value !== actorId))];

@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
@@ -118,7 +119,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
           {/* Default duration */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-2 block">{t('standup.settings.defaultDuration')}</label>
-            <select
+            <SearchableSelect
               value={settings.defaultSpeakDuration}
               onChange={e => updateSettings({ defaultSpeakDuration: Number(e.target.value) })}
               className="w-full border border-border rounded px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -126,7 +127,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
               {DURATION_OPTIONS.map(v => (
                 <option key={v} value={v}>{formatDuration(v)}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Auto-advance toggle */}
@@ -174,7 +175,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                         {user.avatar}
                       </div>
                       <span className="text-xs flex-1 text-foreground truncate">{user.name}</span>
-                      <select
+                      <SearchableSelect
                         value={custom ?? settings.defaultSpeakDuration}
                         onChange={e => setMemberDuration(user.id, Number(e.target.value))}
                         className={`border rounded px-1.5 py-0.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary ${
@@ -184,7 +185,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                         {DURATION_OPTIONS.map(v => (
                           <option key={v} value={v}>{formatDuration(v)}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                       {custom && (
                         <button
                           onClick={() => resetMemberDuration(user.id)}

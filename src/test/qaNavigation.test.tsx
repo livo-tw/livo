@@ -2,16 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn() }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: true }, featureTogglesReady: true, setSelectedTask: vi.fn() }) }));
-vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Example admin', role: 'admin', isActive: true }] }) }));
+const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), command: vi.fn(), comment: vi.fn() }));
+// Keep initialization exports available when an import graph loads the real i18n singleton.
+vi.mock('react-i18next', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+import '@/i18n';
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: true }, featureTogglesReady: true, taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn(), setSelectedTask: vi.fn() }) }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Example admin', jobTitle: '', role: 'admin', isActive: true }] }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Example project', isArchived: false }, { id: 'p2', name: 'Other project', isArchived: false }], productLines: [] as ProductLine[], selectedProjectId: mocks.selectedProjectId, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, command: mocks.command, comment: mocks.comment };
+  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command, comment: mocks.comment };
   return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
 });
 // Kanban loading is unrelated to navigation protection. The Workspace, create
@@ -28,13 +33,13 @@ const issue = createQaIssue(input, 'existing-bug', { actor: { id: 'admin', role:
 const detail: QaDetail = { issue, attachments: [], comments: [], events: [] };
 const file = () => new File(['video'], 'proof.mp4', { type: 'video/mp4' });
 const fillCreate = () => {
-  fireEvent.change(screen.getByLabelText(/qa.project/), { target: { value: 'p1' } });
+  fireEvent.change(screen.getByLabelText(/^qa.project \*$/), { target: { value: 'p1' } });
   fireEvent.change(screen.getByLabelText(/qa.titleField/), { target: { value: input.title } });
   fireEvent.change(screen.getByLabelText(/qa.actual/), { target: { value: input.actual } });
   fireEvent.change(screen.getByLabelText(/qa.environment/), { target: { value: input.observedEnvironment } });
 };
 beforeEach(() => {
-  vi.clearAllMocks(); vi.stubEnv('VITE_API_URL', ''); mocks.selectedProjectId = null; window.history.replaceState({}, '', '/');
+  vi.clearAllMocks(); mocks.getFieldConfiguration.mockResolvedValue({ version: 1, fields: [] }); vi.stubEnv('VITE_API_URL', ''); mocks.selectedProjectId = null; window.history.replaceState({}, '', '/');
   mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.versions.mockResolvedValue([]);
   mocks.list.mockResolvedValue({ issues: [], total: 0, hasMore: false });
   mocks.create.mockImplementation(async (_input: QaCreateInput, id: string) => ({ ...issue, id }));
@@ -49,7 +54,7 @@ describe('QA navigation preserves pending work', () => {
     render(<QaWorkspace />); await waitFor(() => expect(mocks.getWorkflow).toHaveBeenCalledTimes(1));
     fireEvent(window, new Event('livo:qa-create')); fillCreate();
     const draftTitle = screen.getByLabelText(/qa.titleField/);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
     await screen.findByText('qa.createRetryHint'); expect(mocks.create).toHaveBeenCalledTimes(1);
     const original = mocks.create.mock.calls[0].slice(0, 3);
     fireEvent(window, new Event('livo:qa-create'));
@@ -66,7 +71,7 @@ describe('QA navigation preserves pending work', () => {
     fireEvent(window, new Event('livo:qa-create')); fillCreate();
     fireEvent.change(screen.getByLabelText('qa.attach'), { target: { files: [file()] } });
     const draftTitle = screen.getByLabelText(/qa.titleField/);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     const signal = mocks.upload.mock.calls[0][3] as AbortSignal;
     if (navigation === 'selected-project') { mocks.selectedProjectId = 'p2'; view.rerender(<QaWorkspace />); }
@@ -90,7 +95,7 @@ describe('QA navigation preserves pending work', () => {
     let resolveUpload!: (value: unknown) => void, resolveRefresh!: () => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     const onRefresh = vi.fn(() => new Promise<void>(resolve => { resolveRefresh = resolve; })), onBack = vi.fn();
-    const client = { upload: mocks.upload, versions: mocks.versions } as unknown as QaClient;
+    const client = { getFieldConfiguration: mocks.getFieldConfiguration, upload: mocks.upload, versions: mocks.versions } as unknown as QaClient;
     render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={onBack} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.addAttachment' }));
     const attachmentInput = screen.getByLabelText('qa.attach');

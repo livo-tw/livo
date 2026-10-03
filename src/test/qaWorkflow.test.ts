@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_QA_WORKFLOW, SLACK_QA_WORKFLOW, getQaWorkflowColumns, getQaStateLabel, parseQaWorkflow, validateQaWorkflow } from '../lib/qa/workflow';
+import { DEFAULT_QA_WORKFLOW, getQaWorkflowColumns, getQaStateLabel, parseQaWorkflow, validateQaWorkflow } from '../lib/qa/workflow';
 import { qaSlackCard } from '../lib/qa/slack';
 import { canQaCommand, type QaIssue } from '../lib/qa/domain';
 describe('Shared company QA display workflow',()=>{
@@ -16,9 +16,10 @@ describe('Shared company QA display workflow',()=>{
     expect(upgraded.version).toBe(2);expect(upgraded.labels.verification).toBe('Testing');expect(upgraded.order).toEqual(['verified','failed','closed','dismissed','verification','in_progress','triaged','new']);
     expect(upgraded.groups).toEqual([]);
   });
-  it('provides six Slack columns without hiding the distinct canonical stages or outcomes',()=>{
-    const workflow=validateQaWorkflow(SLACK_QA_WORKFLOW),columns=getQaWorkflowColumns(workflow);
-    expect(columns).toHaveLength(6);expect(columns.map(c=>c.label)).toEqual(['已分配','進行中','PASS','FAIL','完成','不處理']);
+  it('preserves saved custom groups without hiding distinct canonical stages or outcomes',()=>{
+    const custom={...DEFAULT_QA_WORKFLOW,groups:[{id:'triaged',label:'Assigned',states:['new','triaged']},{id:'in_progress',label:'Working',states:['in_progress','verification']}],labels:{...DEFAULT_QA_WORKFLOW.labels,verified:'Passed',failed:'Failed',closed:'Done',dismissed:'Dismissed'}};
+    const workflow=validateQaWorkflow(custom),columns=getQaWorkflowColumns(workflow);
+    expect(columns).toHaveLength(6);expect(columns.map(c=>c.label)).toEqual(['Assigned','Working','Passed','Failed','Done','Dismissed']);
     expect(columns[0].states).toEqual(['new','triaged']);expect(columns[1].states).toEqual(['in_progress','verification']);
     expect(getQaStateLabel(workflow,'new')).toBe('新回報');expect(getQaStateLabel(workflow,'verification')).toBe('待部署／驗證');
     for(const states of [['verified','closed'],['failed','in_progress'],['closed','dismissed']])

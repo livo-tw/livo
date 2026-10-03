@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState, useEffect, useMemo } from 'react';
 import { X, FileText, FileInput, ChevronRight, BookOpen, StickyNote } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -166,7 +167,7 @@ const CreateTaskModal = () => {
               {taskTemplates.length > 0 && (
                 <div className="flex items-center gap-1.5">
                   <FileInput size={14} className="text-muted-foreground" />
-                  <select
+                  <SearchableSelect
                     defaultValue=""
                     onChange={e => { if (e.target.value) applyTemplate(e.target.value); e.target.value = ''; }}
                     className="text-xs border border-border rounded px-2 py-1 bg-card text-foreground outline-none focus:ring-1 focus:ring-primary cursor-pointer"
@@ -199,7 +200,7 @@ const CreateTaskModal = () => {
                         </>
                       );
                     })()}
-                  </select>
+                  </SearchableSelect>
                 </div>
               )}
             </div>

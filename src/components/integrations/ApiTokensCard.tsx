@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 // API tokens admin card (系統管理 → 整合) — both backends.
 //
 // Backend fn 'api-tokens': worker/src/functions/apiTokens.ts (Cloudflare) and
@@ -253,7 +254,7 @@ const ApiTokensCard = () => {
             </Field>
             {bindable.length > 0 && <div className="mt-3">
               <Field label={t('apiTokenAccess.memberLabel')}>
-                <select
+                <SearchableSelect
                   className={inputCls}
                   value={newMemberId}
                   onChange={e => setNewMemberId(e.target.value)}
@@ -264,7 +265,7 @@ const ApiTokensCard = () => {
                       {u.id === realMember?.id ? t('apiTokenAccess.memberSelf', { name: u.name }) : u.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </Field>
               <p className="text-xs text-muted-foreground mt-1">{t('apiTokenAccess.memberHint')}</p>
             </div>}

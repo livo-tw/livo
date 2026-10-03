@@ -231,6 +231,7 @@ export type Database = {
           email: string
           id: string
           is_active: boolean
+          is_qa_admin: boolean
           job_title: string
           name: string
           role: Database["public"]["Enums"]["app_member_role"]
@@ -243,6 +244,7 @@ export type Database = {
           email?: string
           id: string
           is_active?: boolean
+          is_qa_admin?: boolean
           job_title?: string
           name: string
           role?: Database["public"]["Enums"]["app_member_role"]
@@ -255,6 +257,7 @@ export type Database = {
           email?: string
           id?: string
           is_active?: boolean
+          is_qa_admin?: boolean
           job_title?: string
           name?: string
           role?: Database["public"]["Enums"]["app_member_role"]

@@ -30,6 +30,7 @@ interface ManageMemberBody {
   email?: string;
   name?: string;
   role?: string;
+  qaAdmin?: boolean;
   jobTitle?: string;
   avatar?: string;
   color?: string;
@@ -58,8 +59,10 @@ export const handleManageMember = async (c: Context<AppContext>): Promise<Respon
       return c.json({ error: 'Permission denied: only super_admin can manage another member login' }, 403);
     }
     if (action === 'create') {
+      if (body.qaAdmin !== undefined && typeof body.qaAdmin !== 'boolean') return c.json({ error: 'invalid QA capability' },400);
+      if (body.role && !['member','admin','super_admin'].includes(body.role)) return c.json({ error: 'invalid role' },400);
       if (body.jobTitle !== undefined && (typeof body.jobTitle !== 'string' || body.jobTitle.length > 200)) return c.json({ error: 'job_title must be at most 200 characters' },400);
-      if (auth.member.role !== 'super_admin' && ((body.jobTitle || '').trim() || (body.role && body.role !== 'member'))) {
+      if (auth.member.role !== 'super_admin' && ((body.jobTitle || '').trim() || (body.role && body.role !== 'member') || body.qaAdmin === true)) {
         return c.json({ error: 'Permission denied: only super_admin can assign positions or administrative roles' },403);
       }
     }
@@ -333,6 +336,7 @@ async function createMember(c: Context<AppContext>, body: ManageMemberBody): Pro
     email,
     name,
     role: body.role || 'member',
+    is_qa_admin: (!body.role || body.role === 'member') && body.qaAdmin === true,
     job_title: body.jobTitle || '',
     avatar: body.avatar || name.slice(0, 1).toUpperCase(),
     color: body.color || '#6B778C',

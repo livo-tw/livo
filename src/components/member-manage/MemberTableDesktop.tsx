@@ -1,6 +1,7 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
+import { MEMBER_ROLE_OPTIONS, selectedMemberRole, selectionRoleLabel, getMemberRoleLabel, getMemberRoleColor, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 import { isPlaceholderEmail } from '@/lib/memberEmail';
 
 interface StatusNode { id: string; name: string; }
@@ -8,7 +9,7 @@ interface StatusNode { id: string; name: string; }
 interface MemberStat {
   user: {
     id: string; name: string; avatar: string; color: string;
-    email?: string; jobTitle?: string; role: string; isActive?: boolean;
+    email?: string; jobTitle?: string; role: string; isActive?: boolean; qaAdmin?: boolean;
   };
   assignedCount: number;
   completedCount: number;
@@ -29,7 +30,7 @@ interface MemberTableDesktopProps {
   onDragStart: (index: number) => void;
   onDragOver: (e: React.DragEvent, index: number) => void;
   onDragEnd: () => void;
-  onRoleChange: (memberId: string, role: MemberRole) => void;
+  onRoleChange: (memberId: string, role: MemberRoleSelection) => void;
   onToggleActive: (memberId: string, currentActive: boolean) => void;
   onDelete: (memberId: string, name: string) => void;
   onResetPassword: (memberId: string, name: string) => void;
@@ -38,7 +39,7 @@ interface MemberTableDesktopProps {
   onEditJobTitle: (memberId: string) => void;
 }
 
-const ROLES: MemberRole[] = ['super_admin', 'admin', 'member'];
+const ROLES = MEMBER_ROLE_OPTIONS;
 
 const MemberTableDesktop = ({
   memberStats, currentMemberId, isSuperAdmin, canReorder,
@@ -109,8 +110,8 @@ const MemberTableDesktop = ({
                 </div>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getRoleColor(user.role as MemberRole) }}>
-                  {getRoleLabel(user.role as MemberRole)}
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getMemberRoleColor(user) }}>
+                  {getMemberRoleLabel(user)}
                 </span>
               </td>
               <td className="px-2 py-3 text-center text-foreground">{assignedCount}</td>
@@ -127,14 +128,14 @@ const MemberTableDesktop = ({
                     </span>
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
-                    <select
-                      value={user.role}
-                      onChange={e => onRoleChange(user.id, e.target.value as MemberRole)}
+                    <SearchableSelect
+                      value={selectedMemberRole(user)}
+                      onChange={e => onRoleChange(user.id, e.target.value as MemberRoleSelection)}
                       disabled={user.id === currentMemberId}
                       className="text-xs border border-border rounded px-2 py-1 bg-card text-foreground outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 min-w-[100px]"
                     >
-                      {ROLES.map(r => <option key={r} value={r}>{getRoleLabel(r)}</option>)}
-                    </select>
+                      {ROLES.map(r => <option key={r} value={r}>{selectionRoleLabel(r)}</option>)}
+                    </SearchableSelect>
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center justify-center gap-1">

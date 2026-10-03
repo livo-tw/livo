@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthContext } from '@/context/AuthContext';
@@ -146,7 +147,7 @@ const SlackNotifyPreferences = () => {
               <Clock size={14} />
               {t('slackNotify.timeLabel')}
             </label>
-            <select
+            <SearchableSelect
               value={prefs.hour}
               onChange={e => setPrefs(prev => ({ ...prev, hour: parseInt(e.target.value) }))}
               className="w-full max-w-xs border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -154,7 +155,7 @@ const SlackNotifyPreferences = () => {
               {Array.from({ length: 24 }, (_, i) => (
                 <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Content types */}

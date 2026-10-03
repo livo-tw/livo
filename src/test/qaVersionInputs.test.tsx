@@ -14,7 +14,7 @@ const deferred = () => { let resolve!: (values: string[]) => void; const promise
 
 describe('QA free-text version suggestions', () => {
   it('preserves an existing custom version when suggestions arrive and allows blank or arbitrary edits', async () => {
-    const result = deferred(), client = { versions: vi.fn(() => result.promise) }, save = vi.fn();
+    const result = deferred(), client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(() => result.promise) }, save = vi.fn();
     render(<QaReportForm initial={issue} projects={projects} productLines={[]} client={client} busy={false} onSubmit={save} onCancel={vi.fn()} />);
     const input = screen.getByLabelText(/qa.observedVersion/) as HTMLInputElement;
     expect(input.value).toBe('old-custom');
@@ -25,16 +25,16 @@ describe('QA free-text version suggestions', () => {
     fireEvent.change(input, { target: { value: 'v2' } });
     expect(input.value).toBe('v2');
     fireEvent.change(input, { target: { value: 'commit/a1b2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.save' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ observedVersion: 'commit/a1b2' }));
     fireEvent.change(input, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.save' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ observedVersion: '' }));
     expect(input.getAttribute('aria-describedby')).toBeTruthy();
   });
   it('clears the old version on a new report project change and ignores a late previous-project response', async () => {
     const a = deferred(), b = deferred();
-    const client = { versions: vi.fn((project: string, _signal?: AbortSignal) => project === 'a' ? a.promise : b.promise) };
+    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn((project: string, _signal?: AbortSignal) => project === 'a' ? a.promise : b.promise) };
     const view = render(<QaReportForm projectId="a" projects={projects} productLines={[]} client={client} busy={false} onSubmit={vi.fn()} onCancel={vi.fn()} />);
     await waitFor(() => expect(client.versions).toHaveBeenCalledTimes(1));
     const input = screen.getByLabelText(/qa.observedVersion/) as HTMLInputElement;
@@ -49,11 +49,11 @@ describe('QA free-text version suggestions', () => {
     expect(document.getElementById(input.getAttribute('list')!)?.querySelector('option[value="build-a"]')).toBeNull();
   });
   it('keeps manual input available after a failed suggestion request', async () => {
-    const client = { versions: vi.fn(async () => { throw new Error('offline'); }) }, save = vi.fn();
+    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(async () => { throw new Error('offline'); }) }, save = vi.fn();
     render(<QaReportForm initial={issue} projects={projects} productLines={[]} client={client} busy={false} onSubmit={save} onCancel={vi.fn()} />);
     await screen.findByText('qa.versionLoadFailed');
     fireEvent.change(screen.getByLabelText(/qa.observedVersion/), { target: { value: 'manual-build' } });
-    fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.save' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ observedVersion: 'manual-build' }));
   });
 });

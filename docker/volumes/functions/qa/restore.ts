@@ -37,7 +37,14 @@ export function validateQaBackup(input: unknown): Record<string, any> {
         date(issue.createdAt); date(issue.updatedAt); date(issue.closedAt, true); date(issue.reopenedAt, true);
         if (issue.dueDate !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(issue.dueDate) || !Number.isFinite(Date.parse(issue.dueDate)))) bad();
         if (issue.resolution !== null && !['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].includes(issue.resolution)) bad();
-        if (issue.state === 'closed' ? !issue.resolution || !issue.closedAt : issue.resolution !== null || issue.closedAt !== null) bad();
+        const terminal = issue.state === 'closed' || issue.state === 'dismissed';
+        if (terminal ? !issue.closedAt : issue.resolution !== null || issue.closedAt !== null) bad();
+        if (issue.closedBy != null) id(issue.closedBy);
+        if (issue.customFields !== undefined) {
+          const fields = record(issue.customFields);
+          if (Object.keys(fields).length > 100 || new TextEncoder().encode(JSON.stringify(fields)).byteLength > 100000) bad();
+          for (const value of Object.values(fields)) if (value !== null && (typeof value === 'number' ? !Number.isFinite(value) : !['string','boolean'].includes(typeof value))) bad();
+        }
         if (issue.duplicateOfId !== null) { id(issue.duplicateOfId); if (issue.duplicateOfId === issue.id || issue.resolution !== 'duplicate') bad(); }
         if (!Array.isArray(issue.targets) || issue.targets.length > 30 || !Array.isArray(issue.runs) || issue.runs.length > 2000 ||
           !Array.isArray(issue.taskIds) || issue.taskIds.length > 50 || new Set(issue.taskIds).size !== issue.taskIds.length) bad();

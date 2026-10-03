@@ -10,7 +10,7 @@ export type CustomFieldValueRow = { id: string; task_id: string; field_id: strin
 export type TaskTemplateRow = { id: string; project_id?: string | null; name: string; description?: string; default_priority?: string | null; default_tag_ids?: string[]; default_spec_background?: string; default_spec_requirement?: string; default_spec_notes?: string; default_check_items?: string[]; default_todo_items?: string[]; created_by: string; created_at: string; updated_at: string };
 export type TaskDependencyRow = { id: string; task_id: string; depends_on_task_id: string; dependency_type?: string; created_at: string };
 export type TaskRow = Tables<'tasks'> & { parent_task_id?: string | null; tag_ids?: string[]; approval_status?: string | null; current_approval_id?: string | null; requires_approval?: boolean };
-export type MemberRow = Tables<'members'> & { theme?: string };
+export type MemberRow = Tables<'members'> & { theme?: string; is_qa_admin?: boolean };
 
 export function mapTask(row: TaskRow): Task {
   return {
@@ -43,7 +43,7 @@ export function mapTask(row: TaskRow): Task {
 }
 
 export function mapUser(row: MemberRow): User {
-  return { id: row.id, name: row.name, avatar: row.avatar, role: row.role, jobTitle: row.job_title, color: row.color, email: row.email, isActive: row.is_active !== false, sortOrder: row.sort_order ?? 99 };
+  return { id: row.id, name: row.name, avatar: row.avatar, role: row.role, qaAdmin: row.is_qa_admin === true, jobTitle: row.job_title, color: row.color, email: row.email, isActive: row.is_active !== false, sortOrder: row.sort_order ?? 99 };
 }
 
 export function mapStatus(row: Tables<'statuses'>): Status {

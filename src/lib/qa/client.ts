@@ -3,9 +3,10 @@ import { createClient } from '@supabase/supabase-js';
 import { fnUrl } from '@/lib/apiBase';
 import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
+import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, createQaIssue, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
+import { applyQaCommand, createQaIssue, qaEventDetail, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload } from './domain';
 
 export class QaClientError extends Error {
@@ -17,6 +18,7 @@ const demoIssues = new Map<string, QaDetail>();
 const demoFiles = new Map<string, Blob>();
 const demoCommands = new Map<string, unknown>();
 const demoWorkflows = new Map<string, QaWorkflow>();
+const demoFieldConfigurations = new Map<string, QaFieldConfiguration>();
 const clone = <T,>(value: T): T => structuredClone(value);
 export const qaId = randomUUID;
 export function qaThrowIfAborted(signal?: AbortSignal): void {
@@ -93,9 +95,20 @@ export function createQaClient(options: QaClientOptions) {
     },
     async saveWorkflow(input: QaWorkflow): Promise<QaWorkflow> {
       ensureEnabled(); const workflow = validateQaWorkflow(input), ctx = options.context();
-      if (!['admin','super_admin'].includes(ctx.actor.role)) throw new QaClientError('qa_forbidden',403);
+      if (!canManageQaConfiguration(ctx.actor)) throw new QaClientError('qa_forbidden',403);
       if (!mock) return request('save_workflow', { workflow });
       demoWorkflows.set(ctx.workspaceId, clone(workflow)); return clone(workflow);
+    },
+    async getFieldConfiguration(signal?: AbortSignal): Promise<QaFieldConfiguration> {
+      ensureEnabled();
+      return mock ? parseQaFieldConfiguration(demoFieldConfigurations.get(options.context().workspaceId)) : request('get_field_configuration', {}, signal);
+    },
+    async saveFieldConfiguration(input: QaFieldConfiguration): Promise<QaFieldConfiguration> {
+      ensureEnabled(); const ctx = options.context();
+      if (!canManageQaConfiguration(ctx.actor)) throw new QaClientError('qa_forbidden',403);
+      if (!mock) return request('save_field_configuration', { configuration: validateQaFieldConfiguration(input) });
+      const configuration = validateQaFieldConfiguration(input, parseQaFieldConfiguration(demoFieldConfigurations.get(ctx.workspaceId)));
+      demoFieldConfigurations.set(ctx.workspaceId, clone(configuration)); return clone(configuration);
     },
     async list(input: QaListInput, signal?: AbortSignal): Promise<QaListResult> {
       ensureEnabled();
@@ -124,7 +137,7 @@ export function createQaClient(options: QaClientOptions) {
       if (!mock) return request('create', { id, commandId, input }, signal);
       return demoOnce(commandId, () => {
         if (demoIssues.has(id)) throw new QaClientError('conflict', 409);
-        const ctx = options.context(), issue = createQaIssue(input, id, ctx);
+        const base = options.context(), ctx = { ...base, fieldConfiguration: parseQaFieldConfiguration(demoFieldConfigurations.get(base.workspaceId)) }, issue = createQaIssue(input, id, ctx);
         demoIssues.set(id, { issue, comments: [], attachments: [], events: [{ id: qaId(), issueId: id, actorId: ctx.actor.id, type: 'created', detail: '', createdAt: ctx.now, version: issue.version }] });
         return issue;
       });
@@ -135,9 +148,10 @@ export function createQaClient(options: QaClientOptions) {
       return demoOnce(commandId, () => {
         const detail = getDemo(issue.id);
         if (detail.issue.version !== issue.version) throw new QaClientError('conflict', 409);
-        const ctx = { ...options.context(), duplicateIssueIds: new Set([...demoIssues.values()].filter(d => d.issue.workspaceId === issue.workspaceId).map(d => d.issue.id)) };
-        detail.issue = applyQaCommand(detail.issue, command, ctx);
-        detail.events.push({ id: qaId(), issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: 'reason' in command ? command.reason : '', createdAt: ctx.now, version: detail.issue.version });
+        const ctx = { ...options.context(), fieldConfiguration: parseQaFieldConfiguration(demoFieldConfigurations.get(options.context().workspaceId)), duplicateIssueIds: new Set([...demoIssues.values()].filter(d => d.issue.workspaceId === issue.workspaceId).map(d => d.issue.id)) };
+        const before = detail.issue;
+        detail.issue = applyQaCommand(before, command, ctx);
+        detail.events.push({ id: qaId(), issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: qaEventDetail(detail.issue, command.type, before), createdAt: ctx.now, version: detail.issue.version });
         return detail.issue;
       });
     },

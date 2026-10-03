@@ -7,7 +7,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, valu
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: state.users }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Example project', color: '#123456' }], productLines: [] as ProductLine[] }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: state.tasks }) }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ setSelectedTask: vi.fn() }) }));
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn(), setSelectedTask: vi.fn() }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ ready: true, values: ['Stage'] }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 import UserSelect from '@/components/UserSelect';
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { createQaIssue } from '@/lib/qa/domain';
 import type { QaActor, QaDetail } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
+import { qaStateColors } from '@/components/qa/QaBadges';
 
 const person = (id: string, name: string, isActive = true, jobTitle = 'Engineer'): User => ({ id, name, isActive, jobTitle, role: 'member', avatar: name[0], color: '#123456', email: `${id}@example.com`, sortOrder: 1 });
 const issue = createQaIssue({ projectId: 'p1', title: 'Checkout error', actual: 'Cannot save a valid entry', expected: 'A valid entry is saved', observedEnvironment: 'Stage' }, 'bug1', { actor: { id: 'reporter', role: 'member' }, workspaceId: 'default', now: '2026-10-03T00:00:00Z', newId: () => 'example-id', memberIds: new Set(['reporter']), projectIds: new Set(['p1']), taskIds: new Set() });
@@ -36,10 +37,56 @@ async function choose(label: string, name: RegExp) {
 }
 function renderDetail(overrides: Partial<QaDetail> = {}, actor: QaActor = { id: 'admin', role: 'admin' }) {
   const command = vi.fn().mockResolvedValue(issue), upload = vi.fn().mockResolvedValue({ id: 'file1' });
-  const client = { command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const props = { detail: { ...detail, ...overrides }, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
   return { ...render(<QaIssueDetail {...props} />), command, upload, props };
 }
+
+describe('QA direct state selection', () => {
+  it('moves historical PASS directly to FAIL with coloured choices and without creating verification or deployment evidence', async () => {
+    const historical: QaDetail['issue'] = { ...issue, state: 'verified', targets: [], runs: [] };
+    const { command, props, rerender } = renderDetail({ issue: historical }, { id: 'reporter', role: 'member' });
+    const failed = { ...historical, state: 'failed' as const, version: historical.version + 1 };
+    command.mockResolvedValue(failed);
+    const picker = screen.getByRole('combobox', { name: 'qa.changeState' });
+    expect(picker).not.toBeDisabled();
+    fireEvent.click(picker);
+    const option = await screen.findByRole('option', { name: 'qa.state.failed' });
+    expect(option.querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors.failed });
+    fireEvent.click(option);
+    await waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    expect(command.mock.calls[0][1]).toEqual({ type: 'set_state', state: 'failed' });
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByLabelText(/qa.targetBuild/)).toBeNull();
+    expect(historical.targets).toEqual([]); expect(historical.runs).toEqual([]);
+    rerender(<QaIssueDetail {...props} detail={{ ...props.detail, issue: failed }} />);
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toHaveTextContent('qa.state.failed');
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' }).querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors.failed });
+  });
+  it('keeps the direct state control visible but disabled for an unrelated member', () => {
+    const { command } = renderDetail({ issue: { ...issue, state: 'verified' } }, { id: 'visitor', role: 'member' });
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toBeDisabled();
+    expect(command).not.toHaveBeenCalled();
+  });
+  it('preserves an acknowledged state through a failed refresh and retries only the reload', async () => {
+    const historical: QaDetail['issue'] = { ...issue, state: 'verified', targets: [], runs: [] };
+    const { command, props } = renderDetail({ issue: historical });
+    const failed = { ...historical, state: 'failed' as const, version: historical.version + 1 };
+    command.mockResolvedValue(failed);
+    props.onRefresh.mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'qa.state.failed' }));
+    await screen.findByText('qa.failed');
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toHaveTextContent('qa.state.failed');
+    expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'qa.back' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' }));
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledTimes(2));
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toHaveTextContent('qa.state.failed');
+  });
+});
 
 describe('shared UserSelect form and dialog behavior', () => {
   it('does not leave an old search portal or steal focus during a rapid switch between owners', async () => {
@@ -128,6 +175,29 @@ describe('shared UserSelect form and dialog behavior', () => {
 });
 
 describe('QA detail uses shared controls with a focused next action', () => {
+  it('prefers QA for testing and project developers for repair while still allowing everyone active', async () => {
+    state.users = [person('pm', 'Morgan', true, 'PM'), person('other', 'Reese', true, 'FE'),
+      person('qa', 'Blair', true, 'QA'), person('dev', 'Alex', true, 'BE'),
+      person('reviewer', 'Taylor', true, 'SRE'), person('inactive', 'Casey', false, 'QA')];
+    state.tasks = [{ id: 'same', projectId: 'p1', assigneeId: 'dev', reviewerId: 'reviewer' },
+      { id: 'other', projectId: 'p2', assigneeId: 'other' }] as Task[];
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.triage' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.assignee' }));
+    let options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    expect(options).toHaveLength(5);
+    ['Alex', 'Taylor', 'Morgan', 'Reese', 'Blair'].forEach((name, index) => expect(options[index]).toHaveTextContent(name));
+    fireEvent.click(screen.getByRole('option', { name: /Morgan/ }));
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
+    options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    expect(options).toHaveLength(5);
+    ['Blair', 'Morgan', 'Reese', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index]).toHaveTextContent(name));
+    fireEvent.change(screen.getByRole('combobox', { name: 'common.search · qa.qaOwner' }), { target: { value: 'Morgan' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Morgan/ }));
+    expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Morgan');
+  });
+
   it('starts an assigned repair in one click without an empty confirmation form', async () => {
     const assigned = { ...issue, state: 'triaged' as const, assigneeId: 'dev', qaOwnerId: 'qa' };
     const { command, props } = renderDetail({ issue: assigned });

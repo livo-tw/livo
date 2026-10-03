@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
 import type { ProjectGroup } from '@/lib/projectGroups';
 import { useEffect, useRef } from 'react';
@@ -77,15 +78,15 @@ const ReportConfigForm = ({
           </label>
           <div className="flex items-center gap-2">
             {cfg.reportType === 'weekly' && (
-              <select
+              <SearchableSelect
                 value={cfg.weekday}
                 onChange={e => setCfg(prev => ({ ...prev, weekday: parseInt(e.target.value) }))}
                 className="border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
               >
                 {WEEKDAYS.map((label, i) => <option key={i} value={i}>{label}</option>)}
-              </select>
+              </SearchableSelect>
             )}
-            <select
+            <SearchableSelect
               value={cfg.hour}
               onChange={e => setCfg(prev => ({ ...prev, hour: parseInt(e.target.value) }))}
               className="border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -93,15 +94,15 @@ const ReportConfigForm = ({
               {Array.from({ length: 24 }, (_, i) => (
                 <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
               ))}
-            </select>
+            </SearchableSelect>
             <span className="text-foreground">:</span>
-            <select
+            <SearchableSelect
               value={cfg.minute}
               onChange={e => setCfg(prev => ({ ...prev, minute: parseInt(e.target.value) }))}
               className="border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
             >
               {[0, 15, 30, 45].map(m => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
         </div>
 

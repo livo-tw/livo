@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useId, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
 import { Check, ChevronDown } from 'lucide-react';
-import { sortUsersByDept } from '@/lib/department';
+import { sortMemberOptions } from '@/lib/memberSelection';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 
@@ -19,11 +19,12 @@ interface UserSelectProps {
   required?: boolean;
   disabled?: boolean;
   activeOnly?: boolean;
+  preferredUserIds?: readonly string[];
 }
 
 const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, allowEmpty = false,
   emptyLabel = '—', className = '', size = 'sm', name, label, required = false, disabled = false,
-  activeOnly = false }: UserSelectProps) => {
+  activeOnly = false, preferredUserIds = [] }: UserSelectProps) => {
   const { t } = useTranslation();
   const { users } = useMemberContext();
   const [internalValue, setInternalValue] = useState(defaultValue);
@@ -38,7 +39,7 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
   const unavailable = !!value && (!selected || (activeOnly && selected.isActive !== true));
   const formValue = unavailable ? '' : value;
   const avatarSize = size === 'sm' ? 'h-5 w-5 text-[7px]' : 'h-6 w-6 text-[8px]';
-  const availableUsers = sortUsersByDept(users.filter(user => !activeOnly || user.isActive === true));
+  const availableUsers = sortMemberOptions(users.filter(user => !activeOnly || user.isActive === true), preferredUserIds);
   const query = search.trim().toLocaleLowerCase();
   const filteredUsers = availableUsers.filter(user => !query ||
     `${user.name} ${user.jobTitle || ''}`.toLocaleLowerCase().includes(query));

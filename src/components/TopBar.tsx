@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useAuthContext } from '@/context/AuthContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useUIContext } from '@/context/UIContext';
@@ -268,7 +269,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
 
           {/* Current member selector - only for admin/super_admin, hidden on mobile */}
           {!isMobile && canSwitch && hasFeature('proxy-login') && (
-            <select
+            <SearchableSelect
               value={currentMemberId}
               onChange={e => setCurrentMemberId(e.target.value)}
               className="bg-sidebar-accent/60 text-sidebar-foreground text-xs rounded px-2 py-1.5 border-0 outline-none"
@@ -276,7 +277,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
               {switchableUsers.map(u => (
                 <option key={u.id} value={u.id}>{u.name}</option>
               ))}
-            </select>
+            </SearchableSelect>
           )}
 
           {/* User avatar with dropdown */}
@@ -303,7 +304,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                 {isMobile && canSwitch && hasFeature('proxy-login') && (
                   <div className="px-3 py-2 border-b border-border">
                     <label className="text-xs text-muted-foreground block mb-1">{t('auth.switchIdentity')}</label>
-                    <select
+                    <SearchableSelect
                       value={currentMemberId}
                       onChange={e => { setCurrentMemberId(e.target.value); setShowMenu(false); }}
                       className="w-full bg-muted text-foreground text-xs rounded px-2 py-1.5 border-0 outline-none"
@@ -311,7 +312,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                       {switchableUsers.map(u => (
                         <option key={u.id} value={u.id}>{u.name}</option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                 )}
                 <button
