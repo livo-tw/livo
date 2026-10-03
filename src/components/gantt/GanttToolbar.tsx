@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import React from 'react';
 import { Lightbulb, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -33,6 +34,7 @@ const GanttToolbar = React.memo(({
   onScrollLeft, onScrollRight, onScrollToToday,
 }: GanttToolbarProps) => {
   const { t } = useTranslation();
+  const getProjectColor = useProjectColor();
   const isMobile = useIsMobile();
 
   const groupByOptions: [GroupByMode, string][] = [
@@ -127,7 +129,7 @@ const GanttToolbar = React.memo(({
         <div className="flex items-center gap-3 flex-wrap text-[13px]">
           {legendProjects.map(p => (
             <span key={p.id} className="flex items-center gap-1">
-              <span className="w-3 h-2.5 rounded-sm inline-block" style={{ backgroundColor: p.color }} />
+              <span className="w-3 h-2.5 rounded-sm inline-block" style={{ backgroundColor: getProjectColor(p) }} />
               <span className="text-muted-foreground">{p.name}</span>
             </span>
           ))}

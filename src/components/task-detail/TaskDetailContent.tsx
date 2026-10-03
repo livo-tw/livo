@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { FileText, MessageSquare, Clock, Timer, History, Layers, PanelRight, Maximize2, Link2, Copy, Trash2, X, ListTree, CornerDownRight, GitMerge, ChevronDown, ChevronRight, Plus, Lock, type LucideIcon } from 'lucide-react';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,6 +16,7 @@ import { useUIContext, type TaskDisplayMode } from '@/context/UIContext';
 type Props = { onClose: () => void };
 
 const TaskDetailContent = ({ onClose }: Props) => {
+  const getProjectColor = useProjectColor();
   const { approvalsEnabled } = useUIContext();
   const { t } = useTranslation();
   const detail = useTaskDetail();
@@ -54,7 +56,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
             </span>
           )}
           {project && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0" style={{ color: project.color, backgroundColor: project.color + '18' }}>
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0" style={{ color: getProjectColor(project), backgroundColor: getProjectColor(project) + '18' }}>
               {project.name}
             </span>
           )}

@@ -29,13 +29,15 @@ describe('QA feature gate and conflict recovery', () => {
     const client = { versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const repairing = { ...issue, state: 'in_progress' as const, assigneeId: 'admin', qaOwnerId: 'admin', component: 'Wallet screen' };
     render(<QaIssueDetail detail={{ ...detail, issue: repairing }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={vi.fn()} onBack={vi.fn()} />);
-    await screen.findByLabelText('qa.versionChoose');
+    const build = screen.getByLabelText(/qa.build/) as HTMLInputElement;
+    await waitFor(() => expect(document.getElementById(build.getAttribute('list')!)?.querySelector('option[value="known-build"]')).toBeTruthy());
     const component = screen.getByLabelText(/qa.fixComponent/) as HTMLInputElement;
     expect(component.value).toBe(''); expect(component.required).toBe(false);
-    fireEvent.change(screen.getByLabelText('qa.versionChoose'), { target: { value: 'known-build' } });
+    fireEvent.change(build, { target: { value: 'known-build' } });
     expect((screen.getByLabelText(/qa.build/) as HTMLInputElement).value).toBe('known-build');
-    fireEvent.click(screen.getByRole('button', { name: 'qa.addTarget' }));
-    expect(screen.getAllByLabelText('qa.versionChoose')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.addEnvironment' }));
+    expect(screen.getAllByLabelText(/qa.build/)).toHaveLength(2);
+    expect(screen.queryByLabelText('qa.versionChoose')).toBeNull();
     expect(mocks.versions).toHaveBeenCalledTimes(1);
   });
   it.each([[false, true], [true, false]])('does not mount data hooks or call endpoints when enabled=%s ready=%s', (enabled, ready) => {
@@ -123,7 +125,8 @@ describe('QA feature gate and conflict recovery', () => {
     const client = { command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const props = { detail, client, actor: { id: 'admin', role: 'admin' }, onRefresh: refresh, onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.edit' }));
     const title = screen.getByLabelText(/qa.titleField/) as HTMLInputElement; fireEvent.change(title, { target: { value: 'My unsent correction' } });
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
     expect(await screen.findByText('qa.conflict')).toBeTruthy(); expect(title.value).toBe('My unsent correction');

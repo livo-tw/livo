@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug } from 'lucide-react';
@@ -18,6 +19,7 @@ interface AppSidebarProps {
 
 const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const { t } = useTranslation();
+  const getProjectColor = useProjectColor();
   const { permissions, currentMember, currentMemberId } = useAuthContext();
   const { approvalsEnabled, featureToggles, featureTogglesReady, setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
   const { selectedProjectId, setSelectedProjectId, selectedLineId, setSelectedLineId, allProjects, productLines, deleteProjectInDb } = useProjectContext();
@@ -261,7 +263,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
                       }`}
                     >
                       <span className="flex items-center gap-1.5 truncate">
-                        <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: project.color }} />
+                        <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: getProjectColor(project) }} />
                         <span className="truncate">{project.name}</span>
                       </span>
                       <span className="flex items-center gap-1">

@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useMemo, useState, useCallback } from 'react';
 import type { Task } from '@/types';
@@ -21,6 +22,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useTranslation } from 'react-i18next';
 
 const ListView = () => {
+  const getProjectColor = useProjectColor();
   const { t } = useTranslation();
   const { setSelectedTask } = useUIContext();
   const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
@@ -211,7 +213,7 @@ const ListView = () => {
                     <button onClick={() => toggleCollapse(project.id)} className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-foreground hover:bg-accent/50 transition-colors bg-muted/50">
                       {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                       {line && <span className="text-xs">{line.icon}</span>}
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: project.color }} />
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getProjectColor(project) }} />
                       <span>{project.name}</span>
                       <span className="text-muted-foreground font-normal">({tasks.length})</span>
                     </button>

@@ -1,3 +1,4 @@
+import { useProjectColor } from '@/hooks/useProjectColor';
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useMemberContext } from '@/context/MemberContext';
@@ -29,6 +30,7 @@ import GanttMobileTimeline from './gantt/GanttMobileTimeline';
 import { useTranslation } from 'react-i18next';
 
 const GanttView = () => {
+  const getProjectColor = useProjectColor();
   const { t } = useTranslation();
   const { currentMemberId } = useAuthContext();
   const { users } = useMemberContext();
@@ -169,10 +171,10 @@ const GanttView = () => {
       })).filter(g => g.tasks.length > 0);
     }
     return allProjects.filter(p => !p.isArchived).map(proj => ({
-      id: proj.id, label: proj.name, color: proj.color,
+      id: proj.id, label: proj.name, color: getProjectColor(proj),
       tasks: sortTasks(activeTasks.filter(t => t.projectId === proj.id)).map(enrichTask),
     })).filter(g => g.tasks.length > 0);
-  }, [allTasks, visibleProjectIds, dateToPx, today, cellW, allProjects, groupBy, filterDept, users, statuses, productLines, selectedSprintId, enrichTask, sortTasks]);
+  }, [allTasks, visibleProjectIds, dateToPx, today, cellW, allProjects, groupBy, filterDept, users, statuses, productLines, selectedSprintId, enrichTask, sortTasks, getProjectColor]);
 
   // ─── Scroll Sync ───
   const handleRightScroll = () => {

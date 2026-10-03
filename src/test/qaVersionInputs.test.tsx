@@ -20,7 +20,9 @@ describe('QA free-text version suggestions', () => {
     expect(input.value).toBe('old-custom');
     await act(async () => result.resolve(['v1', 'v2']));
     expect(input.value).toBe('old-custom');
-    fireEvent.change(screen.getByLabelText('qa.versionChoose'), { target: { value: 'v2' } });
+    expect(screen.queryByLabelText('qa.versionChoose')).toBeNull();
+    expect(document.getElementById(input.getAttribute('list')!)?.querySelector('option[value="v2"]')).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'v2' } });
     expect(input.value).toBe('v2');
     fireEvent.change(input, { target: { value: 'commit/a1b2' } });
     fireEvent.click(screen.getByRole('button', { name: 'qa.save' }));
@@ -43,8 +45,8 @@ describe('QA free-text version suggestions', () => {
     await act(async () => b.resolve(['build-b']));
     await act(async () => a.resolve(['build-a']));
     expect(view.container.querySelector('datalist')?.textContent).not.toContain('build-a');
-    expect(screen.getByLabelText('qa.versionChoose').querySelector('option[value="build-b"]')).toBeTruthy();
-    expect(screen.getByLabelText('qa.versionChoose').querySelector('option[value="build-a"]')).toBeNull();
+    expect(document.getElementById(input.getAttribute('list')!)?.querySelector('option[value="build-b"]')).toBeTruthy();
+    expect(document.getElementById(input.getAttribute('list')!)?.querySelector('option[value="build-a"]')).toBeNull();
   });
   it('keeps manual input available after a failed suggestion request', async () => {
     const client = { versions: vi.fn(async () => { throw new Error('offline'); }) }, save = vi.fn();

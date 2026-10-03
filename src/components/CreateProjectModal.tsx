@@ -1,3 +1,4 @@
+import { LEGACY_PROJECT_COLOR, PROJECT_COLOR_PALETTE, suggestProjectColor } from '@/lib/projectColors';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generateId } from '@/lib/generateId';
@@ -9,7 +10,7 @@ import { logActivity } from '@/lib/activityLog';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 
-const PRESET_COLORS = ['#0065FF', '#36B37E', '#FF5630', '#6554C0', '#00B8D9', '#FF8B00', '#E774BB', '#6B778C'];
+const PRESET_COLORS = [...PROJECT_COLOR_PALETTE, LEGACY_PROJECT_COLOR];
 
 const CreateProjectModal = () => {
   const { t } = useTranslation();
@@ -20,10 +21,12 @@ const CreateProjectModal = () => {
   const [lineId, setLineId] = useState('');
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
-  const [color, setColor] = useState(PRESET_COLORS[0]);
+  const [color, setColor] = useState<string>(PRESET_COLORS[0]);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const latestProjectsRef = useRef(allProjects);
+  latestProjectsRef.current = allProjects;
   const { viewers, trackEditing, isLockedBy, acquireLock, releaseLock } = usePresenceLock(showCreateProject ? 'project-manage-presence' : 'project-manage-inactive', !hasFeature('realtime-collab'));
   const focusTrapRef = useFocusTrap(showCreateProject);
 
@@ -42,7 +45,7 @@ const CreateProjectModal = () => {
         setLineId(productLines[0]?.id || '');
         setName('');
         setKey('');
-        setColor(PRESET_COLORS[0]);
+        setColor(suggestProjectColor(latestProjectsRef.current));
       }
       heldLockRef.current = lockKey;
       acquireLock(lockKey);
@@ -202,10 +205,12 @@ const CreateProjectModal = () => {
           {/* Color */}
           <div>
             <label className="text-[11px] font-medium text-muted-foreground mb-1 block">{t('project.colorLabel')}</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {PRESET_COLORS.map(c => (
                 <button
                   key={c}
+                  aria-label={`${t('project.colorLabel')}: ${c}`}
+                  aria-pressed={color === c}
                   onClick={() => setColor(c)}
                   className="w-7 h-7 rounded-md transition-all"
                   style={{
