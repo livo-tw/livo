@@ -3,17 +3,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('sonner', () => ({ toast: { info: mocks.toast } }));
+const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
+// Keep initialization exports available when an import graph loads the real i18n singleton.
+vi.mock('react-i18next', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+import '@/i18n';
+vi.mock('sonner', () => ({ toast: { info: mocks.toast, success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/lib/featureToggleQueries', () => ({ loadFeatureToggles: mocks.loadFeatures, persistFeatureToggle: mocks.saveFeature }));
-vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Example admin', role: 'admin', isActive: true }] }) }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Example admin', jobTitle: '', role: 'admin', isActive: true }] }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Example project', isArchived: false }], productLines: [] as ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow };
+  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration };
   return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: (): null => null }));
@@ -37,18 +42,20 @@ function Spa() {
 const openCreate = async () => {
   render(<Spa />);
   // The heading can render before passive effects register the toolbar listener.
-  await waitFor(() => expect(screen.getByRole('button', { name: 'qa.workflowTitle' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('button', { name: 'qa.settingsTitle' })).toBeEnabled());
   fireEvent(window, new Event('livo:qa-create'));
   return screen.findByLabelText(/qa.titleField/);
 };
 const fill = () => {
-  fireEvent.change(screen.getByLabelText(/qa.project/), { target: { value: input.projectId } });
+  fireEvent.change(screen.getByLabelText(/^qa.project \*$/), { target: { value: input.projectId } });
   fireEvent.change(screen.getByLabelText(/qa.titleField/), { target: { value: input.title } });
   fireEvent.change(screen.getByLabelText(/qa.actual/), { target: { value: input.actual } });
   fireEvent.change(screen.getByLabelText(/qa.environment/), { target: { value: input.observedEnvironment } });
 };
 beforeEach(() => {
-  vi.clearAllMocks(); vi.stubEnv('VITE_API_URL', ''); window.history.replaceState({}, '', '/');
+  vi.clearAllMocks(); mocks.getFieldConfiguration.mockResolvedValue({ version: 1, fields: [] }); vi.stubEnv('VITE_API_URL', ''); window.history.replaceState({}, '', '/');
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
   mocks.loadFeatures.mockResolvedValue(features()); mocks.saveFeature.mockResolvedValue(undefined);
   mocks.getWorkflow.mockResolvedValue(structuredClone(DEFAULT_QA_WORKFLOW)); mocks.versions.mockResolvedValue([]);
   mocks.create.mockImplementation(async (_input: QaCreateInput, id: string) => ({ ...issue, id }));
@@ -56,7 +63,7 @@ beforeEach(() => {
   mocks.upload.mockResolvedValue({ id: 'attachment1' });
   mocks.command.mockResolvedValue(issue); mocks.comment.mockResolvedValue({ id: 'comment1' });
 });
-afterEach(() => { cleanup(); vi.unstubAllEnvs(); expect(hasQaNavigationGuard()).toBe(false); });
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); expect(hasQaNavigationGuard()).toBe(false); });
 
 describe('central QA navigation guard', () => {
   it('keeps the stable setter and normal functional updates, while preventing guarded mine/all and task navigation', async () => {
@@ -128,6 +135,65 @@ describe('central QA navigation guard', () => {
 });
 
 describe('real QA workspace across SPA views', () => {
+  it('focuses the title when opening a new report and keeps creation in a modal', async () => {
+    const title = await openCreate();
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(screen.getByRole('dialog', { name: 'qa.reportTitle' })).toHaveAttribute('aria-modal', 'true');
+    expect(screen.queryByRole('button', { name: 'task.displayMode.page' })).toBeNull();
+  });
+  it('uses the shared modal, side and page preference without replacing an unsent comment draft', async () => {
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<Spa />);
+    await screen.findByRole('heading', { name: input.title, level: 1 });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
+    const draft = screen.getByLabelText(/qa.commentBody/);
+    fireEvent.change(draft, { target: { value: 'Keep this unsent comment' } });
+    for (const mode of ['side', 'page', 'modal']) {
+      fireEvent.click(screen.getByRole('button', { name: `task.displayMode.${mode}` }));
+      expect(screen.getByRole('button', { name: `task.displayMode.${mode}` })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByLabelText(/qa.commentBody/)).toBe(draft);
+      expect(draft).toHaveValue('Keep this unsent comment');
+    }
+    expect(mocks.comment).not.toHaveBeenCalled(); expect(mocks.command).not.toHaveBeenCalled();
+  });
+  it('closes a nested searchable state picker with Escape while leaving the outer Bug view open', async () => {
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<Spa />);
+    await screen.findByRole('heading', { name: input.title, level: 1 });
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
+    await screen.findByRole('listbox', { name: 'qa.changeState' });
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'common.search · qa.changeState' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(screen.getByRole('dialog', { name: input.title })).toBeTruthy();
+    expect(window.location.search).toBe('?qa=existing-bug'); expect(mocks.command).not.toHaveBeenCalled();
+  });
+  it('retains the original state-change snapshot and command ID after 503 and blocks close or navigation until retry succeeds', async () => {
+    const historical = { ...issue, id: 'existing-bug', state: 'verified' as const };
+    const failed = { ...historical, state: 'failed' as const, version: historical.version + 1 };
+    mocks.get.mockResolvedValue({ issue: historical, attachments: [], comments: [], events: [] });
+    mocks.command.mockRejectedValueOnce({ status: 503, code: 'temporarily_unavailable' }).mockResolvedValueOnce(failed);
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<Spa />);
+    await screen.findByRole('heading', { name: input.title, level: 1 });
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'qa.state.failed' }));
+    await screen.findByText('qa.commandRetryHint');
+    const original = mocks.command.mock.calls[0].slice(0, 3);
+    expect(original[0]).toEqual(historical); expect(original[1]).toEqual({ type: 'set_state', state: 'failed' });
+    expect(screen.getByRole('button', { name: 'common.close' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole('heading', { name: input.title, level: 1 }), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
+    expect(screen.getByLabelText('Current view')).toHaveTextContent('qa');
+    expect(screen.getByRole('dialog', { name: input.title })).toBeTruthy();
+    expect(window.location.search).toBe('?qa=existing-bug');
+    mocks.get.mockResolvedValue({ issue: failed, attachments: [], comments: [], events: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'qa.retryCommand' }));
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(2));
+    expect(mocks.command.mock.calls[1].slice(0, 3)).toEqual(original);
+    await waitFor(() => expect(screen.queryByText('qa.commandRetryHint')).toBeNull());
+    expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toHaveTextContent('qa.state.failed');
+    expect(screen.getByRole('button', { name: 'common.close' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
+    expect(screen.getByRole('heading', { name: 'Task board' })).toBeTruthy();
+  });
   it('allows leaving a blank create form', async () => {
     await openCreate();
     expect(screen.getByLabelText(/qa.titleField/)).toHaveValue(''); expect(hasQaNavigationGuard()).toBe(false);
@@ -136,32 +202,32 @@ describe('real QA workspace across SPA views', () => {
   it('preserves an unknown create result across attempted mine/all and task navigation, then retries the same IDs', async () => {
     mocks.create.mockRejectedValueOnce(new TypeError('connection lost'));
     await openCreate(); fill();
-    const title = screen.getByLabelText(/qa.titleField/); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await screen.findByText('qa.createRetryHint');
+    const title = screen.getByLabelText(/qa.titleField/); await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await screen.findByText('qa.createRetryHint');
     const original = mocks.create.mock.calls[0].slice(0, 3);
     fireEvent.click(screen.getByRole('button', { name: 'My QA navigation' })); fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
     expect(screen.getByLabelText('Current view')).toHaveTextContent('qa'); expect(screen.getByLabelText(/qa.titleField/)).toBe(title);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.retryCreate' })); await screen.findByRole('heading', { name: input.title });
+    fireEvent.click(screen.getByRole('button', { name: 'qa.retryCreate' })); await screen.findByRole('heading', { name: input.title, level: 1 });
     expect(mocks.create.mock.calls[1].slice(0, 3)).toEqual(original); expect(hasQaNavigationGuard()).toBe(false);
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'My QA navigation' })));
-    expect(screen.getByLabelText('Current view')).toHaveTextContent('my-qa'); await screen.findByRole('heading', { name: input.title });
+    expect(screen.getByLabelText('Current view')).toHaveTextContent('my-qa'); await screen.findByRole('heading', { name: input.title, level: 1 });
   });
   it('keeps a real upload alive across attempted view switches and allows navigation after completion', async () => {
     let resolveUpload!: (value: unknown) => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     await openCreate(); fill();
     fireEvent.change(screen.getByLabelText('qa.attach'), { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
-    const title = screen.getByLabelText(/qa.titleField/); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    const title = screen.getByLabelText(/qa.titleField/); await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     const signal = mocks.upload.mock.calls[0][3] as AbortSignal;
     fireEvent.click(screen.getByRole('button', { name: 'My QA navigation' })); fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
     expect(signal.aborted).toBe(false); expect(screen.getByLabelText(/qa.titleField/)).toBe(title); expect(mocks.create).toHaveBeenCalledTimes(1);
-    await act(async () => resolveUpload({ id: 'attachment1' })); await screen.findByRole('heading', { name: input.title });
+    await act(async () => resolveUpload({ id: 'attachment1' })); await screen.findByRole('heading', { name: input.title, level: 1 });
     fireEvent.click(screen.getByRole('button', { name: 'Task navigation' })); expect(screen.getByRole('heading', { name: 'Task board' })).toBeTruthy();
   });
   it('protects an existing Bug attachment from SPA switches and another Bug navigation', async () => {
     let resolveUpload!: (value: unknown) => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     window.history.replaceState({}, '', '/?qa=existing-bug');
-    render(<Spa />); await screen.findByRole('heading', { name: input.title });
+    render(<Spa />); await screen.findByRole('heading', { name: input.title, level: 1 });
     fireEvent.click(screen.getByRole('button', { name: 'qa.addAttachment' }));
     const attachment = screen.getByLabelText('qa.attach');
     fireEvent.change(attachment, { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
@@ -179,7 +245,7 @@ describe('real QA workspace across SPA views', () => {
     mocks[kind].mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     mocks.get.mockImplementation(async (id: string) => ({ issue: { ...issue, id, state: 'triaged', assigneeId: 'admin', qaOwnerId: 'admin' }, attachments: [], comments: [], events: [] }));
     window.history.replaceState({}, '', '/?qa=existing-bug');
-    render(<Spa />); await screen.findByRole('heading', { name: input.title });
+    render(<Spa />); await screen.findByRole('heading', { name: input.title, level: 1 });
     if (kind === 'command') fireEvent.click(screen.getByRole('button', { name: 'qa.startFix' }));
     else {
       fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
@@ -209,7 +275,7 @@ describe('real QA workspace across SPA views', () => {
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     await openCreate(); fill();
     fireEvent.change(screen.getByLabelText('qa.attach'), { target: { files: [new File(['video'], 'proof.mp4', { type: 'video/mp4' })] } });
-    fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     const signal = mocks.upload.mock.calls[0][3] as AbortSignal; expect(hasQaNavigationGuard()).toBe(true);
     mocks.loadFeatures.mockResolvedValue(features(false)); fireEvent.click(screen.getByRole('button', { name: 'Reload capabilities' })); await screen.findByText('qa.disabled');
     expect(signal.aborted).toBe(true); expect(hasQaNavigationGuard()).toBe(false);

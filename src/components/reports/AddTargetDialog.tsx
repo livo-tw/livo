@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -177,14 +178,14 @@ const AddTargetDialog = ({ reportType, projectId, currentUserId, onClose, onCrea
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-foreground">Method</label>
-                <select
+                <SearchableSelect
                   value={webhookMethod}
                   onChange={e => setWebhookMethod(e.target.value)}
                   className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option>POST</option>
                   <option>PUT</option>
-                </select>
+                </SearchableSelect>
               </div>
             </div>
           )}

@@ -20,9 +20,9 @@ export function useQa() {
   useEffect(() => { latest.current.enabled = enabled; return () => { latest.current.enabled = false; }; }, [enabled]);
   const context = useCallback(() => {
     const value = latest.current;
-    return { environmentValues: value.environments.ready ? value.environments.values : [], actor: { id: value.currentMember?.id || '', role: value.currentMember?.role || 'member' }, workspaceId: 'default', now: new Date().toISOString(), newId: qaId,
+    return { environmentValues: value.environments.ready ? value.environments.values : [], actor: { id: value.currentMember?.id || '', role: value.currentMember?.role || 'member', qaAdmin: value.currentMember?.qaAdmin === true }, workspaceId: 'default', now: new Date().toISOString(), newId: qaId,
       memberIds: new Set(value.users.filter(u => u.isActive).map(u => u.id)), projectIds: new Set(value.allProjects.filter(p => !p.isArchived).map(p => p.id)), taskIds: new Set(value.allTasks.map(t => t.id)) };
   }, []);
   const client = useMemo(() => createQaClient({ enabled: () => latest.current.enabled, context }), [context]);
-  return { client, enabled, actor: { id: currentMember?.id || '', role: currentMember?.role || 'member' } };
+  return { client, enabled, actor: { id: currentMember?.id || '', role: currentMember?.role || 'member', qaAdmin: currentMember?.qaAdmin === true } };
 }

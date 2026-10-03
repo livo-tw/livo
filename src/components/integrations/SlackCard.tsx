@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 // Slack self-bind card (系統管理 → 整合).
 //
 // Replaces the old incoming-webhook card. Lets a LIVO admin connect their OWN
@@ -350,7 +351,7 @@ const SlackCard = () => {
 
               {/* Channel picker (task notifications) */}
               <Field label={t('integrations.slack.channelPickerLabel')}>
-                <select
+                <SearchableSelect
                   className={inputCls}
                   value={channelValue}
                   onChange={(e) => saveChannel(e.target.value)}
@@ -363,7 +364,7 @@ const SlackCard = () => {
                       #{ch.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
                 <p className="text-xs text-muted-foreground mt-1">{pickerHint}</p>
                 {selectedNeedsInvite && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">

@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useState, useEffect, useCallback } from 'react';
@@ -124,14 +125,14 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
         {projectOptions.length > 1 && (
           <div className="flex items-center gap-1.5">
             <Filter size={12} className="text-muted-foreground" />
-            <select
+            <SearchableSelect
               value={filterProject}
               onChange={e => setFilterProject(e.target.value)}
               className="text-xs bg-muted border border-border rounded px-2 py-1 text-foreground"
             >
               <option value="">{t('pendingApproval.allProjects')}</option>
               <ProjectSelectOptions groups={groupProjectsByLine(productLines, projectOptions.map(id => allProjects.find(project => project.id === id) ?? { id, name: id }), { archived: 'all' })} />
-            </select>
+            </SearchableSelect>
           </div>
         )}
         {selected.size > 0 && (

@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Calendar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CalendarSettings } from './types';
@@ -24,14 +25,14 @@ const CalendarCard = ({ calendar, onChange, onSave, saving }: CalendarCardProps)
     badge={t('common.comingSoon')}
   >
     <Field label={t('integrations.calendar.providerLabel')}>
-      <select
+      <SearchableSelect
         className={inputCls}
         value={calendar.provider}
         onChange={e => onChange({ ...calendar, provider: e.target.value as 'google' | 'ical' })}
       >
         <option value="google">{t('integrations.calendar.providerGoogle')}</option>
         <option value="ical">{t('integrations.calendar.providerIcal')}</option>
-      </select>
+      </SearchableSelect>
     </Field>
     <Field label="Calendar ID / URL">
       <input

@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Download, FileText, KeyRound, Mail, Upload, Users } from 'lucide-react';
@@ -488,14 +489,14 @@ const JiraImportCard = ({ currentMemberId, isPro, refreshAll }: JiraImportCardPr
 
             <div className="space-y-1">
               <label htmlFor="jira-import-tz" className="text-xs font-medium text-foreground">{t('adminImportExport.timeZoneLabel')}</label>
-              <select
+              <SearchableSelect
                 id="jira-import-tz"
                 value={timeZone}
                 onChange={(e) => setTimeZone(e.target.value)}
                 className="block w-full max-w-xs border border-input rounded-md px-2 py-1.5 text-xs bg-background text-foreground outline-none focus:ring-2 focus:ring-ring"
               >
                 {TIME_ZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-              </select>
+              </SearchableSelect>
               <p className="text-xs text-muted-foreground">{t('adminImportExport.timeZoneHint')}</p>
             </div>
 

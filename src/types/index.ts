@@ -3,6 +3,7 @@ export interface User {
   name: string;
   avatar: string;
   role: 'super_admin' | 'admin' | 'member';
+  qaAdmin?: boolean;
   jobTitle: string;
   color: string;
   email: string;
@@ -123,7 +124,7 @@ export interface StatusLog {
   changedAt: string;
 }
 
-export type CustomFieldType = 'text' | 'textarea' | 'number' | 'select' | 'date' | 'boolean' | 'user';
+export type CustomFieldType = import('../lib/customFieldTypes').CustomFieldType;
 
 export interface CustomField {
   id: string;

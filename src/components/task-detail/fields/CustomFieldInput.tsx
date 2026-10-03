@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Lock } from 'lucide-react';
 import UserSelect from '@/components/UserSelect';
 import type { CustomField, TaskCustomFieldValue } from '@/types';
@@ -85,13 +86,13 @@ export const CustomFieldInput = ({ field, cv, isLocked, locker, onChange, onFocu
 
   if (field.fieldType === 'select') return (
     <div key={field.id}>{labelEl}
-      <select value={cv?.valueText || ''} disabled={isLocked}
+      <SearchableSelect value={cv?.valueText || ''} disabled={isLocked}
         onChange={e => onChange({ valueText: e.target.value || undefined })}
         className="w-full text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground disabled:opacity-50"
         {...focusProps}>
         <option value="">未選擇</option>
         {(field.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
+      </SearchableSelect>
     </div>
   );
 

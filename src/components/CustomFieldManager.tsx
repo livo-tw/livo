@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTaskContext } from '@/context/TaskContext';
@@ -5,25 +6,7 @@ import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { CustomField, CustomFieldType } from '@/types';
 import { X, Plus, Pencil, Trash2, GripVertical, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
-const FIELD_TYPE_KEYS: Record<CustomFieldType, string> = {
-  text: 'customField.types.text',
-  textarea: 'customField.types.textarea',
-  number: 'customField.types.number',
-  select: 'customField.types.select',
-  date: 'customField.types.date',
-  boolean: 'customField.types.boolean',
-  user: 'customField.types.user',
-};
-
-const FIELD_TYPE_ICONS: Record<CustomFieldType, string> = {
-  text: 'T',
-  textarea: '¶',
-  number: '#',
-  select: '▾',
-  date: 'D',
-  boolean: '☑',
-  user: 'U',
-};
+import { CUSTOM_FIELD_TYPE_KEYS as FIELD_TYPE_KEYS, CUSTOM_FIELD_TYPE_ICONS as FIELD_TYPE_ICONS } from '@/lib/customFieldPresentation';
 
 interface Props {
   projectId: string;
@@ -324,7 +307,7 @@ const FieldForm = ({
     {/* Type */}
     <div>
       <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{t('customField.manager.fieldTypeLabel')}</label>
-      <select
+      <SearchableSelect
         value={formType}
         onChange={e => setFormType(e.target.value as CustomFieldType)}
         className="w-full mt-1 text-sm rounded px-2.5 py-1.5 border border-border bg-background text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -332,7 +315,7 @@ const FieldForm = ({
         {(Object.keys(FIELD_TYPE_KEYS) as CustomFieldType[]).map(ft => (
           <option key={ft} value={ft}>{FIELD_TYPE_ICONS[ft]} {t(FIELD_TYPE_KEYS[ft])}</option>
         ))}
-      </select>
+      </SearchableSelect>
     </div>
 
     {/* Options (only for select) */}

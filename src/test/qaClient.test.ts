@@ -14,6 +14,31 @@ const context = (): QaContext => ({ actor: { id: 'admin', role: 'admin' }, works
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'public-test-key'); mocks.session.mockResolvedValue({ data: { session: { access_token: 'test-token' } } }); mocks.signedUpload.mockResolvedValue({ error: null }); mocks.createClient.mockReturnValue({ storage: { from: () => ({ uploadToSignedUrl: mocks.signedUpload }) } }); });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe('QA client capability and isolated demo', () => {
+  it('keeps demo QA schema workspace-scoped and applies live capability and required-field rules',async()=>{
+    const ctx=context();ctx.actor={id:'admin',role:'member',qaAdmin:true};
+    const client=createQaClient({enabled:()=>true,context:()=>ctx,mock:true});
+    const configuration={version:1 as const,fields:[{id:'reason',fieldName:'Reason',fieldType:'text' as const,isEnabled:true,isRequired:true,sortOrder:0}]};
+    expect(await client.getFieldConfiguration()).toEqual({version:1,fields:[]});
+    await client.saveFieldConfiguration(configuration);
+    expect(await client.getFieldConfiguration()).toEqual(configuration);
+    expect(await createQaClient({enabled:()=>true,context,mock:true}).getFieldConfiguration()).toEqual({version:1,fields:[]});
+    await expect(client.create(input)).rejects.toMatchObject({code:'qa_custom_field_required'});
+    const issue=await client.create({...input,customFields:{reason:'Repro'}});
+    expect(issue.customFields).toEqual({reason:'Repro'});
+    ctx.actor.qaAdmin=false;
+    await expect(client.saveFieldConfiguration(configuration)).rejects.toMatchObject({code:'qa_forbidden'});
+  });
+  it('keeps demo manual-state audit and command replay aligned with the server contract', async () => {
+    const ctx = context(), client = createQaClient({ enabled: () => true, context: () => ctx, mock: true });
+    const issue = await client.create(input), command = { type: 'set_state' as const, state: 'failed' as const };
+    const first = await client.command(issue, command, 'manual-state-command');
+    expect(await client.command(issue, command, 'manual-state-command')).toEqual(first);
+    const detail = await client.get(issue.id);
+    expect(detail.issue).toMatchObject({ state: 'failed', runs: [], targets: [], fixCycle: 0 });
+    const events = detail.events.filter(event => event.type === 'set_state');
+    expect(events).toHaveLength(1);
+    expect(JSON.parse(events[0].detail)).toMatchObject({ mode: 'manual', from: 'new', to: 'failed' });
+  });
   it('loads version suggestions through the QA endpoint with project and abort signal', async () => {
     const fetchMock = vi.fn(async () => Response.json(['build-a'])); vi.stubGlobal('fetch', fetchMock);
     const client = createQaClient({ enabled: () => true, context }), controller = new AbortController();

@@ -1,12 +1,23 @@
 // Dependency-injected so the same probes can run against disposable SQLite.
 // Call only after the tenancy migration has completed successfully.
 export async function applyPostTenantSchemaUpgrades({ queryRows, applyFile, log = () => {} }) {
-  const tables = await queryRows("SELECT name,sql FROM sqlite_master WHERE type='table' AND name IN ('tasks','task_deployments','qa_issues')");
+  const tables = await queryRows("SELECT name,sql FROM sqlite_master WHERE type='table' AND name IN ('tasks','task_deployments','qa_issues','members')");
   const table = name => tables.find(row => row.name === name)?.sql;
   if (!table('tasks')) return [];
   const taskColumns = await queryRows('PRAGMA table_info(tasks)');
   if (!taskColumns.some(column => column.name === 'workspace_id')) throw new Error('Schema upgrades require completed tenancy');
   const applied = [];
+  if (table('members')) {
+    const columns = await queryRows('PRAGMA table_info(members)');
+    if (!columns.some(column => column.name === 'workspace_id')) throw new Error('Member capability upgrade requires completed tenancy');
+    if (!columns.some(column => column.name === 'is_qa_admin')) {
+      await applyFile('qa-admin-capability.sql');
+      const updated = await queryRows('PRAGMA table_info(members)');
+      if (!updated.some(column => column.name === 'is_qa_admin')) throw new Error('QA capability schema upgrade did not complete');
+      applied.push('qa-admin-capability.sql');
+      log('[qa-admin-capability] scoped flag added; existing roles and dependent rows preserved.');
+    }
+  }
   if (table('task_deployments') && /\bCHECK\s*\(\s*environment\s+IN\b/i.test(table('task_deployments'))) {
     const columns = await queryRows('PRAGMA table_info(task_deployments)');
     const expected = ['workspace_id', 'id', 'task_id', 'environment', 'status', 'deploy_date'].sort();

@@ -32,6 +32,7 @@ export function isValidMemberColor(v: unknown): boolean {
 export type MembersUpdateDecision = 'allow' | 'own-row' | 'deny' | 'invalid';
 
 export function decideMembersUpdate(rank: number, patch: Record<string, unknown>): MembersUpdateDecision {
+  if (patch.is_qa_admin !== undefined && typeof patch.is_qa_admin !== 'boolean') return 'invalid';
   if (patch.job_title !== undefined && (typeof patch.job_title !== 'string' || patch.job_title.length > 200)) return 'invalid';
   if (rank >= 2) return 'allow'; // super_admin
   const cols = Object.keys(patch).filter((k) => patch[k] !== undefined);

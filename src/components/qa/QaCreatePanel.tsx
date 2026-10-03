@@ -8,10 +8,10 @@ import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import QaReportForm from './QaReportForm';
 import QaDraftAttachments, { uploadQaDraftFiles, useQaDraftFiles } from './QaDraftAttachments';
 
-export default function QaCreatePanel({ client, projects, productLines, projectId, issueId, commandId, onCreated, onCancel, onBusyChange }: {
+export default function QaCreatePanel({ client, projects, productLines, projectId, issueId, commandId, onCreated, onCancel, onBusyChange, fixedFooter = false }: {
   client: QaClient; projects: Project[]; productLines: ProductLine[]; projectId?: string;
   issueId: string; commandId: string; onCreated: (id: string) => void; onCancel: () => void;
-  onBusyChange?: (busy: boolean) => void;
+  onBusyChange?: (busy: boolean) => void; fixedFooter?: boolean;
 }) {
   const { t } = useTranslation(), draft = useQaDraftFiles();
   const [busy, setBusy] = useState(false), [createdId, setCreatedId] = useState<string | null>(null);
@@ -57,10 +57,10 @@ export default function QaCreatePanel({ client, projects, productLines, projectI
       if (active.current) { setBusy(false); callbacks.current.onBusyChange?.(false); }
     }
   };
-  return <div className="min-w-0 space-y-4">
+  return <div className={fixedFooter ? 'flex h-full min-h-0 min-w-0 flex-col gap-4' : 'min-w-0 space-y-4'}>
     {createdId && <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" /><p>{t('qa.createdAttachmentsPending')}</p></div>}
     {failed && <div role="alert" className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{t(createdId ? 'qa.attachmentRetryHint' : locked ? 'qa.createRetryHint' : 'qa.failed')}</p>{errorCode && <p className="break-all font-mono text-xs">{t('qa.errorCode', { code: errorCode })}</p>}</div>}
-    <QaReportForm client={client} projects={projects} productLines={productLines} projectId={projectId} busy={busy} readOnly={locked}
+    <QaReportForm client={client} projects={projects} productLines={productLines} projectId={projectId} busy={busy} readOnly={locked} fixedFooter={fixedFooter}
       submitLabel={t(createdId ? 'qa.retryUpload' : locked ? 'qa.retryCreate' : 'qa.createBug')}
       cancelLabel={createdId ? t('qa.openWithoutPendingFiles') : undefined} cancelDisabled={locked && !createdId}
       onSubmit={input => void submit(input)} onCancel={() => { if (running.current) return; if (created.current) finish(created.current); else if (!frozen.current) onCancel(); }}>

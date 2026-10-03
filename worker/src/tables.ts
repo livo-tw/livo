@@ -85,7 +85,7 @@ export const TABLES: TableRegistry = {
   members: {
     pk: 'id',
     clientAccess: 'full',
-    boolCols: ['is_active'],
+    boolCols: ['is_active', 'is_qa_admin'],
     // update is governed by the members SPECIAL rule in db.ts (runs before
     // the generic rules, columns in memberProfile.ts): super_admin
     // unrestricted; admin limited to {theme, auth_id, sort_order}; member

@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Palette, Bell, FileText, Globe, Info, KeyRound, Mail, UserCircle } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useTranslation } from 'react-i18next';
@@ -55,7 +56,7 @@ const MySettingsView = () => {
           </div>
           <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-5">
             <p className="text-sm text-muted-foreground mb-4">{t('settings.languageDesc')}</p>
-            <select
+            <SearchableSelect
               value={i18n.language}
               onChange={(e) => i18n.changeLanguage(e.target.value)}
               className="w-full max-w-xs rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
@@ -63,7 +64,7 @@ const MySettingsView = () => {
               <option value="zh-TW">{t('settings.langZhTW')}</option>
               <option value="zh-CN">{t('settings.langZhCN')}</option>
               <option value="en">{t('settings.langEn')}</option>
-            </select>
+            </SearchableSelect>
           </div>
         </section>
 

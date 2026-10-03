@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -130,7 +131,7 @@ export default function ApprovalRuleDialog({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">{t('approval.ruleConfig.fromStatus')}</label>
-            <select
+            <SearchableSelect
               value={fromStatus}
               onChange={e => setFromStatus(e.target.value)}
               aria-label={t('approval.ruleConfig.fromStatus')}
@@ -140,11 +141,11 @@ export default function ApprovalRuleDialog({
               {statuses.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">{t('approval.ruleConfig.toStatus')}</label>
-            <select
+            <SearchableSelect
               value={toStatus}
               onChange={e => setToStatus(e.target.value)}
               aria-label={t('approval.ruleConfig.toStatus')}
@@ -154,7 +155,7 @@ export default function ApprovalRuleDialog({
               {statuses.filter(s => s.id !== fromStatus).map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         </div>
 
@@ -172,7 +173,7 @@ export default function ApprovalRuleDialog({
                 <span className="text-xs text-muted-foreground font-medium mt-1.5 flex-shrink-0 w-4">{idx + 1}.</span>
                 <div className="flex-1 space-y-1.5">
                   <div className="flex gap-2">
-                    <select
+                    <SearchableSelect
                       value={step.approver_type}
                       onChange={e => updateStep(setSteps, idx, { approver_type: e.target.value as 'role' | 'user', approver_role: 'admin', approver_user_id: null })}
                       aria-label={t('approval.ruleConfig.approverType')}
@@ -180,9 +181,9 @@ export default function ApprovalRuleDialog({
                     >
                       <option value="role">{t('approval.ruleConfig.byRole')}</option>
                       <option value="user">{t('approval.ruleConfig.byUser')}</option>
-                    </select>
+                    </SearchableSelect>
                     {step.approver_type === 'role' ? (
-                      <select
+                      <SearchableSelect
                         value={step.approver_role ?? ''}
                         onChange={e => updateStep(setSteps, idx, { approver_role: e.target.value })}
                         aria-label={t('approval.ruleConfig.approverRole')}
@@ -191,9 +192,9 @@ export default function ApprovalRuleDialog({
                         {ROLE_OPTIONS.map(r => (
                           <option key={r.value} value={r.value}>{r.label}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     ) : (
-                      <select
+                      <SearchableSelect
                         value={step.approver_user_id ?? ''}
                         onChange={e => updateStep(setSteps, idx, { approver_user_id: e.target.value })}
                         aria-label={t('approval.ruleConfig.assignApprover')}
@@ -203,7 +204,7 @@ export default function ApprovalRuleDialog({
                         {users.filter(u => u.isActive).map(u => (
                           <option key={u.id} value={u.id}>{u.name}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     )}
                   </div>
                   {/* Row 2: allow delegate */}
@@ -230,7 +231,7 @@ export default function ApprovalRuleDialog({
                       className="w-16 text-[10px] bg-card border border-border rounded px-1.5 py-0.5 text-foreground"
                     />
                     <span className="text-[10px] text-muted-foreground">{t('approval.ruleConfig.hoursAfter')}</span>
-                    <select
+                    <SearchableSelect
                       value={step.timeout_action ?? ''}
                       onChange={e => updateStep(setSteps, idx, { timeout_action: (e.target.value as 'remind' | 'auto_approve' | 'escalate') || null })}
                       aria-label={t('approval.ruleConfig.timeoutAction')}
@@ -240,7 +241,7 @@ export default function ApprovalRuleDialog({
                       <option value="remind">{t('approval.ruleConfig.actionRemind')}</option>
                       <option value="auto_approve">{t('approval.ruleConfig.actionAutoApprove')}</option>
                       <option value="escalate">{t('approval.ruleConfig.actionEscalate')}</option>
-                    </select>
+                    </SearchableSelect>
                   </div>
                 </div>
                 {steps.length > 1 && (

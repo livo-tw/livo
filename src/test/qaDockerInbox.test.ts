@@ -89,6 +89,8 @@ describe('Docker QA inbox/release persistence contract', () => {
     expect(release).toContain("path.join(APP_ROOT, 'QA-WORKFLOW.md')");
     expect(release).toContain('`volumes/functions/qa/${file}`');
     expect(release).toContain("'restore.ts', 'slack.ts', 'slackAdapter.ts', 'slackSync.ts'");
-    expect(release).toContain("'domain.ts', 'workflow.ts', 'service.ts'");
+    for (const file of ['domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts']) {
+      expect(release).toContain(`'${file}'`);
+    }
   });
 });

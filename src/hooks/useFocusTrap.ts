@@ -21,19 +21,25 @@ export function useFocusTrap(isActive: boolean) {
     if (!isActive || !containerRef.current) return;
 
     const container = containerRef.current;
-    const focusable = Array.from(
+    const getFocusable = () => Array.from(
       container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS),
-    );
+    ).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && !element.closest('[hidden], [aria-hidden="true"]'));
+    const focusable = getFocusable();
 
     if (focusable.length === 0) return;
 
     // Move focus into the modal on open
-    focusable[0].focus();
+    const previous = document.activeElement as HTMLElement | null;
+    if (!container.contains(previous)) focusable[0].focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
+      // A portaled picker or nested dialog manages its own keyboard focus.
+      if (!container.contains(document.activeElement)) return;
+      const current = getFocusable();
+      if (!current.length) return;
+      const first = current[0];
+      const last = current[current.length - 1];
       if (e.shiftKey) {
         if (document.activeElement === first) {
           e.preventDefault();
@@ -48,7 +54,7 @@ export function useFocusTrap(isActive: boolean) {
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('keydown', handleKeyDown); if (!container.isConnected && previous?.isConnected) previous.focus(); };
   }, [isActive]);
 
   return containerRef;

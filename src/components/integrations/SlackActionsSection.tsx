@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUIContext } from '@/context/UIContext';
@@ -103,16 +104,16 @@ export default function SlackActionsSection() {
       {slackUsers === null
         ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void loadSlackUsers()}>{t('slackActions.manual.load')}</Button>
         : <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <select aria-label={t('slackActions.manual.member')} value={memberId} onChange={e => setMemberId(e.target.value)}
+          <SearchableSelect aria-label={t('slackActions.manual.member')} value={memberId} onChange={e => setMemberId(e.target.value)}
             className="rounded border border-border bg-background px-2 py-1.5 text-sm">
             <option value="">{t('slackActions.manual.member')}</option>
             {assignable.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` · ${u.email}` : ''}</option>)}
-          </select>
-          <select aria-label={t('slackActions.manual.slackUser')} value={slackUserId} onChange={e => setSlackUserId(e.target.value)}
+          </SearchableSelect>
+          <SearchableSelect aria-label={t('slackActions.manual.slackUser')} value={slackUserId} onChange={e => setSlackUserId(e.target.value)}
             className="rounded border border-border bg-background px-2 py-1.5 text-sm">
             <option value="">{t('slackActions.manual.slackUser')}</option>
             {slackUsers.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` · ${u.email}` : ''}</option>)}
-          </select>
+          </SearchableSelect>
           <Button size="sm" disabled={busy || !memberId || !slackUserId} onClick={() => void bind()}>{t('slackActions.manual.bind')}</Button>
         </div>}
       {bindError && <p role="alert" className="text-sm text-destructive">{bindError}</p>}

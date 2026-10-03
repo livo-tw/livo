@@ -1,20 +1,23 @@
 import type { ReactNode } from 'react';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createQaIssue, type QaActor, type QaIssue, type QaState } from '@/lib/qa/domain';
+import { createQaIssue, QA_STATES, type QaActor, type QaIssue, type QaState } from '@/lib/qa/domain';
 import { getQaDropIntent } from '@/lib/qa/boardInteraction';
+import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { QaClient } from '@/lib/qa/client';
 
-const dnd = vi.hoisted(() => ({ end: undefined as ((event: DragEndEvent) => void) | undefined }));
+const dnd = vi.hoisted(() => ({ end: undefined as ((event: DragEndEvent) => void) | undefined, draggable: vi.fn() }));
+const notices = vi.hoisted(() => ({ loading: vi.fn(), success: vi.fn(), error: vi.fn(), info: vi.fn(), dismiss: vi.fn() }));
+vi.mock('sonner', () => ({ toast: notices }));
 vi.mock('@dnd-kit/core', () => ({
   DndContext: ({ onDragEnd, children }: { onDragEnd: (event: DragEndEvent) => void; children: ReactNode }) => { dnd.end = onDragEnd; return <>{children}</>; },
   DragOverlay: ({ children }: { children: ReactNode }) => <>{children}</>,
   useSensor: vi.fn(), useSensors: vi.fn(), PointerSensor: {}, TouchSensor: {}, KeyboardSensor: {},
   KeyboardCode: { Space: 'Space', Esc: 'Escape' }, closestCenter: vi.fn(), pointerWithin: vi.fn(),
   useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
-  useDraggable: () => ({ attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }),
+  useDraggable: (options: unknown) => { dnd.draggable(options); return { attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }; },
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/qa/QaIssueCard', () => ({ default: ({ issue, onOpen }: { issue: QaIssue; onOpen: (id: string) => void }) => <button onClick={() => onOpen(issue.id)}>{issue.title}</button> }));
@@ -23,105 +26,130 @@ import QaKanban from '@/components/qa/QaKanban';
 
 const admin: QaActor = { id: 'example-admin', role: 'admin' };
 const developer: QaActor = { id: 'example-developer', role: 'member' };
+const tester: QaActor = { id: 'example-tester', role: 'member' };
 function issue(state: QaState = 'triaged'): QaIssue {
   return { ...createQaIssue({ projectId: 'example-project', title: 'The demo button stops responding', actual: 'Nothing happens', observedEnvironment: 'Stage' }, 'example-bug',
     { actor: admin, workspaceId: 'example-workspace', now: '2026-10-03T00:00:00Z', newId: () => 'example-event', memberIds: new Set([admin.id]), projectIds: new Set(['example-project']), taskIds: new Set() }),
-    state, assigneeId: developer.id, qaOwnerId: 'example-tester',
-    targets: state === 'verification' ? [{ id: 'example-target', environment: 'Stage', component: '', build: 'example-build', required: true, deployedAt: '2026-10-03T00:00:00Z', deployedBy: developer.id, deploymentEvidence: 'Example deployment' }] : [] };
+    state, assigneeId: developer.id, qaOwnerId: tester.id };
 }
-const tester: QaActor = { id: 'example-tester', role: 'member' };
 afterEach(cleanup);
 
-describe('QA drops use guarded workflow commands', () => {
+describe('QA drops directly change labels without creating verification evidence', () => {
   it('does not move within a grouped display column', () => {
-    expect(getQaDropIntent(issue('new'), admin, ['new', 'triaged'])).toEqual({ kind: 'none' });
+    expect(getQaDropIntent(issue('new'), admin, ['new', 'triaged'], 'triaged')).toEqual({ kind: 'none' });
     expect(getQaDropIntent(issue('verification'), admin, ['in_progress', 'verification'])).toEqual({ kind: 'none' });
   });
-  it('starts repair directly, but requests required data for assignment and fix submission', () => {
-    expect(getQaDropIntent(issue(), developer, ['in_progress'])).toEqual({ kind: 'command', command: { type: 'start_fix' } });
-    expect(getQaDropIntent(issue('new'), admin, ['triaged'])).toEqual({ kind: 'form', action: 'triage' });
-    expect(getQaDropIntent(issue('in_progress'), developer, ['verification'])).toEqual({ kind: 'form', action: 'submit_fix' });
+  it('lets participants move forwards and backwards across all canonical states', () => {
+    for (const actor of [admin, developer, tester]) for (const from of QA_STATES) for (const to of QA_STATES) {
+      expect(getQaDropIntent(issue(from), actor, [to])).toEqual(from === to ? { kind: 'none' } : { kind: 'command', command: { type: 'set_state', state: to } });
+    }
   });
-  it('preserves the chosen verification result and does not manufacture PASS or FAIL evidence', () => {
-    expect(getQaDropIntent(issue('verification'), tester, ['verified'])).toEqual({ kind: 'form', action: 'record_verification', result: 'pass' });
-    expect(getQaDropIntent(issue('verification'), tester, ['failed'])).toEqual({ kind: 'form', action: 'record_verification', result: 'fail' });
-    expect(getQaDropIntent(issue('in_progress'), tester, ['verified'])).toEqual({ kind: 'blocked' });
+  it('allows historical PASS to FAIL, and moving unassigned bugs without mandatory forms', () => {
+    expect(getQaDropIntent(issue('verified'), tester, ['failed'])).toEqual({ kind: 'command', command: { type: 'set_state', state: 'failed' } });
+    expect(getQaDropIntent({ ...issue('new'), assigneeId: null, qaOwnerId: null }, admin, ['verification'])).toEqual({ kind: 'command', command: { type: 'set_state', state: 'verification' } });
+    expect(issue('verified').targets).toEqual([]); expect(issue('verified').runs).toEqual([]);
   });
-  it('cannot close a Bug without real passing evidence, even for an administrator', () => {
-    expect(getQaDropIntent(issue('in_progress'), admin, ['closed'])).toEqual({ kind: 'blocked' });
-    expect(getQaDropIntent(issue('verified'), admin, ['closed'])).toEqual({ kind: 'blocked' });
-    const verified = issue('verified');
-    verified.targets = [{ id: 'example-target', environment: 'Stage', component: '', build: 'example-build', required: true, deployedAt: verified.updatedAt, deployedBy: developer.id, deploymentEvidence: 'Example deployment record' }];
-    verified.runs = [{ id: 'example-run', sequence: 1, fixCycle: 0, targetId: 'example-target', environment: 'Stage', component: '', build: 'example-build', result: 'pass', note: '', testerId: tester.id, createdAt: verified.updatedAt }];
-    expect(getQaDropIntent(verified, tester, ['closed'])).toEqual({ kind: 'form', action: 'close', resolution: 'fixed' });
+  it('uses the canonical column ID for custom groups rather than its first state', () => {
+    expect(getQaDropIntent(issue('failed'), admin, ['new', 'triaged'], 'triaged')).toEqual({ kind: 'command', command: { type: 'set_state', state: 'triaged' } });
   });
-  it('keeps reopen reasons and non-Bug resolution explicit', () => {
-    expect(getQaDropIntent(issue('closed'), developer, ['in_progress'])).toEqual({ kind: 'form', action: 'reopen' });
-    expect(getQaDropIntent({ ...issue('closed'), assigneeId: null }, tester, ['new', 'triaged'])).toEqual({ kind: 'form', action: 'reopen' });
-    expect(getQaDropIntent(issue(), tester, ['dismissed'])).toEqual({ kind: 'form', action: 'close', resolution: 'wont_fix' });
-  });
-  it('enforces actors and refuses arbitrary backwards jumps', () => {
-    expect(getQaDropIntent(issue(), { id: 'example-observer', role: 'member' }, ['in_progress'])).toEqual({ kind: 'blocked' });
-    expect(getQaDropIntent(issue('in_progress'), admin, ['new'])).toEqual({ kind: 'blocked' });
-  });
-  it('does not open an empty verification form for historical PASS or an undeployed candidate', () => {
-    expect(getQaDropIntent(issue('verified'), tester, ['failed'])).toEqual({ kind: 'blocked' });
-    const candidate = issue('verification'); candidate.targets[0].deployedAt = null;
-    expect(getQaDropIntent(candidate, tester, ['verified'])).toEqual({ kind: 'blocked' });
-    expect(getQaDropIntent({ ...issue(), qaOwnerId: null }, admin, ['in_progress'])).toEqual({ kind: 'form', action: 'triage' });
+  it('blocks observers and invalid destinations without using an arbitrary command', () => {
+    expect(getQaDropIntent(issue(), { id: 'example-observer', role: 'member' }, ['in_progress'])).toEqual({ kind: 'blocked', reason: 'permission' });
+    expect(getQaDropIntent(issue(), admin, [])).toEqual({ kind: 'blocked', reason: 'invalid' });
+    expect(getQaDropIntent(issue(), admin, ['new'], 'failed')).toEqual({ kind: 'blocked', reason: 'invalid' });
   });
 });
 
-describe('QA board commands and form navigation', () => {
+describe('QA board state updates provide visible feedback and recover safely', () => {
   const command = vi.fn(), list = vi.fn(), open = vi.fn();
   let current: QaIssue;
   const client = { command, list } as unknown as QaClient;
   const drop = (target: QaState) => act(() => dnd.end!({ active: { id: current.id, data: { current: { issue: current } } }, over: { id: `qa-column-${target}` } } as unknown as DragEndEvent));
-  const mount = (workflow: QaWorkflow = DEFAULT_QA_WORKFLOW) => render(<QaKanban client={client} actor={admin} workflow={workflow} filters={{}} onOpen={open} />);
+  const mount = (workflow: QaWorkflow = DEFAULT_QA_WORKFLOW, actor = admin) => render(<QaKanban client={client} actor={actor} workflow={workflow} filters={{}} onOpen={open} />);
+  const column = (state: QaState) => within(screen.getByRole('region', { name: `qa.state.${state}` }));
   beforeEach(() => {
     vi.clearAllMocks(); current = issue();
+    command.mockImplementation(async (old: QaIssue, change: { state: QaState }) => { current = { ...old, state: change.state, version: old.version + 1 }; return current; });
     list.mockImplementation(async ({ states }: { states: QaState[] }) => ({ issues: states.includes(current.state) ? [current] : [], total: states.includes(current.state) ? 1 : 0, hasMore: false }));
   });
-  it('waits for server acknowledgement before refetching column counts', async () => {
+  it('moves optimistically, announces progress and refetches only after acknowledgement', async () => {
     let acknowledge!: (value: QaIssue) => void;
     command.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
     mount(); await screen.findByText(current.title);
     const originalLoads = list.mock.calls.length;
     drop('in_progress');
-    expect(command).toHaveBeenCalledWith(current, { type: 'start_fix' }, expect.any(String));
+    expect(command).toHaveBeenCalledWith(current, { type: 'set_state', state: 'in_progress' }, expect.any(String));
+    expect(column('in_progress').getByText(current.title)).toBeTruthy(); expect(column('triaged').queryByText(current.title)).toBeNull();
+    expect(column('in_progress').getByText('1')).toBeTruthy(); expect(column('triaged').getByText('0')).toBeTruthy();
+    expect(notices.loading).toHaveBeenCalledWith('qa.dropSaving', expect.objectContaining({ position: 'top-center' }));
     expect(list).toHaveBeenCalledTimes(originalLoads);
     current = { ...current, state: 'in_progress', version: 2 };
     await act(async () => acknowledge(current));
     await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(originalLoads));
+    expect(column('in_progress').getByText('1')).toBeTruthy(); expect(notices.success).toHaveBeenCalledWith('qa.dropSaved', expect.objectContaining({ position: 'top-center' }));
     expect(open).not.toHaveBeenCalled();
   });
-  it('retains the idempotency key on an uncertain response and prevents other drops until resolved', async () => {
-    command.mockRejectedValueOnce({ status: 503, code: 'qa_unavailable' }).mockImplementationOnce(async () => { current = { ...current, state: 'in_progress' }; return current; });
+  it('retains the command ID after an uncertain response, rolls back, and retries once', async () => {
+    command.mockRejectedValueOnce({ status: 503, code: 'qa_unavailable' }).mockImplementationOnce(async (old: QaIssue, change: { state: QaState }) => { current = { ...old, state: change.state }; return current; });
     mount(); await screen.findByText(current.title); drop('in_progress');
     await screen.findByRole('alert');
+    expect(column('triaged').getByText(current.title)).toBeTruthy(); expect(column('in_progress').queryByText(current.title)).toBeNull();
+    expect(notices.error).toHaveBeenCalledWith('qa.dropFailed', expect.objectContaining({ description: 'qa.dropUncertain', duration: Infinity, position: 'top-center' }));
     const first = command.mock.calls[0];
-    drop('dismissed'); expect(open).not.toHaveBeenCalled();
+    drop('dismissed'); expect(command).toHaveBeenCalledTimes(1); expect(notices.info).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'qa.retry' }));
     await waitFor(() => expect(command).toHaveBeenCalledTimes(2));
     expect(command.mock.calls[1]).toEqual(first);
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
-  it('opens a focused form for required data and leaves cancelled submissions unchanged', async () => {
-    current = issue('verification'); mount(); await screen.findByText(current.title); drop('failed');
-    expect(open).toHaveBeenCalledWith(current.id, 'record_verification', { result: 'fail', resolution: undefined });
-    expect(command).not.toHaveBeenCalled(); expect(current.state).toBe('verification');
+  it('changes historical PASS to FAIL directly without an extra form', async () => {
+    current = issue('verified'); mount(); await screen.findByText(current.title); drop('failed');
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ state: 'verified' }), { type: 'set_state', state: 'failed' }, expect.any(String)));
+    expect(open).not.toHaveBeenCalled(); expect(current.runs).toEqual([]); expect(current.targets).toEqual([]);
   });
-  it('shows an explanation instead of silently moving to an unavailable state', async () => {
-    mount(); await screen.findByText(current.title); drop('closed');
-    expect(screen.getByText('qa.dropUnavailable')).toBeTruthy();
-    expect(command).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
+  it('explains permission refusals in an immediate toast with an Open Bug action', async () => {
+    mount(DEFAULT_QA_WORKFLOW, { id: 'example-observer', role: 'member' }); await screen.findByText(current.title); drop('closed');
+    expect(command).not.toHaveBeenCalled();
+    expect(dnd.draggable).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
+    const options = notices.error.mock.calls[0][1]; expect(options.description).toBe('qa.dropPermission'); expect(options.position).toBe('top-center');
+    options.action.onClick(); expect(open).toHaveBeenCalledWith(current.id, undefined, undefined);
+  });
+  it('rolls back server permission errors and offers opening the bug instead of retrying forbidden actions', async () => {
+    command.mockRejectedValueOnce({ status: 403, code: 'qa_forbidden' }); mount(); await screen.findByText(current.title); drop('failed');
+    await screen.findByRole('alert'); expect(column('triaged').getByText(current.title)).toBeTruthy(); expect(screen.queryByRole('button', { name: 'qa.retry' })).toBeNull();
+    notices.error.mock.calls[0][1].action.onClick(); expect(open).toHaveBeenCalledWith(current.id, undefined, undefined);
+  });
+  it('protects uncertain commands from navigation and confirms a lost acknowledgement by refreshing', async () => {
+    command.mockImplementationOnce(async (old: QaIssue, change: { state: QaState }) => {
+      current = { ...old, state: change.state, version: old.version + 1 };
+      throw { status: 503, code: 'qa_unavailable' };
+    });
+    const pending = vi.fn(); render(<QaKanban client={client} actor={admin} workflow={DEFAULT_QA_WORKFLOW} filters={{}} onOpen={open} onPendingChange={pending} />);
+    await screen.findByText(current.title); drop('failed'); await screen.findByRole('alert');
+    expect(hasQaNavigationGuard()).toBe(true); expect(pending).toHaveBeenLastCalledWith(true);
+    fireEvent.click(column('triaged').getByRole('button', { name: current.title })); expect(open).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' }));
+    await waitFor(() => expect(column('failed').getByText(current.title)).toBeTruthy());
+    await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    expect(hasQaNavigationGuard()).toBe(false); expect(notices.dismiss).toHaveBeenCalled(); expect(command).toHaveBeenCalledTimes(1);
+  });
+  it('keeps acknowledged status while a refreshed column fails and recovers without double-counting', async () => {
+    let fail = false;
+    list.mockImplementation(async ({ states }: { states: QaState[] }) => {
+      if (fail && states.includes('failed')) throw { status: 503 };
+      return { issues: states.includes(current.state) ? [current] : [], total: states.includes(current.state) ? 1 : 0, hasMore: false };
+    });
+    mount(); await screen.findByText(current.title); fail = true; drop('failed');
+    await screen.findByRole('alert'); expect(column('failed').getByText(current.title)).toBeTruthy(); expect(column('failed').getByText('1')).toBeTruthy();
+    fail = false; fireEvent.click(column('failed').getByRole('button', { name: 'qa.refresh' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); expect(column('failed').getByText('1')).toBeTruthy();
+    await waitFor(() => expect(dnd.draggable).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false })));
   });
   it('ignores a cancelled drop outside all columns', async () => {
     mount(); await screen.findByText(current.title);
     act(() => dnd.end!({ active: { id: current.id, data: { current: { issue: current } } }, over: null } as unknown as DragEndEvent));
-    expect(command).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(notices.loading).not.toHaveBeenCalled();
   });
-  it('retries the failed first page after a project change without mixing the previous project', async () => {
+  it('retries page zero after a project change without showing the previous project', async () => {
     const old = { ...current, title: 'Old project Bug', projectId: 'example-project-a' };
     const next = { ...current, id: 'example-next-bug', title: 'Next project Bug', projectId: 'example-project-b' };
     let failed = false;

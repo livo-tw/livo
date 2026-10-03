@@ -5,6 +5,7 @@ import { applyQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients,
 import { validateQaBackup } from './restore.ts';
 import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
+import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './fields.ts';
 import { qaVersionSuggestions } from './versions.ts';
 
 export interface QaEnvironment { get(name: string): string | undefined }
@@ -29,6 +30,8 @@ export async function qaPayloadHash(value: unknown): Promise<string> {
 }
 function databaseError(body: Row, status: number): never {
   const message = String(body.message || '');
+  const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
+  if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
   const known = ['qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
     'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict'];
   const code = known.find(code => message.includes(code));
@@ -81,12 +84,12 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const user = await response.json();
     if (typeof user.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(user.id)) fail('qa_unauthorized', 401);
     const [members, settings] = await Promise.all([
-      db.rows('members', { select: 'id,role,auth_id,is_active', auth_id: `eq.${user.id}`, is_active: 'eq.true', limit: 2 }),
+      db.rows('members', { select: 'id,role,auth_id,is_active,is_qa_admin', auth_id: `eq.${user.id}`, is_active: 'eq.true', limit: 2 }),
       db.rows('system_settings', { select: 'value', key: 'eq.feature_toggles', limit: 1 }),
     ]);
     if (members.length !== 1 || members[0].is_active !== true) fail('qa_forbidden', 403);
     if (settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
-    return { ...members[0], authId: user.id };
+    return { ...members[0], qaAdmin: members[0].is_qa_admin === true, authId: user.id };
   }
   async function getIssue(issueId: string): Promise<QaIssue> {
     const row = (await db.qaRows('qa_issues', { select: 'data', id: `eq.${id(issueId)}`, limit: 1 }))[0];
@@ -99,16 +102,17 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const candidates = [...candidateIds].filter(Boolean).map(id);
     const linked = command?.type === 'link_tasks' ? command.taskIds : [];
     if (!Array.isArray(linked) || linked.length > 50) fail('qa_invalid_tasks');
-    const [members, projects, tasks, duplicates, environmentRows] = await Promise.all([
+    const [members, projects, tasks, duplicates, environmentRows, fieldRows] = await Promise.all([
       db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
       db.rows('projects', { select: 'id', id: `eq.${id(projectId)}`, is_archived: 'eq.false', limit: 1 }),
       linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${id(projectId)}` }) : [],
       command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, limit: 1 }) : [],
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
+      !issue || command?.type === 'edit' ? db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }) : [],
     ]);
     const environments = parseDeploymentEnvironments(environmentRows[0]?.value);
     if (!environments) return fail('qa_invalid_environment');
-    return { environmentValues: environments.values, actor: { id: actor.id, role: actor.role }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
+    return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
       memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
@@ -118,12 +122,12 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     if (receipt.actor_id !== actor.id || receipt.issue_id !== request.id || receipt.payload_hash !== hash) fail('qa_command_id_reused', 409);
     return receipt.response;
   }
-  async function commit(actor: Row, request: Row, hash: string, data: unknown, kind: string, type: string, sourceIssue?: QaIssue) {
+  async function commit(actor: Row, request: Row, hash: string, data: unknown, kind: string, type: string, sourceIssue?: QaIssue, before?: QaIssue) {
     const issue = sourceIssue || data as QaIssue;
     const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id);
     const result = await db.rpc('livo_qa_commit', { p_auth_id: actor.authId, p_issue_id: request.id,
       p_command_id: commandId(request.commandId), p_payload_hash: hash, p_expected_version: request.expectedVersion ?? null,
-      p_kind: kind, p_data: data, p_event: { id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type), recipients } });
+      p_kind: kind, p_data: data, p_event: { id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
     const sync = syncQaSlackIssue(env, kind === 'comment' ? issue : result).catch(() => console.error('QA Slack card refresh failed'));
     const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil?: (work: Promise<unknown>) => void } };
     if (runtime.EdgeRuntime?.waitUntil) runtime.EdgeRuntime.waitUntil(sync); else await sync;
@@ -146,9 +150,19 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return parseQaWorkflow(row?.value);
       }
       case 'save_workflow': {
-        if (actor.role !== 'admin' && actor.role !== 'super_admin') fail('qa_forbidden', 403);
+        if (!canManageQaConfiguration({role:actor.role,qaAdmin:actor.qaAdmin})) fail('qa_forbidden', 403);
         validateQaWorkflow(request.workflow);
         return db.rpc('livo_qa_save_workflow', { p_auth_id: actor.authId, p_workflow: parseQaWorkflow(request.workflow) });
+      }
+      case 'get_field_configuration': {
+        const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }))[0];
+        return parseQaFieldConfiguration(row?.value);
+      }
+      case 'save_field_configuration': {
+        if (!canManageQaConfiguration({role:actor.role,qaAdmin:actor.qaAdmin})) fail('qa_forbidden',403);
+        const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }))[0];
+        const configuration = validateQaFieldConfiguration(request.configuration, parseQaFieldConfiguration(row?.value));
+        return db.rpc('livo_qa_save_field_configuration', { p_auth_id: actor.authId, p_configuration: configuration });
       }
       case 'list': {
         const input: QaListInput = request.input == null ? {} : object(request.input);
@@ -197,7 +211,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         if (issue.version !== request.expectedVersion) fail('qa_version_conflict', 409);
         const command = object(request.command) as QaCommand;
         const next = applyQaCommand(issue, command, await context(actor, issue.projectId, issue, command));
-        return commit(actor, request, hash, next, 'command', command.type);
+        return commit(actor, request, hash, next, 'command', command.type, undefined, issue);
       }
       case 'upload_init': {
         const issue = await getIssue(request.id), fileName = text(request.fileName, 255), mimeType = text(request.mimeType, 100).toLowerCase();

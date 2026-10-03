@@ -39,6 +39,11 @@ describe('isolated QA PostgreSQL acceptance runner',()=>{
   });
   it('executes each unmodified migration twice and snapshots data between passes',()=>{
     const plan=buildPlan();
+    expect(plan.summary.migrations.map(({name})=>name)).toEqual([
+      '20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql',
+      '20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261013_qa_manual_state.sql',
+      '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql',
+    ]);
     for(const {name} of plan.summary.migrations) {
       const source=readFileSync(path.join(root,'supabase/migrations',name),'utf8').trimEnd();
       expect(plan.sql.split(source).length-1).toBe(2);
@@ -56,5 +61,14 @@ describe('isolated QA PostgreSQL acceptance runner',()=>{
     expect(cases.labels).toContain('demoted admin cannot save workflow');
     expect(cases.labels).toContain('disabled QA rejects commit');
     expect(cases.labels).toContain('create rejects another workspace');
+    for(const actor of ['member','assignee','qa','admin','super']) {
+      expect(cases.labels).toContain(`${actor} may manually set failed`);
+      expect(cases.labels).toContain(`${actor} may manually set closed`);
+      expect(cases.labels).toContain(`inactive ${actor} cannot manually change state`);
+    }
+    expect(cases.labels).toContain('unrelated active member cannot manually change state');
+    expect(cases.labels).toContain('manual PASS to FAIL replay returns its original response');
+    expect(cases.labels).toContain('manual migration retains submit fix environment guard');
+    expect(cases.labels).toContain('manual states and audit events pass restore validation without fabricated evidence');
   });
 });
