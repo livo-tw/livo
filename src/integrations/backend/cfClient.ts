@@ -938,7 +938,8 @@ const auth = {
    * be replaced (otherwise the next auto-refresh would sign the user out).
    * Error `message` is the backend's zh human message; `code` is the machine
    * code (current_password_required | password_too_short |
-   * invalid_current_password | demo_blocked).
+   * invalid_current_password | demo_blocked | over_request_rate_limit |
+   * auth_unavailable).
    */
   async changePassword(
     currentPassword: string,

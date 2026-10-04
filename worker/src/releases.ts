@@ -1,14 +1,15 @@
 import type { Context } from 'hono';
 import type { AppContext, AuthCtx, Env } from './env';
 import { sha256Hex } from './auth';
+import { liveMemberSql } from './liveMember';
 import { qaReadBody } from './qa';
 import { parseDeploymentEnvironments } from './qa/environments';
 import { applyReleaseCommand, canonicalReleaseJson, parseReleaseRequest, releaseError, ReleaseError, releaseReferenceIds,
   type ReleaseBatch, type ReleaseCommand, type ReleaseContext, type ReleaseEvent, type ReleaseQaSource, type ReleaseResult } from './releases/core';
 type C = Context<AppContext>;
 async function actor(env: Env, auth: AuthCtx, write = false) {
-  const row = await env.DB.prepare(`SELECT m.role FROM members m JOIN auth_users u ON u.id=m.auth_id WHERE m.workspace_id=? AND m.id=? AND m.auth_id=? AND m.is_active=1 AND COALESCE(u.banned,0)=0
-    AND (SELECT count(*) FROM members WHERE workspace_id=m.workspace_id AND auth_id=m.auth_id AND is_active=1)=1`).bind(auth.member.workspaceId, auth.member.id, auth.userId).first<{role:string}>();
+  const live = liveMemberSql(auth, 'm', { strict: true });
+  const row = await env.DB.prepare(`SELECT m.role,m.auth_id FROM members m WHERE ${live.sql}`).bind(...live.params).first<{role:string;auth_id:string|null}>();
   if (!row || (write && !['admin','super_admin'].includes(row.role))) throw new ReleaseError('release_forbidden',403);
   return row;
 }
@@ -37,7 +38,9 @@ async function context(env: Env, auth: AuthCtx, command: ReleaseCommand, before:
     memberIds:new Set(members.results.map(r=>r.id)),projectIds:new Set(projects.results.map(r=>r.id)),taskProjects:new Map(tasks.results.map(r=>[r.id,r.project_id])),environments:environments?.values??[],qaSources};
 }
 export async function executeReleaseCommand(env:Env,auth:AuthCtx,command:ReleaseCommand):Promise<ReleaseResult>{
-  await actor(env,auth,true);const ws=auth.member.workspaceId, canonical=canonicalReleaseJson(command),hash=await sha256Hex(canonical);
+  // The command trigger re-checks the actor's login: a key records its member's login.
+  const authId=(await actor(env,auth,true)).auth_id;if(!authId)throw new ReleaseError('release_forbidden',403);
+  const ws=auth.member.workspaceId, canonical=canonicalReleaseJson(command),hash=await sha256Hex(canonical);
   const receipt=()=>env.DB.prepare('SELECT actor_id,command,request_hash,result_json FROM release_commands WHERE workspace_id=? AND id=?').bind(ws,command.commandId).first<{actor_id:string;command:string;request_hash:string;result_json:string}>();
   const replay=async(prior:NonNullable<Awaited<ReturnType<typeof receipt>>>):Promise<ReleaseResult>=>{
     await actor(env,auth,true);
@@ -49,7 +52,7 @@ export async function executeReleaseCommand(env:Env,auth:AuthCtx,command:Release
   const batch=applyReleaseCommand(before,command,ctx),event:ReleaseEvent={id:ctx.newId(),batchId:batch.id,actorId:ctx.actorId,operation:command.operation,version:batch.version,revision:batch.manifestRevision,createdAt:ctx.now};
   const result:ReleaseResult={commandId:command.commandId,replayed:false,batch,event};
   try {await env.DB.prepare(`INSERT INTO release_commands(workspace_id,id,batch_id,actor_id,auth_id,expected_version,operation,request_hash,command,data,event_id,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(ws,command.commandId,batch.id,ctx.actorId,auth.userId,command.expectedVersion,command.operation,hash,canonical,JSON.stringify(batch),event.id,JSON.stringify(result),ctx.now).run();}
+    .bind(ws,command.commandId,batch.id,ctx.actorId,authId,command.expectedVersion,command.operation,hash,canonical,JSON.stringify(batch),event.id,JSON.stringify(result),ctx.now).run();}
   catch(error){const raced=await receipt();if(raced)return replay(raced);throw releaseError(error);}
   return result;
 }

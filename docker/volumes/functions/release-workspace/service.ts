@@ -55,7 +55,8 @@ export function createReleaseService(env:ReleaseEnvironment,token:string,fetcher
     const [members,projects,tasks,settings,issues]=await Promise.all([
       rows('members',{select:'id',id:`eq.${manifest.ownerId}`,is_active:'eq.true'}),rows('projects',{select:'id',id:`in.(${refs.projectIds.join(',')})`,is_archived:'eq.false'}),
       refs.taskIds.length?rows('tasks',{select:'id,project_id',id:`in.(${refs.taskIds.join(',')})`}):[],rows('system_settings',{select:'value',key:'eq.deployment_environments',limit:1}),
-      command.operation==='link_evidence'&&command.kind==='qa'?rows('qa_issues',{select:'data',id:`eq.${command.issueId}`,limit:1}):[],
+      // QA tables are service-only (20261002_qa_workflow.sql); the actor is already a checked admin.
+      command.operation==='link_evidence'&&command.kind==='qa'?request('/rest/v1/qa_issues',{select:'data',id:`eq.${command.issueId}`,limit:1},undefined,true) as Promise<Row[]>:[],
     ]);
     const environments=parseDeploymentEnvironments(settings[0]?.value);if(!environments&&['create','edit_manifest','link_evidence','start_attempt'].includes(command.operation))throw new ReleaseError('release_invalid_environment');
     const ctx:ReleaseContext={workspaceId:'default',actorId:a.id,role:a.role,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),memberIds:new Set(members.map(r=>r.id)),projectIds:new Set(projects.map(r=>r.id)),taskProjects:new Map(tasks.map(r=>[r.id,r.project_id])),environments:environments?.values??[],qaSources:new Map(issues.map(r=>[r.data.id,r.data as ReleaseQaSource])),...(a.identity?{slackIdentity:a.identity}:{})};

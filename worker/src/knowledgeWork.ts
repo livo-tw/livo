@@ -2,18 +2,23 @@ import type { Context } from 'hono';
 import type { AppContext, AuthCtx, Env } from './env';
 import { qaReadBody } from './qa';
 import { notifyChanges } from './notify';
+import { liveMemberSql } from './liveMember';
 import { KnowledgeWorkError, knowledgeWorkError, parseKnowledgeWorkCommand, parseKnowledgeWorkQuery } from './knowledgeWork/core';
 import { KNOWLEDGE_SNAPSHOT_TABLES, knowledgeDetail, planKnowledgeCommand, queryKnowledgeState, type KnowledgeState, type KnowledgeRow } from './knowledgeWork/engine';
 
 export async function knowledgeSnapshot(env: Env, auth: AuthCtx, commandId: string | null = null): Promise<KnowledgeState> {
-  const ws = auth.member.workspaceId;
-  const queries = [env.DB.prepare(`SELECT m.id FROM members m JOIN auth_users u ON u.id=m.auth_id WHERE m.workspace_id=? AND m.id=? AND m.auth_id=? AND m.is_active=1 AND COALESCE(u.banned,0)=0`).bind(ws, auth.member.id, auth.userId),
+  const ws = auth.member.workspaceId, live = liveMemberSql(auth, 'm', { strict: true });
+  const queries = [env.DB.prepare(`SELECT m.id,m.auth_id FROM members m WHERE ${live.sql}`).bind(...live.params),
     env.DB.prepare('SELECT generation FROM kb_work_clock WHERE workspace_id=?').bind(ws),
     ...KNOWLEDGE_SNAPSHOT_TABLES.map(name => name === 'kb_work_receipts'
       ? env.DB.prepare('SELECT * FROM kb_work_receipts WHERE workspace_id=? AND id=?').bind(ws, commandId)
       : env.DB.prepare(`SELECT * FROM ${name} WHERE workspace_id=?`).bind(ws))];
   const rows = await env.DB.batch<KnowledgeRow>(queries);
   if (rows[0].results.length !== 1 || rows[1].results.length !== 1) throw new KnowledgeWorkError('knowledge_forbidden', 403);
+  // The planner and the context trigger identify the actor by login. A personal
+  // API key acts through its member's linked login, verified live above.
+  const authId = rows[0].results[0].auth_id;
+  if (typeof authId !== 'string' || !authId) throw new KnowledgeWorkError('knowledge_forbidden', 403);
   const tables: KnowledgeState['tables'] = {};
   let total = 0;
   KNOWLEDGE_SNAPSHOT_TABLES.forEach((name, i) => {
@@ -21,7 +26,7 @@ export async function knowledgeSnapshot(env: Env, auth: AuthCtx, commandId: stri
     if (total > 100000 || new TextEncoder().encode(JSON.stringify(values)).byteLength > 25000000) throw new KnowledgeWorkError('knowledge_incomplete_source', 409);
     tables[name] = values;
   });
-  return { generation: Number(rows[1].results[0].generation), workspaceId: ws, authId: auth.userId, tables };
+  return { generation: Number(rows[1].results[0].generation), workspaceId: ws, authId, tables };
 }
 const encoded = (value: unknown) => value !== null && typeof value === 'object' ? JSON.stringify(value) : typeof value === 'boolean' ? Number(value) : value;
 export async function executeKnowledgeWork(env: Env, auth: AuthCtx, input: unknown) {
@@ -29,7 +34,7 @@ export async function executeKnowledgeWork(env: Env, auth: AuthCtx, input: unkno
   const plan = await planKnowledgeCommand(state, command, () => crypto.randomUUID());
   if (plan.result.replayed) return plan.result;
   const ws = state.workspaceId, statements: D1PreparedStatement[] = [env.DB.prepare(`INSERT INTO kb_work_contexts(workspace_id,id,actor_id,auth_id,page_id,operation,expected_generation,lease_pages) VALUES(?,?,?,?,?,?,?,?)`)
-    .bind(ws, command.commandId, plan.actorId, auth.userId, plan.pageId, command.operation, plan.generation, JSON.stringify(plan.leasePageIds))];
+    .bind(ws, command.commandId, plan.actorId, state.authId, plan.pageId, command.operation, plan.generation, JSON.stringify(plan.leasePageIds))];
   for (const id of plan.leasePageIds) statements.push(env.DB.prepare(`INSERT INTO field_locks(workspace_id,lock_key,locked_by,expires_at) VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 seconds'))
     ON CONFLICT(workspace_id,lock_key) DO UPDATE SET locked_by=excluded.locked_by,expires_at=excluded.expires_at`).bind(ws, `kb:${id}`, plan.actorId));
   for (const mutation of plan.mutations) {

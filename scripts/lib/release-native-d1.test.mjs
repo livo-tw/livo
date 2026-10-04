@@ -68,5 +68,21 @@ describe('release actual SQLite transaction boundary',()=>{
   expect(db.prepare('SELECT version FROM release_batches').get().version).toBe(2);expect(db.prepare('SELECT count(*) n FROM release_outbox').get().n).toBe(2);
  });
  it('protects release-linked task history from destructive deletion',async()=>{await executeReleaseCommand(env,auth(),command());expect(()=>db.exec("DELETE FROM tasks WHERE id='task'")).toThrow(/FOREIGN KEY/);expect(db.prepare('SELECT count(*) n FROM release_events').get().n).toBe(1);});
+ it('never lets the requester decide their own release exception, even if the adapter is bypassed',async()=>{
+  db.exec("INSERT INTO auth_users(id,email) VALUES('owner','owner@example.com'); INSERT INTO members(workspace_id,id,name,avatar,email,role,auth_id,is_active) VALUES('a','owner','Owner','','owner@example.com','super_admin','owner',1);");
+  const owner={userId:'owner',email:'owner@example.com',member:{id:'owner',role:'super_admin',workspaceId:'a'}};
+  let {batch}=await executeReleaseCommand(env,auth(),command());
+  ({batch}=await executeReleaseCommand(env,auth(),command('request_exception',{scope:'QA',reason:'Synthetic hotfix'},batch.version)));
+  const exceptionId=batch.exceptions[0].id,decide=(note='Reviewed')=>command('decide_exception',{exceptionId,decision:'approved',note},batch.version);
+  await expect(executeReleaseCommand(env,auth(),decide())).rejects.toThrow('release_self_decision_forbidden');
+  // A forged aggregate that skips the shared rule is refused by SQL before any write.
+  const forged={...batch,version:batch.version+1,exceptions:[{...batch.exceptions[0],decision:'approved',decidedBy:'admin',decidedAt:'2026-10-04T00:00:00.000Z',decisionNote:'Self'}]},c=decide('Self');
+  expect(()=>db.prepare(`INSERT INTO release_commands(workspace_id,id,batch_id,actor_id,auth_id,expected_version,operation,request_hash,command,data,event_id,result_json,created_at)
+   VALUES('a',?,'release','admin','admin',?,'decide_exception',?,?,?,'forged-event','{}','2026-10-04T00:00:00.000Z')`).run(c.commandId,c.expectedVersion,'f'.repeat(64),JSON.stringify(c),JSON.stringify(forged))).toThrow('release_self_decision_forbidden');
+  expect(JSON.parse(db.prepare("SELECT data FROM release_batches WHERE id='release'").get().data).exceptions[0].decision).toBe('pending');
+  expect(db.prepare("SELECT count(*) n FROM release_commands WHERE operation='decide_exception'").get().n).toBe(0);
+  const decided=await executeReleaseCommand(env,owner,decide());
+  expect(decided.batch.exceptions[0]).toMatchObject({requestedBy:'admin',decidedBy:'owner',decision:'approved'});
+ });
  it('applies the migration twice without losing rows',async()=>{await executeReleaseCommand(env,auth(),command());db.exec(fs.readFileSync(new URL('../../worker/migrate/release-workspace.sql',import.meta.url),'utf8'));expect(db.prepare('SELECT version FROM release_batches').get().version).toBe(1);});
 });

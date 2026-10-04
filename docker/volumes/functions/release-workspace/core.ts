@@ -138,6 +138,8 @@ export function applyReleaseCommand(before: ReleaseBatch | null, input: ReleaseC
   else if (command.operation === 'decide_exception') {
     const item = next.exceptions.find(e => e.id === command.exceptionId);
     if (!item || item.revision !== next.manifestRevision || item.decision !== 'pending') fail('release_exception_stale', 409);
+    // Whoever requested the exception never decides it, whatever their role.
+    if (item!.requestedBy === ctx.actorId) fail('release_self_decision_forbidden', 403);
     Object.assign(item!, { decision: command.decision, decidedBy: ctx.actorId, decidedAt: ctx.now, decisionNote: command.note });
   } else if (command.operation === 'start_attempt') {
     if (!ctx.environments.includes(command.environment)) fail('release_invalid_environment');
@@ -168,7 +170,7 @@ export function applyReleaseCommand(before: ReleaseBatch | null, input: ReleaseC
   next.version++; next.updatedAt = ctx.now;
   return next;
 }
-export const RELEASE_ERROR_STATUS: Record<string, number> = { release_invalid_input: 400, release_unauthorized: 401, release_forbidden: 403, release_not_found: 404,
+export const RELEASE_ERROR_STATUS: Record<string, number> = { release_invalid_input: 400, release_unauthorized: 401, release_forbidden: 403, release_not_found: 404, release_self_decision_forbidden: 403,
   release_reference_unavailable: 403, release_conflict: 409, release_command_reused: 409, release_closed: 409, release_invalid_environment: 400,
   release_evidence_stale: 409, release_exception_stale: 409, release_invalid_transition: 409, release_confirmation_required: 409, release_limit_reached: 413,
   release_unavailable: 503, release_transport_error: 503 };

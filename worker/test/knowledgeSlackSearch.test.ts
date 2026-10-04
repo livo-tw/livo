@@ -40,7 +40,7 @@ describe('knowledge Slack live ACL search', () => {
     const f = fixture();
     for (const id of ['reader','owner']) {
       const result = await searchCloudKnowledge(f.env,f.actor(id),{text:'Release',page:0,category:'all'});
-      expect(result.pages.map((p: {id: string}) => p.id)).toEqual(['public']); expect(result.hasMore).toBe(false);
+      expect(result.pages.map(p => String(p.id))).toEqual(['public']); expect(result.hasMore).toBe(false);
       expect(result.pages[0]).not.toHaveProperty('body'); expect(result.pages[0]).not.toHaveProperty('access_policy');
     }
   });

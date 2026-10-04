@@ -8,7 +8,9 @@ import type { Task, Status, StatusLog, User, Project } from '@/types';
 import { randomUUID } from '@/lib/generateId';
 import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/taskPlanning/client';
 import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/client';
+import { subtaskQuickCreateFields, type SubtaskRequiredFields } from '@/lib/taskWork/subtaskDefaults';
 import { mapTask, type TaskRow } from '@/context/mappers';
+import { taskWriteErrorText } from '@/lib/approval/feedback';
 
 interface TaskCRUDDeps {
   allTasks: Task[];
@@ -54,6 +56,15 @@ export function useTaskCRUD({
       await refreshTasks();
       return;
     }
+    // Keys are unique across projects; if another task already holds the generated key
+    // (e.g. one moved here from elsewhere, or a concurrent create), the database stores
+    // the next free number. Show the stored key.
+    const stored = await supabase.from('tasks').select('task_key').eq('id', task.id).maybeSingle();
+    const storedKey = (stored.data as { task_key?: string } | null)?.task_key;
+    if (storedKey && storedKey !== task.taskKey) {
+      task = { ...task, taskKey: storedKey };
+      setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, taskKey: storedKey } : t));
+    }
     // Webhook: task_created (advertised in the integrations UI, but previously
     // never dispatched from anywhere). getWebhookConfig() fallback picks up a
     // config saved in this session (the ref is only hydrated at initial load).
@@ -71,7 +82,7 @@ export function useTaskCRUD({
         },
       }).catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
     }
-  }, [refreshTasks, webhookConfigRef]);
+  }, [refreshTasks, webhookConfigRef, setAllTasks]);
 
   const createUpdateTaskInDb = useCallback(
     (
@@ -79,7 +90,9 @@ export function useTaskCRUD({
       users: User[],
       setSelectedTask: (fn: (prev: Task | null) => Task | null) => void,
     ) =>
-      async (taskId: string, updates: Partial<Task>) => {
+      // Resolves true once the task row (and any deployments) is saved, false when the
+      // save was refused or failed; callers gate notifications on it.
+      async (taskId: string, updates: Partial<Task>): Promise<boolean> => {
         const dbUpdates: Record<string, string | number | boolean | null | undefined> = {};
         // Captured BEFORE the optimistic update / awaits so the webhook
         // dispatch below can't misread the already-updated task state.
@@ -132,7 +145,7 @@ export function useTaskCRUD({
 
         if ('dueDate' in updates || 'dueDateKind' in updates) {
           const before = allTasksRef.current.find(task => task.id === taskId);
-          if (!before) { await refreshTasks(); return; }
+          if (!before) { await refreshTasks(); return false; }
           try {
             const date = 'dueDate' in updates ? updates.dueDate || null : before.dueDate || null;
             const row = await setTaskDeadline(taskId,
@@ -144,7 +157,7 @@ export function useTaskCRUD({
             delete dbUpdates.due_date; delete dbUpdates.started_at;
           } catch (error) {
             toast.error(i18n.t(`taskPlanning.errors.${planningErrorCode(error)}`));
-            await refreshTasks(); return;
+            await refreshTasks(); return false;
           }
         }
 
@@ -157,9 +170,9 @@ export function useTaskCRUD({
         if (Object.keys(dbUpdates).length > 0) {
           const { error } = await supabase.from('tasks').update(dbUpdates).eq('id', taskId);
           if (error) {
-            toast.error(i18n.t('error.updateFailed') + error.message);
+            toast.error(taskWriteErrorText(error.message));
             await refreshTasks();
-            return;
+            return false;
           }
         }
 
@@ -187,7 +200,7 @@ export function useTaskCRUD({
           if (deploymentError) {
             toast.error(i18n.t('error.updateFailed') + deploymentError.message);
             await refreshTasks();
-            return;
+            return false;
           }
         }
 
@@ -241,12 +254,13 @@ export function useTaskCRUD({
               .catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
           }
         }
+        return true;
       },
     [refreshTasks, appendStatusLog, statuses, webhookConfigRef],
   );
 
   const createCreateSubtask = useCallback(
-    (allProjects: Project[], currentMemberId: string) => {
+    (allProjects: Project[], currentMemberId: string, requiredFields?: SubtaskRequiredFields) => {
       subtaskActor.current = currentMemberId;
       let run = subtaskRunners.current.get(currentMemberId);
       if (!run) { run = createTaskWorkCommandRunner(supabase); subtaskRunners.current.set(currentMemberId, run); }
@@ -260,7 +274,8 @@ export function useTaskCRUD({
         const project = allProjects.find(p => p.id === projectId);
         if (!project) return null;
         try {
-          const result = await run!({ operation: 'create_subtask', taskId: parentTaskId, title: title.trim(), statusId, priority: 'medium', assigneeId: null, reviewerId: null, dueDate: null });
+          const result = await run!({ operation: 'create_subtask', taskId: parentTaskId, title: title.trim(), statusId, priority: 'medium',
+            ...subtaskQuickCreateFields(parent, requiredFields) });
           if (subtaskActor.current !== currentMemberId) return null;
           const newTask = mapTask(result.record as TaskRow);
           setAllTasks(prev => [...prev.filter(item => item.id !== newTask.id), newTask]);

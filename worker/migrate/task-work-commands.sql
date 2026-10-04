@@ -26,7 +26,8 @@ CREATE TRIGGER IF NOT EXISTS work_task_insert_guard BEFORE INSERT ON tasks BEGIN
  SELECT RAISE(ABORT,'work_invalid_parent') WHERE NEW.parent_task_id IS NOT NULL AND NOT EXISTS(
   SELECT 1 FROM tasks p WHERE p.workspace_id=NEW.workspace_id AND p.id=NEW.parent_task_id AND p.id<>NEW.id AND p.project_id=NEW.project_id AND p.parent_task_id IS NULL);
 END;
-CREATE TRIGGER IF NOT EXISTS work_task_update_guard BEFORE UPDATE ON tasks BEGIN
+DROP TRIGGER IF EXISTS work_task_update_guard;
+CREATE TRIGGER work_task_update_guard BEFORE UPDATE ON tasks BEGIN
  SELECT RAISE(ABORT,'work_forbidden') WHERE (
   NEW.assignee_revision<>OLD.assignee_revision OR NEW.reviewer_revision<>OLD.reviewer_revision
   OR NEW.assignee_acknowledged_at IS NOT OLD.assignee_acknowledged_at OR NEW.reviewer_acknowledged_at IS NOT OLD.reviewer_acknowledged_at)
@@ -40,9 +41,16 @@ CREATE TRIGGER IF NOT EXISTS work_task_update_guard BEFORE UPDATE ON tasks BEGIN
  SELECT RAISE(ABORT,'work_invalid_parent') WHERE (NEW.parent_task_id IS NOT OLD.parent_task_id OR NEW.project_id<>OLD.project_id) AND (
   (NEW.parent_task_id IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM tasks p WHERE p.workspace_id=NEW.workspace_id AND p.id=NEW.parent_task_id
     AND p.id<>NEW.id AND p.project_id=NEW.project_id AND p.parent_task_id IS NULL) OR EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id)))
-  OR EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id<>NEW.project_id));
+  OR (NEW.project_id IS OLD.project_id AND EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id<>NEW.project_id)));
  SELECT RAISE(ABORT,'work_conflict') WHERE (NEW.task_key<>OLD.task_key OR NEW.project_id<>OLD.project_id) AND EXISTS(
   SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND project_id=NEW.project_id AND task_key=NEW.task_key AND id<>NEW.id);
+END;
+-- A parent changing project takes its subtasks along in the same statement; each
+-- subtask still passes work_task_update_guard against the already-moved parent.
+DROP TRIGGER IF EXISTS work_task_move_subtasks;
+CREATE TRIGGER work_task_move_subtasks AFTER UPDATE ON tasks
+WHEN NEW.project_id IS NOT OLD.project_id AND NEW.parent_task_id IS NULL BEGIN
+ UPDATE tasks SET project_id=NEW.project_id WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id IS NOT NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS work_task_assignment_revision AFTER UPDATE ON tasks
 WHEN NEW.assignee_id IS NOT OLD.assignee_id OR NEW.reviewer_id IS NOT OLD.reviewer_id BEGIN
@@ -94,7 +102,9 @@ CREATE TRIGGER IF NOT EXISTS work_dependency_guard BEFORE INSERT ON task_depende
   SELECT NEW.depends_on_task_id UNION SELECT d.depends_on_task_id FROM task_dependencies d JOIN reachable r ON d.task_id=r.id WHERE d.workspace_id=NEW.workspace_id)
   SELECT 1 FROM reachable WHERE id=NEW.task_id);
 END;
-CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_contexts BEGIN
+-- Replaced on every apply so a corrected rule reaches existing databases.
+DROP TRIGGER IF EXISTS work_command_validate;
+CREATE TRIGGER work_command_validate BEFORE INSERT ON task_work_contexts BEGIN
  SELECT RAISE(ABORT,'work_invalid_input') WHERE NEW.operation NOT IN('acknowledge','create_subtask','add_item','update_item','delete_item','add_dependency','remove_dependency')
   OR NEW.id IS NOT json_extract(NEW.payload,'$.commandId') OR NEW.operation IS NOT json_extract(NEW.payload,'$.operation') OR NEW.task_id IS NOT json_extract(NEW.payload,'$.taskId');
  SELECT RAISE(ABORT,'work_forbidden') WHERE NOT EXISTS(SELECT 1 FROM members m JOIN auth_users u ON u.id=m.auth_id WHERE m.workspace_id=NEW.workspace_id AND m.id=NEW.actor_id
@@ -112,7 +122,7 @@ CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_co
   AND NOT EXISTS(SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=x.value AND is_active=1));
  SELECT RAISE(ABORT,'work_required_fields') WHERE NEW.operation='create_subtask' AND (
   EXISTS(SELECT 1 FROM system_settings s JOIN json_each(s.value) x WHERE s.workspace_id=NEW.workspace_id AND s.key='required_fields' AND x.value=1 AND (
-    x.key NOT IN('dueDate','assignee','reviewer') OR (x.key='dueDate' AND json_extract(NEW.payload,'$.dueDate') IS NULL)
+    x.key NOT IN('title','project','status','priority','dueDate','assignee','reviewer') OR (x.key='dueDate' AND json_extract(NEW.payload,'$.dueDate') IS NULL)
     OR (x.key='assignee' AND json_extract(NEW.payload,'$.assigneeId') IS NULL) OR (x.key='reviewer' AND json_extract(NEW.payload,'$.reviewerId') IS NULL)))
   OR EXISTS(SELECT 1 FROM custom_fields f JOIN tasks t ON t.project_id=f.project_id AND t.workspace_id=f.workspace_id WHERE t.workspace_id=NEW.workspace_id AND t.id=NEW.task_id AND f.is_required=1));
  SELECT RAISE(ABORT,'work_conflict') WHERE NEW.operation IN('update_item','delete_item') AND NOT EXISTS(
@@ -124,14 +134,18 @@ CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_co
  SELECT RAISE(ABORT,'work_conflict') WHERE NEW.operation='remove_dependency' AND NOT EXISTS(SELECT 1 FROM task_dependencies d JOIN tasks t ON t.workspace_id=d.workspace_id AND t.id=d.depends_on_task_id
   JOIN projects p ON p.workspace_id=t.workspace_id AND p.id=t.project_id WHERE d.workspace_id=NEW.workspace_id AND d.task_id=NEW.task_id AND d.id=json_extract(NEW.payload,'$.dependencyId') AND p.is_archived=0);
 END;
-CREATE TRIGGER IF NOT EXISTS work_command_apply AFTER INSERT ON task_work_contexts BEGIN
+-- New subtask keys count every task with the project's prefix, including tasks moved
+-- to another project (they keep their key; keys are unique per workspace).
+-- DROP + CREATE so existing databases receive trigger changes.
+DROP TRIGGER IF EXISTS work_command_apply;
+CREATE TRIGGER work_command_apply AFTER INSERT ON task_work_contexts BEGIN
  INSERT INTO task_work_events(workspace_id,id,command_id,actor_id,task_id,operation,before_value,created_at)
   VALUES(NEW.workspace_id,NEW.event_id,NEW.id,NEW.actor_id,NEW.task_id,NEW.operation,NULL,NEW.created_at);
  UPDATE tasks SET assignee_acknowledged_at=CASE WHEN json_extract(NEW.payload,'$.role')='assignee' THEN COALESCE(assignee_acknowledged_at,NEW.created_at) ELSE assignee_acknowledged_at END,
   reviewer_acknowledged_at=CASE WHEN json_extract(NEW.payload,'$.role')='reviewer' THEN COALESCE(reviewer_acknowledged_at,NEW.created_at) ELSE reviewer_acknowledged_at END
   WHERE NEW.operation='acknowledge' AND workspace_id=NEW.workspace_id AND id=NEW.task_id;
  INSERT INTO tasks(workspace_id,id,task_key,project_id,parent_task_id,title,status_id,priority,creator_id,assignee_id,reviewer_id,due_date,sprint_id,started_at,completed_at)
-  SELECT NEW.workspace_id,NEW.record_id,p.key||'-'||(SELECT COALESCE(max(CAST(substr(x.task_key,length(p.key)+2) AS INTEGER)),0)+1 FROM tasks x WHERE x.workspace_id=NEW.workspace_id AND x.project_id=p.id),
+  SELECT NEW.workspace_id,NEW.record_id,p.key||'-'||(SELECT COALESCE(max(CAST(substr(x.task_key,length(p.key)+2) AS INTEGER)),0)+1 FROM tasks x WHERE x.workspace_id=NEW.workspace_id AND substr(x.task_key,1,length(p.key)+1)=p.key||'-'),
    p.id,t.id,json_extract(NEW.payload,'$.title'),s.id,json_extract(NEW.payload,'$.priority'),NEW.actor_id,json_extract(NEW.payload,'$.assigneeId'),json_extract(NEW.payload,'$.reviewerId'),json_extract(NEW.payload,'$.dueDate'),t.sprint_id,
    CASE WHEN s.auto_start=1 THEN NEW.created_at END,CASE WHEN s.auto_done=1 THEN NEW.created_at END
   FROM tasks t JOIN projects p ON p.id=t.project_id AND p.workspace_id=t.workspace_id JOIN statuses s ON s.workspace_id=NEW.workspace_id AND s.id=json_extract(NEW.payload,'$.statusId')

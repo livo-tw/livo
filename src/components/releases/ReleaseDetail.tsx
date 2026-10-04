@@ -26,7 +26,7 @@ export default function ReleaseDetail({ batch, resources, client, actorId, canMa
   const name = (id: string) => resources.users.find(u => u.id === id)?.name ?? t('releaseWorkspace.unavailable');
   const saved = (next: ReleaseBatch) => { onSaved(next); setAction(null); setEventPage(0); };
   if (action === 'edit_manifest') return <ReleaseManifestForm batch={batch} actorId={actorId} client={client} resources={resources} onSaved={saved} onCancel={() => setAction(null)} />;
-  if (action) return <ReleaseActionForm key={action} batch={batch} action={action} client={client} qaClient={qaClient} qaEnabled={qaEnabled} onSource={onSource} onSaved={saved} onCancel={() => setAction(null)} />;
+  if (action) return <ReleaseActionForm key={action} batch={batch} action={action} client={client} qaClient={qaClient} qaEnabled={qaEnabled} actorId={actorId} onSource={onSource} onSaved={saved} onCancel={() => setAction(null)} />;
   const open = batch.status === 'draft' || batch.status === 'active';
   const actions: ReleaseAction[] = open ? ['link_evidence', 'request_exception', 'decide_exception', 'start_attempt', 'record_result', 'record_maintenance', 'complete', 'cancel'] : ['record_result', 'record_maintenance'];
   return <div className="space-y-5">

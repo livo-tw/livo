@@ -20,6 +20,7 @@ const entries:Record<string,[string,string,string]>={
   processor_not_configured:['The private document processor has not been configured.','尚未設定私有文件處理服务。','尚未配置私有文件处理服务。'],
   processor_busy:['The private processor is busy. Retry this item shortly.','私有處理器忙碌中，請稍後重試此項目。','私有处理器正忙，请稍后重试此项目。'],
   processing_timeout:['Processing reached its time limit. Split the document or retry.','解析超過時間上限，請拆分文件或重試。','解析超出时间上限，请拆分文档或重试。'],
+  processor_unavailable:['The private document processor is not reachable. Ask the system operator to check that it is running, then retry this item.','無法連線到私有文件處理服務，請系統維運者確認服務已啟動後再重試此項目。','无法连接到私有文件处理服务，请系统运维者确认服务已启动后再重试此项目。'],
   page_limit:['The PDF exceeds the 40-page processing limit. Split it into smaller files.','PDF 超過 40 頁處理上限，請拆成較小檔案。','PDF 超过 40 页处理上限，请拆成较小文件。'],
   encrypted_pdf:['Password-protected PDFs cannot be parsed. Provide an authorized unlocked copy.','無法解析加密 PDF，請提供已授權且解除保護的副本。','无法解析加密 PDF，请提供已授权且解除保护的副本。'],
   invalid_document:['The document is damaged or unsupported. The original was not published.','文件損壞或格式不支援，原檔未被公開。','文档损坏或格式不支持，原件未被公开。'],

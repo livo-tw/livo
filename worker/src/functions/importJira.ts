@@ -852,6 +852,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
   } catch (err) {
     if(!written.wiped && err instanceof Error && err.message.includes('approval_pending'))return c.json({error:'approval_pending',message:'仍有待處理簽核，原有資料未變更。'},409);
     if(!written.wiped && err instanceof Error && /work_history_requires_restore|qa_task_links_require_restore/.test(err.message))return c.json({error:err.message.includes('qa_task_links_require_restore')?'qa_task_links_require_restore':'work_history_requires_restore',message:'此工作區保留任務操作歷史，請使用完整伺服器備份還原。'},409);
+    if(!written.wiped && err instanceof Error && err.message.includes('knowledge_requires_server_restore'))return c.json({error:'knowledge_requires_server_restore',message:'知識庫文件引用了現有任務或 QA，無法覆蓋匯入。請使用完整伺服器備份還原，原資料已保留。'},409);
     if(!written.wiped && err instanceof Error && err.message.includes('planning_history_requires_restore'))return c.json({error:'planning_history_requires_restore',message:'此工作區保留期限異動或個人提醒設定，無法覆蓋匯入。請使用完整伺服器備份還原。'},409);
     console.error('Import error:', err);
     if (written.wiped) {

@@ -16,7 +16,8 @@ ALTER TABLE public.tasks ADD COLUMN priority text NOT NULL DEFAULT 'medium';
 ALTER TABLE public.tasks ADD COLUMN creator_id text;
 ALTER TABLE public.tasks ADD COLUMN assignee_id text;
 ALTER TABLE public.tasks ADD COLUMN due_date text;
-CREATE TABLE public.task_specs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text UNIQUE REFERENCES public.tasks(id),background text,requirement text,notes text);
+-- Same id shape as the delivery baseline: text, no default (20261017_task_specs_default_id.sql adds one).
+CREATE TABLE public.task_specs(id text PRIMARY KEY,task_id text UNIQUE REFERENCES public.tasks(id),background text,requirement text,notes text);
 CREATE TABLE public.task_todos(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text REFERENCES public.tasks(id),text text,is_done boolean NOT NULL DEFAULT false,sort_order integer DEFAULT 0);
 CREATE TABLE public.task_deployments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text REFERENCES public.tasks(id),environment text,status text,deploy_date text);
 CREATE TABLE public.activity_logs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id text,action text,target_type text,task_id text,task_key text,detail text,created_at timestamptz DEFAULT now());

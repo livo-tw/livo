@@ -126,17 +126,23 @@ Input: `QueryRequest` (protocol.ts). Output: `QueryResponse`.
   store SHA-256).
 - login throttle (`auth_login_attempts(key TEXT PK, failures, window_start,
   locked_until)` plus expiring `auth_login_reservations`, both server-only, no
-  `workspace_id`): 5 confirmed failures per email or 20 per IP
-  (`CF-Connecting-IP`, canonical IPv6 per /64) within 15 min
-  → that key is locked for 15 min → `429` + `Retry-After`,
+  `workspace_id`): 5 confirmed failures for one email from one source
+  (`pair:<email>|<ip>`) or 20 per source across emails (`ip:`; `CF-Connecting-IP`,
+  canonical IPv6 per /64) within 15 min → that pair / source is locked for 15 min
+  → `429` + `Retry-After`,
   `{user:null, session:null, error:{message:'Too many requests; please retry later',
-  code:'over_request_rate_limit'}}`, even for the right password. Each attempt
+  code:'over_request_rate_limit'}}`, even for the right password from that source.
+  The email itself is never hard-locked (anyone could lock out a known address):
+  at most 10 checks per email are in flight, and after 50 failures per email in a
+  window from all sources each further failure pauses it for 30 s. Success clears
+  the email pause and the pair's failures. `/api/auth/change-password` spends the
+  same budget for its current-password check. Each attempt
   reserves its slot atomically before the password check (no parallel-burst
   bypass); in-flight slots do not count as failures. Temporary capacity returns
   429 with Retry-After 1 second, without hard-locking the account or IP. Settlement
   is exactly once and tied to the original counter window; success clears only
-  confirmed email failures, retaining other live reservations. Unknown emails
-  count like real ones; an already-blocked IP cannot create more email rows.
+  confirmed email/pair failures, retaining other live reservations. Unknown emails
+  count like real ones; an already-blocked IP cannot create more email or pair rows.
   Reservations expire after 2 minutes; `scheduled()` prunes expired reservations
   and counters in bounded batches of 500. Missing schema/store failure fails
   closed; no session is issued without successful settlement. Missing/invalid

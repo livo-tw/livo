@@ -1,0 +1,14 @@
+-- QA updates (livo_qa_commit since 20261002) and knowledge-workflow QA links are
+-- inbox notifications that are not about a task card, so they are written with
+-- task_id NULL. The delivery baseline (20260308185150_*.sql) still declared
+-- notifications.task_id NOT NULL, so on installs created from it every QA command
+-- that notified someone failed and rolled back the whole command.
+--
+-- Every reader already treats a missing task as "no card link": the inbox panel
+-- only resolves a card when task_id is set, the Slack personal capture and the
+-- paused due-reminder guard look the task up and skip when none is found, and the
+-- e-mail dispatch never reads task_id. Cloudflare D1 has always allowed NULL here.
+--
+-- Non-destructive and repeatable: no row is touched, and dropping NOT NULL from a
+-- column that is already nullable is a no-op.
+ALTER TABLE public.notifications ALTER COLUMN task_id DROP NOT NULL;

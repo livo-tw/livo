@@ -7,16 +7,18 @@
 //   handleSlackChannels(c) — POST /api/functions/slack-channels (member JWT)
 //   runSlackDigest(env,ctx)— hourly cron entrypoint (scheduled())
 //
-// Upstream bug FIXED here: the old slack-notify silently no-op'd on
-// type 'report' (client sends
-// prebuilt blocks). This port posts those to the configured channel.
+// The request only names an event: task, project, actor and DM recipients are
+// read from D1, messages are built and escaped by ../slackNotifyCore (shared
+// with the Docker slack-notify), and caller-built blocks are never posted.
 
 import type { Context } from 'hono';
-import type { AppContext, Ctx, Env } from '../env';
+import type { AppContext, AuthCtx, Ctx, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoWorkspace } from '../env';
 import { TABLES } from '../tables';
 import { rowToWire, type TableMeta } from '../meta';
 import { checkProfessional } from '../license';
+import { commentMentionIds, commentPlainText, dmRecipients, mrkdwn, mrkdwnLine, notifyChannelId, notifyDetails, NOTIFY_TASK_TYPES,
+  reportMessage, requestedEmails, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from '../slackNotifyCore';
 
 // ─── Table meta (defensive fallback while tables.ts is authoritative) ──────
 
@@ -82,8 +84,9 @@ interface SlackUser {
   id: string;
   deleted?: boolean;
   is_bot?: boolean;
-  real_name?: string;
-  profile?: { display_name?: string; real_name?: string };
+  is_restricted?: boolean;
+  is_ultra_restricted?: boolean;
+  profile?: { email?: string };
 }
 
 interface SlackApiResponse {
@@ -96,10 +99,9 @@ interface SlackApiResponse {
   response_metadata?: { next_cursor?: string };
 }
 
-/** Per-invocation Slack context (token + users.list cache). */
+/** Per-invocation Slack context. */
 interface SlackCtx {
   token: string;
-  usersCache: SlackUser[] | null;
 }
 
 async function slackGet(
@@ -131,76 +133,42 @@ async function slackPost(
   return (await resp.json()) as SlackApiResponse;
 }
 
-/** Resolve a channel setting (name, '#name' or ID) to a channel ID. */
-async function resolveChannelId(sc: SlackCtx, setting: string): Promise<string> {
-  const name = setting.replace(/^#/, '');
-  const data = await slackGet(sc, 'conversations.list', {
-    limit: '200',
-    exclude_archived: 'true',
-    types: 'public_channel,private_channel',
-  });
-  if (data.ok && data.channels) {
-    const found = data.channels.find((ch) => ch.name === name || ch.id === setting);
-    if (found) return found.id;
-  }
-  return setting;
-}
-
-/** Paginated users.list, cached per invocation. */
-async function usersList(sc: SlackCtx): Promise<SlackUser[]> {
-  if (sc.usersCache) return sc.usersCache;
-  const all: SlackUser[] = [];
+/**
+ * Resolve a channel setting (name, '#name' or channel ID) to a channel ID the
+ * bot can post to. A user or DM id is never accepted, so a member-supplied
+ * target cannot turn into a direct message to an arbitrary person.
+ */
+async function resolveChannelId(sc: SlackCtx, setting: string): Promise<string | undefined> {
+  const channels: NonNullable<SlackApiResponse['channels']> = [];
   let cursor = '';
-  do {
-    const params: Record<string, string> = { limit: '200' };
-    if (cursor) params.cursor = cursor;
-    const data = await slackGet(sc, 'users.list', params);
-    if (!data.ok) {
-      console.error('[slack] users.list error:', data.error);
-      break;
-    }
-    all.push(...(data.members || []));
+  for (let page = 0; page < 5 && !/^[CG][A-Z0-9]{2,}$/.test(setting.trim()); page++) {
+    const data = await slackGet(sc, 'conversations.list', {
+      limit: '200',
+      exclude_archived: 'true',
+      types: 'public_channel,private_channel',
+      ...(cursor ? { cursor } : {}),
+    });
+    if (!data.ok || !data.channels) break;
+    channels.push(...data.channels);
+    if (notifyChannelId(channels, setting)) break;
     cursor = data.response_metadata?.next_cursor || '';
-  } while (cursor);
-  sc.usersCache = all;
-  return all;
+    if (!cursor) break;
+  }
+  return notifyChannelId(channels, setting);
 }
 
-async function lookupUserByEmail(sc: SlackCtx, email: string): Promise<SlackUser | null> {
+/**
+ * Slack account for a member: email lookup only, and only a full workspace
+ * member (no guests, bots or deactivated accounts). Display names are never
+ * used — anyone can set a display name that matches a colleague.
+ */
+async function findSlackUserId(sc: SlackCtx, email: string): Promise<string | null> {
+  if (!email) return null;
   try {
     const data = await slackGet(sc, 'users.lookupByEmail', { email });
-    if (data.ok && data.user) return data.user;
+    if (data.ok && data.user && slackDmEligible(data.user, email)) return data.user.id;
   } catch {
-    /* fall through to name matching */
-  }
-  return null;
-}
-
-function findSlackUserByName(users: SlackUser[], name: string): SlackUser | undefined {
-  const normalized = name.trim().toLowerCase();
-  return users.find((u) => {
-    if (u.deleted || u.is_bot) return false;
-    const realName = (u.real_name || '').toLowerCase();
-    const displayName = (u.profile?.display_name || '').toLowerCase();
-    const profileRealName = (u.profile?.real_name || '').toLowerCase();
-    return realName === normalized || displayName === normalized || profileRealName === normalized;
-  });
-}
-
-/** Email lookup first, then name-match fallback via users.list. */
-async function findSlackUserId(
-  sc: SlackCtx,
-  email: string,
-  name: string | undefined
-): Promise<string | null> {
-  if (email) {
-    const byEmail = await lookupUserByEmail(sc, email);
-    if (byEmail) return byEmail.id;
-  }
-  if (name) {
-    const users = await usersList(sc);
-    const found = findSlackUserByName(users, name);
-    if (found) return found.id;
+    /* treated as not found */
   }
   return null;
 }
@@ -234,193 +202,20 @@ async function postMessage(
   });
 }
 
-// ─── slack-notify: payload + block builders (faithful port) ────────────────
+// ─── slack-notify ──────────────────────────────────────────────────────────
 
-interface NotifyPayload {
-  type: string;
-  eventType?: string;
-  taskKey?: string;
-  taskTitle?: string;
-  taskId?: string;
-  projectName?: string;
-  actorName?: string;
-  priority?: string;
-  assigneeName?: string;
-  statusName?: string;
-  dueDate?: string;
-  fromStatus?: string;
-  toStatus?: string;
-  oldAssignee?: string;
-  newAssignee?: string;
-  commentPreview?: string;
-  dmTargets?: { email: string; name?: string; reason: string }[];
-  /** Prebuilt Block Kit blocks from the client (report / approval types). */
-  blocks?: SlackBlock[];
-  // type 'report'
-  reportContent?: string;
-  reportTitle?: string;
-  reportType?: string;
-  channelTarget?: string;
-  // approval types
-  requestId?: string;
-  action?: string;
-  customMessage?: string;
-}
+type Row = Record<string, unknown>;
 
 const priorityEmoji: Record<string, string> = {
   highest: '🔴', high: '🟠', medium: '🟡', low: '🔵', lowest: '⚪',
   '最高': '🔴', '高': '🟠', '中': '🟡', '低': '🔵', '最低': '⚪',
 };
 
-const typeLabel: Record<string, { emoji: string; text: string }> = {
-  task_created: { emoji: '✨', text: '新任務建立' },
-  status_changed: { emoji: '🔀', text: '狀態變更' },
-  assignee_changed: { emoji: '🔁', text: '指派變更' },
-  priority_changed: { emoji: '⚡', text: '優先級變更' },
-  comment_added: { emoji: '💬', text: '新評論' },
-};
-
-const TASK_EVENT_TYPES = [
-  'task_created',
-  'status_changed',
-  'assignee_changed',
-  'comment_added',
-  'priority_changed',
-];
-
 const taskUrl = (env: Env, taskKey: string): string =>
   `${appBaseUrl(env)}/demo/?task=${encodeURIComponent(taskKey)}`;
 
-function buildBlocks(env: Env, payload: NotifyPayload): SlackBlock[] {
-  const key = payload.taskKey || '';
-  const taskLink = `<${taskUrl(env, key)}|${key} - ${payload.taskTitle || ''}>`;
-  const project = payload.projectName || '—';
-  const pEmoji = priorityEmoji[payload.priority || 'medium'] || '🟡';
-  const { emoji, text: headerText } = typeLabel[payload.type] || { emoji: '📋', text: '任務通知' };
-
-  const lines: string[] = [];
-
-  // Line 1: header
-  lines.push(`${emoji} *${headerText}*`);
-  // Line 2: task link
-  lines.push(taskLink);
-
-  switch (payload.type) {
-    case 'task_created':
-      lines.push(`🙋 建立者: ${payload.actorName ?? ''}`);
-      if (payload.assigneeName) lines.push(`👤 經辦人: ${payload.assigneeName}`);
-      if (payload.statusName) lines.push(`📊 狀態: ${payload.statusName}`);
-      lines.push(`${pEmoji} 優先級: ${payload.priority || 'medium'}`);
-      if (payload.dueDate) lines.push(`📅 到期日: ${payload.dueDate}`);
-      break;
-
-    case 'status_changed':
-      lines.push(`🙋 變更者: ${payload.actorName ?? ''}`);
-      lines.push(`📊 狀態: ${payload.fromStatus || '—'} → ${payload.toStatus || '—'}`);
-      if (payload.assigneeName) lines.push(`👤 經辦人: ${payload.assigneeName}`);
-      break;
-
-    case 'assignee_changed':
-      lines.push(`🙋 變更者: ${payload.actorName ?? ''}`);
-      lines.push(`👤 指派: ${payload.oldAssignee || '未指派'} → ${payload.newAssignee || '未指派'}`);
-      if (payload.statusName) lines.push(`📊 狀態: ${payload.statusName}`);
-      break;
-
-    case 'priority_changed': {
-      const fromPEmoji = priorityEmoji[payload.fromStatus || 'medium'] || '🟡';
-      const toPEmoji = priorityEmoji[payload.toStatus || 'medium'] || '🟡';
-      lines.push(`🙋 變更者: ${payload.actorName ?? ''}`);
-      lines.push(`${fromPEmoji} ${payload.fromStatus || '—'} → ${toPEmoji} ${payload.toStatus || '—'}`);
-      if (payload.assigneeName) lines.push(`👤 經辦人: ${payload.assigneeName}`);
-      if (payload.statusName) lines.push(`📊 狀態: ${payload.statusName}`);
-      break;
-    }
-
-    case 'comment_added':
-      lines.push(`🙋 評論者: ${payload.actorName ?? ''}`);
-      if (payload.commentPreview) {
-        lines.push(`💭 評論內容:`);
-        lines.push(payload.commentPreview);
-      }
-      if (payload.assigneeName) lines.push(`👤 經辦人: ${payload.assigneeName}`);
-      break;
-  }
-
-  // Last line: project
-  lines.push(`📁 項目: ${project}`);
-
-  return [
-    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } },
-    { type: 'divider' },
-  ];
-}
-
-const dmReasonEmoji: Record<string, string> = {
-  '你被指派為經辦人': '🎯',
-  '你被指派為驗收人': '✅',
-  '你在留言中被提及': '💬',
-};
-
-function buildDmBlocks(env: Env, payload: NotifyPayload, reason: string): SlackBlock[] {
-  const key = payload.taskKey || '';
-  const taskLink = `<${taskUrl(env, key)}|${key} - ${payload.taskTitle || ''}>`;
-  const pEmoji = priorityEmoji[payload.priority || 'medium'] || '🟡';
-  const project = payload.projectName || '—';
-  const headerIcon = dmReasonEmoji[reason] || typeLabel[payload.type]?.emoji || '🔔';
-
-  const lines: string[] = [];
-  lines.push(`${headerIcon} *${reason}*`);
-  lines.push(taskLink);
-  lines.push(`🙋 來自: ${payload.actorName ?? ''}`);
-  lines.push(`${pEmoji} 優先級: ${payload.priority || 'medium'}`);
-
-  if (payload.type === 'comment_added' && payload.commentPreview) {
-    lines.push(`💭 評論內容:`);
-    lines.push(payload.commentPreview);
-  }
-
-  lines.push(`📁 項目: ${project}`);
-
-  return [
-    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } },
-    { type: 'divider' },
-  ];
-}
-
-async function sendTaskDm(
-  env: Env,
-  sc: SlackCtx,
-  email: string,
-  reason: string,
-  payload: NotifyPayload,
-  memberName?: string
-): Promise<void> {
-  try {
-    const slackUserId = await findSlackUserId(sc, email, memberName);
-    if (!slackUserId) {
-      console.log(`[slack] DM: user not found for email=${email}, name=${memberName}`);
-      return;
-    }
-
-    const dmChannelId = await openDm(sc, slackUserId);
-    if (!dmChannelId) return;
-
-    const blocks = buildDmBlocks(env, payload, reason);
-    const msgData = await postMessage(
-      sc,
-      dmChannelId,
-      `${reason}: ${payload.taskKey || ''} ${payload.taskTitle || ''}`,
-      blocks,
-      'PM 任務通知',
-      ':bell:'
-    );
-    if (!msgData.ok) {
-      console.error(`[slack] DM: failed to send message — ${msgData.error}`);
-    }
-  } catch (err) {
-    console.error(`[slack] DM error for ${email}:`, err);
-  }
-}
+const COMMENT_WINDOW_MS = 15 * 60 * 1000;
+const ID = /^[\w-]{1,200}$/;
 
 // ─── Notify settings (backup_settings single row) ──────────────────────────
 
@@ -461,95 +256,121 @@ async function loadNotifySettings(env: Env, workspaceId: string): Promise<Notify
 
 // ─── handleSlackNotify ─────────────────────────────────────────────────────
 
+/**
+ * Any member may call this. The request names an event (type, taskId, details)
+ * and, for the web app's DMs, which of the task's own recipients to notify.
+ */
+export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row): Promise<{ body: Row; status: number }> {
+  const ws = auth.member.workspaceId;
+  const reply = (body: Row, status = 200) => ({ body, status });
+  const type = typeof payload.type === 'string' ? payload.type : '';
+  if (type.startsWith('approval_') || String(payload.eventType ?? '').startsWith('approval_')) {
+    return reply({ error: 'approval_command_required' }, 409);
+  }
+  const token = await resolveSlackToken(env, ws);
+  if (!token) return reply({ error: 'slack_not_configured' });
+  // License check — professional feature (caller's workspace)
+  if (!(await checkProfessional(env, ws))) return reply(LICENSE_REQUIRED_BODY, 403);
+  const sc: SlackCtx = { token };
+  const settings = await loadNotifySettings(env, ws);
+
+  if (type === 'report') {
+    const target = typeof payload.channelTarget === 'string' && payload.channelTarget.trim() ? payload.channelTarget : settings.taskNotifyChannel;
+    if (!target) return reply({ error: 'no_channel_configured' });
+    const channelId = await resolveChannelId(sc, target);
+    if (!channelId) return reply({ error: 'channel_not_found' }, 400);
+    const message = reportMessage(payload.reportTitle, payload.reportContent, auth.member.name);
+    const res = await postMessage(sc, channelId, message.text, message.blocks, 'PM 任務通知', ':clipboard:');
+    if (!res.ok) {
+      console.error('[slack] report post error:', slackErrorCode(res.error));
+      return reply({ error: slackErrorCode(res.error) });
+    }
+    return reply({ success: true });
+  }
+  if (!NOTIFY_TASK_TYPES.includes(type)) return reply({ error: 'unknown_notify_type' }, 400);
+
+  const taskId = typeof payload.taskId === 'string' && ID.test(payload.taskId) ? payload.taskId : '';
+  const task = taskId ? await env.DB.prepare(
+    'SELECT id, task_key, title, priority, project_id, status_id, assignee_id, reviewer_id FROM tasks WHERE workspace_id = ? AND id = ? LIMIT 1'
+  ).bind(ws, taskId).first<Record<string, string | null>>() : null;
+  if (!task) return reply({ error: 'task_unavailable' }, 404);
+  const name = async (table: 'projects' | 'statuses' | 'members', id: string | null) => id
+    ? (await env.DB.prepare(`SELECT name FROM ${table} WHERE workspace_id = ? AND id = ? LIMIT 1`).bind(ws, id).first<{ name: string }>())?.name
+    : undefined;
+  const [projectName, statusName, assigneeName] = await Promise.all([
+    name('projects', task.project_id), name('statuses', task.status_id), name('members', task.assignee_id),
+  ]);
+  const details = notifyDetails(payload);
+  let mentioned: string[] = [];
+  let preview = details.commentPreview;
+  if (type === 'comment_added') {
+    // Mentions and the preview come from the caller's own new comment.
+    const comment = await env.DB.prepare(
+      'SELECT content, created_at FROM comments WHERE workspace_id = ? AND task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(ws, task.id, auth.member.id).first<{ content: string; created_at: string }>();
+    if (!comment || !(Date.now() - Date.parse(comment.created_at) < COMMENT_WINDOW_MS)) return reply({ error: 'comment_unavailable' }, 404);
+    mentioned = commentMentionIds(comment.content);
+    preview = commentPlainText(comment.content);
+  }
+  const fields: NotifyFields = {
+    ...details, type, taskKey: task.task_key || '', taskTitle: task.title || '', projectName: projectName || '',
+    actorName: auth.member.name, priority: task.priority || 'medium', commentPreview: preview,
+    assigneeName: assigneeName || details.assigneeName, statusName: statusName || details.statusName,
+  };
+  const url = taskUrl(env, fields.taskKey);
+
+  // Channel notification if this type is enabled and a channel is set
+  if (settings.taskNotifyChannel && settings.enabledTypes.includes(type)) {
+    const channelId = await resolveChannelId(sc, settings.taskNotifyChannel);
+    if (channelId) {
+      const message = taskChannelMessage(fields, url);
+      const res = await postMessage(sc, channelId, message.text, message.blocks, 'PM 任務通知', ':clipboard:');
+      if (!res.ok) console.error('[slack] channel error:', slackErrorCode(res.error));
+    }
+  }
+
+  // DMs: only the task's own recipients, narrowed by the request.
+  const allowed = dmRecipients(type, task, auth.member.id, mentioned);
+  const requested = requestedEmails(payload.dmTargets);
+  if (allowed.size > 0 && requested.size > 0) {
+    // Time window check (Taiwan time UTC+8), wrap-around supported
+    const currentHour = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
+    const { dmStartHour: startHour, dmEndHour: endHour } = settings;
+    const inWindow = startHour <= endHour
+      ? currentHour >= startHour && currentHour < endHour
+      : currentHour >= startHour || currentHour < endHour;
+    if (settings.dmEnabled && inWindow) {
+      const ids = [...allowed.keys()];
+      const { results } = await env.DB.prepare(
+        `SELECT id, email FROM members WHERE workspace_id = ? AND is_active = 1 AND id IN (${ids.map(() => '?').join(',')})`
+      ).bind(ws, ...ids).all<{ id: string; email: string }>();
+      const targets = (results || []).filter((m) => typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
+      await Promise.allSettled(targets.map(async (m) => {
+        const slackUserId = await findSlackUserId(sc, m.email.trim());
+        const dm = slackUserId ? await openDm(sc, slackUserId) : null;
+        if (!dm) return;
+        const message = taskDmMessage(fields, allowed.get(m.id) as DmReason, url);
+        const res = await postMessage(sc, dm, message.text, message.blocks, 'PM 任務通知', ':bell:');
+        if (!res.ok) console.error('[slack] DM error:', slackErrorCode(res.error));
+      }));
+    } else {
+      console.log('[slack] DM skipped: disabled or outside the notify window');
+    }
+  }
+  return reply({ success: true });
+}
+
 export async function handleSlackNotify(c: Context<AppContext>): Promise<Response> {
   const env = c.env;
-  const ws = c.get('auth').member.workspaceId;
+  const auth = c.get('auth');
   try {
-    const payload = (await c.req.json()) as NotifyPayload;
-    if (payload.type?.startsWith('approval_') || payload.eventType?.startsWith('approval_')) {
-      return c.json({ error: 'approval_command_required' },409);
-    }
-    const token = await resolveSlackToken(env, ws);
-    if (!token) return c.json({ error: 'slack_not_configured' });
-
-    // License check — professional feature (caller's workspace)
-    if (!(await checkProfessional(env, ws))) {
-      return c.json(LICENSE_REQUIRED_BODY, 403);
-    }
-
-    const sc: SlackCtx = { token, usersCache: null };
-    const settings = await loadNotifySettings(env, ws);
-
-    // ── type 'report' (upstream no-op bug FIXED) ──────────────────────────
-    if (payload.type === 'report') {
-      const target = payload.channelTarget || settings.taskNotifyChannel;
-      if (!target) return c.json({ error: 'no_channel_configured' });
-
-      const title = payload.reportTitle || '報告';
-      const blocks: SlackBlock[] =
-        Array.isArray(payload.blocks) && payload.blocks.length > 0
-          ? payload.blocks
-          : [
-              {
-                type: 'section',
-                text: { type: 'mrkdwn', text: `📝 *${title}*\n\n${payload.reportContent || ''}` },
-              },
-              { type: 'divider' },
-            ];
-
-      const channelId = await resolveChannelId(sc, target);
-      const res = await postMessage(sc, channelId, title, blocks, 'PM 任務通知', ':clipboard:');
-      if (!res.ok) {
-        console.error('[slack] report post error:', res.error);
-        return c.json({ error: res.error || 'slack_error' });
-      }
-      return c.json({ success: true });
-    }
-
-    // ── the 5 task event types (faithful port) ────────────────────────────
-    if (!TASK_EVENT_TYPES.includes(payload.type)) {
-      return c.json({ error: `unknown notify type: ${payload.type}` });
-    }
-
-    // Channel notification if this type is enabled and a channel is set
-    if (settings.taskNotifyChannel && settings.enabledTypes.includes(payload.type)) {
-      const channelId = await resolveChannelId(sc, settings.taskNotifyChannel);
-      const blocks = buildBlocks(env, payload);
-      const fallbackText = `${payload.actorName ?? ''} - ${payload.taskKey || ''} ${payload.taskTitle || ''}`;
-      const res = await postMessage(sc, channelId, fallbackText, blocks, 'PM 任務通知', ':clipboard:');
-      if (!res.ok) {
-        console.error('[slack] channel error:', res.error);
-      }
-    }
-
-    // DMs if targets specified and DM notifications are enabled
-    if (payload.dmTargets && payload.dmTargets.length > 0) {
-      if (settings.dmEnabled) {
-        // Time window check (Taiwan time UTC+8), wrap-around supported
-        const nowTW = new Date(Date.now() + 8 * 60 * 60 * 1000);
-        const currentHour = nowTW.getUTCHours();
-        const { dmStartHour: startHour, dmEndHour: endHour } = settings;
-        const inWindow =
-          startHour <= endHour
-            ? currentHour >= startHour && currentHour < endHour
-            : currentHour >= startHour || currentHour < endHour;
-
-        if (inWindow) {
-          await Promise.allSettled(
-            payload.dmTargets.map((t) => sendTaskDm(env, sc, t.email, t.reason, payload, t.name))
-          );
-        } else {
-          console.log(`[slack] DM skipped: current hour ${currentHour} outside window ${startHour}-${endHour}`);
-        }
-      } else {
-        console.log('[slack] DM skipped: dm_notify_enabled is false');
-      }
-    }
-
-    return c.json({ success: true });
-  } catch (err) {
-    console.error('[slack] notify error:', err);
-    return c.json({ error: String(err) }, 500);
+    const payload: unknown = await c.req.json();
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return c.json({ error: 'invalid_request' }, 400);
+    const result = await executeSlackNotify(env, auth, payload as Row);
+    return c.json(result.body, result.status as 200 | 400 | 403 | 404 | 409);
+  } catch {
+    console.error('[slack] notify failed');
+    return c.json({ error: 'notify_failed' }, 500);
   }
 }
 
@@ -560,7 +381,7 @@ export async function handleSlackChannels(c: Context<AppContext>): Promise<Respo
   if (!token) return c.json({ error: 'slack_not_configured' });
 
   try {
-    const sc: SlackCtx = { token, usersCache: null };
+    const sc: SlackCtx = { token };
     const data = await slackGet(sc, 'conversations.list', {
       limit: '200',
       exclude_archived: 'true',
@@ -580,7 +401,7 @@ export async function handleSlackChannels(c: Context<AppContext>): Promise<Respo
     return c.json({ channels });
   } catch (err) {
     console.error('[slack] channels error:', err);
-    return c.json({ error: String(err) }, 500);
+    return c.json({ error: 'slack_channels_unavailable' }, 500);
   }
 }
 
@@ -644,13 +465,14 @@ function enrichTasks(
   statusMap: Map<string, string>,
   projectMap: Map<string, string>
 ): TaskInfo[] {
+  // Escaped once here: every digest and report line is Slack mrkdwn.
   return tasks.map((t) => ({
     taskKey: t.task_key,
-    title: t.title,
+    title: mrkdwnLine(t.title, 200),
     priority: t.priority || 'medium',
-    statusName: statusMap.get(t.status_id || '') || '未知',
-    projectName: projectMap.get(t.project_id || '') || '—',
-    dueDate: t.due_date || undefined,
+    statusName: mrkdwnLine(statusMap.get(t.status_id || '') || '未知'),
+    projectName: mrkdwnLine(projectMap.get(t.project_id || '') || '—'),
+    dueDate: t.due_date ? mrkdwnLine(t.due_date, 20) : undefined,
   }));
 }
 
@@ -662,9 +484,9 @@ function buildDigestBlocks(
   assigned: TaskInfo[],
   review: TaskInfo[]
 ): SlackBlock[] {
-  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${t.taskKey}>`;
+  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${mrkdwnLine(t.taskKey, 40)}>`;
   const lines: string[] = [];
-  lines.push(`📋 *${memberName} 的任務摘要*`);
+  lines.push(`📋 *${mrkdwnLine(memberName)} 的任務摘要*`);
   lines.push('');
 
   if (assigned.length > 0) {
@@ -709,9 +531,9 @@ interface ReportData {
 }
 
 function buildDefaultDailyReport(env: Env, memberName: string, data: ReportData): string {
-  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${t.taskKey}>`;
+  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${mrkdwnLine(t.taskKey, 40)}>`;
   const lines: string[] = [];
-  lines.push(`📝 *${memberName} 的日報*  (${new Date().toISOString().split('T')[0]})`);
+  lines.push(`📝 *${mrkdwnLine(memberName)} 的日報*  (${new Date().toISOString().split('T')[0]})`);
   lines.push('');
 
   lines.push('*✅ 今日完成：*');
@@ -756,13 +578,13 @@ function buildDefaultDailyReport(env: Env, memberName: string, data: ReportData)
 }
 
 function buildDefaultWeeklyReport(env: Env, memberName: string, data: ReportData): string {
-  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${t.taskKey}>`;
+  const link = (t: TaskInfo) => `<${taskUrl(env, t.taskKey)}|${mrkdwnLine(t.taskKey, 40)}>`;
   const lines: string[] = [];
   const now = new Date();
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - now.getDay());
   lines.push(
-    `📊 *${memberName} 的週報*  (${weekStart.toISOString().split('T')[0]} ~ ${now.toISOString().split('T')[0]})`
+    `📊 *${mrkdwnLine(memberName)} 的週報*  (${weekStart.toISOString().split('T')[0]} ~ ${now.toISOString().split('T')[0]})`
   );
   lines.push('');
 
@@ -810,14 +632,15 @@ function buildDefaultWeeklyReport(env: Env, memberName: string, data: ReportData
 function applyCustomTemplate(template: string, data: ReportData): string {
   const format = (tasks: TaskInfo[]) =>
     tasks
-      .map((t) => `• ${t.taskKey} ${t.title}${t.dueDate ? ` (${t.dueDate})` : ''}`)
+      .map((t) => `• ${mrkdwnLine(t.taskKey, 40)} ${t.title}${t.dueDate ? ` (${t.dueDate})` : ''}`)
       .join('\n') || '（無）';
-  return template
-    .replace(/\{\{completed_tasks\}\}/g, format(data.completed))
-    .replace(/\{\{in_progress_tasks\}\}/g, format(data.inProgress))
-    .replace(/\{\{overdue_tasks\}\}/g, format(data.overdue))
-    .replace(/\{\{upcoming_deadlines\}\}/g, format(data.upcoming))
-    .replace(/\{\{all_tasks\}\}/g, format(data.allTasks))
+  // The template is member text too: no mentions or links of its own.
+  return mrkdwn(template, 2500)
+    .replace(/\{\{completed_tasks\}\}/g, () => format(data.completed))
+    .replace(/\{\{in_progress_tasks\}\}/g, () => format(data.inProgress))
+    .replace(/\{\{overdue_tasks\}\}/g, () => format(data.overdue))
+    .replace(/\{\{upcoming_deadlines\}\}/g, () => format(data.upcoming))
+    .replace(/\{\{all_tasks\}\}/g, () => format(data.allTasks))
     .replace(/\{\{date\}\}/g, new Date().toISOString().split('T')[0] as string)
     .replace(/\{\{task_count\}\}/g, String(data.allTasks.length))
     .replace(/\{\{completed_count\}\}/g, String(data.completed.length))
@@ -846,6 +669,10 @@ async function digestSendChannel(
   blocks: SlackBlock[]
 ): Promise<void> {
   const channelId = await resolveChannelId(sc, channelSetting);
+  if (!channelId) {
+    console.error('[slack] digest channel not found');
+    return;
+  }
   const res = await postMessage(sc, channelId, text, blocks, 'LIVO', ':clipboard:');
   if (!res.ok) console.error('[slack] digest channel error:', res.error);
 }
@@ -919,7 +746,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
       const token = await resolveSlackToken(env, ws);
       if (!token) continue; // Slack not configured for this workspace
 
-      const sc: SlackCtx = { token, usersCache: null };
+      const sc: SlackCtx = { token };
 
       // Load lookup data (workspace-scoped)
       const [statusRes, projectRes, memberRes] = await Promise.all([
@@ -983,7 +810,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
 
         if (assigned.length === 0 && review.length === 0) continue;
 
-        const slackUserId = await findSlackUserId(sc, member.email, member.name);
+        const slackUserId = await findSlackUserId(sc, member.email);
         if (!slackUserId) continue;
 
         const blocks = buildDigestBlocks(env, member.name, assigned, review);
@@ -1100,7 +927,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
         if (cfg.send_target === 'channel' && typeof cfg.send_channel === 'string' && cfg.send_channel) {
           await digestSendChannel(sc, cfg.send_channel, summaryText, blocks);
         } else {
-          const slackUserId = await findSlackUserId(sc, member.email, member.name);
+          const slackUserId = await findSlackUserId(sc, member.email);
           if (slackUserId) {
             await digestSendDm(sc, slackUserId, summaryText, blocks);
           }
@@ -1180,7 +1007,7 @@ export async function handleSlackConfigSet(c: Context<AppContext>): Promise<Resp
     }
 
     // Validate against Slack before persisting.
-    const test = (await slackGet({ token, usersCache: null }, 'auth.test')) as SlackApiResponse & {
+    const test = (await slackGet({ token }, 'auth.test')) as SlackApiResponse & {
       team?: string;
     };
     if (!test.ok) {

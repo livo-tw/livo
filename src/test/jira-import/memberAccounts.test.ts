@@ -6,7 +6,7 @@ const env = new Map<string, string>();
 vi.stubGlobal('Deno', { env: { get: (k: string) => env.get(k) } });
 // A runtime path keeps this Deno file out of the app's type check (no Deno types there).
 const MEMBER_ACCOUNTS = '../../../docker/volumes/functions/manage-member/memberAccounts.ts';
-const { isApiKeyToken, isLocalHostname, resolveAppUrl } = await import(/* @vite-ignore */ MEMBER_ACCOUNTS);
+const { isApiKeyToken, isLocalHostname, resolveAppUrl, unusablePassword } = await import(/* @vite-ignore */ MEMBER_ACCOUNTS);
 
 const req = (origin?: string) => new Request('http://functions:9000/manage-member', { headers: origin ? { Origin: origin } : {} });
 const b64u = (s: string) => Buffer.from(s).toString('base64url');
@@ -48,5 +48,21 @@ describe('API-key tokens', () => {
     expect(isApiKeyToken(jwt({ sub: 'u', role: 'authenticated', session_id: 's' }))).toBe(false);
     expect(isApiKeyToken('not-a-jwt')).toBe(false);
     expect(isApiKeyToken('')).toBe(false);
+  });
+});
+
+describe('unusablePassword', () => {
+  // GoTrue hashes with bcrypt and refuses (or crashes on) passwords over 72 bytes:
+  // a 76-character throwaway made "add member" without a password fail.
+  it('stays within 72 bytes and covers every character class', () => {
+    for (let i = 0; i < 20; i++) {
+      const password = unusablePassword();
+      expect(new TextEncoder().encode(password).length).toBeLessThanOrEqual(72);
+      expect(password).toMatch(/[a-z]/);
+      expect(password).toMatch(/[A-Z]/);
+      expect(password).toMatch(/[0-9]/);
+      expect(password).toMatch(/[^A-Za-z0-9]/);
+    }
+    expect(unusablePassword()).not.toBe(unusablePassword());
   });
 });

@@ -253,7 +253,8 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         if (!user) throw new DeliveryError('recipient_not_verified');
         recipientUser = user;
         const info = (await slack('users.info', { user })).user;
-        if (!info || info.deleted || info.is_bot || info.team_id !== job.team_id) throw new DeliveryError('recipient_unavailable');
+        // Guests (single- or multi-channel) never receive personal task notices.
+        if (!info || info.deleted || info.is_bot || info.is_restricted || info.is_ultra_restricted || info.team_id !== job.team_id) throw new DeliveryError('recipient_unavailable');
         const membership = new Map<string, boolean>();
         const visible = async (p: Row | undefined) => {
           for (const id of matchingChannels(config, p)) {

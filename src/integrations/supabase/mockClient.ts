@@ -1,4 +1,4 @@
-import { taskWorkMockCommand, workMockPatch } from './taskWorkMock';
+import { taskWorkMockCommand, workMockMoveSubtasks, workMockPatch } from './taskWorkMock';
 import { TaskWorkError, taskWorkError } from '@/lib/taskWork/core';
 import { mockApprovalCommand } from './mockApprovalCommands';
 // Mock Supabase Client for local development without Docker/Supabase
@@ -7,7 +7,7 @@ import { mockApprovalCommand } from './mockApprovalCommands';
 import { seedAllDemoData } from './seedData';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { seedKnowledgeMock, knowledgeMockDefaults, knowledgeMockUpdate } from './knowledgeMock';
-import { knowledgeWorkMock, knowledgeMockVisible, knowledgeMockWriteGuard, knowledgeMockRestoreAvailable, knowledgeMockHasData } from './knowledgeWorkMock';
+import { knowledgeWorkMock, knowledgeMockVisible, knowledgeMockWriteGuard, knowledgeMockRestoreAvailable, knowledgeMockHasData, knowledgeMockForgetDeleted } from './knowledgeWorkMock';
 import { KnowledgeWorkError, knowledgeWorkError } from '@/lib/knowledgeWork/core';
 import { planningMockActor, planningMockRpc, planningMockUpdate, planningMockSuppressed } from './taskPlanningMock';
 import { TaskPlanningError, calendarDate, dueDateKind } from '@/lib/taskPlanning/core';
@@ -380,7 +380,11 @@ class UpdateBuilder extends FilterBuilder {
     if (this.t==='tasks') {
       const actor=planningMockActor(db,currentSession?.user.id);
       const prepared=arr.map((r,i)=>matches(r,this.filters)?{i,...withWorkTaskUpdate(r,clone(this.vals),actor)}:null).filter(x=>x!==null);
-      for(const change of prepared) { arr[change.i]=change.row; updated.push(change.row); if(change.history) tbl('task_deadline_history').push(change.history); }
+      const before=arr.slice();
+      // Moved parents take their subtasks along; any refused subtask rolls the whole update back.
+      try { for(const change of prepared) arr[change.i]=change.row; for(const change of prepared) workMockMoveSubtasks(db,before[change.i],change.row); }
+      catch(error) { arr.splice(0,arr.length,...before); throw error; }
+      for(const change of prepared) { updated.push(change.row); if(change.history) tbl('task_deadline_history').push(change.history); }
       return updated;
     }
     arr.forEach((row, i) => {
@@ -411,7 +415,7 @@ class DeleteBuilder extends FilterBuilder {
     if(['tasks','members','projects','comments','checks','todos','task_specs','task_attachments','qa_issues'].includes(this.t) && !this.filters.some(f=>f.op==='eq'||f.op==='in') && knowledgeMockHasData(db)) throw new KnowledgeWorkError('knowledge_requires_server_restore',409);
     const deleted: DbRow[] = [];
     for (let i = arr.length - 1; i >= 0; i--) {
-      if (matches(arr[i], this.filters)) {knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,arr[i],{},true);deleted.push(...arr.splice(i, 1));}
+      if (matches(arr[i], this.filters)) {knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,arr[i],{});const [row]=arr.splice(i, 1);deleted.push(row);knowledgeMockForgetDeleted(db,this.t,row);}
     }
     return deleted;
   }
@@ -476,7 +480,11 @@ class TableRef {
         arr.push(withInsertDefaults(this.t, row));
         result.push(row);
       } else if (!opts?.ignoreDuplicates) {
-        if(this.t==='tasks') { const change=withWorkTaskUpdate(arr[idx],row,planningMockActor(db,currentSession?.user.id)); arr[idx]=change.row; if(change.history) tbl('task_deadline_history').push(change.history); }
+        if(this.t==='tasks') {
+          const change=withWorkTaskUpdate(arr[idx],row,planningMockActor(db,currentSession?.user.id)),before=arr.slice();
+          try { arr[idx]=change.row; workMockMoveSubtasks(db,before[idx],change.row); } catch(error) { arr.splice(0,arr.length,...before); throw error; }
+          if(change.history) tbl('task_deadline_history').push(change.history);
+        }
         else arr[idx] = workMockPatch(db,this.t,arr[idx],{...row,id:arr[idx].id});
         result.push(arr[idx]);
       }

@@ -10,6 +10,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useUIContext } from '@/context/UIContext';
 import { useBrowserNotification } from '@/hooks/useBrowserNotification';
 import { parseQaNotification } from '@/lib/qa/notifications';
+import { formatApprovalNotification, parseApprovalNotification } from '@/lib/approvalNotifications';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,8 @@ const NOTIFICATION_TYPE_KEYS: Record<string, string> = {
   due_soon: 'notification.types.dueSoon',
   system: 'notification.types.system',
   qa_update: 'qa.title',
+  approval_requested: 'notification.types.approvalRequested',
+  approval_completed: 'notification.types.approvalCompleted',
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -63,7 +66,12 @@ const NotificationPanel = () => {
   const qaEnabled = featureTogglesReady && featureToggles.qa;
   const [allNotifications, setNotifications] = useState<Notification[]>([]);
   const notifications = allNotifications.filter(notification => isEventEnabled(notification.type, approvalsEnabled) && (notification.type !== 'qa_update' || qaEnabled));
-  const notificationText = (type: string, content: string) => type === 'qa_update' ? parseQaNotification(content)?.title || t('qa.title') : content;
+  const notificationText = (type: string, content: string) => {
+    if (type === 'qa_update') return parseQaNotification(content)?.title || t('qa.title');
+    // Cloud stores approval notifications as JSON; Docker stores plain text.
+    const approval = parseApprovalNotification(content);
+    return approval ? formatApprovalNotification(approval, t) : content;
+  };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { permission, requestPermission, sendNotification } = useBrowserNotification();

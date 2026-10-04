@@ -79,14 +79,11 @@ Deno.serve(async (req) => {
           await supabase.auth.getUser(callerToken);
         if (callerErr || !callerAuth) return deny('Invalid token', 401);
         let callerRole: string | null = null;
+        // No e-mail fallback and only active members: an unlinked login may carry an
+        // admin's address, and a member deactivated within the hour still has a token.
         const { data: byAuth } = await supabase
-          .from('members').select('role').eq('auth_id', callerAuth.id).maybeSingle();
+          .from('members').select('role').eq('auth_id', callerAuth.id).eq('is_active', true).maybeSingle();
         callerRole = (byAuth as { role?: string } | null)?.role ?? null;
-        if (!callerRole && callerAuth.email) {
-          const { data: byEmail } = await supabase
-            .from('members').select('role').eq('email', callerAuth.email).maybeSingle();
-          callerRole = (byEmail as { role?: string } | null)?.role ?? null;
-        }
         if (callerRole !== 'super_admin') {
           return deny('Permission denied: super_admin role required', 403);
         }

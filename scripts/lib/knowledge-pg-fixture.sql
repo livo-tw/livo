@@ -1,7 +1,11 @@
 -- ISOLATED TEST DATABASE ONLY. Minimal dependencies for the two KB migrations.
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE SCHEMA IF NOT EXISTS storage;
-CREATE TABLE public.members(id text PRIMARY KEY,auth_id uuid,role text,job_title text NOT NULL DEFAULT '',is_active boolean NOT NULL DEFAULT true,email text);
+-- members.role is the app_member_role enum, as in the delivery baseline
+-- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
+-- comparison bugs that failed on real installs.
+CREATE TYPE public.app_member_role AS ENUM ('admin','member','super_admin');
+CREATE TABLE public.members(id text PRIMARY KEY,auth_id uuid,role public.app_member_role,job_title text NOT NULL DEFAULT '',is_active boolean NOT NULL DEFAULT true,email text);
 CREATE TABLE public.projects(id text PRIMARY KEY,is_archived boolean NOT NULL DEFAULT false);
 CREATE TABLE public.field_locks(lock_key text PRIMARY KEY,locked_by text,expires_at timestamptz);
 CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean DEFAULT false);

@@ -36,7 +36,7 @@ function databaseError(body: Row, status: number): never {
     'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request'];
   const code = known.find(code => message.includes(code));
   if (code) fail(code.startsWith('qa_') ? code : `qa_${code}`, ['42501'].includes(body.code) ? 403
-    : ['40001', '23505'].includes(body.code) ? 409 : body.code === 'P0002' ? 404 : 400);
+    : ['40001', 'PT409', '23505'].includes(body.code) ? 409 : body.code === 'P0002' ? 404 : 400);
   return fail('qa_storage_unavailable', status >= 500 ? 503 : 400);
 }
 

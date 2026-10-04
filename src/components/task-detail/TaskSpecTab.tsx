@@ -1,3 +1,4 @@
+import { safeLinkHref } from '@/lib/safeLink';
 import { useState, memo } from 'react';
 import RichTextEditor from '@/components/RichTextEditorLazy';
 import { BookOpen, FileText, StickyNote, ListChecks, CheckCircle2, Paperclip, Plus, Check, Pencil, X, ExternalLink, Trash2, Lock } from 'lucide-react';
@@ -249,10 +250,10 @@ const TaskSpecTab = ({ detail }: Props) => {
         </div>
       </div>
 
-      {task.gitlabUrl && (
+      {safeLinkHref(task.gitlabUrl) && (
         <div className="rounded px-3 py-2 flex items-center gap-2 bg-yellow-50 dark:bg-yellow-900/20">
           <ExternalLink size={12} className="text-primary flex-shrink-0" />
-          <a href={task.gitlabUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary truncate hover:underline">{task.gitlabUrl}</a>
+          <a href={safeLinkHref(task.gitlabUrl)!} target="_blank" rel="noopener noreferrer" className="text-sm text-primary truncate hover:underline">{task.gitlabUrl}</a>
         </div>
       )}
 

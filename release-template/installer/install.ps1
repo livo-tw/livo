@@ -209,6 +209,12 @@ foreach ($req in @(
 Initialize-EnvFile
 Assert-EnvNotOverwritten
 Backup-EnvFile
+# 自架版不用公開註冊（第一個管理員由安裝程式建立，成員由團隊設定建立登入）。
+# 舊版範本預設開放註冊，任何連得到伺服器的人都能自己建帳號；每次執行都關掉。
+if ((Get-DotenvValue 'DISABLE_SIGNUP') -ne 'true') {
+  Set-DotenvVar 'DISABLE_SIGNUP' 'true'
+  Ok '已關閉公開註冊（DISABLE_SIGNUP=true）'
+}
 
 # ============================================================
 # [1/7] 環境檢查
@@ -508,10 +514,27 @@ function Ensure-KnowledgeSecrets {
   }
 }
 
+# 知識庫文件匯入處理器（PDF / Word / Markdown 解析、OCR）是選用服務，預設關閉：
+# 它在這台機器上建置映像檔（需要連外下載 Debian 套件與 PyPI），並佔用約 1 GB 記憶體。
+# docker\.env 設 KNOWLEDGE_PROCESSOR_ENABLED=1 再重跑安裝程式才會建置、啟動。
+$script:KnowledgeProcessorUrl = 'http://knowledge-processor:8091'
+function Test-KnowledgeProcessorEnabled {
+  return @('1', 'true', 'yes', 'on') -contains ([string](Get-DotenvValue 'KNOWLEDGE_PROCESSOR_ENABLED')).ToLowerInvariant()
+}
+# 只清掉安裝程式自己填的內部網址；指向其他主機的自訂網址保留。
+function Clear-KnowledgeProcessorUrl {
+  if ((Get-DotenvValue 'KNOWLEDGE_PROCESSOR_URL') -eq $script:KnowledgeProcessorUrl) { Set-DotenvVar 'KNOWLEDGE_PROCESSOR_URL' '' }
+}
+
 Invoke-KeyRotation
 Invoke-S3KeyRotation
 Ensure-SlackSecret
 Ensure-KnowledgeSecrets
+if (Test-KnowledgeProcessorEnabled) {
+  if (-not (Get-DotenvValue 'KNOWLEDGE_PROCESSOR_URL')) { Set-DotenvVar 'KNOWLEDGE_PROCESSOR_URL' $script:KnowledgeProcessorUrl }
+} else {
+  Clear-KnowledgeProcessorUrl
+}
 Sync-FrontendAnonKey
 Backup-EnvFile
 
@@ -520,8 +543,31 @@ Backup-EnvFile
 # ============================================================
 Say ''
 Say '[3/7] 啟動後端與前端服務（第一次執行需下載映像檔，約 5-10 分鐘）...'
-Invoke-Compose build knowledge-processor
-if ($LASTEXITCODE -ne 0) { Fail 'Knowledge processor build failed.' 'Check the network and rerun the installer. Existing workspace data has not been changed.' }
+# 選用的知識庫處理器：建置失敗只警告、不中止安裝（前端與資料庫更新照常進行），
+# 文件匯入畫面會顯示「尚未設定私有文件處理服務」。服務放在 compose profile
+# knowledge-processor 裡，只有啟用時才帶 COMPOSE_PROFILES 啟動。
+function Remove-KnowledgeProcessor { # 停掉先前留下的處理器容器，釋放記憶體
+  $previousProfiles = $env:COMPOSE_PROFILES
+  $env:COMPOSE_PROFILES = 'knowledge-processor'
+  try { Invoke-Compose rm -s -f knowledge-processor *> $null } finally { $env:COMPOSE_PROFILES = $previousProfiles }
+}
+if (Test-KnowledgeProcessorEnabled) {
+  Say '  建置知識庫文件匯入處理器（選用，KNOWLEDGE_PROCESSOR_ENABLED=1）...'
+  $env:COMPOSE_PROFILES = 'knowledge-processor'
+  Invoke-Compose build knowledge-processor
+  if ($LASTEXITCODE -eq 0) {
+    Ok '知識庫文件匯入處理器已建置'
+  } else {
+    Remove-Item Env:COMPOSE_PROFILES -ErrorAction SilentlyContinue
+    Clear-KnowledgeProcessorUrl
+    Remove-KnowledgeProcessor
+    Warn '知識庫文件匯入處理器建置失敗（多半是無法連外下載 Debian 套件或 PyPI），先略過，其他服務照常安裝。'
+    Say '      文件匯入會顯示「尚未設定私有文件處理服務」；排除網路問題後重新執行 install.bat 即可。'
+  }
+} else {
+  Remove-KnowledgeProcessor
+  Say '  [i] 知識庫文件匯入處理器未啟用（選用，預設關閉；啟用方式見 README）'
+}
 Invoke-Compose up -d
 if ($LASTEXITCODE -ne 0) {
   Fail 'docker compose 啟動失敗。' @'
@@ -542,6 +588,12 @@ if ($runningNames -contains 'supabase-kong') {
   if ($LASTEXITCODE -ne 0) {
     Warn '重新載入失敗，可稍後在 docker\ 目錄執行：docker compose restart kong functions'
   }
+}
+# 前端與 Slack 連線容器直接掛載 app\。升級時 app\ 整個換新，但 compose 認為容器
+# 定義沒變、不會重建，容器就一直指著已刪除的舊目錄（整站 404）。每次都強制重建。
+Invoke-Compose up -d --force-recreate --no-deps livo-frontend livo-slack-socket *> $null
+if ($LASTEXITCODE -ne 0) {
+  Warn '前端重新啟動失敗，可稍後在 docker\ 目錄執行：docker compose -f docker-compose.yml -f compose.frontend.yml up -d --force-recreate livo-frontend'
 }
 Ok '服務已啟動'
 
@@ -892,11 +944,20 @@ while (-not $adminDone) {
 # ============================================================
 Say ''
 Say '[7/7] 檢查前端服務...'
-$frontendUp = & docker ps --filter 'name=livo-frontend' --filter 'status=running' -q 2>$null
-if ($frontendUp) {
-  Ok '前端服務執行中'
+# 等容器的健康檢查實際打到首頁成功（healthy），不只是「在執行」：
+# 容器可能在執行，卻因為掛載失效而整站 404。
+$frontendHealth = ''
+for ($i = 0; $i -lt 75; $i++) {
+  $frontendHealth = (& docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' livo-frontend 2>$null | Out-String).Trim()
+  if ($frontendHealth -eq 'healthy') { break }
+  Start-Sleep -Seconds 2
+}
+if ($frontendHealth -eq 'healthy') {
+  Ok '前端服務正常（首頁可以開啟）'
 } else {
-  Warn '前端容器沒有在執行。查看原因（在 docker\ 目錄執行）：docker compose -f docker-compose.yml -f compose.frontend.yml logs livo-frontend'
+  if (-not $frontendHealth) { $frontendHealth = '找不到容器' }
+  Warn ('前端服務沒有正常回應（狀態：' + $frontendHealth + '）。先試著重新建立（在 docker\ 目錄執行）：docker compose -f docker-compose.yml -f compose.frontend.yml up -d --force-recreate livo-frontend')
+  Warn '仍不行再看原因（在 docker\ 目錄執行）：docker compose -f docker-compose.yml -f compose.frontend.yml logs livo-frontend'
 }
 
 Say ''
@@ -928,6 +989,9 @@ Say '  常用指令（在 docker\ 目錄執行）：'
 Say '  停止：docker compose -f docker-compose.yml -f compose.frontend.yml down'
 Say '  啟動：docker compose -f docker-compose.yml -f compose.frontend.yml up -d'
 Say '  記錄：docker compose logs -f'
+if ($env:COMPOSE_PROFILES -eq 'knowledge-processor') {
+  Say '  （已啟用知識庫文件匯入處理器：手動啟動／停止時在 docker compose 後加 --profile knowledge-processor）'
+}
 Say ''
 Say "  $Support"
 Say ''

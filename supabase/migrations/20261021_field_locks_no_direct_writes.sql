@@ -1,0 +1,13 @@
+-- Edit locks change only through the lock functions.
+--
+-- field_locks (20260326100000) kept policies that let any signed-in session
+-- insert, update and delete rows directly, so the checks in
+-- 20261020_field_lock_caller.sql (only your own lock, at most 300 seconds) could
+-- be skipped by writing the table: a member could release an admin's lock, or
+-- hold a status, project or member edit screen for years. The app only reads
+-- this table; the lock functions run as the table owner, and knowledge-work
+-- writes with the service role, so taking the write privileges from signed-in
+-- sessions changes nothing else. Knowledge-page keys were already guarded by
+-- kb_lock_guard, and Cloud never allowed direct writes.
+-- Repeatable: revoking a privilege that is not held is a no-op; no row is touched.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.field_locks FROM anon, authenticated;

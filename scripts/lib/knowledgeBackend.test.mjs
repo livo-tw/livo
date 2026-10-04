@@ -56,6 +56,18 @@ const policy = (patch = {}) => ({ mode: 'custom', view: rule({ positions: ['PM']
 const adminActor = () => actor('member-admin','admin');
 
 describe('knowledge fine-grained ACL security', () => {
+  it('accepts the single-row array the web client sends for pages and comments, and refuses a batch',async()=>{
+    const created=await query({op:'insert',values:[{title:'From the web client'}],single:true});
+    expect(created.error).toBeNull();expect(created.data.title).toBe('From the web client');
+    expect((await query({table:'kb_comments',op:'insert',values:[{page_id:created.data.id,body:'Web comment'}]})).error).toBeNull();
+    expect((await query({op:'insert',values:[{title:'One'},{title:'Two'}]})).error?.message).toBe('kb_invalid_request');
+  });
+  it('keeps a client-named page id (the web app reads the page back itself) and refuses a malformed one',async()=>{
+    const page=await create({id:'0f6c6a4e-8d1b-4a39-9a8e-2f6b5c1d7e90'});
+    expect(page.id).toBe('0f6c6a4e-8d1b-4a39-9a8e-2f6b5c1d7e90');
+    expect((await query({op:'insert',values:{title:'Clash',id:'0f6c6a4e-8d1b-4a39-9a8e-2f6b5c1d7e90'}})).error).not.toBeNull();
+    expect((await query({op:'insert',values:{title:'Bad id',id:"x'; --"}})).error?.message).toBe('kb_forbidden');
+  });
   it('rejects a cached identity after its live authentication binding is changed',async()=>{
     const page=await create({access_policy:policy()},adminActor());
     db.prepare('UPDATE members SET auth_id=? WHERE id=?').run('replacement-user','member-a');
@@ -171,7 +183,8 @@ describe('knowledge storage and identity boundaries',()=>{
     expect(env.ATTACHMENTS.put).not.toHaveBeenCalled();
   });
   it('blocks administrator account-takeover paths before any account mutation', async () => {
-    for (const body of [{action:'create',jobTitle:'PM'},{action:'create',role:'super_admin'},{action:'reset_password',memberId:'member-a'},{action:'create_login',memberId:'member-a'}]) {
+    // Deactivating or deleting removes the member's login too: super_admin only, as in the app.
+    for (const body of [{action:'create',jobTitle:'PM'},{action:'create',role:'super_admin'},{action:'reset_password',memberId:'member-a'},{action:'create_login',memberId:'member-a'},{action:'toggle_active',memberId:'member-a',isActive:false},{action:'delete',memberId:'member-a'}]) {
       let auth=adminActor(); const c={env,get:()=>auth,set:(_key,v)=>{auth=v;},req:{json:async()=>body},json:(v,status=200)=>new Response(JSON.stringify(v),{status})};
       expect((await handleManageMember(c)).status).toBe(403);
     }

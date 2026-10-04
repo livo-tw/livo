@@ -90,8 +90,9 @@ try {
   }
   // Replace fixture writes with the same role floor used by deployed installations.
   await db.exec(sql('20260713_permission_floor.sql'));
-  const migration = sql('20261005_slack_task_workspace.sql');
+  const migration = sql('20261005_slack_task_workspace.sql'), ruleScope = sql('20261017_approval_slack_rule_scope.sql');
   await db.exec(migration); await db.exec(migration); checks++;
+  await db.exec(ruleScope); await db.exec(ruleScope); checks++;
   check(await scalar("SELECT prosecdef FROM pg_proc WHERE proname='livo_slack_update'"), false, 'RPC keeps caller RLS');
   check(await scalar("SELECT has_function_privilege('anon','livo_slack_update(text,text,jsonb,jsonb,jsonb)','EXECUTE')"), false, 'anonymous execution denied');
   const claims = { sub: '00000000-0000-4000-8000-000000000001', role: 'authenticated',
@@ -153,6 +154,11 @@ try {
     INSERT INTO approval_rules(id,project_id,from_status,to_status,created_by)
       VALUES('00000000-0000-4000-8000-000000000010','project','done','todo','actor')`);
   await reject(update('request-approval-rule', { status_id: 'todo' }, await expected()), 'slack_approval_required', '23514');
+  // A project-less rule is not matched by the app or the approval command, so Slack must not block on it either.
+  await admin(`INSERT INTO approval_rules(id,project_id,from_status,to_status,created_by)
+      VALUES('00000000-0000-4000-8000-000000000011',NULL,'done','review','actor')`);
+  check((await update('request-global-rule', { status_id: 'review' }, await expected())).task.status_id, 'review', 'project-less rule matches no task, as in the app');
+  await admin("UPDATE tasks SET status_id='done' WHERE id='task'");
   await admin(`UPDATE approval_rules SET is_active=false WHERE id='00000000-0000-4000-8000-000000000010';
     INSERT INTO approval_requests(task_id,rule_id,requested_by,from_status,to_status)
       VALUES('task','00000000-0000-4000-8000-000000000010','actor','done','todo')`);

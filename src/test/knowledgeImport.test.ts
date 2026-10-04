@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe,expect,it } from 'vitest';
-import { createKnowledgeImport,defaultImportPolicy,ImportError,allowedNotionAsset,notionPageId,importAllowed, type ImportJob,type ImportRepository,type ImportPolicy,type ImportPage,type ImportStoredSource } from '../../worker/src/knowledgeImport';
+import { createKnowledgeImport,defaultImportPolicy,ImportError,allowedNotionAsset,notionPageId,importAllowed,unsafeProcessorHtml, type ImportJob,type ImportRepository,type ImportPolicy,type ImportPage,type ImportStoredSource } from '../../worker/src/knowledgeImport';
 import type { KnowledgeActor,KnowledgeRule } from '../../worker/src/knowledgeAccess';
 import type { ImportDestination } from '../../worker/src/knowledgeImport';
 const rule:KnowledgeRule={roles:[],positions:['PM'],member_ids:[]};
@@ -90,5 +90,27 @@ describe('private knowledge imports',()=>{
     const failed=harness(),pending=await failed.start();failed.repo.deleteFile=async()=>{throw new Error('storage unavailable');};
     const cancelled=await failed.execute({action:'cancel',job_id:pending.id}) as ImportJob;
     expect(cancelled.status).toBe('cancelled');expect(failed.files.size).toBe(1);expect(failed.jobs.has(pending.id)).toBe(true);
+  });
+});
+
+describe('processor result safety check',()=>{
+  const processed=(body:string):typeof fetch=>async()=>new Response(JSON.stringify({result:{body,warnings:[],pages:[],assets:[],hash:'a'.repeat(64),parser_version:'test',incomplete:false,needs_review:false}}),{status:200,headers:{'content-type':'application/json'}});
+  const ordinary=['<p>Test data: rows 1-3</p>','<p>Metadata: owner and version</p>','<p>one = 1</p>','<h2>Data: summary</h2><p>Avoid javascript: links and vbscript: macros</p>',
+    '<p>Set onclick= in the handler table</p>','<p>&lt;script&gt;alert(1)&lt;/script&gt; is shown as text</p>','<p>a &lt; b and c &gt; d</p>',
+    '<a href="https://example.com/data:report?x=on" target="_blank" rel="noopener noreferrer">data: report</a>','<a href="#section-1">Jump</a>','<table><tr><td>key=value</td></tr></table>',
+    '<a href="https://example.com/search?q=javascript:void,data:x" title="Data: summary">Search</a>','<p ="x">Test data: one = 1</p>'];
+  it.each(ordinary)('accepts ordinary escaped text and passive markup: %s',body=>expect(unsafeProcessorHtml(body)).toBe(false));
+  const malicious=['<a href="javascript:alert(1)">x</a>','<a href="JaVaScRiPt&#58;alert(1)">x</a>','<a href="&#x6A;avascript:alert(1)">x</a>','<a href=" java\tscript:alert(1)">x</a>',
+    '<a href=javascript:alert(1)>x</a>','<a href="vbscript:msgbox(1)">x</a>','<a href="data:text/html;base64,PHNjcmlwdD4=">x</a>','<a title="a>b" href="javascript:alert(1)">x</a>',
+    '<p onclick="alert(1)">x</p>','<p/onmouseover=alert(1)>x</p>','<p ONLOAD=alert(1)>x</p>','<img src=x>','<svg><g></g></svg>','<ScRiPt>alert(1)</script>','<iframe srcdoc="x"></iframe>',
+    '<p style="background:url(javascript:alert(1))">x</p>','<form action="javascript:alert(1)"><button>x</button></form>','<a href="javascript&colon;alert(1)">x</a>','<p srcset="https://example.com/a.png 1x, javascript:alert(1) 2x">x</p>'];
+  it.each(malicious)('rejects executable markup: %s',body=>expect(unsafeProcessorHtml(body)).toBe(true));
+  it('imports ordinary text that only mentions a scheme or an assignment',async()=>{
+    const h=harness();h.setTransport(processed('<p>Test data: 3 rows</p><p>Metadata: one = 1</p>'));
+    const job=await h.start();expect(job.items[0].error).toBeUndefined();expect(job.status).toBe('preview_ready');
+  });
+  it('still refuses a processor result with an executable attribute',async()=>{
+    const h=harness();h.setTransport(processed('<p onclick="alert(1)">Document</p>'));
+    const job=await h.start();expect(job.status).toBe('failed');expect(job.items[0].error).toBe('unsafe_processor_result');
   });
 });

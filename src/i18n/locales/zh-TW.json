@@ -180,7 +180,10 @@
     "unavailable": "無法取得這筆簽核，請重新載入。",
     "invalid": "簽核資料不完整，請重新確認。",
     "prerequisite": "尚未完成這個狀態所需的前置流程。",
-    "failed": "尚未確認簽核結果，請重試；系統會避免重複操作。"
+    "failed": "尚未確認簽核結果，請重試；系統會避免重複操作。",
+    "selfDecision": "申請人不能核准、退回或駁回自己送出的簽核，請等待其他簽核人處理，或撤回申請。",
+    "selfDecisionHint": "這是你送出的申請，需由其他簽核人決定；你仍可撤回。",
+    "requirementAdminOnly": "只有管理員可以關閉「需要簽核」。"
   },
   "taskPlanning": {
     "history": "期限變更紀錄",
@@ -249,7 +252,7 @@
       "byAdmin": "管理員指定",
       "byEmail": "Email 對應",
       "ownerOnly": "帳號對應僅限最高管理員修改。",
-      "reconfirm": "這筆既有對應需要最高管理員重新確認後，才能搜尋知識庫。"
+      "reconfirm": "這筆對應需要最高管理員在下方重新對應後，才能使用 Slack 功能。"
     },
     "title": "從 Slack 建卡與留言",
     "demo": "展示模式不連接 Slack，請在 Docker 自架版設定。",
@@ -393,6 +396,7 @@
     "loadFailed": "載入失敗：",
     "createFailed": "建立失敗：",
     "updateFailed": "更新失敗：",
+    "approvalPending": "這個任務或它的子任務有待簽核的申請，請先完成或撤回再修改。",
     "deleteFailed": "刪除失敗：",
     "uploadFailed": "上傳失敗：",
     "fileSizeExceeded": "檔案大小超過限制",
@@ -435,6 +439,7 @@
     "switchIdentity": "切換身份",
     "accountDisabled": "此帳號已被停用，請聯繫管理員。",
     "accountNotLinked": "此帳號 ({{email}}) 尚未與任何成員綁定，已通知管理員。",
+    "accountUnavailable": "此帳號（{{email}}）目前無法使用：沒有綁定在職成員。請聯繫管理員。",
     "unknownAccountNotify": "未知帳號嘗試登入：{{email}}，請確認是否需要新增此成員。",
     "orTryDemo": "或直接體驗",
     "oneClickDemo": "一鍵進入體驗環境（免輸入）",
@@ -1192,6 +1197,7 @@
     "createTitle": "新增專案",
     "viewing": "{{name}} 正在檢視",
     "lineLabel": "所屬產線",
+    "noProductLine": "還沒有產線。請先到「團隊管理 → 任務配置 → 管理產線」新增一條，再建立專案。",
     "nameLabel": "專案名稱 *",
     "namePlaceholder": "例如：商城主站",
     "keyLabel": "專案代碼 (Key) *",
@@ -1291,6 +1297,8 @@
     "lockedByOther": "{{name}} 正在操作此成員",
     "requiredFields": "請填寫必填欄位",
     "addFailed": "新增失敗：",
+    "addEmailTaken": "這個 Email 的登入帳號屬於另一位成員，沒有新增成員。",
+    "addDuplicate": "此 Email 的成員已存在。",
     "added": "成員已新增",
     "cannotDeactivateSelf": "無法停用自己",
     "deactivate": "停用",
@@ -1324,6 +1332,7 @@
     "confirmPasswordLabel": "確認新密碼",
     "resetPasswordButton": "重設",
     "resetPasswordFailed": "重設失敗：",
+    "resetPasswordEmailTaken": "這個 Email 的登入帳號屬於另一位成員，沒有做任何變更。",
     "passwordResetDone": "已重設「{{name}}」的密碼",
     "createLogin": "啟用帳號",
     "createLoginTitle": "為「{{name}}」啟用帳號",
@@ -1361,7 +1370,18 @@
       "commentReply": "在你參與的任務中留言了",
       "statusChanged": "更新了任務狀態",
       "dueSoon": "提醒：任務即將到期",
-      "system": "系統通知"
+      "system": "系統通知",
+      "approvalRequested": "送出了簽核請求",
+      "approvalCompleted": "更新了簽核結果"
+    },
+    "approval": {
+      "submit": "已送出簽核",
+      "approve": "已核准",
+      "reject": "已駁回",
+      "return": "已退回修改",
+      "withdraw": "已撤回",
+      "updated": "簽核已更新",
+      "withTitle": "{{action}}：{{title}}"
     },
     "panelTitle": "通知",
     "systemSender": "系統",
@@ -2867,6 +2887,7 @@
     "saving": "處理中…",
     "saved": "已儲存",
     "cancel": "取消",
+    "close": "關閉",
     "create": "建立",
     "archive": "封存",
     "unarchive": "取消封存",
@@ -2910,7 +2931,9 @@
       "kb_self_lockout": "請保留您自己的檢視權限，以便後續管理。",
       "kb_policy_invalid": "權限設定無效，請重新選擇授權對象。",
       "kb_legacy_public_attachments": "此頁或子頁仍有舊的公開附件。請先下載備份，刪除舊附件並重新上傳為受控附件，再限制檢視權限。正文中的公開圖片也需改用受控附件。",
-      "kb_comment_invalid": "評論需為 1 至 10,000 字的純文字。"
+      "kb_comment_invalid": "評論需為 1 至 10,000 字的純文字。",
+      "kb_delete_blocked": "此頁面仍有其他內容依附（例如子頁面，包含您看不到的頁面），因此無法刪除。請先移動或刪除這些內容，或聯絡管理員。",
+      "kb_private_draft_parent": "共用頁面不能移到私人草稿底下。請先分享草稿，或選擇其他上層頁面。"
     },
     "category": "類別",
     "allCategories": "全部類別",
@@ -3187,6 +3210,8 @@
     "view": "檢視／下載",
     "download": "下載檔案",
     "closePreview": "關閉預覽",
+    "reload": "重新載入",
+    "retry": "重試",
     "uploadProgress": "上傳中 {{percent}}%",
     "retryUpload": "重試上傳",
     "disabled": "QA 尚未開啟，管理員可在系統管理的功能開關啟用。",
@@ -3318,9 +3343,10 @@
     "duplicate_source": "此來源已匯入這個位置。請選擇既有頁新增來源版本，或明確另存副本。",
     "file_size_limit": "檔案為空或超過 10 MB 上限。",
     "unsupported_format": "請使用 .docx、.md 或 .pdf；不接受舊版 .doc、.docm 與 ZIP 包。",
-    "processor_not_configured": "尚未設定私有文件處理服务。",
+    "processor_not_configured": "尚未設定私有文件處理服務。",
     "processor_busy": "私有處理器忙碌中，請稍後重試此項目。",
     "processing_timeout": "解析超過時間上限，請拆分文件或重試。",
+    "processor_unavailable": "無法連線到私有文件處理服務，請系統維運者確認服務已啟動後再重試此項目。",
     "page_limit": "PDF 超過 40 頁處理上限，請拆成較小檔案。",
     "encrypted_pdf": "無法解析加密 PDF，請提供已授權且解除保護的副本。",
     "invalid_document": "文件損壞或格式不支援，原檔未被公開。",
@@ -3501,6 +3527,7 @@
     }
   },
   "releaseWorkspace": {
+    "selfDecisionHint": "你自己申請的例外不會列在這裡，需由其他管理員決定。",
     "title": "發布工作區",
     "intro": "整理發布清單、驗證證據與人工操作紀錄；儲存紀錄不會執行部署或變更任務、QA 狀態。",
     "create": "建立發布批次",
@@ -3635,7 +3662,8 @@
       "release_confirmation_required": "仍有未確認的例外、部署結果或維護狀態，請檢查清單後再完成。",
       "release_limit_reached": "此批次已達紀錄數量上限。",
       "release_unavailable": "目前無法處理，請稍後再試。",
-      "release_transport_error": "連線中斷，尚未確認結果。請重試同一筆操作。"
+      "release_transport_error": "連線中斷，尚未確認結果。請重試同一筆操作。",
+      "release_self_decision_forbidden": "申請例外的人不能自己核准或駁回，請由其他管理員決定。"
     }
   },
   "myAssignments": {

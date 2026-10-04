@@ -55,7 +55,10 @@ export const handleManageMember = async (c: Context<AppContext>): Promise<Respon
   try {
     const body = (await c.req.json()) as ManageMemberBody;
     const action = body.action;
-    if (auth.member.role !== 'super_admin' && (action === 'reset_password' || action === 'create_login')) {
+    // Deactivating or deleting a member removes their login too, so it is a
+    // super_admin action, as in the app. An admin could otherwise lock out a
+    // super_admin.
+    if (auth.member.role !== 'super_admin' && (action === 'reset_password' || action === 'create_login' || action === 'toggle_active' || action === 'delete')) {
       return c.json({ error: 'Permission denied: only super_admin can manage another member login' }, 403);
     }
     if (action === 'create') {
@@ -280,7 +283,7 @@ async function createMember(c: Context<AppContext>, body: ManageMemberBody): Pro
   if (existingMember) {
     const sameWs = (existingMember.workspace_id || DEFAULT_WORKSPACE) === ws;
     return c.json(
-      { error: sameWs ? '此 Email 的成員已存在' : '此 Email 已在其他 LIVO 團隊使用，請改用其他 Email' },
+      { error: sameWs ? '此 Email 的成員已存在' : '此 Email 已在其他 LIVO 團隊使用，請改用其他 Email', ...(sameWs ? { code: 'member_exists' } : {}) },
       400
     );
   }

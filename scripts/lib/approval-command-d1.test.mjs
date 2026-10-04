@@ -184,8 +184,60 @@ describe('native SQLite atomic approval commands', () => {
         expect(result.task.requires_approval).toBe(true);
         expect(() => db.exec("UPDATE tasks SET status_id='done' WHERE id='task'")).toThrow('approval_forbidden');
         const one = await executeApprovalCommand(env, actor(), { ...submit(), expected: { statusId: 'todo', requiresApproval: true, currentApprovalId: null, approvalStatus: null } });
-        await expect(executeApprovalCommand(env, actor(), { ...intent, commandId: commandId(), expectedRequiresApproval: true, enabled: false })).rejects.toMatchObject({ code: 'approval_conflict' });
+        // An administrator may remove the requirement, but not while a request is pending.
+        await expect(executeApprovalCommand(env, actor('approver'), { ...intent, commandId: commandId(), expectedRequiresApproval: true, enabled: false })).rejects.toMatchObject({ code: 'approval_conflict' });
         expect(one.request.status).toBe('pending');
+    });
+    it('lets any member require approval but only live administrators remove the requirement', async () => {
+        const on = () => ({ commandId: commandId(), operation: 'set_requirement', taskId: 'task', expectedRequiresApproval: false, enabled: true });
+        const off = (who) => executeApprovalCommand(env, actor(who), { commandId: commandId(), operation: 'set_requirement', taskId: 'task', expectedRequiresApproval: true, enabled: false });
+        expect((await executeApprovalCommand(env, actor(), on())).task.requires_approval).toBe(true);
+        for (const who of ['requester', 'other'])
+            await expect(off(who)).rejects.toMatchObject({ code: 'approval_requirement_admin_only', status: 403 });
+        expect(row('tasks', 'task').requires_approval).toBe(1);
+        expect(count('approval_command_receipts')).toBe(1);
+        expect((await off('approver')).task.requires_approval).toBe(false);
+        await executeApprovalCommand(env, actor(), on());
+        expect((await off('super')).task.requires_approval).toBe(false);
+        // The database checks the live role, not the adapter's possibly stale session role.
+        await executeApprovalCommand(env, actor(), on());
+        db.exec("UPDATE members SET role='member' WHERE id='approver'");
+        await expect(off('approver')).rejects.toMatchObject({ code: 'approval_requirement_admin_only' });
+        db.exec("UPDATE system_settings SET value='{\"approvals\":false}' WHERE key='feature_toggles'");
+        await expect(off('requester')).rejects.toMatchObject({ code: 'approval_requirement_admin_only' });
+        expect((await off('super')).task.requires_approval).toBe(false);
+    });
+    it('never lets a requester decide their own request, even as administrator or owner', async () => {
+        const own = await executeApprovalCommand(env, actor('approver'), submit());
+        for (const operation of ['approve', 'reject', 'return'])
+            await expect(action(own.request, operation, 'approver')).rejects.toMatchObject({ code: 'approval_self_decision_forbidden', status: 403 });
+        expect(count('approval_actions')).toBe(0);
+        expect(row('approval_requests', own.request.id).status).toBe('pending');
+        // No one else holds the exact admin role, so the request waits; its requester may withdraw it.
+        await expect(action(own.request, 'approve', 'super')).rejects.toMatchObject({ code: 'approval_forbidden' });
+        const withdrawn = await executeApprovalCommand(env, actor('approver'), { commandId: commandId(), operation: 'withdraw', requestId: own.request.id, expectedVersion: 1 });
+        expect(withdrawn.request.status).toBe('cancelled');
+        // Default administrator fallback (no rule): the owner cannot approve their own request either.
+        db.exec("INSERT INTO statuses(workspace_id,id,name,is_done,auto_start) VALUES('a','review','Review',0,0)");
+        const fallback = await executeApprovalCommand(env, actor('super'), { ...submit('second', null), toStatusId: 'review', enableRequirement: true });
+        await expect(action(fallback.request, 'approve', 'super')).rejects.toMatchObject({ code: 'approval_self_decision_forbidden' });
+        expect((await action(fallback.request, 'approve', 'approver')).request.status).toBe('approved');
+    });
+    it('blocks a named user step when that user is the requester', async () => {
+        db.exec("UPDATE approval_rule_steps SET approver_type='user',approver_role=NULL,approver_user_id='requester' WHERE id='step1'");
+        const one = await executeApprovalCommand(env, actor(), submit());
+        await expect(action(one.request, 'approve', 'requester')).rejects.toMatchObject({ code: 'approval_self_decision_forbidden' });
+        expect(count('approval_actions')).toBe(0);
+        expect(count('approval_command_receipts')).toBe(1);
+    });
+    it('does not ask a requester to approve their own request at a later step', async () => {
+        db.exec("INSERT INTO approval_rule_steps(workspace_id,id,rule_id,step_order,approver_type,approver_role) VALUES('a','step2','rule',2,'role','member')");
+        const one = await executeApprovalCommand(env, actor(), submit()), next = await action(one.request);
+        expect(next.request.current_step).toBe(2);
+        const asked = db.prepare("SELECT recipient_id FROM notifications WHERE type='approval_requested' AND id LIKE ? ORDER BY recipient_id").all(next.eventId + ':%');
+        expect(asked.map(r => r.recipient_id)).toEqual(['other']);
+        await expect(action(next.request, 'approve', 'requester')).rejects.toMatchObject({ code: 'approval_self_decision_forbidden' });
+        expect((await action(next.request, 'approve', 'other')).request.status).toBe('approved');
     });
     it('checks prerequisites both on submit and again before final approval', async () => {
         const one = await executeApprovalCommand(env, actor(), submit());

@@ -180,7 +180,10 @@
     "unavailable": "无法取得这笔签核，请重新加载。",
     "invalid": "签核资料不完整，请重新确认。",
     "prerequisite": "尚未完成这个状态所需的前置流程。",
-    "failed": "尚未确认签核结果，请重试；系统会避免重复操作。"
+    "failed": "尚未确认签核结果，请重试；系统会避免重复操作。",
+    "selfDecision": "申请人不能批准、退回或驳回自己提交的签核，请等待其他签核人处理，或撤回申请。",
+    "selfDecisionHint": "这是你提交的申请，需由其他签核人决定；你仍可撤回。",
+    "requirementAdminOnly": "只有管理员可以关闭“需要签核”。"
   },
   "taskPlanning": {
     "history": "期限变更记录",
@@ -249,7 +252,7 @@
       "byAdmin": "管理员指定",
       "byEmail": "Email 对应",
       "ownerOnly": "账号对应仅限最高管理员修改。",
-      "reconfirm": "这笔已有对应需要最高管理员重新确认后，才能搜索知识库。"
+      "reconfirm": "这笔对应需要最高管理员在下方重新对应后，才能使用 Slack 功能。"
     },
     "title": "从 Slack 建卡与留言",
     "demo": "演示模式不连接 Slack，请在 Docker 自托管版设置。",
@@ -393,6 +396,7 @@
     "loadFailed": "载入失败：",
     "createFailed": "建立失败：",
     "updateFailed": "更新失败：",
+    "approvalPending": "这个任务或它的子任务有待签核的申请，请先完成或撤回再修改。",
     "deleteFailed": "删除失败：",
     "uploadFailed": "上传失败：",
     "fileSizeExceeded": "档案大小超过限制",
@@ -435,6 +439,7 @@
     "switchIdentity": "切换身份",
     "accountDisabled": "此账号已被停用，请联系管理员。",
     "accountNotLinked": "此账号 ({{email}}) 尚未与任何成员绑定，已通知管理员。",
+    "accountUnavailable": "此账号（{{email}}）目前无法使用：没有绑定在职成员。请联系管理员。",
     "unknownAccountNotify": "未知账号尝试登录：{{email}}，请确认是否需要新增此成员。",
     "orTryDemo": "或直接体验",
     "oneClickDemo": "一键进入体验环境（免输入）",
@@ -1192,6 +1197,7 @@
     "createTitle": "新增专案",
     "viewing": "{{name}} 正在检视",
     "lineLabel": "所属产线",
+    "noProductLine": "还没有产线。请先到「团队管理 → 任务配置 → 管理产线」新增一条，再建立专案。",
     "nameLabel": "专案名称 *",
     "namePlaceholder": "例如：商城主站",
     "keyLabel": "专案代码 (Key) *",
@@ -1289,6 +1295,8 @@
     "lockedByOther": "{{name}} 正在操作此成员",
     "requiredFields": "请填写必填栏位",
     "addFailed": "新增失败：",
+    "addEmailTaken": "这个 Email 的登录账号属于另一位成员，没有新增成员。",
+    "addDuplicate": "此 Email 的成员已存在。",
     "added": "成员已新增",
     "cannotDeactivateSelf": "无法停用自己",
     "deactivate": "停用",
@@ -1324,6 +1332,7 @@
     "confirmPasswordLabel": "确认新密码",
     "resetPasswordButton": "重设",
     "resetPasswordFailed": "重设失败：",
+    "resetPasswordEmailTaken": "这个 Email 的登录账号属于另一位成员，没有做任何变更。",
     "passwordResetDone": "已重设「{{name}}」的密码",
     "createLogin": "启用账号",
     "createLoginTitle": "为「{{name}}」启用账号",
@@ -1361,7 +1370,18 @@
       "commentReply": "在你参与的任务中留言了",
       "statusChanged": "更新了任务状态",
       "dueSoon": "提醒：任务即将到期",
-      "system": "系统通知"
+      "system": "系统通知",
+      "approvalRequested": "提交了签核请求",
+      "approvalCompleted": "更新了签核结果"
+    },
+    "approval": {
+      "submit": "已提交签核",
+      "approve": "已批准",
+      "reject": "已驳回",
+      "return": "已退回修改",
+      "withdraw": "已撤回",
+      "updated": "签核已更新",
+      "withTitle": "{{action}}：{{title}}"
     },
     "panelTitle": "通知",
     "systemSender": "系统",
@@ -2867,6 +2887,7 @@
     "saving": "处理中…",
     "saved": "已保存",
     "cancel": "取消",
+    "close": "关闭",
     "create": "创建",
     "archive": "归档",
     "unarchive": "取消归档",
@@ -2910,7 +2931,9 @@
       "kb_self_lockout": "请保留您自己的查看权限，以便后续管理。",
       "kb_policy_invalid": "权限设置无效，请重新选择授权对象。",
       "kb_legacy_public_attachments": "此页或子页仍有旧的公开附件。请先下载备份，删除旧附件并重新上传为受控附件，再限制查看权限。正文中的公开图片也需改用受控附件。",
-      "kb_comment_invalid": "评论需为 1 至 10,000 字的纯文本。"
+      "kb_comment_invalid": "评论需为 1 至 10,000 字的纯文本。",
+      "kb_delete_blocked": "此页面仍有其他内容依附（例如子页面，包括您看不到的页面），因此无法删除。请先移动或删除这些内容，或联系管理员。",
+      "kb_private_draft_parent": "共享页面不能移到私人草稿下面。请先分享草稿，或选择其他上级页面。"
     },
     "category": "类别",
     "allCategories": "全部类别",
@@ -3187,6 +3210,8 @@
     "view": "查看／下载",
     "download": "下载文件",
     "closePreview": "关闭预览",
+    "reload": "重新加载",
+    "retry": "重试",
     "uploadProgress": "上传中 {{percent}}%",
     "retryUpload": "重试上传",
     "disabled": "QA 尚未开启，管理员可在系统管理的功能开关启用。",
@@ -3321,6 +3346,7 @@
     "processor_not_configured": "尚未配置私有文件处理服务。",
     "processor_busy": "私有处理器正忙，请稍后重试此项目。",
     "processing_timeout": "解析超出时间上限，请拆分文档或重试。",
+    "processor_unavailable": "无法连接到私有文件处理服务，请系统运维者确认服务已启动后再重试此项目。",
     "page_limit": "PDF 超过 40 页处理上限，请拆成较小文件。",
     "encrypted_pdf": "无法解析加密 PDF，请提供已授权且解除保护的副本。",
     "invalid_document": "文档损坏或格式不支持，原件未被公开。",
@@ -3501,6 +3527,7 @@
     }
   },
   "releaseWorkspace": {
+    "selfDecisionHint": "你自己申请的例外不会列在这里，需由其他管理员决定。",
     "title": "发布工作区",
     "intro": "整理发布清单、验证证据与人工操作记录；保存记录不会执行部署或变更任务、QA 状态。",
     "create": "创建发布批次",
@@ -3635,7 +3662,8 @@
       "release_confirmation_required": "仍有未确认的例外、部署结果或维护状态，请检查清单后再完成。",
       "release_limit_reached": "此批次已达到记录数量上限。",
       "release_unavailable": "当前无法处理，请稍后重试。",
-      "release_transport_error": "连接中断，尚未确认结果。请重试同一条操作。"
+      "release_transport_error": "连接中断，尚未确认结果。请重试同一条操作。",
+      "release_self_decision_forbidden": "申请例外的人不能自己批准或驳回，请由其他管理员决定。"
     }
   },
   "myAssignments": {

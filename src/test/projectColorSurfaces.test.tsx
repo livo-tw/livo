@@ -63,6 +63,21 @@ describe('shared project colour surfaces', () => {
     await waitFor(() => expect(state.update).toHaveBeenCalledWith('p-b', { name: 'Project B renamed' }));
   });
 
+  it('cannot create a project before a product line exists, and says why', () => {
+    const lines = state.lines;
+    state.projects = []; state.lines = [];
+    try {
+      render(<CreateProjectModal />);
+      fireEvent.change(screen.getByPlaceholderText('project.namePlaceholder'), { target: { value: 'First project' } });
+      fireEvent.change(screen.getByPlaceholderText('project.keyPlaceholder'), { target: { value: 'FP' } });
+      expect(screen.getByRole('alert')).toHaveTextContent('project.noProductLine');
+      const buttons = screen.getAllByRole('button');
+      expect(buttons[buttons.length - 1]).toBeDisabled();
+      fireEvent.click(buttons[buttons.length - 1]);
+      expect(state.create).not.toHaveBeenCalled();
+    } finally { state.lines = lines; }
+  });
+
   it('new project colour defaults use the complete catalog and keep the choice visible', () => {
     state.projects = projects;
     render(<CreateProjectModal />);

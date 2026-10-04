@@ -118,8 +118,8 @@ export async function handleKnowledgeSlack(p: Row, d: KnowledgeSlackActions): Pr
     try {
       if (!submitted) opened = await d.slack(p.view?.id ? 'views.update' : 'views.open', {
         ...(p.view?.id ? { view_id: p.view.id, ...(p.view.hash ? { hash: p.view.hash } : {}) } : { trigger_id: p.trigger_id }), view: loading });
-      const actor = await d.actor(p);
       if (!await d.enabled()) throw new Error('disabled');
+      const actor = await d.actor(p);
       const view = query ? knowledgeResultsModal(p, query, await d.search(actor, query), d.link, actor.locale)
         : knowledgeSearchModal(p, actor.locale, initial);
       await d.slack('views.update', { view_id: opened?.view?.id || p.view?.id,

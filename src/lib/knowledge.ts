@@ -28,6 +28,29 @@ export function buildKnowledgeTree(pages: KnowledgePage[]): KnowledgeNode[] {
   return roots;
 }
 
+/** True when the page or one of its ancestors is a private draft. */
+export function knowledgeInsidePrivateDraft(pages: Pick<KnowledgePage, 'id' | 'parent_id' | 'private_draft_owner_id'>[], id: string | null | undefined): boolean {
+  const seen = new Set<string>();
+  for (let cursor = id || null; cursor && !seen.has(cursor) && seen.size < 10;) {
+    seen.add(cursor);
+    const page = pages.find(p => p.id === cursor);
+    if (!page) return false;
+    if (page.private_draft_owner_id) return true;
+    cursor = page.parent_id;
+  }
+  return false;
+}
+
+/** Turn a refused page deletion into a message key the reader can act on. */
+export function knowledgeDeleteErrorKey(failure: unknown): string {
+  const message = failure && typeof failure === 'object' && 'message' in failure ? String(failure.message) : String(failure ?? '');
+  // PostgreSQL names the constraint; the parent link means child pages remain.
+  if (/parent_id_fkey/i.test(message)) return 'kb_has_children';
+  // Any other remaining reference (SQLite does not name the constraint, so hidden child pages land here too).
+  if (/foreign key|knowledge_conflict/i.test(message)) return 'kb_delete_blocked';
+  return message.match(/\bkb_(?!pages\b)[a-z_]+/)?.[0] || 'kb_failed';
+}
+
 export function knowledgeText(html: string): string {
   const el = document.createElement('div');
   el.innerHTML = DOMPurify.sanitize(html).replace(/<\/(p|div|h[1-6]|li)>|<br\s*\/?\s*>/gi, ' ');

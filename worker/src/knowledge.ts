@@ -7,6 +7,7 @@ import { TABLES } from './tables';
 import { notifyChanges } from './notify';
 import { knowledgeIsAdmin, parseKnowledgePolicy, knowledgeRuleMatches } from './knowledgeAccess';
 import { knowledgePermissionSql } from './knowledgeSql';
+import { liveMember, liveMemberSql } from './liveMember';
 
 const pageColumns = new Set(['title','body','parent_id','project_id','sort_order','admin_only','is_archived','category','access_policy']);
 const fail = (message: string): QueryResponse => ({ data: null, error: { message, code: '42501' } });
@@ -24,13 +25,21 @@ export async function knowledgeLockAllowed(env: Env, auth: AuthCtx, lockKey: str
 
 export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: QueryRequest): Promise<QueryResponse> {
   const ws=auth.member.workspaceId || DEFAULT_WORKSPACE, member=auth.member.id;
-  const liveActor=await env.DB.prepare('SELECT id,role,job_title,is_active FROM members WHERE workspace_id=? AND id=? AND auth_id=?').bind(ws,member,auth.userId).first<{id:string;role:string;job_title:string;is_active:number}>();
+  const liveActor=await liveMember(env,auth);
   if (!liveActor?.is_active) return fail('kb_forbidden');
   const admin=knowledgeAdmin(liveActor.role);
   const adminSql="EXISTS (SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND role IN ('admin','super_admin'))";
   if (!member || req.op==='upsert' || req.table==='kb_revisions') return fail('kb_forbidden');
-  const values=req.values && typeof req.values==='object' && !Array.isArray(req.values) ? req.values as Record<string,unknown> : {};
-  const id=req.op==='insert' ? crypto.randomUUID() : req.filters?.find(f=>f.col==='id' && f.op==='eq')?.val;
+  // The web client (cfClient) always sends inserts as an array; knowledge writes are one
+  // row at a time, so unwrap a single row and refuse a batch.
+  if (Array.isArray(req.values) && req.values.length!==1) return fail('kb_invalid_request');
+  const row=Array.isArray(req.values) ? req.values[0] : req.values;
+  const values=row && typeof row==='object' && !Array.isArray(row) ? row as Record<string,unknown> : {};
+  // A new page may carry its client-generated id: the Docker backend cannot return the
+  // inserted row through RLS (the view check looks the page up by id), so the web app
+  // names the page itself and reads it back. Ids are globally unique keys; a clash fails.
+  const clientId=req.op==='insert' && req.table==='kb_pages' && typeof values.id==='string' && /^[A-Za-z0-9-]{8,64}$/.test(values.id) ? values.id : null;
+  const id=req.op==='insert' ? clientId ?? crypto.randomUUID() : req.filters?.find(f=>f.col==='id' && f.op==='eq')?.val;
   if (typeof id!=='string' || req.filters?.some(f=>f.op!=='eq' || !['id','version','created_by'].includes(f.col))) return fail('kb_invalid_request');
   const stamp=new Date().toISOString();
   const edit=knowledgePermissionSql('kb_pages.id','edit',auth), view=knowledgePermissionSql('kb_pages.id','view',auth);
@@ -40,7 +49,7 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
   const editableParams=[...edit.params,...lockParams];
   let statement:D1PreparedStatement;
   if (req.table==='kb_pages') {
-    if (Object.keys(values).some(k=>!new Set([...pageColumns,'created_by','updated_by']).has(k))) return fail('kb_forbidden');
+    if (Object.keys(values).some(k=>!new Set([...pageColumns,'created_by','updated_by',...(clientId?['id']:[])]).has(k))) return fail('kb_forbidden');
     if (!admin && (values.admin_only!==undefined || values.is_archived!==undefined || (values.access_policy!==undefined && parseKnowledgePolicy(values.access_policy)?.mode!=='inherit'))) return fail('kb_forbidden');
     if (values.title!==undefined && (typeof values.title!=='string' || !values.title.trim() || values.title.length>200)) return fail('kb_invalid_title');
     if (values.body!==undefined && (typeof values.body!=='string' || values.body.length>1000000)) return fail('kb_invalid_body');
@@ -59,9 +68,9 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
       const parent=typeof values.parent_id==='string' ? knowledgePermissionSql(literal(values.parent_id),'edit',auth) : null;
       const needsAdmin=policy.mode==='custom' || values.admin_only!==undefined || values.is_archived!==undefined;
       statement=env.DB.prepare(`INSERT INTO kb_pages(id,workspace_id,title,body,project_id,parent_id,sort_order,admin_only,is_archived,category,access_policy,created_by,updated_by,created_at,updated_at)
-        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM members WHERE workspace_id=? AND id=? AND auth_id=? AND is_active=1)
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM members m WHERE ${liveMemberSql(auth,'m').sql})
         ${parent ? `AND ${parent.sql}` : ''} ${needsAdmin ? `AND ${adminSql}` : ''} RETURNING *`)
-        .bind(id,ws,values.title.trim(),values.body??'',values.project_id??null,values.parent_id??null,values.sort_order??0,values.admin_only?1:0,values.is_archived?1:0,values.category??'general',JSON.stringify(policy),member,member,stamp,stamp,ws,member,auth.userId,...(parent?.params??[]),...(needsAdmin?[ws,member]:[]));
+        .bind(id,ws,values.title.trim(),values.body??'',values.project_id??null,values.parent_id??null,values.sort_order??0,values.admin_only?1:0,values.is_archived?1:0,values.category??'general',JSON.stringify(policy),member,member,stamp,stamp,...liveMemberSql(auth,'m').params,...(parent?.params??[]),...(needsAdmin?[ws,member]:[]));
     } else if (req.op==='update') {
       const version=req.filters?.find(f=>f.col==='version')?.val;
       if (!Number.isSafeInteger(version)) return fail('kb_conflict');

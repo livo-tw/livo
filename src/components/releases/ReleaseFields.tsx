@@ -1,3 +1,4 @@
+import { safeLinkHref } from '@/lib/safeLink';
 import { useEffect, useLayoutEffect, useRef, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -24,9 +25,9 @@ export function ReleaseFailure({ error }: { error: unknown }) {
 }
 export function ReleaseLink({ url }: { url: string | null }) {
   const { t } = useTranslation();
-  if (!url) return null;
-  try { const parsed = new URL(url); if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null; } catch { return null; }
-  return <a className="text-primary underline" href={url} target="_blank" rel="noopener noreferrer">{t('releaseWorkspace.openEvidence')}</a>;
+  const href = safeLinkHref(url);
+  if (!href) return null;
+  return <a className="text-primary underline" href={href} target="_blank" rel="noopener noreferrer">{t('releaseWorkspace.openEvidence')}</a>;
 }
 export function useReleaseSubmit(client: ReleaseClient, onSaved: (batch: ReleaseBatch) => void) {
   const { t } = useTranslation();

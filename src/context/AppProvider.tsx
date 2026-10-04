@@ -36,8 +36,8 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   );
 
   const createSubtask = useMemo(
-    () => task.createCreateSubtask(project.allProjects, auth.currentMemberId),
-    [task.createCreateSubtask, project.allProjects, auth.currentMemberId],
+    () => task.createCreateSubtask(project.allProjects, auth.currentMemberId, ui.requiredFields),
+    [task.createCreateSubtask, project.allProjects, auth.currentMemberId, ui.requiredFields],
   );
 
   const deleteProjectInDb = useMemo(

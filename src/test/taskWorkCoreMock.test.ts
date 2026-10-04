@@ -1,6 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {parseTaskWorkCommand,canonicalTaskWorkPayload,taskWorkError,workCalendarDate} from '../lib/taskWork/core';
-import {taskWorkMockCommand,workMockPatch} from '../integrations/supabase/taskWorkMock';
+import {taskWorkMockCommand,workMockMoveSubtasks,workMockPatch} from '../integrations/supabase/taskWorkMock';
+import {DEFAULT_REQUIRED_FIELDS} from '../context/UIContext';
 type Row=Record<string,any>;
 const command={commandId:'command-example',taskId:'t1',operation:'acknowledge',role:'assignee',expectedRevision:0};
 const fixture=():Record<string,Row[]>=>({members:[{id:'m1',auth_id:'auth1',is_active:true},{id:'m2',auth_id:'auth2',is_active:true}],
@@ -44,6 +45,27 @@ describe('TaskWork input and Mock transaction contract',()=>{
     expect(()=>taskWorkMockCommand(db,'auth1',{...child,title:'Changed'})).toThrow('work_command_reused');
     db.custom_fields=[{project_id:'p1',is_required:true}];const before=JSON.stringify(db);
     expect(()=>taskWorkMockCommand(db,'auth1',{...child,commandId:'new-child-command'})).toThrow('work_required_fields');expect(JSON.stringify(db)).toBe(before);
+  });
+  it('applies the shipped required_fields default like the database: title and project are always supplied',()=>{
+    const db=fixture(),child:Row={taskId:'t1',operation:'create_subtask',title:'Child',statusId:'s1',priority:'medium',assigneeId:null,reviewerId:null};
+    const setRequired=(value:Row)=>{db.system_settings=[{key:'required_fields',value}];};
+    setRequired({...DEFAULT_REQUIRED_FIELDS});
+    expect(()=>taskWorkMockCommand(db,'auth1',{...child,commandId:'undated-child',dueDate:null})).toThrow('work_required_fields');
+    expect(taskWorkMockCommand(db,'auth1',{...child,commandId:'dated-child',dueDate:'2027-02-01'}).record).toMatchObject({parent_task_id:'t1',due_date:'2027-02-01'});
+    setRequired({title:true,project:true,status:true,priority:true});
+    expect(taskWorkMockCommand(db,'auth1',{...child,commandId:'plain-child',dueDate:null}).record).toMatchObject({parent_task_id:'t1',due_date:null});
+    setRequired({assignee:true});
+    expect(()=>taskWorkMockCommand(db,'auth1',{...child,commandId:'unassigned-child',dueDate:null})).toThrow('work_required_fields');
+    setRequired({title:true,background:true});const before=JSON.stringify(db);
+    expect(()=>taskWorkMockCommand(db,'auth1',{...child,commandId:'background-child',dueDate:'2027-02-01'})).toThrow('work_required_fields');
+    expect(JSON.stringify(db)).toBe(before);
+  });
+  it('moves subtasks together with their parent and refuses moving a subtask alone',()=>{
+    const db=fixture();db.tasks.push({id:'c1',task_key:'EXAMPLE-5',project_id:'p1',title:'Child',status_id:'s1',parent_task_id:'t1'});
+    expect(()=>workMockPatch(db,'tasks',db.tasks[2],{project_id:'p2'})).toThrow('work_invalid_parent');
+    const before=db.tasks[0];db.tasks[0]=workMockPatch(db,'tasks',before,{project_id:'p2'});
+    workMockMoveSubtasks(db,before,db.tasks[0]);
+    expect(db.tasks.find(t=>t.id==='c1')).toMatchObject({project_id:'p2',parent_task_id:'t1'});
   });
   it('protects checklist edits from generic writes and stale form versions',()=>{
     const db=fixture(),first=taskWorkMockCommand(db,'auth1',{commandId:'item-command',taskId:'t1',operation:'add_item',list:'checks',text:'Evidence'});

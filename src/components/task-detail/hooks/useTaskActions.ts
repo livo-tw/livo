@@ -8,6 +8,7 @@ import i18n from '@/i18n';
 import { createNotification, type EnvName } from '../utils';
 import type { Task, Status, User, Project, TaskCustomFieldValue } from '@/types';
 import { copyText } from '@/lib/clipboard';
+import { applyTaskUpdate } from '@/lib/taskWork/projectMove';
 
 export interface UseTaskActionsParams {
   task: Task | null;
@@ -21,7 +22,7 @@ export interface UseTaskActionsParams {
   assignee: User | undefined;
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   setSelectedTask: React.Dispatch<React.SetStateAction<Task | null>>;
-  updateTaskInDb: (taskId: string, updates: Partial<Task>) => void;
+  updateTaskInDb: (taskId: string, updates: Partial<Task>) => Promise<boolean | void> | void;
   confirm: (opts: { title?: string; description: string; destructive?: boolean }) => Promise<boolean>;
   undoStack: { push: (entry: { type: string; description: string; undo: () => Promise<void> }) => void };
   customFieldValues: TaskCustomFieldValue[];
@@ -62,51 +63,60 @@ export function useTaskActions(params: UseTaskActionsParams) {
   const updateTask = (updates: Partial<Task>) => {
     if (!task) return;
     const updated = { ...task, ...updates };
-    setAllTasks(prev => prev.map(t => t.id === task.id ? updated : t));
+    setAllTasks(prev => applyTaskUpdate(prev, updated, task.projectId));
     setSelectedTask(updated);
-    updateTaskInDb(task.id, updates);
+    const saved = Promise.resolve(updateTaskInDb(task.id, updates));
+    // Activity, inbox notifications and Slack notices describe the saved task, so they
+    // run only after the write succeeds: a refused save (permission, approval, conflict)
+    // must not log or announce a change that did not happen. slack-notify also reads the
+    // assignee and reviewer from the stored row.
+    const afterSave: Array<() => void> = [];
+    const log = (...args: Parameters<typeof logActivity>) => { afterSave.push(() => { void logActivity(...args); }); };
+    const notify = (...args: Parameters<typeof createNotification>) => { afterSave.push(() => { void createNotification(...args); }); };
+    const notifyAfterSave = (payload: Parameters<typeof sendSlackNotify>[0]) => { afterSave.push(() => { void sendSlackNotify(payload); }); };
+    void saved.then(ok => { if (ok !== false) afterSave.forEach(run => run()); }, () => {});
 
     if (updates.title && updates.title !== task.title)
-      logActivity(currentMemberId, 'update_title', `「${task.title}」→「${updates.title}」`, task.id, task.taskKey);
+      log(currentMemberId, 'update_title', `「${task.title}」→「${updates.title}」`, task.id, task.taskKey);
     if (updates.statusId && updates.statusId !== task.statusId) {
       const oldS = statuses.find(s => s.id === task.statusId);
       const newS = statuses.find(s => s.id === updates.statusId);
-      logActivity(currentMemberId, 'update_status', `${oldS?.name || '—'} → ${newS?.name || '—'}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_status', `${oldS?.name || '—'} → ${newS?.name || '—'}`, task.id, task.taskKey);
     }
     if (updates.priority && updates.priority !== task.priority) {
       const pLabels: Record<string, string> = { highest: i18n.t('priority.highest'), high: i18n.t('priority.high'), medium: i18n.t('priority.medium'), low: i18n.t('priority.low'), lowest: i18n.t('priority.lowest') };
-      logActivity(currentMemberId, 'update_priority', `${pLabels[task.priority] || task.priority} → ${pLabels[updates.priority] || updates.priority}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_priority', `${pLabels[task.priority] || task.priority} → ${pLabels[updates.priority] || updates.priority}`, task.id, task.taskKey);
     }
     if (updates.assigneeId !== undefined && updates.assigneeId !== task.assigneeId) {
       const oldA = users.find(u => u.id === task.assigneeId);
       const newA = users.find(u => u.id === updates.assigneeId);
-      logActivity(currentMemberId, 'update_assignee', `${oldA?.name || i18n.t('common.unassigned')} → ${newA?.name || i18n.t('common.unassigned')}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_assignee', `${oldA?.name || i18n.t('common.unassigned')} → ${newA?.name || i18n.t('common.unassigned')}`, task.id, task.taskKey);
     }
     if (updates.reviewerId !== undefined && updates.reviewerId !== task.reviewerId) {
       const oldR = users.find(u => u.id === task.reviewerId);
       const newR = users.find(u => u.id === updates.reviewerId);
-      logActivity(currentMemberId, 'update_reviewer', `${oldR?.name || i18n.t('common.unassigned')} → ${newR?.name || i18n.t('common.unassigned')}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_reviewer', `${oldR?.name || i18n.t('common.unassigned')} → ${newR?.name || i18n.t('common.unassigned')}`, task.id, task.taskKey);
     }
     if (updates.dueDate !== undefined && updates.dueDate !== task.dueDate)
-      logActivity(currentMemberId, 'update_due_date', `${task.dueDate || '—'} → ${updates.dueDate || '—'}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_due_date', `${task.dueDate || '—'} → ${updates.dueDate || '—'}`, task.id, task.taskKey);
     if (updates.projectId && updates.projectId !== task.projectId) {
       const oldP = allProjects.find(p => p.id === task.projectId);
       const newP = allProjects.find(p => p.id === updates.projectId);
-      logActivity(currentMemberId, 'update_project', `${oldP?.name || '—'} → ${newP?.name || '—'}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_project', `${oldP?.name || '—'} → ${newP?.name || '—'}`, task.id, task.taskKey);
     }
     if (updates.department !== undefined && updates.department !== task.department)
-      logActivity(currentMemberId, 'update_department', `${task.department || '—'} → ${updates.department || '—'}`, task.id, task.taskKey);
+      log(currentMemberId, 'update_department', `${task.department || '—'} → ${updates.department || '—'}`, task.id, task.taskKey);
     if (updates.deployments)
-      logActivity(currentMemberId, 'update_deploy', i18n.t('activity.updateDeploy'), task.id, task.taskKey);
+      log(currentMemberId, 'update_deploy', i18n.t('activity.updateDeploy'), task.id, task.taskKey);
 
     if (updates.assigneeId && updates.assigneeId !== task.assigneeId) {
-      createNotification(updates.assigneeId, currentMemberId, 'assign', task.id, task.title);
+      notify(updates.assigneeId, currentMemberId, 'assign', task.id, task.title);
       const oldAssignee = users.find(u => u.id === task.assigneeId);
       const newAssignee = users.find(u => u.id === updates.assigneeId);
       const dmTargets: { email: string; name?: string; reason: string }[] = [];
       if (newAssignee && newAssignee.id !== currentMemberId)
         dmTargets.push({ email: newAssignee.email, name: newAssignee.name, reason: i18n.t('taskDetail.assignedAsAssignee') });
-      sendSlackNotify({
+      notifyAfterSave({
         type: 'assignee_changed', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
         projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
         oldAssignee: oldAssignee?.name || i18n.t('common.unassigned'), newAssignee: newAssignee?.name || i18n.t('common.unassigned'),
@@ -115,7 +125,7 @@ export function useTaskActions(params: UseTaskActionsParams) {
     }
     if (updates.priority && updates.priority !== task.priority) {
       const pLabels2: Record<string, string> = { highest: i18n.t('priority.highest'), high: i18n.t('priority.high'), medium: i18n.t('priority.medium'), low: i18n.t('priority.low'), lowest: i18n.t('priority.lowest') };
-      sendSlackNotify({
+      notifyAfterSave({
         type: 'priority_changed', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
         projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
         assigneeName: users.find(u => u.id === task.assigneeId)?.name, statusName: status?.name,
@@ -123,10 +133,10 @@ export function useTaskActions(params: UseTaskActionsParams) {
       });
     }
     if (updates.reviewerId && updates.reviewerId !== task.reviewerId) {
-      createNotification(updates.reviewerId, currentMemberId, 'review', task.id, task.title);
+      notify(updates.reviewerId, currentMemberId, 'review', task.id, task.title);
       const newReviewer = users.find(u => u.id === updates.reviewerId);
       if (newReviewer?.email && newReviewer.id !== currentMemberId) {
-        sendSlackNotify({
+        notifyAfterSave({
           type: 'assignee_changed', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
           projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
           oldAssignee: users.find(u => u.id === task.reviewerId)?.name || i18n.t('common.unassigned'),

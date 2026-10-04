@@ -28,6 +28,21 @@ function isAllowedApiPath(target) {
   }
 }
 
+// Stored objects keep whatever content-type the uploader sent, and the proxy
+// serves them from the app's own origin. Raster images and PDFs display inline;
+// anything else (HTML, SVG, XML…) downloads inside a sandbox, so an uploaded file
+// can never run script as LIVO. Same rule as the cloud Worker (worker/src/storage.ts).
+const INLINE_SAFE_TYPE = /^(image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)\s*(;|$)/i;
+function storageObjectHeaders(url, headers) {
+  if (!url.startsWith('/storage/v1/object/')) return headers;
+  const out = { ...headers, 'x-content-type-options': 'nosniff' };
+  if (!INLINE_SAFE_TYPE.test(String(headers['content-type'] || ''))) {
+    out['content-security-policy'] = "default-src 'none'; sandbox";
+    out['content-disposition'] = 'attachment';
+  }
+  return out;
+}
+
 function endToEndHeaders(headers) {
   const blocked = new Set(HOP_BY_HOP);
   for (const name of (headers.connection || '').split(',')) blocked.add(name.trim().toLowerCase());
@@ -92,7 +107,7 @@ function createApiProxy(rawUpstream) {
     request.on('response', (incoming) => {
       response = incoming;
       incoming.on('error', fail);
-      res.writeHead(incoming.statusCode, endToEndHeaders(incoming.headers));
+      res.writeHead(incoming.statusCode, storageObjectHeaders(req.url, endToEndHeaders(incoming.headers)));
       incoming.pipe(res);
     });
     req.pipe(request);
@@ -135,4 +150,4 @@ function createApiProxy(rawUpstream) {
   return { proxyHttp, proxyUpgrade };
 }
 
-module.exports = { isAllowedApiPath, createApiProxy };
+module.exports = { isAllowedApiPath, createApiProxy, storageObjectHeaders };

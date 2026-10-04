@@ -125,3 +125,41 @@ CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_insert AFTER INS
 CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_update AFTER UPDATE ON external_account_bindings BEGIN INSERT INTO kb_work_clock(workspace_id,generation) VALUES(NEW.workspace_id,1) ON CONFLICT(workspace_id) DO UPDATE SET generation=generation+1; END;
 CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_delete AFTER DELETE ON external_account_bindings BEGIN INSERT INTO kb_work_clock(workspace_id,generation) VALUES(OLD.workspace_id,1) ON CONFLICT(workspace_id) DO UPDATE SET generation=generation+1; END;
 CREATE TRIGGER IF NOT EXISTS kb_clock_auth_update AFTER UPDATE ON auth_users BEGIN UPDATE kb_work_clock SET generation=generation+1 WHERE workspace_id IN(SELECT workspace_id FROM members WHERE auth_id=NEW.id); END;
+-- Deleting a page removes its knowledge-work bookkeeping (receipts, events,
+-- own source links, publications) and every source link that points at the
+-- page or one of its files; other publications only lose their pointer.
+-- SQLite cannot change these foreign keys in place and checks RESTRICT
+-- immediately, so the cleanup runs before the page row is deleted.
+DROP TRIGGER IF EXISTS kb_work_page_delete_cleanup;
+CREATE TRIGGER kb_work_page_delete_cleanup BEFORE DELETE ON kb_pages BEGIN
+ DELETE FROM kb_source_links WHERE workspace_id=OLD.workspace_id AND (page_id=OLD.id OR (source_kind='knowledge' AND source_id=OLD.id)
+  OR (source_kind='knowledge_file' AND source_id IN(SELECT id FROM kb_attachments WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id)));
+ UPDATE kb_publications SET predecessor_id=NULL WHERE workspace_id=OLD.workspace_id AND page_id<>OLD.id
+  AND predecessor_id IN(SELECT id FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id);
+ UPDATE kb_publications SET successor_id=NULL WHERE workspace_id=OLD.workspace_id AND page_id<>OLD.id
+  AND successor_id IN(SELECT id FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id);
+ DELETE FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+ DELETE FROM kb_work_events WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+ DELETE FROM kb_work_receipts WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+END;
+DROP TRIGGER IF EXISTS kb_work_attachment_delete_cleanup;
+CREATE TRIGGER kb_work_attachment_delete_cleanup AFTER DELETE ON kb_attachments BEGIN
+ DELETE FROM kb_source_links WHERE workspace_id=OLD.workspace_id AND source_kind='knowledge_file' AND source_id=OLD.id;
+END;
+-- A shared page cannot be moved under a private draft (or anything inside
+-- one): that would hide it, and its children, from everyone but the owner.
+DROP TRIGGER IF EXISTS kb_draft_hierarchy_guard;
+CREATE TRIGGER kb_draft_hierarchy_guard BEFORE UPDATE OF parent_id ON kb_pages
+WHEN NEW.parent_id IS NOT NULL AND NEW.parent_id IS NOT OLD.parent_id BEGIN
+ SELECT CASE WHEN (WITH RECURSIVE target_chain(id,parent_id,owner,depth) AS (
+   SELECT id,parent_id,private_draft_owner_id,1 FROM kb_pages WHERE workspace_id=NEW.workspace_id AND id=NEW.parent_id
+   UNION ALL SELECT p.id,p.parent_id,p.private_draft_owner_id,t.depth+1 FROM kb_pages p JOIN target_chain t ON p.id=t.parent_id
+    WHERE p.workspace_id=NEW.workspace_id AND t.depth<10
+  ) SELECT count(*) FROM target_chain WHERE owner IS NOT NULL)>0
+  AND (WITH RECURSIVE source_chain(id,parent_id,owner,depth) AS (
+   SELECT OLD.id,OLD.parent_id,OLD.private_draft_owner_id,1
+   UNION ALL SELECT p.id,p.parent_id,p.private_draft_owner_id,s.depth+1 FROM kb_pages p JOIN source_chain s ON p.id=s.parent_id
+    WHERE p.workspace_id=OLD.workspace_id AND s.depth<10
+  ) SELECT count(*) FROM source_chain WHERE owner IS NOT NULL)=0
+ THEN RAISE(ABORT,'kb_private_draft_parent') END;
+END;

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { isAllowedApiPath } = require('../../server-proxy.cjs');
+const { isAllowedApiPath, storageObjectHeaders } = require('../../server-proxy.cjs');
 const appRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('proxy path allow-list', () => {
@@ -199,6 +199,21 @@ afterAll(async () => {
   for (const socket of sockets) socket.destroy();
   if (upstream?.listening) await new Promise<void>((resolve) => upstream.close(() => resolve()));
   if (fixture && path.resolve(fixture).startsWith(path.join(tmpdir(), 'livo-proxy-'))) rmSync(fixture, { recursive: true, force: true });
+});
+
+describe('stored objects served through the proxy', () => {
+  const served = (url: string, type: string) => storageObjectHeaders(url, { 'content-type': type, etag: 'x' });
+  it.each(['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'image/png; charset=binary'])('shows %s inline with nosniff', (type) => {
+    expect(served('/storage/v1/object/public/task-images/a/b', type)).toEqual({ 'content-type': type, etag: 'x', 'x-content-type-options': 'nosniff' });
+  });
+  it.each(['text/html', 'image/svg+xml', 'application/xml', 'text/javascript', ''])('downloads %s in a sandbox, so an upload cannot run script as LIVO', (type) => {
+    expect(served('/storage/v1/object/public/task-images/x/evil', type)).toMatchObject({
+      'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", 'content-disposition': 'attachment' });
+  });
+  it('leaves other API responses unchanged', () => {
+    expect(served('/rest/v1/tasks', 'text/html')).toEqual({ 'content-type': 'text/html', etag: 'x' });
+    expect(served('/storage/v1/bucket', 'text/html')).toEqual({ 'content-type': 'text/html', etag: 'x' });
+  });
 });
 
 describe('server.cjs proxy integration', () => {

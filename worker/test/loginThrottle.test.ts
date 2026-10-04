@@ -46,16 +46,33 @@ describe('login throttle with real SQLite transactions and auth routes',()=>{
     expect(await finishLoginAttempt(env,await hold(email,ip),'failure')).toBe(true);
   }
 
-  it('locks only after five confirmed email failures, emits 429 and unlocks after 15 minutes',async()=>{
+  const pair='pair:person@example.com|203.0.113.8';
+  it('locks an email from one source after five failures, emits 429 there and unlocks after 15 minutes',async()=>{
     for(let i=0;i<5;i++){
       const response=await login();expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({user:null,session:null,error:{message:'Invalid login credentials'}});
     }
     const locked=await login('person@example.com','correct-password');expect(locked.status).toBe(429);
     expect(locked.headers.get('Retry-After')).toBe('900');expect(await locked.json()).toMatchObject({error:{code:'over_request_rate_limit'}});
-    const lock=row('email:person@example.com')?.locked_until;now+=60_000;await login();expect(row('email:person@example.com')?.locked_until).toBe(lock);
+    const lock=row(pair)?.locked_until;now+=60_000;await login();expect(row(pair)?.locked_until).toBe(lock);
     now+=14*60_000+1;const response=await login('person@example.com','correct-password');expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({error:null,user:{email:'person@example.com'}});expect(row('email:person@example.com')?.failures).toBe(0);
+    expect(await response.json()).toMatchObject({error:null,user:{email:'person@example.com'}});
+    expect(row(pair)?.failures).toBe(0);expect(row('email:person@example.com')?.failures).toBe(0);
+  });
+  it('never lets failures from other sources lock the owner out',async()=>{
+    for(let i=0;i<10;i++)for(let j=0;j<5;j++)await fail('person@example.com',`198.51.100.${i}`);
+    expect((await login('person@example.com','correct-password',{},'198.51.100.3')).status).toBe(429);
+    // 50 failures pause the email briefly; they never become a 15-minute lock.
+    const paused=await login('person@example.com','correct-password',{},'203.0.113.8');expect(paused.status).toBe(429);
+    expect(Number(paused.headers.get('Retry-After'))).toBeLessThanOrEqual(30);
+    now+=30_001;const owner=await login('person@example.com','correct-password',{},'203.0.113.8');expect(owner.status).toBe(200);
+    expect(await owner.json()).toMatchObject({error:null,user:{email:'person@example.com'}});
+    expect(row('email:person@example.com')).toMatchObject({failures:0,locked_until:null});
+  });
+  it('keeps admitting the owner during a burst below the distributed pause threshold',async()=>{
+    for(let i=0;i<9;i++)for(let j=0;j<5;j++)await fail('person@example.com',`198.51.100.${i}`);
+    expect(row('email:person@example.com')).toMatchObject({failures:45,locked_until:null});
+    expect((await login('person@example.com','correct-password',{},'203.0.113.8')).status).toBe(200);
   });
   it('locks IP after 20 failures across emails without growing email rows on blocked requests',async()=>{
     for(let i=0;i<20;i++)await fail(`unknown${i}@example.com`);
@@ -67,16 +84,18 @@ describe('login throttle with real SQLite transactions and auth routes',()=>{
   it('admits at most 20 concurrent KDF slots and never hard-locks 19 successes plus one failure',async()=>{
     const results=await Promise.all(Array.from({length:100},(_,i)=>reserveLoginAttempt(env,`parallel${i}@example.com`,'203.0.113.8')));
     const accepted=results.filter((r):r is {locked:false;id:string}=>!r.locked);expect(accepted).toHaveLength(20);
-    expect(results.filter(r=>r.locked)).toHaveLength(80);expect(count('auth_login_attempts')).toBe(21);
+    expect(results.filter(r=>r.locked)).toHaveLength(80);expect(count('auth_login_attempts')).toBe(41);
     expect(results[99]).toEqual({locked:true,retryAfterS:1});
     await finishLoginAttempt(env,accepted[19].id,'failure');
     for(const result of accepted.slice(0,19))await finishLoginAttempt(env,result.id,'success');
     expect(row('ip:203.0.113.8')).toMatchObject({failures:1,locked_until:null});
     expect((await reserveLoginAttempt(env,'next@example.com','203.0.113.8')).locked).toBe(false);
   });
-  it('limits simultaneous attempts for one email even with distinct IPs',async()=>{
+  it('limits simultaneous attempts for one email even with distinct IPs, and per source',async()=>{
     const results=await Promise.all(Array.from({length:30},(_,i)=>reserveLoginAttempt(env,'person@example.com',`203.0.113.${i}`)));
-    expect(results.filter(r=>!r.locked)).toHaveLength(5);expect(count('auth_login_reservations')).toBe(5);
+    expect(results.filter(r=>!r.locked)).toHaveLength(10);expect(count('auth_login_reservations')).toBe(10);
+    const same=await Promise.all(Array.from({length:10},()=>reserveLoginAttempt(env,'other@example.com','198.51.100.1')));
+    expect(same.filter(r=>!r.locked)).toHaveLength(5);
   });
   it('clears successful email failures while preserving other in-flight leases, and settles once',async()=>{
     const early=await hold('person@example.com'),late=await hold('person@example.com');
@@ -124,10 +143,11 @@ describe('login throttle with real SQLite transactions and auth routes',()=>{
     expect(count('auth_login_reservations')).toBe(0);
   });
   it('normalizes email and ignores caller-supplied tenant identifiers',async()=>{
-    for(let i=0;i<5;i++)await login(' Person@EXAMPLE.com ','wrong',{workspace_id:`ws-${i}`,workspaceId:`ws-${i}`},`203.0.113.${i}`);
-    expect(row('email:person@example.com')?.failures).toBe(5);
-    expect((await login('person@example.com','correct-password',{workspace_id:'different'},'198.51.100.1')).status).toBe(429);
+    for(let i=0;i<5;i++)await login(' Person@EXAMPLE.com ','wrong',{workspace_id:`ws-${i}`,workspaceId:`ws-${i}`},'203.0.113.8');
+    expect(row('email:person@example.com')?.failures).toBe(5);expect(row(pair)?.failures).toBe(5);
+    expect((await login('person@example.com','correct-password',{workspace_id:'different'},'203.0.113.8')).status).toBe(429);
     expect(db.prepare("SELECT count(*) AS n FROM auth_login_attempts WHERE key LIKE 'email:%'").get()?.n).toBe(1);
+    expect(db.prepare("SELECT count(*) AS n FROM auth_login_attempts WHERE key LIKE 'pair:%'").get()?.n).toBe(1);
   });
   it('rejects oversized email without truncating onto another identity',async()=>{
     const response=await login('a'.repeat(321)+'@example.com');expect(response.status).toBe(200);expect(count('auth_login_attempts')).toBe(0);
@@ -162,16 +182,34 @@ describe('login throttle with real SQLite transactions and auth routes',()=>{
     expect(TABLES.auth_login_attempts.clientAccess).toBe('none');expect(TABLES.auth_login_reservations.clientAccess).toBe('none');
     db.exec(readFileSync(new URL('../schema.sql',import.meta.url),'utf8'));
     for(let i=0;i<4;i++)await fail('person@example.com');now+=14*60_000;await fail('person@example.com');
-    now+=2*60_000;await pruneLoginAttempts(env);expect(row('email:person@example.com')?.locked_until).not.toBeNull();
-    expect((await reserveLoginAttempt(env,'person@example.com',null)).locked).toBe(true);
+    now+=2*60_000;await pruneLoginAttempts(env);expect(row(pair)?.locked_until).not.toBeNull();
+    expect(row('email:person@example.com')).toBeUndefined();
+    expect((await reserveLoginAttempt(env,'person@example.com','203.0.113.8')).locked).toBe(true);
+    expect((await reserveLoginAttempt(env,'person@example.com',null)).locked).toBe(false);
     now+=15*60_000;await pruneLoginAttempts(env);expect(count('auth_login_attempts')).toBe(0);
   });
   it('bounds cleanup work while retaining active reservations and their counters',async()=>{
     const lease=await hold('person@example.com');
     const insert=db.prepare('INSERT INTO auth_login_attempts(key,failures,window_start) VALUES(?,0,?)');
     for(let i=0;i<501;i++)insert.run(`email:expired${i}@example.com`,new Date(now-30*60_000).toISOString());
-    await pruneLoginAttempts(env);expect(count('auth_login_attempts')).toBe(3);
+    await pruneLoginAttempts(env);expect(count('auth_login_attempts')).toBe(4);
     expect(count('auth_login_reservations')).toBe(1);expect(await finishLoginAttempt(env,lease,'success')).toBe(true);
-    await pruneLoginAttempts(env);expect(count('auth_login_attempts')).toBe(2);
+    await pruneLoginAttempts(env);expect(count('auth_login_attempts')).toBe(3);
+  });
+  it('throttles current-password checks on change-password with the login budget',async()=>{
+    const session=await (await login('person@example.com','correct-password')).json() as {session:{access_token:string}};
+    const change=(current:string,ip='203.0.113.8')=>app.request(new Request('https://api.example.com/api/auth/change-password',{method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.session.access_token}`,'CF-Connecting-IP':ip},
+      body:JSON.stringify({current_password:current,new_password:'replacement-password'})}),undefined,env);
+    for(let i=0;i<5;i++)expect((await change('wrong')).status).toBe(403);
+    expect(row(pair)?.failures).toBe(5);
+    const limited=await change('correct-password');expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({error:'over_request_rate_limit'});
+    expect((await login('person@example.com','correct-password')).status).toBe(429);
+    const changed=await change('correct-password','198.51.100.20');expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({error:null});
+    expect((await login('person@example.com','replacement-password',{},'198.51.100.20')).status).toBe(200);
+    vi.spyOn(console,'error').mockImplementation(()=>{});
+    expect((await change('anything','')).status).toBe(503);
   });
 });

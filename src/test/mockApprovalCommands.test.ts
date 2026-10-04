@@ -4,7 +4,7 @@ import type {ApprovalCommand} from '@/lib/approval/core';
 
 type Store=Parameters<typeof mockApprovalCommand>[0];
 function fixture():Store{return{
- members:[{id:'member-1',auth_id:'auth-1',role:'member',is_active:true},{id:'admin-1',auth_id:'auth-2',role:'admin',is_active:true}],
+ members:[{id:'member-1',auth_id:'auth-1',role:'member',is_active:true},{id:'admin-1',auth_id:'auth-2',role:'admin',is_active:true},{id:'super-1',auth_id:'auth-3',role:'super_admin',is_active:true}],
  system_settings:[{key:'feature_toggles',value:{approvals:true}}],projects:[{id:'project-1',is_archived:false}],
  tasks:[{id:'task-1',project_id:'project-1',status_id:'todo',requires_approval:false,approval_status:null,current_approval_id:null}],
  statuses:[{id:'todo',is_done:false},{id:'done',is_done:true}],approval_rules:[],approval_requests:[],approval_actions:[]};}
@@ -15,7 +15,7 @@ describe('offline approval commands',()=>{
   const r=mockApprovalCommand(db,'auth-1',submit,next);
   expect(r.task.requires_approval).toBe(true);expect(r.request?.steps_snapshot).toHaveLength(1);
   const decision={commandId:'approve-0001',operation:'approve',requestId:r.request!.id,expectedVersion:1,expectedStep:1};
-  expect(()=>mockApprovalCommand(db,'auth-1',decision,next)).toThrow('approval_forbidden');
+  expect(()=>mockApprovalCommand(db,'auth-1',decision,next)).toThrow('approval_self_decision_forbidden');
   expect(db.approval_actions).toHaveLength(0);
   const saved=mockApprovalCommand(db,'auth-2',decision,next);
   expect(saved.request).toMatchObject({status:'approved',version:2});expect(saved.task).toMatchObject({status_id:'done',current_approval_id:null,approval_status:null});
@@ -38,7 +38,27 @@ describe('offline approval commands',()=>{
  });
  it('cannot clear a pending requirement or silently replace its snapshot',()=>{
   const db=fixture();let id=0;const next=()=>String(++id);mockApprovalCommand(db,'auth-1',submit,next);
-  expect(()=>mockApprovalCommand(db,'auth-1',{commandId:'require-001',operation:'set_requirement',taskId:'task-1',expectedRequiresApproval:true,enabled:false},next)).toThrow('approval_conflict');
+  // Even an administrator, who may otherwise remove the requirement, cannot while a request is pending.
+  expect(()=>mockApprovalCommand(db,'auth-2',{commandId:'require-001',operation:'set_requirement',taskId:'task-1',expectedRequiresApproval:true,enabled:false},next)).toThrow('approval_conflict');
   expect(db.tasks[0].requires_approval).toBe(true);
+ });
+ it('never lets a requester decide their own request, even as an administrator',()=>{
+  const db=fixture();let id=0;const next=()=>String(++id);
+  const own=mockApprovalCommand(db,'auth-2',submit,next);
+  for(const operation of ['approve','reject','return'])
+   expect(()=>mockApprovalCommand(db,'auth-2',{commandId:`self-${operation}-01`,operation,requestId:own.request!.id,expectedVersion:1,expectedStep:1},next)).toThrow('approval_self_decision_forbidden');
+  expect(db.approval_actions).toHaveLength(0);expect(db.approval_requests[0].status).toBe('pending');
+  const decided=mockApprovalCommand(db,'auth-3',{commandId:'other-approve',operation:'approve',requestId:own.request!.id,expectedVersion:1,expectedStep:1},next);
+  expect(decided.request).toMatchObject({status:'approved'});
+ });
+ it('lets members require approval but only administrators remove the requirement',()=>{
+  const db=fixture();let id=0;const next=()=>String(++id);
+  const toggle=(auth:string,commandId:string,enabled:boolean)=>mockApprovalCommand(db,auth,{commandId,operation:'set_requirement',taskId:'task-1',expectedRequiresApproval:!enabled,enabled},next);
+  expect(toggle('auth-1','member-on-01',true).task.requires_approval).toBe(true);
+  expect(()=>toggle('auth-1','member-off-01',false)).toThrow('approval_requirement_admin_only');
+  expect(db.tasks[0].requires_approval).toBe(true);
+  expect(toggle('auth-2','admin-off-001',false).task.requires_approval).toBe(false);
+  toggle('auth-1','member-on-02',true);
+  expect(toggle('auth-3','super-off-001',false).task.requires_approval).toBe(false);
  });
 });

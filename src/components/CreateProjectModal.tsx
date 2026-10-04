@@ -65,7 +65,9 @@ const CreateProjectModal = () => {
   if (!showCreateProject) return null;
 
   const keyRegex = /^[A-Z]{2,6}$/;
-  const isValid = name.trim().length > 0 && (isEditing || keyRegex.test(key));
+  // A project needs a product line (projects.line_id is a foreign key). A new
+  // install has none, and creating one failed with a raw constraint error.
+  const isValid = name.trim().length > 0 && lineId !== '' && (isEditing || keyRegex.test(key));
 
   const handleSubmit = async () => {
     if (!isValid || isSubmitting) return;
@@ -169,6 +171,9 @@ const CreateProjectModal = () => {
                 <option key={l.id} value={l.id}>{l.icon} {l.name}</option>
               ))}
             </SearchableSelect>
+            {productLines.length === 0 && (
+              <p role="alert" className="text-[10px] text-destructive mt-0.5">{t('project.noProductLine')}</p>
+            )}
           </div>
 
           {/* Name */}

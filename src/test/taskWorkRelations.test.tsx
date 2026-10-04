@@ -9,6 +9,8 @@ vi.mock('sonner', () => ({ toast: { error: mocks.error } }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
 import { useTaskRelations } from '@/context/hooks/useTaskRelations';
 import { useTaskCRUD } from '@/context/hooks/useTaskCRUD';
+import { DEFAULT_REQUIRED_FIELDS, type RequiredFieldsConfig } from '@/context/UIContext';
+import { subtaskQuickCreateFields } from '@/lib/taskWork/subtaskDefaults';
 const parent = { id: 'parent', projectId: 'project', taskKey: 'EX-1', title: 'Parent', statusId: 'doing' } as Task;
 const project = { id: 'project', key: 'EX' } as Project;
 beforeEach(() => { mocks.run.mockReset(); mocks.factory.mockClear(); mocks.error.mockReset(); });
@@ -42,6 +44,24 @@ describe('LIVO task relations shared command boundary', () => {
     let child: Task | null = null; await act(async () => { child = await create(parent.id, 'Child', project.id, 'doing'); });
     expect(child).toMatchObject({ taskKey: 'EX-92', parentTaskId: 'parent' });
     expect(setAllTasks).toHaveBeenCalledTimes(1);
+  });
+  it('fills only team-required due date, assignee and reviewer from the parent for the title-only quick create', async () => {
+    mocks.run.mockResolvedValue({ record: {
+      id: 'child', task_key: 'EX-93', project_id: 'project', parent_task_id: 'parent', title: 'Child', status_id: 'doing', priority: 'medium',
+      creator_id: 'me', assignee_id: null, reviewer_id: null, due_date: '2027-02-01', sort_order: 0, created_at: '2026-10-03T00:00:00Z', comment_count: 0,
+    } });
+    const owned = { ...parent, dueDate: '2027-02-01', assigneeId: 'owner', reviewerId: 'checker' } as Task;
+    const view = renderHook(() => useTaskCRUD({ allTasks: [owned], statuses: [], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn(), webhookConfigRef: { current: null } }));
+    const createWith = async (required?: RequiredFieldsConfig) => {
+      await act(async () => { await view.result.current.createCreateSubtask([project], 'me', required)(owned.id, 'Child', project.id, 'doing'); });
+      return mocks.run.mock.calls.at(-1)?.[0];
+    };
+    // Shipped default: title/project/dueDate. Title and project come from the quick create itself.
+    expect(await createWith({ ...DEFAULT_REQUIRED_FIELDS })).toMatchObject({ operation: 'create_subtask', title: 'Child', dueDate: '2027-02-01', assigneeId: null, reviewerId: null });
+    expect(await createWith({ ...DEFAULT_REQUIRED_FIELDS, dueDate: false, assignee: true, reviewer: true })).toMatchObject({ dueDate: null, assigneeId: 'owner', reviewerId: 'checker' });
+    expect(await createWith()).toMatchObject({ dueDate: null, assigneeId: null, reviewerId: null });
+    const legacy = { ...owned, dueDate: '2027-02-01T00:00:00Z' } as Task;
+    expect(subtaskQuickCreateFields(legacy, DEFAULT_REQUIRED_FIELDS)).toEqual({ dueDate: null, assigneeId: null, reviewerId: null });
   });
   it('keeps the same runner through task refreshes and refuses a mismatched parent project', async () => {
     const base = { allTasks: [parent], statuses: [] as Status[], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn(), webhookConfigRef: { current: null as WebhookConfig | null } };

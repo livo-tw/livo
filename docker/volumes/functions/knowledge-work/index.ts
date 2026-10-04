@@ -42,7 +42,7 @@ export function knowledgeWorkHandler(env: Environment, fetcher: typeof fetch = f
         const data = await response.json().catch(() => null);
         if (!response.ok) {
           const code = typeof data?.message === 'string' && Object.prototype.hasOwnProperty.call(KNOWLEDGE_WORK_ERRORS, data.message) ? data.message
-            : ['40001', '40P01'].includes(data?.code) ? 'knowledge_conflict' : 'knowledge_unavailable';
+            : ['40001', 'PT409', '40P01'].includes(data?.code) ? 'knowledge_conflict' : 'knowledge_unavailable';
           throw new KnowledgeWorkError(code, KNOWLEDGE_WORK_ERRORS[code] || 503);
         }
         return data as T;

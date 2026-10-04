@@ -9,7 +9,11 @@ CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT COALES
 CREATE FUNCTION auth.email() RETURNS text LANGUAGE sql STABLE AS $$ SELECT auth.jwt()->>'email' $$;
 GRANT USAGE ON SCHEMA auth TO anon,authenticated,service_role;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon,authenticated,service_role;
-CREATE TABLE public.members(id text PRIMARY KEY,auth_id uuid,role text NOT NULL,name text,email text,is_active boolean DEFAULT true,theme text,sort_order integer DEFAULT 0);
+-- members.role is the app_member_role enum, as in the delivery baseline
+-- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
+-- comparison bugs that failed on real installs.
+CREATE TYPE public.app_member_role AS ENUM ('admin','member','super_admin');
+CREATE TABLE public.members(id text PRIMARY KEY,auth_id uuid,role public.app_member_role NOT NULL,name text,email text,is_active boolean DEFAULT true,theme text,sort_order integer DEFAULT 0);
 CREATE TABLE public.projects(id text PRIMARY KEY,line_id text,name text,key text,is_archived boolean DEFAULT false);
 CREATE TABLE public.statuses(id text PRIMARY KEY,name text,is_done boolean DEFAULT false);
 CREATE TABLE public.tasks(id text PRIMARY KEY,task_key text,project_id text REFERENCES projects(id),title text,status_id text REFERENCES statuses(id),creator_id text REFERENCES members(id),assignee_id text,reviewer_id text,due_date text,started_at text,completed_at text,current_approval_id text,approval_status text);

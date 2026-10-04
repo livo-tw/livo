@@ -1,5 +1,10 @@
 import {describe,it,expect,vi} from 'vitest';
-import {parseApprovalCommand,canonicalApprovalPayload,approvalSnapshotSteps,canActOnApproval} from '@/lib/approval/core';
+import {parseApprovalCommand,canonicalApprovalPayload,approvalSnapshotSteps,canActOnApproval,canSetApprovalRequirement,ApprovalCommandError} from '@/lib/approval/core';
+import {approvalErrorText,taskWriteErrorText} from '@/lib/approval/feedback';
+import i18n from '@/i18n';
+import tw from '@/i18n/locales/zh-TW.json';
+import cn from '@/i18n/locales/zh-CN.json';
+import en from '@/i18n/locales/en.json';
 import {createApprovalCommandRunner,executeApprovalCommand} from '@/lib/approvalCommands';
 import type {ApprovalCommand,ApprovalCommandResult,ApprovalStepSnapshot,ApprovalRequestState} from '@/lib/approval/core';
 const submit:Extract<ApprovalCommand,{operation:'submit'}>={commandId:'command-0001',operation:'submit',taskId:'task-1',expected:{statusId:'todo',requiresApproval:false,currentApprovalId:null,approvalStatus:null},toStatusId:'done',expectedRuleId:null,enableRequirement:true};
@@ -51,6 +56,32 @@ describe('immutable step authorization',()=>{
   expect(canActOnApproval(r,{id:'admin',role:'admin'})).toBe(false);
   expect(canActOnApproval(r,{id:'owner',role:'member'})).toBe(true);
   expect(canActOnApproval({...r,status:'approved'},{id:'owner',role:'member'})).toBe(false);
+ });
+ it('never lets a requester decide their own request, whatever their role',()=>{
+  for(const role of ['member','admin','super_admin']){
+   expect(canActOnApproval({...request,requested_by:'self'},{id:'self',role})).toBe(false);
+   expect(canActOnApproval({...request,rule_id:'rule-1',requested_by:'self',steps_snapshot:[{...step,approver_role:role}]},{id:'self',role})).toBe(false);
+  }
+  const named:ApprovalRequestState={...request,rule_id:'rule-1',requested_by:'owner',steps_snapshot:[{...step,approver_type:'user' as const,approver_role:null,approver_user_id:'owner'}]};
+  expect(canActOnApproval(named,{id:'owner',role:'member'})).toBe(false);
+  // The request waits for someone else instead of becoming undecidable.
+  expect(canActOnApproval({...request,requested_by:'self'},{id:'another-admin',role:'admin'})).toBe(true);
+ });
+ it('lets members require approval but only administrators remove the requirement',()=>{
+  expect(canSetApprovalRequirement(true,{role:'member'})).toBe(true);
+  expect(canSetApprovalRequirement(false,{role:'member'})).toBe(false);
+  expect(canSetApprovalRequirement(false,{role:'admin'})).toBe(true);
+  expect(canSetApprovalRequirement(false,{role:'super_admin'})).toBe(true);
+  expect(canSetApprovalRequirement(false,{role:'admin',active:false})).toBe(false);
+  expect(canSetApprovalRequirement(false,{role:''})).toBe(false);
+ });
+ it('explains the specific policy refusals instead of a generic failure',()=>{
+  expect(approvalErrorText(new ApprovalCommandError('approval_self_decision_forbidden',403))).toBe(i18n.t('approvalCommand.selfDecision'));
+  expect(approvalErrorText(new ApprovalCommandError('approval_requirement_admin_only',403))).toBe(i18n.t('approvalCommand.requirementAdminOnly'));
+  expect(taskWriteErrorText('approval_pending')).toBe(i18n.t('error.approvalPending'));
+  expect(taskWriteErrorText('approval_pending')).not.toContain('approval_pending');
+  expect(taskWriteErrorText('boom')).toBe(i18n.t('error.updateFailed') + 'boom');
+  for(const locale of [tw,cn,en]) for(const key of ['selfDecision','requirementAdminOnly','selfDecisionHint']) expect(locale.approvalCommand[key as keyof typeof locale.approvalCommand]).toBeTruthy();
  });
 });
 describe('approval delivery client',()=>{

@@ -156,7 +156,23 @@ export function qaSlackError(error: unknown): string {
   if (messages[code]) return messages[code];
   return /[\u3400-\u9fff]/.test(code) && code.length < 300 ? code : '操作未完成，請重新開啟表單再試；可在 LIVO 查看目前狀態。';
 }
+/**
+ * An inbox event that no retry can complete: its author has no (active) LIVO
+ * account, may no longer act on the bug, or the bug is gone. Outages retry.
+ */
+export function isPermanentQaEventError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (error as Error & { code?: unknown }).code === 'no_account'
+    || ['qa_forbidden', 'qa_member_inactive', 'qa_issue_not_found', 'qa_not_found'].includes(error.message);
+}
 async function processQaSlackEvent(p: QaSlackPayload, id: string, d: QaSlackActions): Promise<void> {
+  try { await recordQaSlackEvent(p, id, d); }
+  catch (error) {
+    if (!isPermanentQaEventError(error)) throw error;
+    await d.completeEvent(id);
+  }
+}
+async function recordQaSlackEvent(p: QaSlackPayload, id: string, d: QaSlackActions): Promise<void> {
   const event = p.event!;
   const source = sourceOf(p), actor = await d.actor({ ...p, user_id: event.user });
   const issueId = await d.mapped(actor, source);

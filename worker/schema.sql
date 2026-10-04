@@ -153,6 +153,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_expires ON auth_refresh_token
 
 -- Login throttle is global auth plumbing: identity is not tenant-scoped before login.
 -- failures counts confirmed failures ONLY; in-flight work has expiring reservations.
+-- Keys: pair:<email>|<source> (locks one email from one source), ip:<source>,
+-- email:<email> (short pause only, never a lockout). See loginThrottle.ts.
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
   key TEXT PRIMARY KEY,
   failures INTEGER NOT NULL DEFAULT 0 CHECK(failures>=0),
@@ -166,10 +168,14 @@ CREATE TABLE IF NOT EXISTS auth_login_reservations (
   email_window TEXT NOT NULL,
   ip_key TEXT,
   ip_window TEXT,
-  expires_at TEXT NOT NULL
+  expires_at TEXT NOT NULL,
+  -- Added after release: existing D1 databases get them from apply-tenant-alters.mjs.
+  pair_key TEXT,
+  pair_window TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_email ON auth_login_reservations(email_key,email_window,expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_ip ON auth_login_reservations(ip_key,ip_window,expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_pair ON auth_login_reservations(pair_key,pair_window,expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_login_reservations_expiry ON auth_login_reservations(expires_at);
 
 -- ── Core team / board tables ────────────────────────────────────────────────
@@ -753,7 +759,7 @@ CREATE TABLE IF NOT EXISTS status_transition_rules (
 CREATE TABLE IF NOT EXISTS approval_rules (
   workspace_id TEXT NOT NULL DEFAULT 'default',
   id          TEXT PRIMARY KEY,             -- uuid generated in db.ts
-  project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = global
+  project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,  -- rules are per project; NULL rows are never matched
   from_status TEXT NOT NULL,                -- stores status IDs in practice
   to_status   TEXT NOT NULL,
   is_active   INTEGER NOT NULL DEFAULT 1,
@@ -1453,6 +1459,8 @@ CREATE TABLE IF NOT EXISTS approval_delivery_threads (
   PRIMARY KEY(workspace_id,team_id,task_id,channel_id)
 );
 
+-- Dropped and recreated on every run so existing databases receive policy changes.
+DROP TRIGGER IF EXISTS approval_command_validate;
 CREATE TRIGGER IF NOT EXISTS approval_command_validate BEFORE INSERT ON approval_command_contexts
 BEGIN
   SELECT RAISE(ABORT,'approval_invalid_input') WHERE NEW.operation NOT IN ('submit','approve','reject','return','withdraw','set_requirement')
@@ -1469,6 +1477,10 @@ BEGIN
     (SELECT CASE WHEN json_type(value,'$.approvals') IN ('true','false') THEN json_extract(value,'$.approvals') END
       FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='feature_toggles'),
     EXISTS(SELECT 1 FROM approval_rules WHERE workspace_id=NEW.workspace_id) OR EXISTS(SELECT 1 FROM approval_requests WHERE workspace_id=NEW.workspace_id));
+  -- Anyone who may edit a task can require approval; only a live administrator may remove it.
+  SELECT RAISE(ABORT,'approval_requirement_admin_only') WHERE NEW.operation='set_requirement'
+    AND json_type(NEW.payload,'$.enabled') IS NOT 'true' AND NOT EXISTS(
+      SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id AND is_active=1 AND role IN ('admin','super_admin'));
   SELECT RAISE(ABORT,'approval_conflict') WHERE NEW.operation='set_requirement' AND (
     json_extract(NEW.payload,'$.taskId') IS NOT NEW.task_id OR NOT EXISTS(
       SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND id=NEW.task_id
@@ -1517,6 +1529,10 @@ BEGIN
     SELECT 1 FROM approval_requests r JOIN members m ON m.id=NEW.actor_id AND m.workspace_id=r.workspace_id
     WHERE r.workspace_id=NEW.workspace_id AND r.id=NEW.request_id
       AND (r.requested_by=NEW.actor_id OR m.role IN ('admin','super_admin')));
+  -- A requester never decides their own request, whatever their role; it waits for
+  -- another approver or is withdrawn.
+  SELECT RAISE(ABORT,'approval_self_decision_forbidden') WHERE NEW.operation IN ('approve','reject','return') AND EXISTS(
+    SELECT 1 FROM approval_requests WHERE workspace_id=NEW.workspace_id AND id=NEW.request_id AND requested_by=NEW.actor_id);
   -- Legacy pending requests have no trustworthy snapshot. They can be withdrawn
   -- and resubmitted, but must never be reinterpreted using an edited live rule.
   SELECT RAISE(ABORT,'approval_rule_invalid') WHERE NEW.operation IN ('approve','reject','return') AND NOT EXISTS(
@@ -1541,6 +1557,7 @@ BEGIN
       AND NOT EXISTS(SELECT 1 FROM status_logs l WHERE l.workspace_id=NEW.workspace_id AND l.task_id=NEW.task_id AND l.to_status_id=x.required_status_id));
 END;
 
+DROP TRIGGER IF EXISTS approval_command_apply;
 CREATE TRIGGER IF NOT EXISTS approval_command_apply AFTER INSERT ON approval_command_contexts
 BEGIN
   INSERT INTO approval_requests(workspace_id,id,task_id,rule_id,requested_by,from_status,to_status,current_step,status,created_at,version,steps_snapshot,rule_snapshot)
@@ -1600,7 +1617,7 @@ BEGIN
     FROM approval_requests r JOIN tasks t ON t.workspace_id=r.workspace_id AND t.id=r.task_id
     JOIN members m ON m.workspace_id=r.workspace_id AND m.is_active=1 AND m.id<>NEW.actor_id
     WHERE r.workspace_id=NEW.workspace_id AND r.id=NEW.request_id AND NEW.operation IN ('submit','approve','reject','return')
-      AND ((r.status<>'pending' AND m.id=r.requested_by) OR (r.status='pending' AND EXISTS(
+      AND ((r.status<>'pending' AND m.id=r.requested_by) OR (r.status='pending' AND m.id<>r.requested_by AND EXISTS(
         SELECT 1 FROM json_each(r.steps_snapshot) s WHERE CAST(s.key AS INTEGER)+1=r.current_step AND (
           (json_extract(s.value,'$.approver_type')='user' AND json_extract(s.value,'$.approver_user_id')=m.id)
           OR (json_extract(s.value,'$.approver_type')='role' AND json_extract(s.value,'$.approver_role')=m.role)
@@ -1857,7 +1874,8 @@ CREATE TRIGGER IF NOT EXISTS work_task_insert_guard BEFORE INSERT ON tasks BEGIN
  SELECT RAISE(ABORT,'work_invalid_parent') WHERE NEW.parent_task_id IS NOT NULL AND NOT EXISTS(
   SELECT 1 FROM tasks p WHERE p.workspace_id=NEW.workspace_id AND p.id=NEW.parent_task_id AND p.id<>NEW.id AND p.project_id=NEW.project_id AND p.parent_task_id IS NULL);
 END;
-CREATE TRIGGER IF NOT EXISTS work_task_update_guard BEFORE UPDATE ON tasks BEGIN
+DROP TRIGGER IF EXISTS work_task_update_guard;
+CREATE TRIGGER work_task_update_guard BEFORE UPDATE ON tasks BEGIN
  SELECT RAISE(ABORT,'work_forbidden') WHERE (
   NEW.assignee_revision<>OLD.assignee_revision OR NEW.reviewer_revision<>OLD.reviewer_revision
   OR NEW.assignee_acknowledged_at IS NOT OLD.assignee_acknowledged_at OR NEW.reviewer_acknowledged_at IS NOT OLD.reviewer_acknowledged_at)
@@ -1871,9 +1889,16 @@ CREATE TRIGGER IF NOT EXISTS work_task_update_guard BEFORE UPDATE ON tasks BEGIN
  SELECT RAISE(ABORT,'work_invalid_parent') WHERE (NEW.parent_task_id IS NOT OLD.parent_task_id OR NEW.project_id<>OLD.project_id) AND (
   (NEW.parent_task_id IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM tasks p WHERE p.workspace_id=NEW.workspace_id AND p.id=NEW.parent_task_id
     AND p.id<>NEW.id AND p.project_id=NEW.project_id AND p.parent_task_id IS NULL) OR EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id)))
-  OR EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id<>NEW.project_id));
+  OR (NEW.project_id IS OLD.project_id AND EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id<>NEW.project_id)));
  SELECT RAISE(ABORT,'work_conflict') WHERE (NEW.task_key<>OLD.task_key OR NEW.project_id<>OLD.project_id) AND EXISTS(
   SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND project_id=NEW.project_id AND task_key=NEW.task_key AND id<>NEW.id);
+END;
+-- A parent changing project takes its subtasks along in the same statement; each
+-- subtask still passes work_task_update_guard against the already-moved parent.
+DROP TRIGGER IF EXISTS work_task_move_subtasks;
+CREATE TRIGGER work_task_move_subtasks AFTER UPDATE ON tasks
+WHEN NEW.project_id IS NOT OLD.project_id AND NEW.parent_task_id IS NULL BEGIN
+ UPDATE tasks SET project_id=NEW.project_id WHERE workspace_id=NEW.workspace_id AND parent_task_id=NEW.id AND project_id IS NOT NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS work_task_assignment_revision AFTER UPDATE ON tasks
 WHEN NEW.assignee_id IS NOT OLD.assignee_id OR NEW.reviewer_id IS NOT OLD.reviewer_id BEGIN
@@ -1925,7 +1950,9 @@ CREATE TRIGGER IF NOT EXISTS work_dependency_guard BEFORE INSERT ON task_depende
   SELECT NEW.depends_on_task_id UNION SELECT d.depends_on_task_id FROM task_dependencies d JOIN reachable r ON d.task_id=r.id WHERE d.workspace_id=NEW.workspace_id)
   SELECT 1 FROM reachable WHERE id=NEW.task_id);
 END;
-CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_contexts BEGIN
+-- Replaced on every apply so a corrected rule reaches existing databases.
+DROP TRIGGER IF EXISTS work_command_validate;
+CREATE TRIGGER work_command_validate BEFORE INSERT ON task_work_contexts BEGIN
  SELECT RAISE(ABORT,'work_invalid_input') WHERE NEW.operation NOT IN('acknowledge','create_subtask','add_item','update_item','delete_item','add_dependency','remove_dependency')
   OR NEW.id IS NOT json_extract(NEW.payload,'$.commandId') OR NEW.operation IS NOT json_extract(NEW.payload,'$.operation') OR NEW.task_id IS NOT json_extract(NEW.payload,'$.taskId');
  SELECT RAISE(ABORT,'work_forbidden') WHERE NOT EXISTS(SELECT 1 FROM members m JOIN auth_users u ON u.id=m.auth_id WHERE m.workspace_id=NEW.workspace_id AND m.id=NEW.actor_id
@@ -1943,7 +1970,7 @@ CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_co
   AND NOT EXISTS(SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=x.value AND is_active=1));
  SELECT RAISE(ABORT,'work_required_fields') WHERE NEW.operation='create_subtask' AND (
   EXISTS(SELECT 1 FROM system_settings s JOIN json_each(s.value) x WHERE s.workspace_id=NEW.workspace_id AND s.key='required_fields' AND x.value=1 AND (
-    x.key NOT IN('dueDate','assignee','reviewer') OR (x.key='dueDate' AND json_extract(NEW.payload,'$.dueDate') IS NULL)
+    x.key NOT IN('title','project','status','priority','dueDate','assignee','reviewer') OR (x.key='dueDate' AND json_extract(NEW.payload,'$.dueDate') IS NULL)
     OR (x.key='assignee' AND json_extract(NEW.payload,'$.assigneeId') IS NULL) OR (x.key='reviewer' AND json_extract(NEW.payload,'$.reviewerId') IS NULL)))
   OR EXISTS(SELECT 1 FROM custom_fields f JOIN tasks t ON t.project_id=f.project_id AND t.workspace_id=f.workspace_id WHERE t.workspace_id=NEW.workspace_id AND t.id=NEW.task_id AND f.is_required=1));
  SELECT RAISE(ABORT,'work_conflict') WHERE NEW.operation IN('update_item','delete_item') AND NOT EXISTS(
@@ -1955,14 +1982,18 @@ CREATE TRIGGER IF NOT EXISTS work_command_validate BEFORE INSERT ON task_work_co
  SELECT RAISE(ABORT,'work_conflict') WHERE NEW.operation='remove_dependency' AND NOT EXISTS(SELECT 1 FROM task_dependencies d JOIN tasks t ON t.workspace_id=d.workspace_id AND t.id=d.depends_on_task_id
   JOIN projects p ON p.workspace_id=t.workspace_id AND p.id=t.project_id WHERE d.workspace_id=NEW.workspace_id AND d.task_id=NEW.task_id AND d.id=json_extract(NEW.payload,'$.dependencyId') AND p.is_archived=0);
 END;
-CREATE TRIGGER IF NOT EXISTS work_command_apply AFTER INSERT ON task_work_contexts BEGIN
+-- New subtask keys count every task with the project's prefix, including tasks moved
+-- to another project (they keep their key; keys are unique per workspace).
+-- DROP + CREATE so existing databases receive trigger changes.
+DROP TRIGGER IF EXISTS work_command_apply;
+CREATE TRIGGER work_command_apply AFTER INSERT ON task_work_contexts BEGIN
  INSERT INTO task_work_events(workspace_id,id,command_id,actor_id,task_id,operation,before_value,created_at)
   VALUES(NEW.workspace_id,NEW.event_id,NEW.id,NEW.actor_id,NEW.task_id,NEW.operation,NULL,NEW.created_at);
  UPDATE tasks SET assignee_acknowledged_at=CASE WHEN json_extract(NEW.payload,'$.role')='assignee' THEN COALESCE(assignee_acknowledged_at,NEW.created_at) ELSE assignee_acknowledged_at END,
   reviewer_acknowledged_at=CASE WHEN json_extract(NEW.payload,'$.role')='reviewer' THEN COALESCE(reviewer_acknowledged_at,NEW.created_at) ELSE reviewer_acknowledged_at END
   WHERE NEW.operation='acknowledge' AND workspace_id=NEW.workspace_id AND id=NEW.task_id;
  INSERT INTO tasks(workspace_id,id,task_key,project_id,parent_task_id,title,status_id,priority,creator_id,assignee_id,reviewer_id,due_date,sprint_id,started_at,completed_at)
-  SELECT NEW.workspace_id,NEW.record_id,p.key||'-'||(SELECT COALESCE(max(CAST(substr(x.task_key,length(p.key)+2) AS INTEGER)),0)+1 FROM tasks x WHERE x.workspace_id=NEW.workspace_id AND x.project_id=p.id),
+  SELECT NEW.workspace_id,NEW.record_id,p.key||'-'||(SELECT COALESCE(max(CAST(substr(x.task_key,length(p.key)+2) AS INTEGER)),0)+1 FROM tasks x WHERE x.workspace_id=NEW.workspace_id AND substr(x.task_key,1,length(p.key)+1)=p.key||'-'),
    p.id,t.id,json_extract(NEW.payload,'$.title'),s.id,json_extract(NEW.payload,'$.priority'),NEW.actor_id,json_extract(NEW.payload,'$.assigneeId'),json_extract(NEW.payload,'$.reviewerId'),json_extract(NEW.payload,'$.dueDate'),t.sprint_id,
    CASE WHEN s.auto_start=1 THEN NEW.created_at END,CASE WHEN s.auto_done=1 THEN NEW.created_at END
   FROM tasks t JOIN projects p ON p.id=t.project_id AND p.workspace_id=t.workspace_id JOIN statuses s ON s.workspace_id=NEW.workspace_id AND s.id=json_extract(NEW.payload,'$.statusId')
@@ -2191,6 +2222,44 @@ CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_insert AFTER INS
 CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_update AFTER UPDATE ON external_account_bindings BEGIN INSERT INTO kb_work_clock(workspace_id,generation) VALUES(NEW.workspace_id,1) ON CONFLICT(workspace_id) DO UPDATE SET generation=generation+1; END;
 CREATE TRIGGER IF NOT EXISTS kb_clock_external_account_bindings_delete AFTER DELETE ON external_account_bindings BEGIN INSERT INTO kb_work_clock(workspace_id,generation) VALUES(OLD.workspace_id,1) ON CONFLICT(workspace_id) DO UPDATE SET generation=generation+1; END;
 CREATE TRIGGER IF NOT EXISTS kb_clock_auth_update AFTER UPDATE ON auth_users BEGIN UPDATE kb_work_clock SET generation=generation+1 WHERE workspace_id IN(SELECT workspace_id FROM members WHERE auth_id=NEW.id); END;
+-- Deleting a page removes its knowledge-work bookkeeping (receipts, events,
+-- own source links, publications) and every source link that points at the
+-- page or one of its files; other publications only lose their pointer.
+-- SQLite cannot change these foreign keys in place and checks RESTRICT
+-- immediately, so the cleanup runs before the page row is deleted.
+DROP TRIGGER IF EXISTS kb_work_page_delete_cleanup;
+CREATE TRIGGER kb_work_page_delete_cleanup BEFORE DELETE ON kb_pages BEGIN
+ DELETE FROM kb_source_links WHERE workspace_id=OLD.workspace_id AND (page_id=OLD.id OR (source_kind='knowledge' AND source_id=OLD.id)
+  OR (source_kind='knowledge_file' AND source_id IN(SELECT id FROM kb_attachments WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id)));
+ UPDATE kb_publications SET predecessor_id=NULL WHERE workspace_id=OLD.workspace_id AND page_id<>OLD.id
+  AND predecessor_id IN(SELECT id FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id);
+ UPDATE kb_publications SET successor_id=NULL WHERE workspace_id=OLD.workspace_id AND page_id<>OLD.id
+  AND successor_id IN(SELECT id FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id);
+ DELETE FROM kb_publications WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+ DELETE FROM kb_work_events WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+ DELETE FROM kb_work_receipts WHERE workspace_id=OLD.workspace_id AND page_id=OLD.id;
+END;
+DROP TRIGGER IF EXISTS kb_work_attachment_delete_cleanup;
+CREATE TRIGGER kb_work_attachment_delete_cleanup AFTER DELETE ON kb_attachments BEGIN
+ DELETE FROM kb_source_links WHERE workspace_id=OLD.workspace_id AND source_kind='knowledge_file' AND source_id=OLD.id;
+END;
+-- A shared page cannot be moved under a private draft (or anything inside
+-- one): that would hide it, and its children, from everyone but the owner.
+DROP TRIGGER IF EXISTS kb_draft_hierarchy_guard;
+CREATE TRIGGER kb_draft_hierarchy_guard BEFORE UPDATE OF parent_id ON kb_pages
+WHEN NEW.parent_id IS NOT NULL AND NEW.parent_id IS NOT OLD.parent_id BEGIN
+ SELECT CASE WHEN (WITH RECURSIVE target_chain(id,parent_id,owner,depth) AS (
+   SELECT id,parent_id,private_draft_owner_id,1 FROM kb_pages WHERE workspace_id=NEW.workspace_id AND id=NEW.parent_id
+   UNION ALL SELECT p.id,p.parent_id,p.private_draft_owner_id,t.depth+1 FROM kb_pages p JOIN target_chain t ON p.id=t.parent_id
+    WHERE p.workspace_id=NEW.workspace_id AND t.depth<10
+  ) SELECT count(*) FROM target_chain WHERE owner IS NOT NULL)>0
+  AND (WITH RECURSIVE source_chain(id,parent_id,owner,depth) AS (
+   SELECT OLD.id,OLD.parent_id,OLD.private_draft_owner_id,1
+   UNION ALL SELECT p.id,p.parent_id,p.private_draft_owner_id,s.depth+1 FROM kb_pages p JOIN source_chain s ON p.id=s.parent_id
+    WHERE p.workspace_id=OLD.workspace_id AND s.depth<10
+  ) SELECT count(*) FROM source_chain WHERE owner IS NOT NULL)=0
+ THEN RAISE(ABORT,'kb_private_draft_parent') END;
+END;
 CREATE TABLE IF NOT EXISTS kb_navigation_preferences (workspace_id TEXT NOT NULL DEFAULT 'default',member_id TEXT NOT NULL,preferences TEXT NOT NULL DEFAULT '{"items":{},"orders":{},"pins":[]}',version INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(workspace_id,member_id));
 
 -- Canonical fragment merged into worker/schema.sql by the integration task.
@@ -2313,6 +2382,14 @@ CREATE TRIGGER IF NOT EXISTS release_command_validate BEFORE INSERT ON release_c
   AND NOT EXISTS(SELECT 1 FROM json_each(COALESCE((SELECT json_extract(value,'$.values') FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='deployment_environments'),'["Dev","QA","Stage","Live Staging","Prod"]')) e WHERE e.value=json_extract(t.value,'$.environment')));
  SELECT RAISE(ABORT,'release_evidence_stale') WHERE NEW.operation='link_evidence' AND json_extract(NEW.command,'$.kind')='qa'
   AND NOT EXISTS(SELECT 1 FROM qa_issues q WHERE q.workspace_id=NEW.workspace_id AND q.id=json_extract(NEW.command,'$.issueId') AND q.version=json_extract(NEW.command,'$.issueVersion') AND json_extract(q.data,'$.fixCycle')=json_extract(NEW.data,'$.evidence[#-1].qa.fixCycle'));
+END;
+-- Whoever requested a release exception never decides it, whatever their role. Checked
+-- against the stored batch before release_command_apply replaces it.
+CREATE TRIGGER IF NOT EXISTS release_exception_self_decision BEFORE INSERT ON release_commands
+WHEN NEW.operation='decide_exception' AND json_valid(NEW.command) BEGIN
+ SELECT RAISE(ABORT,'release_self_decision_forbidden') WHERE EXISTS(SELECT 1 FROM release_batches b JOIN json_each(b.data,'$.exceptions') e
+  WHERE b.workspace_id=NEW.workspace_id AND b.id=NEW.batch_id AND json_extract(e.value,'$.id')=json_extract(NEW.command,'$.exceptionId')
+  AND json_extract(e.value,'$.requestedBy')=NEW.actor_id);
 END;
 CREATE TRIGGER IF NOT EXISTS release_command_apply AFTER INSERT ON release_commands BEGIN
  INSERT INTO release_batches(workspace_id,id,title,owner_id,status,version,revision,data,updated_at)

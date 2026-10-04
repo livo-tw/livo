@@ -53,14 +53,15 @@ services:
     depends_on:
       kong:
         condition: service_healthy
+    # Headers go to curl on stdin (-H @-) from the shell's printf builtin, so the
+    # secret never appears in a process command line (/proc/*/cmdline, ps).
     entrypoint:
       - /bin/sh
       - -c
       - |
         while true; do
-          curl --silent --max-time 55 --output /dev/null -X POST http://kong:8000/functions/v1/slack-deliver \
-            -H "Authorization: Bearer $${ANON_KEY}" \
-            -H "x-livo-slack-secret: $${SLACK_INTERNAL_SECRET}" || true
+          printf 'Authorization: Bearer %s\nx-livo-slack-secret: %s\n' "$${ANON_KEY}" "$${SLACK_INTERNAL_SECRET}" |
+            curl --silent --max-time 55 --output /dev/null -X POST -H @- http://kong:8000/functions/v1/slack-deliver || true
           sleep 5
         done
 

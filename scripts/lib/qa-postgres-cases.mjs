@@ -43,6 +43,7 @@ export function buildQaPostgresCases({ migrationCount = 7, permissionFloorSql = 
   error('receipt rejects another actor', `SELECT ${commit('admin',base,'created','create',null,'command-create')}`, '23505','command_id_reused');
   error('receipt rejects changed payload hash', `SELECT ${commit('member',base,'created','create',null,'command-create','b'.repeat(64))}`, '23505','command_id_reused');
   check('notification is QA content without task', `(SELECT count(*) FROM notifications WHERE type='qa_update' AND task_id IS NULL AND content::jsonb->>'kind'='qa' AND content::jsonb->>'issueId'='issue-main')=1`);
+  check('notification task link is optional while recipient sender and type stay required', `(SELECT count(*)=4 AND bool_and(CASE column_name WHEN 'task_id' THEN is_nullable='YES' ELSE is_nullable='NO' END) FROM information_schema.columns WHERE table_schema='public' AND table_name='notifications' AND column_name IN ('task_id','recipient_id','sender_id','type'))`);
   for (const actor of ['admin','super']) {
     const issue = {...base,id:`issue-${actor}`,reporterId:`m-${actor}`};
     check(`${actor} can report`, `${commit(actor,issue)}->>'id'=${literal(issue.id)}`);

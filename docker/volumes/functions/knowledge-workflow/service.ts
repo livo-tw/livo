@@ -13,7 +13,7 @@ export function createKnowledgeWorkflowService(env: KnowledgeWorkflowEnvironment
     if (!response.ok) {
       const code = String(result.message || '').match(/(?:kb_workflow|qa)_[a-z_]+/)?.[0] || (response.status === 401 ? 'kb_workflow_unauthorized' : 'kb_workflow_invalid');
       throw new KnowledgeWorkflowError(code, result.code === '42501' ? 403 : result.code === 'P0002' ? 404
-        : ['40001','23505'].includes(result.code) ? 409 : response.status >= 500 ? 503 : 400);
+        : ['40001','PT409','23505'].includes(result.code) ? 409 : response.status >= 500 ? 503 : 400);
     }
     return result;
   } };

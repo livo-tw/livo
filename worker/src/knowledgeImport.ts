@@ -51,18 +51,75 @@ export function allowedNotionAsset(value:string):boolean {try{const u=new URL(va
 async function boundedResponse(response:Response,limit:number,sizeCode='source_size_limit'):Promise<Uint8Array>{if(Number(response.headers.get('content-length')||0)>limit)throw new ImportError(sizeCode,413);const reader=response.body?.getReader();if(!reader)throw new ImportError('source_missing');const chunks:Uint8Array[]=[];let total=0;try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>limit)throw new ImportError(sizeCode,413);chunks.push(value);}}finally{await reader.cancel().catch(():void=>{});}const result=new Uint8Array(total);let at=0;for(const c of chunks){result.set(c,at);at+=c.length;}return result;}
 async function cryptSecret(value: string, secret: string|undefined, decode = false) { if(!secret||secret.length<32)throw new ImportError('notion_encryption_not_configured',503);const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(secret)),'AES-GCM',false,[decode?'decrypt':'encrypt']);if(decode){const raw=fromBase64(value);return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12)},key,raw.slice(12)));}const iv=crypto.getRandomValues(new Uint8Array(12));const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(value)));const bytes=new Uint8Array(iv.length+encrypted.length);bytes.set(iv);bytes.set(encrypted,12);return toBase64(bytes); }
 function publicPolicy(policy: ImportPolicy) { const {notion_secret:_,...rest}=policy;return {...rest,notion_configured:!!policy.notion_secret}; }
+const UNSAFE_ELEMENTS=new Set(['script','iframe','object','embed','svg','math','img','style','link','meta','base','form','frame','frameset']);
+const URL_ATTRIBUTES=new Set(['href','src','action','formaction','xlink:href','data','poster','background','srcset','cite','longdesc','lowsrc','dynsrc','ping','codebase','archive','manifest']);
+const NAMED_ENTITIES:Record<string,string>={colon:':',tab:'\t',newline:'\n',amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",sol:'/',lpar:'(',rpar:')',nbsp:' '};
+const codePoint=(n:number)=>n>0&&n<=0x10ffff?String.fromCodePoint(n):'';
+/** A browser-equivalent view of an attribute value: entities decoded, controls and spaces removed. */
+function attributeValue(raw:string):string{
+  return raw.replace(/&#x([0-9a-f]+);?/gi,(_,hex:string)=>codePoint(parseInt(hex,16))).replace(/&#(\d+);?/g,(_,dec:string)=>codePoint(Number(dec)))
+    .replace(/&([a-z]+);/gi,(entity,name:string)=>NAMED_ENTITIES[name.toLowerCase()]??entity)
+    .replace(/[\u0000-\u0020\u007f-\u00a0\u1680\u180e\u2000-\u200f\u2028\u2029\u205f\u3000\ufeff]/g,'').toLowerCase();
+}
+/**
+ * Defense in depth if a misconfigured processor does not run the bundled
+ * allowlist. Inspects real markup only: element names, event-handler
+ * attributes and URL schemes inside attributes. Escaped text such as
+ * "Test data:", "Metadata:" or "one = 1" is ordinary content.
+ */
+export function unsafeProcessorHtml(html:string):boolean{
+  for(let i=html.indexOf('<');i!==-1&&i<html.length;i=html.indexOf('<',i)){
+    const open=/^<\/?([A-Za-z][^\s/>]*)/.exec(html.slice(i,i+80));
+    if(!open){i++;continue;}
+    if(UNSAFE_ELEMENTS.has(open[1].toLowerCase()))return true;
+    i+=open[0].length;
+    while(i<html.length&&html[i]!=='>'){
+      if(/[\s/]/.test(html[i])){i++;continue;}
+      const start=i;
+      while(i<html.length&&!/[\s/>=]/.test(html[i]))i++;
+      const name=html.slice(start,i).toLowerCase();
+      while(i<html.length&&/\s/.test(html[i]))i++;
+      let value:string|null=null;
+      if(html[i]==='='){
+        i++;while(i<html.length&&/\s/.test(html[i]))i++;
+        const quote=html[i];
+        if(quote==='"'||quote==="'"){const end=html.indexOf(quote,i+1);value=html.slice(i+1,end===-1?html.length:end);i=end===-1?html.length:end+1;}
+        else{const from=i;while(i<html.length&&!/[\s>]/.test(html[i]))i++;value=html.slice(from,i);}
+      }
+      if(!name)continue; // a stray "=value" was consumed above
+      if(name.startsWith('on'))return true;
+      if(value===null)continue;
+      const normalized=attributeValue(value);
+      // srcset, ping and archive hold lists of URLs; every other URL attribute holds one.
+      const urls=['srcset','ping','archive'].includes(name)?normalized.split(','):[normalized];
+      if(URL_ATTRIBUTES.has(name)&&urls.some(url=>/^(?:javascript|vbscript|data):/.test(url)))return true;
+      if(name==='style'&&/(?:javascript|vbscript):|expression\(/.test(normalized))return true;
+    }
+  }
+  return false;
+}
 function checkParsed(value: unknown): ImportParsed {
   const p=asRecord(value);if(typeof p.body==='string'&&new TextEncoder().encode(p.body).byteLength>900000)throw new ImportError('parsed_document_too_large',413);
   if(typeof p.body!=='string'||!Array.isArray(p.warnings)||!Array.isArray(p.pages)||!Array.isArray(p.assets)||p.pages.length>40||p.assets.length>24)throw new ImportError('invalid_processor_result',502);
-  // Defense in depth if a misconfigured processor does not run the bundled allowlist.
-  if(/<(?:script|iframe|object|embed|svg|math|img)\b|\son\w+\s*=|(?:javascript|vbscript|data):/i.test(p.body))throw new ImportError('unsafe_processor_result',502);
+  if(unsafeProcessorHtml(p.body))throw new ImportError('unsafe_processor_result',502);
   if(!p.body.trim()&&!p.incomplete)throw new ImportError('empty_document');return p as ImportParsed;
 }
+// Nested time budgets: the processor parses for at most 85 s (server.py BUDGET),
+// this caller waits 95 s, and the self-host knowledge-import function may run
+// 150 s (functions/main). Aborting the request also stops the processor's parse.
+export const PROCESSOR_TIMEOUT_MS = 95_000;
 export async function parseWithProcessor(config: ImportConfig, source: 'md'|'docx'|'pdf', bytes: Uint8Array, previous?:ImportItem): Promise<ImportParsed> {
   if(!config.processorUrl||!config.processorToken||config.processorToken.length<32)throw new ImportError('processor_not_configured',503);
-  const url=new URL(config.processorUrl);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new ImportError('invalid_processor_configuration',503);
-  const result=await (config.fetcher||fetch)(new URL('/parse',url),{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',Authorization:`Bearer ${config.processorToken}`},body:JSON.stringify({source,data:toBase64(bytes),...(source==='pdf'&&previous?.parsed?{previous_pages:previous.parsed.pages,previous_hash:previous.source_hash}:{})}),signal:AbortSignal.timeout(115000)});
-  const body=asRecord(JSON.parse(new TextDecoder().decode(await boundedResponse(result,IMPORT_LIMIT,'parsed_document_too_large'))));if(!result.ok)throw new ImportError(typeof body.error==='string'?body.error:'processing_failed',result.status);return checkParsed(body.result);
+  let url:URL;try{url=new URL(config.processorUrl);}catch{throw new ImportError('invalid_processor_configuration',503);}
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new ImportError('invalid_processor_configuration',503);
+  // An absent, stopped or unreachable processor is a clear item error, never a crash.
+  const unavailable=(error:unknown):never=>{if(error instanceof ImportError)throw error;throw new ImportError((error as {name?:unknown}|null)?.name==='TimeoutError'?'processing_timeout':'processor_unavailable',503);};
+  let result:Response,body:Record<string,unknown>;
+  try{result=await (config.fetcher||fetch)(new URL('/parse',url),{method:'POST',redirect:'error',headers:{'Content-Type':'application/json',Authorization:`Bearer ${config.processorToken}`},body:JSON.stringify({source,data:toBase64(bytes),...(source==='pdf'&&previous?.parsed?{previous_pages:previous.parsed.pages,previous_hash:previous.source_hash}:{})}),signal:AbortSignal.timeout(PROCESSOR_TIMEOUT_MS)});}
+  catch(error){return unavailable(error);}
+  try{body=asRecord(JSON.parse(new TextDecoder().decode(await boundedResponse(result,IMPORT_LIMIT,'parsed_document_too_large'))));}
+  catch(error){return unavailable(error);}
+  if(!result.ok)throw new ImportError(typeof body.error==='string'?body.error:'processing_failed',result.status);return checkParsed(body.result);
 }
 
 export function createKnowledgeImport(repo: ImportRepository, config: ImportConfig) {

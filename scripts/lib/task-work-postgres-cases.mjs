@@ -1,7 +1,8 @@
 const q=v=>"'"+String(v).replaceAll("'","''")+"'";
 const uid={member:'00000000-0000-0000-0000-000000000001',admin:'00000000-0000-0000-0000-000000000002',super:'00000000-0000-0000-0000-000000000003',other:'00000000-0000-0000-0000-000000000004'};
 const identity={bindingId:'00000000-0000-0000-0000-000000000010',teamId:'TTEST',userId:'UTEST'};
-export function buildTaskWorkPostgresCases(){
+export function buildTaskWorkPostgresCases({shippedRequired}={}){
+ if(typeof shippedRequired!=='string'||!JSON.parse(shippedRequired).title)throw new Error('Pass the shipped required_fields default');
  const sql=[],labels=[];let seq=0,races=0;
  const raw=s=>sql.push(s);
  const root=()=>raw("RESET ROLE; SET request.jwt.claim.sub=''; SET request.jwt.claim.role=''; SET request.jwt.claims='{}';");
@@ -100,6 +101,37 @@ export function buildTaskWorkPostgresCases(){
  root();raw("UPDATE system_settings SET value='{}' WHERE key='required_fields'; INSERT INTO custom_fields VALUES('required-custom','p',true);");service();
  error('required custom fields prevent incomplete child',call(sub('t-8')),'work_required_fields');
  root();raw("DELETE FROM custom_fields WHERE id='required-custom';");service();
+ // Shipped default: title/project are always supplied by the command itself, the
+ // deadline is still enforced, and fields a subtask command cannot carry still block.
+ const required=value=>{root();raw("UPDATE system_settings SET value="+q(value)+"::jsonb WHERE key='required_fields';");service();};
+ required(shippedRequired);
+ error('shipped default still requires a subtask deadline',call(sub('t-8')),'work_required_fields');
+ save('shipped-default-child',sub('t-8',{dueDate:'2027-02-01'}));
+ check('shipped default accepts a dated subtask',data('shipped-default-child')+"#>>'{record,due_date}'='2027-02-01' AND "+data('shipped-default-child')+"#>>'{record,parent_task_id}'='t-8'");
+ required(JSON.stringify({title:true,project:true,status:true,priority:true}));
+ save('always-supplied-child',sub('t-8',{assigneeId:null,reviewerId:null}));
+ check('title project status and priority never block a subtask command',data('always-supplied-child')+"#>>'{record,parent_task_id}'='t-8' AND "+data('always-supplied-child')+"#>>'{record,due_date}' IS NULL");
+ required(JSON.stringify({assignee:true,reviewer:true}));
+ error('required assignee is enforced',call(sub('t-8',{assigneeId:null})),'work_required_fields');
+ error('required reviewer is enforced',call(sub('t-8',{reviewerId:null})),'work_required_fields');
+ required(JSON.stringify({title:true,project:true,background:true}));
+ error('required field a subtask command cannot carry still blocks',call(sub('t-8',{dueDate:'2027-02-01'})),'work_required_fields');
+ required('{}');
+ // A parent keeps its subtasks when it moves project: they move with it, in one statement.
+ root();raw("UPDATE tasks SET parent_task_id='t-50' WHERE id IN('t-51','t-52'); UPDATE tasks SET parent_task_id='t-53' WHERE id='t-54'; UPDATE tasks SET task_key='Q-80' WHERE id='t-80'; UPDATE tasks SET task_key='Q-80' WHERE id='t-54';");
+ member();raw("UPDATE tasks SET project_id='q' WHERE id='t-50';");root();
+ check('moving a parent moves its subtasks with it',"(SELECT count(*)=3 AND bool_and(project_id='q') FROM tasks WHERE id IN('t-50','t-51','t-52')) AND (SELECT bool_and(parent_task_id='t-50') FROM tasks WHERE id IN('t-51','t-52'))");
+ member();error('a subtask alone still cannot leave its parent project',"UPDATE tasks SET project_id='p' WHERE id='t-51'",'work_invalid_parent');
+ error('a subtask key clash in the target project rolls the whole move back',"UPDATE tasks SET project_id='q' WHERE id='t-53'",'work_conflict');
+ root();check('a refused move leaves parent and subtask in place',"(SELECT bool_and(project_id='p') FROM tasks WHERE id IN('t-53','t-54'))");
+ member();raw("UPDATE tasks SET project_id='p' WHERE id='t-50';");root();
+ check('moving the parent back brings its subtasks back',"(SELECT bool_and(project_id='p') FROM tasks WHERE id IN('t-50','t-51','t-52'))");
+ // A subtask waiting for approval keeps the whole family in place (the move runs as owner, past the per-row guard).
+ raw("INSERT INTO approval_requests(id,task_id,requested_by,from_status,to_status) VALUES('a0000000-0000-0000-0000-000000000051','t-51','member','todo','done');");
+ member();error('a parent cannot move while a subtask has a pending approval',"UPDATE tasks SET project_id='q' WHERE id='t-50'",'approval_pending');
+ root();check('the refused family move leaves everything in place',"(SELECT bool_and(project_id='p') FROM tasks WHERE id IN('t-50','t-51','t-52'))");
+ raw("UPDATE approval_requests SET status='cancelled' WHERE id='a0000000-0000-0000-0000-000000000051';");
+ service();
  save('cross-project-dep',dep('t-9','t-80'));
  check('same-workspace cross-project dependency preserved',data('cross-project-dep')+"#>>'{record,depends_on_task_id}'='t-80'");
  error('duplicate edge refused',call(dep('t-9','t-80')),'work_conflict');
@@ -119,6 +151,37 @@ export function buildTaskWorkPostgresCases(){
  error('trailing activity failure rolls back entire subtask command',call(rollbackChild),'synthetic_side_effect_failure');
  root();check('trailing failure leaves no child spec log event or receipt',"NOT EXISTS(SELECT 1 FROM tasks WHERE parent_task_id='t-15') AND NOT EXISTS(SELECT 1 FROM task_work_events WHERE command_id="+q(rollbackChild.commandId)+") AND NOT EXISTS(SELECT 1 FROM task_work_receipts WHERE command_id="+q(rollbackChild.commandId)+") AND NOT EXISTS(SELECT 1 FROM task_work_contexts)");
  raw("DROP TRIGGER synthetic_fail_activity ON activity_logs;");
+ // Notifications are attributed (inbox, Slack DM, e-mail) to sender_id: clients may only send as themselves.
+ const notify=(recipient,sender,type,content)=>"INSERT INTO notifications(recipient_id,sender_id,type,task_id,content) VALUES("+[recipient,sender,type,'t-1',content].map(q).join(',')+")";
+ member();error('member cannot send a notification as the super admin',notify('other','super','mention','Spoofed'),'row-level security');
+ raw(notify('other','member','mention','Own mention')+';');
+ member('admin');error('admin cannot send a notification as another member',notify('other','member','comment','Spoofed'),'row-level security');
+ member('super');raw(notify('other','member','comment','Restored history')+';');
+ // A signed-in account without an active member row (e.g. self-registered while sign-up was open)
+ // reads and writes nothing: every table is gated on an active member (20261019_active_member_gate.sql).
+ raw("SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-000000000077'; SET request.jwt.claim.role='authenticated'; SET request.jwt.claims='{}';");
+ check('an unlinked account reads no tasks, members or comments',"(SELECT count(*)=0 FROM tasks) AND (SELECT count(*)=0 FROM members) AND (SELECT count(*)=0 FROM comments)");
+ raw("UPDATE tasks SET title='Changed by an unlinked account' WHERE id='t-1';");
+ error('an unlinked account cannot raise even the unknown-account alert',notify('super','super','system','Spoofed'),'row-level security');
+ error('an unlinked account cannot alert an ordinary member',notify('member','member','system','Spoofed'),'row-level security');
+ root();check('an unlinked account changed no task',"NOT EXISTS(SELECT 1 FROM tasks WHERE title='Changed by an unlinked account')");
+ // A member deactivated a moment ago is cut off at once, whatever token it still holds.
+ raw("UPDATE members SET is_active=false WHERE id='other';");member('other');
+ check('a deactivated member reads no tasks',"(SELECT count(*)=0 FROM tasks)");
+ root();raw("UPDATE members SET is_active=true WHERE id='other';");
+ // The recipient may mark it read but not re-address or re-attribute it.
+ member('other');error('a recipient cannot re-attribute a notification',"UPDATE notifications SET sender_id='super' WHERE content='Own mention'",'notification_identity_immutable');
+ error('a recipient cannot re-address a notification',"UPDATE notifications SET recipient_id='member' WHERE content='Own mention'",'notification_identity_immutable');
+ raw("UPDATE notifications SET is_read=true WHERE content='Own mention';");
+ root();check('only own and restored notifications were stored',"(SELECT count(*)=2 FROM notifications WHERE content IN('Own mention','Restored history')) AND NOT EXISTS(SELECT 1 FROM notifications WHERE content='Spoofed')");
+ // Comments are attributed (task view, Slack channel) to user_id: clients may only comment as themselves.
+ const comment=(id,user,content)=>"INSERT INTO comments(id,task_id,user_id,content) VALUES("+[id,'t-1',user,content].map(q).join(',')+")";
+ member();error('member cannot comment as the super admin',comment('c-spoof-1','super','Spoofed'),'row-level security');
+ raw(comment('c-own','member','Own comment')+';');
+ member('admin');error('admin cannot comment as another member',comment('c-spoof-2','member','Spoofed'),'row-level security');
+ error('admin cannot re-attribute a comment',"UPDATE comments SET user_id='admin' WHERE id='c-own'",'comment_author_immutable');
+ member('super');raw(comment('c-restored','member','Restored history')+';');
+ root();check('only own and restored comments were stored, with their authors',"(SELECT count(*)=2 FROM comments WHERE content IN('Own comment','Restored history') AND user_id='member') AND NOT EXISTS(SELECT 1 FROM comments WHERE content='Spoofed')");
  const runPair=(name,a,b,ready=false)=>{
   races++;root();
   const encode=s=>Buffer.from(s).toString('base64');

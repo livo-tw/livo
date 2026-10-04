@@ -34,8 +34,9 @@ interface SlackNotifyPayload {
   newAssignee?: string;
   // comment_added
   commentPreview?: string;
-  // DM targets — edge function will resolve
-  dmTargetUserIds?: string[];
+  // DM requests: the server only notifies those among the task's own assignee,
+  // reviewer and comment mentions, and chooses the reason text itself.
+  dmTargets?: { email: string; name?: string; reason: string }[];
   // Optional custom message
   customMessage?: string;
 }

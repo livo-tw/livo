@@ -1,3 +1,4 @@
+import { safeLinkHref } from '@/lib/safeLink';
 import { createProjectColorResolver } from '@/lib/projectColors';
 /**
  * useListColumns — shared hook for all three list views (ListView, AllListView, MyTasksView).
@@ -169,9 +170,9 @@ export function buildRenderCell(
         );
 
       case 'gitlabUrl':
-        return task.gitlabUrl ? (
+        return safeLinkHref(task.gitlabUrl) ? (
           <a
-            href={task.gitlabUrl}
+            href={safeLinkHref(task.gitlabUrl)!}
             target="_blank"
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}

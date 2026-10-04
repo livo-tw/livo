@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck, FileText } from 'lucide-react';
 import { renderKnowledgeHtml } from '@/lib/knowledgeHtml';
+import { randomUUID } from '@/lib/generateId';
 import { toast } from 'sonner';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile } from '@/hooks/useKnowledgeBase';
-import { validateKnowledgeTree } from '@/lib/knowledge';
+import { validateKnowledgeTree, knowledgeInsidePrivateDraft, knowledgeDeleteErrorKey } from '@/lib/knowledge';
 import KnowledgeNavigation, { KnowledgePageActions } from '@/components/knowledge/KnowledgeNavigation';
 import KnowledgeSidebar from '@/components/knowledge/KnowledgeSidebar';
 import KnowledgeShareActions from '@/components/knowledge/KnowledgeShareActions';
@@ -67,7 +68,8 @@ export default function KnowledgeBaseView() {
   const fileInput = useRef<HTMLInputElement>(null);
   const member = users.find(u => u.id === currentMemberId) || currentMember;
   const actor = member && currentMemberId ? { id: currentMemberId, role: member.role || currentMember?.role || '', jobTitle: member.jobTitle || '', is_active: member.isActive !== false } : null;
-  const { pages, attachments, revisions, comments, loading, error, refresh } = useKnowledgeBase(selectedId, actor);
+  const hasActor = !!actor;
+  const { pages, attachments, revisions, comments, loading, error, ready, refresh } = useKnowledgeBase(selectedId, actor);
   const importCapability = useKnowledgeImportCapability(JSON.stringify(actor));
   const locks = usePresenceLock('knowledge-base');
   const activeLock = useRef<string | null>(null);
@@ -93,7 +95,8 @@ export default function KnowledgeBaseView() {
   useEffect(() => { setScope(selectedProjectId || 'all'); }, [selectedProjectId]);
 
   useEffect(() => {
-    if (loading || error || !actor) return;
+    // Wait for pages read as the current member; an identity change briefly shows none.
+    if (!ready || error || !actor) return;
     const url = new URL(window.location.href), requestedId = url.searchParams.get('knowledge');
     if (!requestedId) return;
     const target = pages.find(candidate => candidate.id === requestedId && !candidate.is_archived);
@@ -103,7 +106,7 @@ export default function KnowledgeBaseView() {
     // Do not retain a restricted document id in the URL or reveal its existence.
     url.searchParams.delete('knowledge');
     window.history.replaceState({}, '', url.toString());
-  }, [loading, error, pages, actor]);
+  }, [ready, error, pages, actor]);
 
   useEffect(() => {
     const pop = () => {
@@ -128,13 +131,14 @@ export default function KnowledgeBaseView() {
 
 
   useEffect(() => {
-    if (selectedId && !loading && !page) {
+    // Keep a ?kb= selection until pages for the current member are known.
+    if (selectedId && ready && hasActor && !page) {
       setSelectedId(null); setPreview(null); setShowHistory(false); setPermissionTarget(null);
       void stopEditing();
     } else if (draft && !hasEditAccess) {
       void stopEditing();
     }
-  }, [selectedId, page, loading, hasEditAccess, draft]);
+  }, [selectedId, page, ready, hasActor, hasEditAccess, draft]);
 
   useEffect(() => { if (!admin) setPermissionTarget(null); }, [admin]);
 
@@ -220,18 +224,23 @@ export default function KnowledgeBaseView() {
     await run(async () => {
       if (pages.some(p => p.parent_id === page.id)) throw new Error('kb_has_children');
       const result = await supabase.from('kb_pages').delete().eq('id', page.id).select('*').single();
-      if (result.error || !result.data) throw result.error || new Error('kb_conflict');
+      if (result.error) throw new Error(knowledgeDeleteErrorKey(result.error));
+      if (!result.data) throw new Error('kb_conflict');
       setSelectedId(null); await refresh();
     });
   }
   async function create() {
     await run(async () => {
       ensurePolicyKeepsView(newPolicy);
-      const result = await supabase.from('kb_pages').insert({ title: newTitle.trim(), body: '',
-        project_id: newScope === 'shared' ? null : newScope, category: newCategory, access_policy: newPolicy, created_by: currentMemberId, updated_by: currentMemberId }).select('*').single();
-      if (result.error || !result.data) throw result.error || new Error('kb_failed');
+      // Name the page here and read it back afterwards: on Docker, RLS checks a returned
+      // row with the page's inherited view permission, which cannot see a row that is
+      // still being inserted, so asking for it back made every new page fail.
+      const id = randomUUID();
+      const result = await supabase.from('kb_pages').insert({ id, title: newTitle.trim(), body: '',
+        project_id: newScope === 'shared' ? null : newScope, category: newCategory, access_policy: newPolicy, created_by: currentMemberId, updated_by: currentMemberId });
+      if (result.error) throw result.error;
       setCreating(false); setNewTitle(''); setScope(newScope); setCategory(newCategory); setNewPolicy({ mode: 'inherit' }); setQuery('');
-      await refresh(); await selectPage(result.data.id);
+      await refresh(); await selectPage(id);
     });
   }
   async function savePolicy(policy: KnowledgePolicy) {
@@ -325,7 +334,9 @@ export default function KnowledgeBaseView() {
             <div className="grid sm:grid-cols-3 gap-3">
               <label className="flex flex-col gap-1 text-xs">{t('kb.scope')}<SearchableSelect disabled={busy || !admin} className={selectStyle} value={draft.project_id || 'shared'} onChange={e => setDraft({ ...draft, project_id: e.target.value === 'shared' ? null : e.target.value, parent_id: null })}>{scopeOptions}</SearchableSelect></label>
               <label className="flex flex-col gap-1 text-xs">{t('kb.parent')}<SearchableSelect disabled={busy || !admin} className={selectStyle} value={draft.parent_id || ''} onChange={e => setDraft({ ...draft, parent_id: e.target.value || null })}>
-                <option value="">{t('kb.noParent')}</option>{pages.filter(p => p.id !== draft.id && p.project_id === draft.project_id && (!p.is_archived || p.id === draft.parent_id)).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                <option value="">{t('kb.noParent')}</option>{pages.filter(p => p.id !== draft.id && p.project_id === draft.project_id && (!p.is_archived || p.id === draft.parent_id)
+                  // A shared page cannot be moved into a private draft.
+                  && (p.id === draft.parent_id || knowledgeInsidePrivateDraft(pages, draft.id) || !knowledgeInsidePrivateDraft(pages, p.id))).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
               </SearchableSelect></label>
               <label className="flex flex-col gap-1 text-xs">{t('kb.order')}<Input disabled={busy} type="number" step="1" value={draft.sort_order} onChange={e => setDraft({ ...draft, sort_order: Number(e.target.value) })} /></label>
             </div>

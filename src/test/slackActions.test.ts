@@ -238,19 +238,40 @@ describe('backend security and effects', () => {
       if (path.endsWith('/external_account_bindings')) return response(binding ? [{ platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE', ...binding }] : []);
       if (path.endsWith('/members')) {
         const params = new URL(url).searchParams;
-        const id = params.get('id')?.replace(/^eq\./, '');
-        return response(id ? members.filter(m => m.id === id) : members);
+        const filter = (key: string) => params.get(key)?.replace(/^eq\./, '');
+        const [id, role, active] = [filter('id'), filter('role'), filter('is_active')];
+        return response(members.filter(m => (!id || m.id === id) && (!role || m.role === role) && (!active || String(m.is_active) === active)));
       }
       return response([]);
     }));
     return writes;
   }
+  const owner = { id: 'member-owner', name: 'Example Owner', email: 'owner@example.com', role: 'super_admin', is_active: true, auth_id: '00000000-0000-4000-8000-000000000009' };
+  const manual = (issuer?: string) => ({ id: 'binding-admin', platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE', member_id: actor.id,
+    is_verified: true, verified_by: 'admin', ...(issuer === undefined ? {} : { verified_by_member_id: issuer }) });
   it('uses an admin-assigned binding even when the Slack email differs', async () => {
-    const writes = slackFake({ slackEmail: 'personal@example.org', members: [actor],
-      binding: { id: 'binding-admin', platform_team_id:'TEXAMPLE', platform_user_id:'UEXAMPLE', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+    const writes = slackFake({ slackEmail: 'personal@example.org', members: [actor, owner], binding: manual(owner.id) });
     const resolved = await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' });
     expect(resolved).toMatchObject({ id: actor.id, binding_id: 'binding-admin' });
     expect(writes).toEqual([]);
+  });
+  it.each([
+    ['a legacy mapping without an issuer', undefined, [actor, owner]],
+    ['a mapping made by a plain admin', 'member-admin', [actor, owner, { ...owner, id: 'member-admin', role: 'admin' }]],
+    ['a mapping whose owner was deactivated', owner.id, [actor, { ...owner, is_active: false }]],
+    ['a mapping whose owner was demoted', owner.id, [actor, { ...owner, role: 'admin' }]],
+    ['a mapping whose owner was removed', owner.id, [actor]],
+  ])('treats %s as unbound and asks for an owner to map it again', async (_label, issuer, members) => {
+    const writes = slackFake({ slackEmail: 'personal@example.org', members: members as Record<string, unknown>[], binding: manual(issuer as string | undefined) });
+    await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
+    expect(writes).toEqual([]);
+  });
+  it('lets the Slack email prove identity again when an untrusted mapping matches it', async () => {
+    const writes = slackFake({ slackEmail: actor.email, members: [actor, owner], binding: manual() });
+    const resolved = await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].body).toMatchObject({ member_id: actor.id, is_verified: true, verified_by: 'email' });
+    expect(resolved).toMatchObject({ id: actor.id, binding_verified_by: 'email' });
   });
   it('never trusts a verified binding without the server admin marker when emails differ', async () => {
     slackFake({ slackEmail: 'personal@example.org', members: [actor],
@@ -258,8 +279,7 @@ describe('backend security and effects', () => {
     await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
   });
   it('still refuses a deactivated member behind an admin-assigned binding', async () => {
-    slackFake({ slackEmail: 'personal@example.org', members: [{ ...actor, is_active: false }],
-      binding: { id: 'binding-admin', platform_team_id:'TEXAMPLE', platform_user_id:'UEXAMPLE', member_id: actor.id, is_verified: true, verified_by: 'admin' } });
+    slackFake({ slackEmail: 'personal@example.org', members: [{ ...actor, is_active: false }, owner], binding: manual(owner.id) });
     await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
   });
   it('marks a first-time email match as verified by email', async () => {

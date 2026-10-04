@@ -232,7 +232,8 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
     if (!email || email.length > 320 || !password) return c.json<AuthResponse>(authFailure(INVALID_CREDENTIALS));
 
     // Brute-force throttle — before the user lookup, so a locked-out attempt
-    // costs no KDF work.
+    // costs no KDF work. Locks are per email AND source (plus a per-source
+    // budget), so failures from elsewhere never lock the owner out.
     let attempt: LoginReservation;
     try {
       attempt = await reserveLoginAttempt(c.env, email, loginSourceIp(c.req.url, c.req.header('CF-Connecting-IP')));
@@ -405,7 +406,35 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
       return c.json({ error: 'unauthorized', message: 'Unauthorized' }, 401);
     }
 
+    // A stolen session must not become an unthrottled password oracle: the
+    // current-password check spends the same budget as /api/auth/login.
+    const unavailable = () =>
+      c.json({ error: 'auth_unavailable', message: '暫時無法驗證密碼，請稍後再試' }, 503);
+    let attempt: LoginReservation;
+    try {
+      attempt = await reserveLoginAttempt(
+        c.env,
+        (user.email || '').trim().toLowerCase(),
+        loginSourceIp(c.req.url, c.req.header('CF-Connecting-IP'))
+      );
+    } catch {
+      console.error('[auth] change-password throttle unavailable');
+      return unavailable();
+    }
+    if (attempt.locked) {
+      return c.json(
+        { error: 'over_request_rate_limit', message: '嘗試次數過多，請稍後再試' },
+        429,
+        { 'Retry-After': String(attempt.retryAfterS) }
+      );
+    }
     const { ok } = await verifyPassword(currentPassword, user.password_hash);
+    try {
+      if (!await finishLoginAttempt(c.env, attempt.id, ok ? 'success' : 'failure')) return unavailable();
+    } catch {
+      console.error('[auth] change-password throttle settlement unavailable');
+      return unavailable();
+    }
     if (!ok) {
       return c.json({ error: 'invalid_current_password', message: '目前的密碼不正確' }, 403);
     }
@@ -612,7 +641,8 @@ function getMemberByAuthId(env: Env, sub: string, email: string): Promise<Member
 // ─── Personal access tokens (PAT) ─────────────────────────────────────────
 // Bearer `livo_pat_…` → api_tokens lookup (sha256, not revoked) → the bound
 // member's identity, inheriting the same server-side permission floor as a
-// JWT session for that member. auth.userId is 'pat:<token id>' — NOT an
+// JWT session for that member (paths that re-check the live actor in SQL use
+// liveMember.ts, which accepts the key). auth.userId is 'pat:<token id>' — NOT an
 // auth_users id, so auth_users-coupled flows (e.g. /api/auth/change-password)
 // simply find no user and fail closed with 401.
 
@@ -628,6 +658,7 @@ interface PatRow {
   name: string | null;
   is_active: number | null;
   workspace_id: string | null;
+  banned: number | null;
 }
 
 async function authenticatePat(
@@ -640,8 +671,10 @@ async function authenticatePat(
   try {
     row = await c.env.DB.prepare(
       `SELECT t.id AS token_id, t.last_used_at,
-              m.id AS member_id, m.role, m.email, m.name, m.is_active, m.workspace_id
-       FROM api_tokens t JOIN members m ON m.id = t.member_id
+              m.id AS member_id, m.role, m.email, m.name, m.is_active, m.workspace_id,
+              COALESCE(u.banned, 0) AS banned
+       FROM api_tokens t JOIN members m ON m.id = t.member_id AND m.workspace_id = t.workspace_id
+       LEFT JOIN auth_users u ON u.id = m.auth_id
        WHERE t.token_hash = ? AND t.revoked_at IS NULL`
     )
       .bind(tokenHash)
@@ -650,7 +683,8 @@ async function authenticatePat(
     row = null; // api_tokens table may not exist on a pre-migration DB
   }
   if (!row) return c.json({ error: { message: 'Unauthorized' } }, 401);
-  if (!row.is_active) return c.json({ error: { message: 'Account disabled' } }, 403);
+  // Same rule as liveMember.ts: the key stops with its member or the member's banned login.
+  if (!row.is_active || row.banned) return c.json({ error: { message: 'Account disabled' } }, 403);
 
   // last_used_at bookkeeping, throttled to one write per 5 min, off the hot path.
   const lastUsedMs = row.last_used_at ? Date.parse(row.last_used_at) : NaN;

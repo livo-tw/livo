@@ -101,6 +101,14 @@ describe('Release workspace frontend', () => {
   it('lets the user leave a rejected stale form without upgrading its version', async () => {
     mocks.execute.mockRejectedValue(new ReleaseError('release_conflict', 409)); const props = actionProps(); render(<ReleaseActionForm {...props} />); submit(); await screen.findByText('releaseWorkspace.errors.release_conflict'); expect(screen.getByRole('button', { name: 'releaseWorkspace.cancelForm' })).not.toBeDisabled(); expect(mocks.execute.mock.calls[0][0].expectedVersion).toBe(3);
   });
+  it('does not offer requesters their own pending exception to decide', () => {
+    const own = { id: 'own', revision: 2, scope: 'Own scope', reason: 'Own reason', requestedBy: 'admin', requestedAt: '2026-10-03T00:00:00Z', decision: 'pending' as const, decidedBy: null as string | null, decidedAt: null as string | null, decisionNote: null as string | null };
+    const other = { ...own, id: 'other', scope: 'Other scope', reason: 'Other reason', requestedBy: 'someone' };
+    render(<ReleaseActionForm {...actionProps()} batch={{ ...batch(), exceptions: [own, other] }} action="decide_exception" actorId="admin" />);
+    expect(screen.queryByRole('option', { name: 'Own scope · Own reason' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'Other scope · Other reason' })).toBeInTheDocument();
+    expect(screen.getByText('releaseWorkspace.selfDecisionHint')).toBeInTheDocument();
+  });
   it('reviews the complete target manifest for completion and cancellation', () => {
     render(<ReleaseActionForm {...actionProps()} action="complete" />); expect(screen.getByText('Synthetic release')).toBeInTheDocument(); expect(screen.getByText('Frontend · Stage · v1.2 / cfg1 / data1')).toBeInTheDocument(); expect(screen.getByLabelText('releaseWorkspace.confirmRecord')).toBeRequired();
   });

@@ -6,16 +6,18 @@ Only the highest administrator configures the `knowledge.import` capability in T
 
 ## Private processor
 
-The self-host stack runs `docker/knowledge-processor` without host ports, host mounts or internet access. It is a non-root, read-only container with a temporary filesystem, one CPU, 768 MB memory and bounded child-process execution. Functions are connected to its internal Docker network. OCR uses local Poppler and Tesseract (`eng`, `chi_tra`, `chi_sim`); documents are not sent to public LIVO or an external OCR/model provider.
+The self-host stack can run `docker/knowledge-processor`, an optional service that is off by default: it sits in the compose profile `knowledge-processor` and is built and started by the installer only when `docker/.env` sets `KNOWLEDGE_PROCESSOR_ENABLED=1` (the build needs outbound Debian/PyPI access; a failed build only warns, and the import dialog then reports that the processor is not configured). It runs without host ports, host mounts or internet access. It is a non-root, read-only container with a temporary filesystem, one CPU, 768 MB memory and bounded child-process execution. Functions are connected to its internal Docker network. OCR uses local Poppler and Tesseract (`eng`, `chi_tra`, `chi_sim`); documents are not sent to public LIVO or an external OCR/model provider.
 
 Functions require these operator settings:
 
 | Variable | Purpose |
 |---|---|
-| `KNOWLEDGE_PROCESSOR_URL` | Self-host default `http://knowledge-processor:8091`; cloud deployments must configure their own trusted processor endpoint. |
-| `KNOWLEDGE_PROCESSOR_TOKEN` | Random secret of at least 32 characters, shared only by the API/functions and processor. |
+| `KNOWLEDGE_PROCESSOR_URL` | Empty means not configured. The self-host installer sets `http://knowledge-processor:8091` while the processor is enabled; cloud deployments must configure their own trusted processor endpoint. An unreachable processor fails the item with `processor_unavailable`. |
+| `KNOWLEDGE_PROCESSOR_TOKEN` | Random secret of at least 32 characters, shared only by the API/functions and processor. A processor started without it stays up and answers `processor_not_configured`. |
 | `KNOWLEDGE_IMPORT_SECRET` | Independent random secret of at least 32 characters for encrypting stored Notion integration tokens with AES-GCM. Keep stable across upgrades; replacing it requires reconnecting Notion. |
 | `KNOWLEDGE_OCR_ENABLED` | Processor-only setting: `1` enables local OCR. Without it, scanned pages remain pending and cannot be claimed as a complete conversion. |
+
+Time budgets nest: the processor parses one document at a time for at most 85 seconds (OCR starts new pages only during the first 40 seconds, each page at most 40 seconds; later pages stay `ocr_pending` for a retry that reuses finished pages), the caller waits at most 95 seconds, and the self-host `knowledge-import` function may run for 150 seconds. When the caller disconnects, the processor stops the parse and frees its slot.
 
 Cloudflare Workers keep parsing work in the active HTTP request (not the 30-second post-response `waitUntil` window). A persisted job is created before processing; after a disconnected request, use My import history to recover it rather than uploading again. Abandoned processing becomes retryable after a stale lease is detected. Workers orchestrate jobs and private R2 staging; they do not run PDF/Word native processes. A missing processor is an explicit configuration error. Tokens are never returned in frontend policy reads, logs or export configuration; Notion integration secrets are stored encrypted in the server-only policy table.
 

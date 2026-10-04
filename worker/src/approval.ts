@@ -7,6 +7,7 @@ import { QaError } from './qa/domain';
 import { ApprovalCommandError, canonicalApprovalPayload, parseApprovalCommand, type ApprovalCommandResult } from './approval/core';
 import { runApprovalDeliveries } from './approvalDelivery';
 import type { ChangeEvent } from './protocol';
+import { withFullTaskRows } from './taskEvents';
 
 type C = Context<AppContext>;
 type Receipt = { actor_id: string; task_id: string; payload_hash: string; result_json: string };
@@ -28,6 +29,7 @@ async function replay(env: Env, auth: AuthCtx, prior: Receipt, hash: string,allo
 export function approvalError(error: unknown): ApprovalCommandError {
   if (error instanceof ApprovalCommandError) return error;
   const statuses: Record<string,number>={approval_forbidden:403,approval_disabled:403,approval_unavailable:404,
+    approval_self_decision_forbidden:403,approval_requirement_admin_only:403,
     approval_conflict:409,approval_idempotency_conflict:409,approval_rule_in_use:409,
     approval_invalid_input:400,approval_rule_invalid:400,approval_not_required:400,approval_transition_prerequisite:400};
   const code=(error instanceof Error?error.message:String(error)).match(/\bapproval_[a-z_]+\b/)?.[0];
@@ -70,7 +72,8 @@ export async function handleApprovalCommand(c: C): Promise<Response> {
     if (!result.replayed) {
       const events:ChangeEvent[]=[{table:'tasks',eventType:'UPDATE',new:{...result.task},old:null}];
       if(result.request) events.push({table:'approval_requests',eventType:'UPDATE',new:{...result.request},old:null});
-      notifyChanges(c.env,c.executionCtx,events,c.get('auth').member.workspaceId);
+      const ws=c.get('auth').member.workspaceId;
+      notifyChanges(c.env,c.executionCtx,await withFullTaskRows(c.env,ws,events),ws);
       c.executionCtx.waitUntil(runApprovalDeliveries(c.env,c.get('auth').member.workspaceId).catch(()=>console.error('approval_delivery_unavailable')));
     }
     return c.json(result);

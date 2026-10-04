@@ -248,7 +248,14 @@ export function useMemberManage() {
       // generates a random throwaway (member can't log in until reset).
       body: { action: 'create', email: addForm.email, name: addForm.name, role: newRole === 'qa_admin' ? 'member' : newRole, qaAdmin: newRole === 'qa_admin', jobTitle: isSuperAdmin ? addForm.jobTitle.trim() : '', avatar: addForm.name.slice(0, 1).toUpperCase(), color: COLORS[Math.floor(Math.random() * COLORS.length)], ...(addForm.password ? { password: addForm.password } : {}) },
     });
-    if (error || data?.error) { toast.error(i18n.t('member.addFailed') + (data?.error || error?.message)); }
+    let body = data as { error?: string; code?: string; message?: string } | null;
+    const context = error ? (error as { context?: unknown }).context : undefined;
+    if (!body && context instanceof Response) {
+      try { body = await context.json(); } catch { /* no JSON body */ }
+    }
+    if (body?.error === 'email_taken') { toast.error(i18n.t('member.addEmailTaken')); }
+    else if (body?.code === 'member_exists') { toast.error(i18n.t('member.addDuplicate')); }
+    else if (error || body?.error) { toast.error(i18n.t('member.addFailed') + (body?.message || body?.error || error?.message)); }
     else {
       toast.success(i18n.t('member.added'));
       if (currentMemberId) {
@@ -291,8 +298,15 @@ export function useMemberManage() {
     if (resetForm.password !== resetForm.confirm) { toast.error(i18n.t('member.passwordMismatch')); return; }
     setResetLoading(true);
     const { data, error } = await supabase.functions.invoke('manage-member', { body: { action: 'reset_password', memberId: resetTarget.id, newPassword: resetForm.password } });
-    const body = data as { success?: boolean; error?: string; message?: string } | null;
-    if (error || body?.error) {
+    let body = data as { success?: boolean; error?: string; message?: string } | null;
+    // supabase-js keeps a non-2xx answer's body on error.context.
+    const context = error ? (error as { context?: unknown }).context : undefined;
+    if (!body && context instanceof Response) {
+      try { body = await context.json(); } catch { /* no JSON body */ }
+    }
+    if (body?.error === 'email_taken') {
+      toast.error(i18n.t('member.resetPasswordEmailTaken'));
+    } else if (error || body?.error) {
       // Worker failures carry the zh human text in `message` (cfClient also
       // surfaces it via error.message); fall back to the raw error code.
       toast.error(i18n.t('member.resetPasswordFailed') + (body?.message || body?.error || error?.message));

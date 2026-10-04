@@ -91,6 +91,18 @@ describe('knowledge workflow D1 transactions and live ACL',()=>{
   expect(notifyChanges).toHaveBeenCalledTimes(1);
   expect(vi.mocked(notifyChanges).mock.calls[0][2]).toEqual([{table:'qa_issues',eventType:'INSERT',new:{id:result.targetId,workspace_id:'default',project_id:'project',version:1},old:null}]);
  });
+ it('validates and keeps the team QA custom fields',async()=>{
+  const fields={version:1,fields:[{id:'build',fieldName:'Build',fieldType:'text',isRequired:true,isEnabled:true,sortOrder:0}]};
+  db.prepare("INSERT OR REPLACE INTO system_settings(key,value) VALUES('qa_custom_fields',?)").run(JSON.stringify(fields));
+  const input={projectId:'project',title:'Investigate result',actual:'Observed failure',observedEnvironment:'QA'};
+  await expect(run({action:'create_qa',commandId:'qa-missing',expectedPageVersion:1,input})).rejects.toThrow('qa_custom_field_required');
+  const result=await run({action:'create_qa',commandId:'qa-fields',expectedPageVersion:1,input:{...input,customFields:{build:'1.2.3'}}});
+  expect(JSON.parse(db.prepare('SELECT data FROM qa_issues WHERE id=?').get(result.targetId).data).customFields).toEqual({build:'1.2.3'});
+  beforeBatch=()=>db.prepare("UPDATE system_settings SET value=? WHERE key='qa_custom_fields'").run(JSON.stringify({version:1,fields:[{...fields.fields[0],isEnabled:false}]}));
+  await expect(run({action:'create_qa',commandId:'qa-changed',expectedPageVersion:1,input:{...input,customFields:{build:'1.2.4'}}})).rejects.toThrow();
+  expect(db.prepare("SELECT count(*) n FROM kb_workflow_commands WHERE id='qa-changed' AND allowed=1").get().n).toBe(0);
+  expect(db.prepare('SELECT count(*) n FROM qa_issues').get().n).toBe(1);
+ });
  it.each(["UPDATE auth_users SET banned=1 WHERE id='pm'", "DELETE FROM auth_users WHERE id='pm'"])('rejects QA creation when verified login is revoked before transaction (%s)',async sql=>{
   beforeBatch=()=>db.exec(sql);
   await expect(run({action:'create_qa',commandId:'qa-revoked',expectedPageVersion:1,input:{projectId:'project',title:'Investigate result',actual:'Observed failure',observedEnvironment:'QA'}})).rejects.toThrow('qa_forbidden');

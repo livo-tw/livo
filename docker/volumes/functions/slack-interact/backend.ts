@@ -10,7 +10,9 @@ import { createTaskContextData } from './task-context.ts';
 import { createPlanningData } from './planning-backend.ts';
 import { TaskPlanningError } from './planning-core.ts';
 import { KNOWLEDGE_SEARCH_SIZE, normalizeKnowledgeSearch } from './knowledge.ts';
-export function fail(message: string): never { throw Object.assign(new Error(message), { name: 'ActionError' }); }
+export function fail(message: string): never {
+  throw Object.assign(new Error(message), { name: 'ActionError', ...(message === NO_ACCOUNT ? { code: 'no_account' } : {}) });
+}
 export interface Environment { get(name: string): string | undefined }
 const encoder = new TextEncoder();
 export async function constantTimeSecret(actual: string, expected: string) {
@@ -54,6 +56,18 @@ export class Database {
   rows(table: string, query: Row = {}) { return this.request(`/rest/v1/${table}`, 'GET', undefined, query) as Promise<Row[]>; }
   write(table: string, body: unknown, query: Row = {}, method = 'POST') { return this.request(`/rest/v1/${table}`, method, body, query); }
   async setting(key: string) { return (await this.rows('system_settings', { select: 'value', key: `eq.${key}`, limit: '1' }))[0]?.value; }
+}
+/**
+ * A manual (admin) Slack mapping is trusted only while the member who made it is
+ * an active super_admin: the rule kb_slack_search applies, used for every Slack
+ * action and delivery. Legacy mappings without an issuer, or made by a plain
+ * admin, count as unbound until an owner maps the account again.
+ */
+export async function trustedAdminBinding(db: Database, binding: Row | undefined): Promise<boolean> {
+  const issuer = binding?.verified_by_member_id;
+  if (binding?.is_verified !== true || binding.verified_by !== 'admin' || typeof issuer !== 'string' || !/^[\w-]{1,200}$/.test(issuer)) return false;
+  const rows = await db.rows('members', { select: 'id,role,is_active', id: `eq.${issuer}`, role: 'eq.super_admin', is_active: 'eq.true', limit: '1' });
+  return rows.length === 1 && rows[0].id === issuer && rows[0].role === 'super_admin' && rows[0].is_active === true;
 }
 /** Slack Web API calls with the bot token from slack_config (or SLACK_BOT_TOKEN). */
 export function slackClient(env: Environment, admin = new Database(env)) {
@@ -101,7 +115,12 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         platform_user_id: `eq.${user}`, platform_team_id: `eq.${team}`, limit: '1' }))[0];
       let member: Row | undefined;
       if (binding?.is_verified && binding.verified_by === 'admin') {
-        // An admin assigned this Slack user to a member whose LIVO email differs.
+        // An untrusted manual mapping is no mapping: the Slack email must prove
+        // identity again, otherwise an owner has to map the account again.
+        if (!(await trustedAdminBinding(admin, binding))) binding = { ...binding, is_verified: false };
+      }
+      if (binding?.is_verified && binding.verified_by === 'admin') {
+        // An owner assigned this Slack user to a member whose LIVO email differs.
         // Only the server writes verified_by (livo_guard_slack_binding).
         member = (await admin.rows('members', { select: '*', id: `eq.${binding.member_id}`, limit: '1' }))[0];
       } else {
@@ -212,8 +231,11 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       const targets = isComment ? commentRecipients(task, actor.id, result.mentioned_ids || []) : [];
       const members = targets.length ? await memberDb(actor).rows('members', { select: 'id,name,email', is_active: 'eq.true',
         id: `in.(${targets.map(t => t.id).join(',')})` }) : [];
+      // slack-notify escapes every text field and recomputes the recipients from
+      // the stored task plus these server-resolved mentions.
       const payload = { type: isComment ? 'comment_added' : 'task_created', taskId: task.id, taskKey: task.task_key,
-        taskTitle: task.title, priority: task.priority, actorName: actor.name, commentPreview: result.preview,
+        taskTitle: task.title, priority: task.priority, actorId: actor.id, actorName: actor.name, commentPreview: result.preview,
+        mentionedIds: isComment ? result.mentioned_ids || [] : [],
         sourceChannelId: isComment && source.echoExistingMessage !== false ? source.channel : undefined,
         dmTargets: members.map(m => ({ email: m.email, name: m.name, reason: targets.find(t => t.id === m.id)?.type === 'mention' ? '你被 @提及' : '你的任務有新留言' })) };
       // 20260714_notify_dispatch.sql already sends signed webhooks on task/comment

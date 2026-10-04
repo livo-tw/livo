@@ -79,7 +79,10 @@ Deno.serve(async (req: Request) => {
       memoryLimitMb: 150,
       // QA streams private evidence (up to 200 MB) without buffering it in
       // the user worker. Allow a slow download to finish before terminating it.
-      workerTimeoutMs: serviceName === 'qa' ? 300_000 : 60_000,
+      // knowledge-import waits up to 95 s for the optional document processor
+      // (85 s parse budget) in its background task; 150 s leaves room to stage
+      // the result and stays below the 180 s stale-job recovery.
+      workerTimeoutMs: serviceName === 'qa' ? 300_000 : serviceName === 'knowledge-import' ? 150_000 : 60_000,
       noModuleCache: false,
       importMapPath: null,
       envVars: Object.entries(Deno.env.toObject()),

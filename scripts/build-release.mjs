@@ -313,6 +313,8 @@ for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/v
   'volumes/functions/slack-interact/projectGroups.ts',
   'volumes/functions/slack-interact/knowledge-workspace.ts',
   'volumes/functions/slack-interact/task-context.ts',
+  ...['index.ts','handler.ts'].map(file => `volumes/functions/slack-actions-config/${file}`),
+  ...['index.ts','service.ts','core.ts'].map(file => `volumes/functions/slack-notify/${file}`),
   ...['index.ts', 'environments.ts', 'versions.ts', 'projectGroups.ts', 'domain.ts', 'workflow.ts', 'fields.ts', 'customFieldTypes.ts', 'service.ts', 'restore.ts', 'slack.ts', 'slackWorkspace.ts', 'slackHandoff.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => `volumes/functions/qa/${file}`)]) {
   if (!fs.existsSync(path.join(DOCKER_DEST, rel))) die(`docker/${rel} 沒有進交付包，請檢查 docker/ 的複製規則。`);
 }

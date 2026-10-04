@@ -112,9 +112,13 @@ export function generateTempPassword(length = 12): string {
   return out;
 }
 
-/** A password nobody knows: invited users cannot sign in until they use the link. */
-function unusablePassword(): string {
-  return crypto.randomUUID() + crypto.randomUUID();
+/**
+ * A password nobody knows: invited users cannot sign in until they use the
+ * link. 70 characters, with every character class a password policy may ask
+ * for; GoTrue (bcrypt) refuses passwords longer than 72 bytes.
+ */
+export function unusablePassword(): string {
+  return crypto.randomUUID() + crypto.randomUUID().slice(0, 30) + 'Aa1!';
 }
 
 export class LoginError extends Error {

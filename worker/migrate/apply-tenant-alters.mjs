@@ -46,18 +46,21 @@ function tryWrangler(args) {
 }
 
 // Independent column upgrades must run before the tenancy sentinel can exit.
+// schema.sql indexes some of these columns, so they must exist before it runs.
 for (const [table, column, definition] of [
   ['kb_pages', 'category', "TEXT NOT NULL DEFAULT 'general'"],
   ['kb_pages', 'access_policy', `TEXT NOT NULL DEFAULT '{"mode":"inherit"}'`],
   ['kb_attachments', 'storage_bucket', "TEXT NOT NULL DEFAULT 'task-images'"],
+  ['auth_login_reservations', 'pair_key', 'TEXT'],
+  ['auth_login_reservations', 'pair_window', 'TEXT'],
 ]) {
   const result = tryWrangler(`--command "SELECT ${column} FROM ${table} LIMIT 0"`);
   if (!result.ok && /no such column/i.test(result.out)) {
-    const file = join(tmpdir(), `livo-kb-${table}-${column}-${process.pid}.sql`);
+    const file = join(tmpdir(), `livo-column-${table}-${column}-${process.pid}.sql`);
     try { writeFileSync(file, `ALTER TABLE ${table} ADD COLUMN ${column} ${definition};\n`); wrangler(`--file="${file}"`); }
     finally { try { unlinkSync(file); } catch { /* cleanup only */ } }
   } else if (!result.ok && !/no such table/i.test(result.out)) {
-    throw new Error(`Knowledge upgrade probe failed for ${table}.${column}`);
+    throw new Error(`Column upgrade probe failed for ${table}.${column}`);
   }
 }
 const manualProbe = tryWrangler('--command "SELECT custom_fields FROM member_manuals LIMIT 0"');

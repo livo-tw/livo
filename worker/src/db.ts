@@ -59,6 +59,21 @@ function stricterRule(a: WriteRule, b: WriteRule): WriteRule {
   return RULE_STRICTNESS[a] >= RULE_STRICTNESS[b] ? a : b;
 }
 
+/**
+ * Columns an upsert may overwrite only on a row that already has the same
+ * value. The permission floor checks the rows being written; ON CONFLICT DO
+ * UPDATE would otherwise overwrite an existing row someone else owns (another
+ * member's comment, notification or preference) with them.
+ */
+function upsertOwnerColumns(table: string, meta: TableMeta, rank: number): string[] {
+  const cols = new Set<string>();
+  if (table === 'comments' && rank < 2) cols.add('user_id');
+  if (table === 'notifications' && rank < 2) cols.add('sender_id');
+  const write = meta.write ?? DEFAULT_WRITE;
+  if (rank < 1 && stricterRule(write.insert, write.update) === 'own' && write.ownerCol) cols.add(write.ownerCol);
+  return [...cols];
+}
+
 // Secure-by-default fallback for a future full-access table whose registry
 // entry forgot the write spec: admins keep working, members get 42501.
 const DEFAULT_WRITE: NonNullable<TableMeta['write']> = {
@@ -110,6 +125,31 @@ function enforceWritePolicy(
     const values = Array.isArray(req.values) ? req.values : [req.values];
     if (values.some(value => value && typeof value === 'object' && protectedKeys.includes(String((value as Row).key)))) return permissionDenied(table);
     if (req.op === 'update') req.filters = [...(req.filters || []), ...protectedKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
+  }
+
+  // Notifications are shown and e-mailed in the name of sender_id: a client may only
+  // send as itself, and a recipient may not re-address or re-attribute one it holds.
+  // super_admin keeps restoring historical rows (JSON backup restore).
+  if (table === 'notifications' && rank < 2) {
+    const rows = valuesAsRows(req.values);
+    if ((req.op === 'insert' || req.op === 'upsert') && rows.some((row) => row.sender_id !== memberId)) {
+      return permissionDenied(table);
+    }
+    if (req.op === 'update' && rows.some((row) => row.sender_id !== undefined || row.recipient_id !== undefined)) {
+      return permissionDenied(table);
+    }
+  }
+
+  // Comments are shown (and, on Docker, posted to Slack) in the name of user_id:
+  // same rule as notifications. Only super_admin restores or re-attributes them.
+  if (table === 'comments' && rank < 2) {
+    const rows = valuesAsRows(req.values);
+    if ((req.op === 'insert' || req.op === 'upsert') && rows.some((row) => row.user_id !== memberId)) {
+      return permissionDenied(table);
+    }
+    if (req.op === 'update' && rows.some((row) => row.user_id !== undefined)) {
+      return permissionDenied(table);
+    }
   }
 
   // ── members SPECIAL rule (checked before the generic rules) ──
@@ -727,7 +767,8 @@ export async function runQuery(
           req.ignoreDuplicates || updateCols.length === 0
             ? ' DO NOTHING'
             : ` DO UPDATE SET ${[...updateCols.map((c) => `${c} = excluded.${c}`), ...(deadlineVersion.sql ? [deadlineVersion.sql] : [])].join(', ')}` +
-              ' WHERE workspace_id = excluded.workspace_id'+(table==='external_account_bindings'?" AND external_account_bindings.platform <> 'slack'":'');
+              ' WHERE workspace_id = excluded.workspace_id'+(table==='external_account_bindings'?" AND external_account_bindings.platform <> 'slack'":'') +
+              upsertOwnerColumns(table, meta, roleRank(auth?.member?.role)).map((c) => ` AND ${table}.${ident(c)} = excluded.${ident(c)}`).join('');
         const conflictSql = ` ON CONFLICT (${target.join(', ')})${doClause}`;
         const stmts = buildInsertStatements(env, table, rows, columns, meta, conflictSql);
         const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
@@ -780,6 +821,23 @@ export async function runQuery(
         const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
         if (returned.length) {
           emitChanges(env, ctx, updateEvents(table, returned, meta.pk), ws);
+          // The work_task_move_subtasks trigger moved these parents' subtasks in the same
+          // statement; publish them too so other clients do not keep a stale project.
+          // Best-effort like every other side effect: the committed write never fails here.
+          if (table === 'tasks' && setCols.includes('project_id')) {
+            try {
+              const parents = returned.map((r) => r.id);
+              for (let i = 0; i < parents.length; i += 90) {
+                const chunk = parents.slice(i, i + 90);
+                const moved = await env.DB.prepare(
+                  `SELECT * FROM tasks WHERE workspace_id = ? AND parent_task_id IN (${chunk.map(() => '?').join(', ')})`,
+                ).bind(ws, ...chunk).all<Row>();
+                if (moved.results.length) {
+                  emitChanges(env, ctx, updateEvents(table, moved.results.map((r) => rowToWire(r, meta)), meta.pk), ws);
+                }
+              }
+            } catch { /* realtime fan-out only */ }
+          }
         }
         return shapeRows(returned, req);
       }

@@ -70,8 +70,9 @@ const SHARED = [
   { source: 'docker/volumes/functions/slack-interact/task-context.ts', copies: ['supabase/functions/slack-interact/task-context.ts'] },
   { source: 'src/lib/qa/slackWorkspace.ts', copies: ['worker/src/qa/slackWorkspace.ts', 'docker/volumes/functions/qa/slackWorkspace.ts', 'supabase/functions/qa/slackWorkspace.ts'] },
   { source: 'docker/volumes/functions/slack-interact/index.ts', copies: ['supabase/functions/slack-interact/index.ts'] },
-  { source: 'docker/volumes/functions/slack-actions-config/index.ts', copies: ['supabase/functions/slack-actions-config/index.ts'] },
-  { source: 'docker/volumes/functions/slack-notify/index.ts', copies: ['supabase/functions/slack-notify/index.ts'] },
+  ...['index.ts', 'handler.ts'].map(file => ({ source: `docker/volumes/functions/slack-actions-config/${file}`, copies: [`supabase/functions/slack-actions-config/${file}`] })),
+  { source: 'src/lib/slackNotifyCore.ts', copies: ['worker/src/slackNotifyCore.ts', 'docker/volumes/functions/slack-notify/core.ts', 'supabase/functions/slack-notify/core.ts'] },
+  ...['index.ts', 'service.ts'].map(file => ({ source: `docker/volumes/functions/slack-notify/${file}`, copies: [`supabase/functions/slack-notify/${file}`] })),
   { source: 'docker/volumes/functions/scheduled-backup/index.ts', copies: ['supabase/functions/scheduled-backup/index.ts'] },
   {
     source: 'worker/src/functions/jiraCsv.ts',

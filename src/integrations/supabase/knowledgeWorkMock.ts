@@ -18,7 +18,30 @@ export function knowledgeMockVisible(db: DB, authId: string | undefined, name: s
   if (name === 'field_locks') return !String(row.lock_key).startsWith('kb:') || knowledgeCan(pages, String(row.lock_key).slice(3), who, 'view');
   return !name.startsWith('kb_') || knowledgeCan(pages, String(name === 'kb_pages' ? row.id : row.page_id), who, 'view');
 }
-export function knowledgeMockWriteGuard(db: DB, authId: string | undefined, name: string, before: KnowledgeRow | null, patch: KnowledgeRow, deleting = false): void {
+function insidePrivateDraft(db: DB, id: unknown): boolean {
+  const seen = new Set<string>();
+  for (let cursor = typeof id === 'string' ? id : null; cursor && !seen.has(cursor) && seen.size < 10;) {
+    seen.add(cursor);
+    const row = (db.kb_pages || []).find(p => p.id === cursor);
+    if (!row) return false;
+    if (row.private_draft_owner_id) return true;
+    cursor = typeof row.parent_id === 'string' ? row.parent_id : null;
+  }
+  return false;
+}
+/** Mirrors the database cleanup when a page or attachment is deleted. */
+export function knowledgeMockForgetDeleted(db: DB, name: string, row: KnowledgeRow): void {
+  const links = db.kb_source_links || [];
+  if (name === 'kb_attachments') { db.kb_source_links = links.filter(l => !(l.source_kind === 'knowledge_file' && l.source_id === row.id)); return; }
+  if (name !== 'kb_pages') return;
+  const files = new Set((db.kb_attachments || []).filter(a => a.page_id === row.id).map(a => a.id));
+  db.kb_source_links = links.filter(l => l.page_id !== row.id && !(l.source_kind === 'knowledge' && l.source_id === row.id) && !(l.source_kind === 'knowledge_file' && files.has(l.source_id)));
+  const gone = new Set((db.kb_publications || []).filter(p => p.page_id === row.id).map(p => p.id));
+  db.kb_publications = (db.kb_publications || []).filter(p => p.page_id !== row.id)
+    .map(p => ({ ...p, predecessor_id: gone.has(p.predecessor_id) ? null : p.predecessor_id, successor_id: gone.has(p.successor_id) ? null : p.successor_id }));
+  for (const table of ['kb_work_receipts', 'kb_work_events']) db[table] = (db[table] || []).filter(r => r.page_id !== row.id);
+}
+export function knowledgeMockWriteGuard(db: DB, authId: string | undefined, name: string, before: KnowledgeRow | null, patch: KnowledgeRow): void {
   if (!name.startsWith('kb_')) return;
   if (internal(name) || name === 'kb_revisions') throw new KnowledgeWorkError('knowledge_forbidden', 403);
   const who = actor(db, authId), pages = (db.kb_pages || []) as unknown as KnowledgeAclPage[];
@@ -30,7 +53,9 @@ export function knowledgeMockWriteGuard(db: DB, authId: string | undefined, name
     if (before?.private_draft_owner_id && ['parent_id','project_id','access_policy'].some(k => k in patch && JSON.stringify(patch[k]) !== JSON.stringify(before[k]))) throw new KnowledgeWorkError('knowledge_forbidden', 403);
     if (!['admin','super_admin'].includes(who.role) && (patch.admin_only || patch.is_archived || (patch.access_policy && JSON.stringify(patch.access_policy) !== '{"mode":"inherit"}') || (before && 'parent_id' in patch && patch.parent_id !== before.parent_id))) throw new KnowledgeWorkError('knowledge_forbidden', 403);
     if (patch.parent_id && !knowledgeCan(pages, String(patch.parent_id), who, 'edit')) throw new KnowledgeWorkError('knowledge_forbidden', 403);
-    if (deleting && ((db.kb_publications || []).some(r => r.page_id === before?.id) || (db.kb_source_links || []).some(r => r.page_id === before?.id) || (db.kb_work_receipts || []).some(r => r.page_id === before?.id))) throw new KnowledgeWorkError('knowledge_conflict', 409);
+    // A shared page must not disappear into a private draft (same rule as the database guards).
+    if (before && patch.parent_id && patch.parent_id !== before.parent_id && insidePrivateDraft(db, patch.parent_id) && !insidePrivateDraft(db, before.id))
+      throw new KnowledgeWorkError('kb_private_draft_parent', 409);
   } else {
     const id = String(before?.page_id || patch.page_id);
     if (!knowledgeCan(pages, id, who, name === 'kb_comments' ? 'comment' : 'edit')) throw new KnowledgeWorkError('knowledge_forbidden', 403);

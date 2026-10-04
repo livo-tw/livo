@@ -20,6 +20,7 @@ import {
   LoginError,
   prepareLogin,
   resolveLoginChannel,
+  unusablePassword,
 } from "./memberAccounts.ts";
 
 const corsHeaders = {
@@ -92,32 +93,29 @@ Deno.serve(async (req) => {
       return json({ error: "Invalid token" }, 401);
     }
 
-    // Verify caller is admin or super_admin (keep the role — reset_password
-    // has a stricter per-action rule below).
+    // Verify caller is an active admin or super_admin linked to this login
+    // (keep the role — reset_password has a stricter per-action rule below).
+    // No e-mail fallback: a login that is not linked to a member could carry
+    // an admin's address (self-registered while public sign-up was open), and
+    // a member deactivated less than an hour ago still holds a valid token.
     const { data: callerMember } = await supabaseAdmin
       .from("members")
       .select("role, name")
       .eq("auth_id", callerAuth.id)
+      .eq("is_active", true)
       .maybeSingle();
 
-    let callerRole: string | null = callerMember ? callerMember.role : null;
-    let callerName: string = callerMember ? callerMember.name : "";
-    if (!callerMember) {
-      // Fallback: check by email
-      const { data: callerByEmail } = await supabaseAdmin
-        .from("members")
-        .select("role, name")
-        .eq("email", callerAuth.email)
-        .maybeSingle();
-      callerRole = callerByEmail ? callerByEmail.role : null;
-      callerName = callerByEmail ? callerByEmail.name : "";
-    }
+    const callerRole: string | null = callerMember ? callerMember.role : null;
+    const callerName: string = callerMember ? callerMember.name : "";
     if (!callerRole || !["admin", "super_admin"].includes(callerRole)) {
       return json({ error: "Permission denied: admin role required" }, 403);
     }
 
     const { action, ...params } = await req.json();
-    if (callerRole !== 'super_admin' && (action === 'reset_password' || action === 'create_login')) {
+    // Deactivating or deleting a member removes their login too (ban / delete),
+    // so it is a super_admin action, as in the app. An admin could otherwise
+    // lock out a super_admin.
+    if (callerRole !== 'super_admin' && (action === 'reset_password' || action === 'create_login' || action === 'toggle_active' || action === 'delete')) {
       return json({ error: 'Permission denied: only super_admin can manage another member login' },403);
     }
     if (action === 'create') {
@@ -150,14 +148,22 @@ Deno.serve(async (req) => {
       }
 
       // Duplicate member check FIRST (avoids orphaning a fresh auth user).
-      const { data: existingMembers } = await supabaseAdmin
+      // Case-insensitive, as GoTrue matches logins: "Boss@x" and "boss@x" are
+      // one login, and a second member on it would share that person's account.
+      const { data: memberEmails } = await supabaseAdmin
         .from("members")
-        .select("id")
-        .eq("email", emailStr)
-        .limit(1);
-      if (existingMembers && existingMembers.length > 0) {
-        return json({ error: "此 Email 的成員已存在" }, 400);
+        .select("email");
+      const emailKey = emailStr.toLowerCase();
+      if ((memberEmails || []).some((m: { email?: string | null }) => (m.email || "").trim().toLowerCase() === emailKey)) {
+        return json({ error: "此 Email 的成員已存在", code: "member_exists" }, 400);
       }
+
+      // Use the admin-supplied password when given; otherwise a random one
+      // nobody knows (the member signs in after a reset or an invitation).
+      const newPassword =
+        typeof password === "string" && password.length > 0
+          ? password
+          : unusablePassword();
 
       // Find-or-create the auth user (scan ALL pages, not just the first).
       let authUserId: string;
@@ -165,15 +171,28 @@ Deno.serve(async (req) => {
       const existingAuth = await findAuthUserByEmail(supabaseAdmin, emailStr);
 
       if (existingAuth) {
-        // Auth user already exists, reuse it
+        // A login with this email already exists, e.g. one self-registered
+        // while public sign-up was open. Adopt it only when no member uses it,
+        // and give it this member's password and lift any ban, as 「啟用帳號」
+        // does, so whoever registered it cannot keep signing in with their own.
+        const { data: owner } = await supabaseAdmin
+          .from("members")
+          .select("id")
+          .eq("auth_id", existingAuth.id)
+          .limit(1);
+        if (owner && owner.length > 0) {
+          return json({ error: "email_taken", message: "這個 Email 的登入帳號屬於另一位成員" }, 409);
+        }
+        const { error: adoptErr } = await supabaseAdmin.auth.admin.updateUserById(existingAuth.id, {
+          password: newPassword,
+          email_confirm: true,
+          ban_duration: "none",
+        });
+        if (adoptErr) {
+          return json({ error: adoptErr.message }, 400);
+        }
         authUserId = existingAuth.id;
       } else {
-        // Use the admin-supplied password when given; otherwise fall back to a
-        // random throwaway (original behavior, from the OAuth-only era).
-        const newPassword =
-          typeof password === "string" && password.length > 0
-            ? password
-            : crypto.randomUUID() + crypto.randomUUID() + "Aa1!";
         const { data: authUser, error: authCreateErr } =
           await supabaseAdmin.auth.admin.createUser({
             email: emailStr,
@@ -341,6 +360,25 @@ Deno.serve(async (req) => {
       const authUser = await resolveAuthUser(supabaseAdmin, member);
 
       if (authUser) {
+        // A login found by email and not linked to this member: if another
+        // member owns it, leave it alone; otherwise (a self-registered #40-era
+        // account) link it below. An unlinked login sees no data since
+        // 20261019_active_member_gate.sql, so a reset alone would not let the
+        // person in.
+        const relink = member.auth_id !== authUser.id;
+        if (relink) {
+          const { data: owner } = await supabaseAdmin
+            .from("members")
+            .select("id")
+            .eq("auth_id", authUser.id)
+            .limit(1);
+          if (owner && owner.length > 0) {
+            return json(
+              { error: "email_taken", message: "這個 Email 的登入帳號屬於另一位成員" },
+              409
+            );
+          }
+        }
         // GoTrue invalidates the user's refresh tokens on password update, so
         // whoever held the old credentials is locked out.
         const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
@@ -348,6 +386,15 @@ Deno.serve(async (req) => {
         });
         if (error) {
           return json({ error: error.message }, 400);
+        }
+        if (relink) {
+          const { error: linkErr } = await supabaseAdmin
+            .from("members")
+            .update({ auth_id: authUser.id })
+            .eq("id", memberIdStr);
+          if (linkErr) {
+            return json({ error: linkErr.message }, 400);
+          }
         }
       } else {
         // Member never had a login (e.g. imported from Jira) — resetting

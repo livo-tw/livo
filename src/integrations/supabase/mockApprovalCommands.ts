@@ -1,5 +1,5 @@
 // Local demonstration adapter only. It has no network, Slack or production database access.
-import {parseApprovalCommand,canonicalApprovalPayload,approvalSnapshotSteps,canActOnApproval,ApprovalCommandError} from '@/lib/approval/core';
+import {parseApprovalCommand,canonicalApprovalPayload,approvalSnapshotSteps,canActOnApproval,canSetApprovalRequirement,ApprovalCommandError} from '@/lib/approval/core';
 import type {ApprovalRequestState,ApprovalCommandResult,ApprovalStepSnapshot} from '@/lib/approval/core';
 type Row=Record<string,unknown>;
 type Store=Record<string,Row[]>;
@@ -36,6 +36,7 @@ export function mockApprovalCommand(store:Store,authId:string|undefined,input:un
     if(rows('status_transition_rules').some(row=>row.target_status_id===to&&!rows('status_logs').some(log=>log.task_id===task.id&&log.to_status_id===row.required_status_id))) return fail('transition_prerequisite');
   };
   if(command.operation==='set_requirement'){
+    if(!canSetApprovalRequirement(command.enabled,{role:String(actor.role)})) return fail('requirement_admin_only');
     if(pending||task.current_approval_id||task.approval_status==='pending_approval'||!!task.requires_approval!==command.expectedRequiresApproval) return fail('conflict');
     task.requires_approval=command.enabled;
   }else if(command.operation==='submit'){
@@ -59,6 +60,7 @@ export function mockApprovalCommand(store:Store,authId:string|undefined,input:un
       request.status='cancelled';
     }else{
       if(request.current_step!==command.expectedStep)return fail('conflict');
+      if(request.requested_by===actor.id)return fail('self_decision_forbidden');
       if(!approvalSnapshotSteps(request))return fail('legacy_request');
       if(!canActOnApproval(request,{id:String(actor.id),role:String(actor.role)}))return fail('forbidden');
       rows('approval_actions').push({id:newId(),request_id:request.id,step_order:request.current_step,action_by:actor.id,action:command.operation,comment:command.comment,acted_at:now,command_id:command.commandId});

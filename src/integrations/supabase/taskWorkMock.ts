@@ -25,7 +25,8 @@ export function workMockPatch(db:Store,name:string,before:Row|null,patch:Row):Ro
     }
     if(!before||row.parent_task_id!==before.parent_task_id||row.project_id!==before.project_id) {
       if(row.parent_task_id) {const parent=visible(db,row.parent_task_id);if(parent.id===row.id||parent.parent_task_id||parent.project_id!==row.project_id||(db.tasks||[]).some(t=>t.parent_task_id===row.id))fail('work_invalid_parent');}
-      if((db.tasks||[]).some(t=>t.parent_task_id===row.id&&t.project_id!==row.project_id))fail('work_invalid_parent');
+      // A moving parent takes its subtasks along (workMockMoveSubtasks), as in PostgreSQL/D1.
+      if((!before||row.project_id===before.project_id)&&(db.tasks||[]).some(t=>t.parent_task_id===row.id&&t.project_id!==row.project_id))fail('work_invalid_parent');
     }
     if((!before||row.task_key!==before.task_key||row.project_id!==before.project_id)&&(db.tasks||[]).some(t=>t.id!==row.id&&t.project_id===row.project_id&&t.task_key===row.task_key))fail('work_conflict');
   } else if(['task_checks','task_todos'].includes(name)) {
@@ -37,6 +38,13 @@ export function workMockPatch(db:Store,name:string,before:Row|null,patch:Row):Ro
     if((db.task_dependencies||[]).some(d=>d.task_id===row.task_id&&d.depends_on_task_id===row.depends_on_task_id))fail('work_conflict');
   }
   return row;
+}
+/** Call after the moved parent row is stored: its subtasks follow it into the new project. */
+export function workMockMoveSubtasks(db:Store,before:Row,parent:Row):void {
+  if(before.project_id===parent.project_id||parent.parent_task_id)return;
+  const tasks=table(db,'tasks');
+  const moved=tasks.map((t,i)=>t.parent_task_id===parent.id&&t.project_id!==parent.project_id?{i,row:workMockPatch(db,'tasks',t,{project_id:parent.project_id})}:null);
+  for(const change of moved)if(change)tasks[change.i]=change.row;
 }
 export function taskWorkMockCommand(db:Store,authId:string|undefined,input:unknown):TaskWorkResult {
   const command=parseTaskWorkCommand(input),canonical=canonicalTaskWorkPayload(command);
@@ -56,8 +64,10 @@ export function taskWorkMockCommand(db:Store,authId:string|undefined,input:unkno
     const project=(draft.projects||[]).find(p=>p.id===card.project_id)!;
     if(!(draft.statuses||[]).some(s=>s.id===command.statusId))fail('work_invalid_input');
     for(const member of [command.assigneeId,command.reviewerId])if(member&&!(draft.members||[]).some(m=>m.id===member&&m.is_active!==false))fail('work_member_unavailable');
+    // Same rule as PostgreSQL/D1: the command always supplies title, project, status and priority.
     const required=(draft.system_settings||[]).find(s=>s.key==='required_fields')?.value as Row||{};
-    if(Object.entries(required).some(([k,v])=>v===true&&(!['dueDate','assignee','reviewer'].includes(k)||!({dueDate:command.dueDate,assignee:command.assigneeId,reviewer:command.reviewerId} as Row)[k]))
+    const supplied:Row={title:true,project:true,status:true,priority:true,dueDate:command.dueDate,assignee:command.assigneeId,reviewer:command.reviewerId};
+    if(Object.entries(required).some(([k,v])=>v===true&&!(Object.prototype.hasOwnProperty.call(supplied,k)&&supplied[k]))
       ||(draft.custom_fields||[]).some(f=>f.project_id===project.id&&f.is_required))fail('work_required_fields');
     const next=Math.max(0,...(draft.tasks||[]).filter(t=>t.project_id===project.id).map(t=>Number(String(t.task_key).match(/(\d+)$/)?.[1]||0)))+1;
     const state=(draft.statuses||[]).find(s=>s.id===command.statusId)!;

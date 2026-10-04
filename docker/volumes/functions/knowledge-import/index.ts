@@ -12,7 +12,7 @@ Deno.serve(async(req:Request)=>{
     const client=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
     const {data:auth,error:authError}=await client.auth.getUser(token);if(authError||!auth.user)return json({error:'unauthorized'},401);
     const {data:actor,error:actorError}=await client.from('members').select('id,role,job_title,is_active').eq('auth_id',auth.user.id).eq('is_active',true).maybeSingle();if(actorError||!actor)return json({error:'import_forbidden'},403);
-    const db=async(action:string,payload:Record<string,unknown>={})=>{const {data,error}=await client.rpc('knowledge_import_db',{p_action:action,p_actor:actor.id,p_payload:{...payload,auth_id:auth.user.id}});if(error)throw new ImportError(error.message,error.code==='42501'?403:error.code==='40001'?409:400);return data;};
+    const db=async(action:string,payload:Record<string,unknown>={})=>{const {data,error}=await client.rpc('knowledge_import_db',{p_action:action,p_actor:actor.id,p_payload:{...payload,auth_id:auth.user.id}});if(error)throw new ImportError(error.message,error.code==='42501'?403:['40001','PT409'].includes(error.code)?409:400);return data;};
     const repo:ImportRepository={
       actor:()=>db('actor'),pages:()=>db('pages'),policy:()=>db('policy'),
       async savePolicy(policy,expectedVersion){await db('save_policy',{policy,expected:expectedVersion});},

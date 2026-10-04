@@ -8,16 +8,23 @@ CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$
   SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid
 $$;
 GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
+-- members.role is the app_member_role enum, as in the delivery baseline
+-- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
+-- comparison bugs that failed on real installs.
+CREATE TYPE public.app_member_role AS ENUM ('admin','member','super_admin');
 CREATE TABLE public.members (
-  id text PRIMARY KEY, auth_id uuid UNIQUE, role text NOT NULL,
+  id text PRIMARY KEY, auth_id uuid UNIQUE, role public.app_member_role NOT NULL,
   is_active boolean NOT NULL DEFAULT true
 );
 CREATE TABLE public.projects (id text PRIMARY KEY,is_archived boolean NOT NULL DEFAULT false);
 CREATE TABLE public.tasks (id text PRIMARY KEY,project_id text NOT NULL REFERENCES public.projects(id));
 CREATE TABLE public.system_settings (key text PRIMARY KEY,value jsonb,updated_at timestamptz NOT NULL DEFAULT now());
+-- Same NOT NULL shape as the delivery baseline (20260308185150_*.sql): task_id
+-- only became nullable with 20261017_notifications_task_optional.sql.
 CREATE TABLE public.notifications (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),recipient_id text NOT NULL,sender_id text,
-  type text NOT NULL,task_id text,content text,created_at timestamptz NOT NULL DEFAULT now()
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),recipient_id text NOT NULL,sender_id text NOT NULL,
+  type text NOT NULL,task_id text NOT NULL,content text NOT NULL DEFAULT '',is_read boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE SCHEMA storage;
 CREATE TABLE storage.buckets (

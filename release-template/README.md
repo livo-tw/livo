@@ -44,6 +44,8 @@ livo-release/
 | 硬碟 | 20 GB | 50 GB+ |
 | Docker | 24.0+（含 Compose v2） | 最新版 |
 
+選用的「知識庫文件匯入處理器」預設關閉；要開啟時，另需約 1 GB 可用記憶體（見下方「知識庫文件匯入」）。
+
 **唯一要先自己裝的東西是 Docker：**
 
 - **Windows / macOS**：安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
@@ -131,6 +133,36 @@ docker compose logs -f
 請把它改成實際網址（例如 `https://pm.example.com`，不含結尾斜線），再到
 `docker/` 執行 `docker compose up -d` 重新載入。還是 `localhost` 時，邀請信會
 改用管理員當下開著 LIVO 的網址。
+
+### 知識庫文件匯入（選用，預設關閉）
+
+知識庫的「匯入文件」（Word `.docx`、Markdown `.md`、PDF，含掃描檔 OCR）需要另一個私有解析服務
+`knowledge-processor`。它**預設關閉**；沒開時匯入視窗會顯示「尚未設定私有文件處理服務」，
+知識庫本身與其他功能都不受影響。檔案只在這台伺服器內解析，不會送到外部 OCR。
+
+開啟前請確認：
+
+- **記憶體**：處理器容器上限 768 MB，建議伺服器還有約 **1 GB 可用記憶體**。Docker 只有 4 GB
+  而且已用掉大半的機器，請維持關閉或先加記憶體。
+- **網路**：映像檔在這台機器上建置，需要能連外下載 Debian 套件（poppler、tesseract）與 PyPI 套件。
+  建置失敗時安裝程式只會警告並略過，前端與資料庫更新照常完成，排除網路問題後重跑即可。
+- **處理量**：一次處理一份文件；單檔 10 MB、PDF 40 頁為上限。每份文件最多解析約 85 秒，
+  掃描 PDF 的 OCR 只在前 40 秒內開始新的頁面，其餘頁面標示「OCR 待處理」，
+  可在匯入紀錄按「重試失敗項目／OCR 頁面」接續處理。
+
+開啟方式：
+
+1. 編輯 `docker/.env`，設定 `KNOWLEDGE_PROCESSOR_ENABLED=1`
+   （不需要 OCR 時可再設 `KNOWLEDGE_OCR_ENABLED=0`，較省記憶體與時間）。
+2. 重新執行安裝程式（`sh install.sh` 或 `install.bat`）。它會建置並啟動處理器，並把
+   `KNOWLEDGE_PROCESSOR_URL` 設為 `http://knowledge-processor:8091`。
+   `KNOWLEDGE_PROCESSOR_TOKEN` 由安裝程式產生，請勿清空或改短（少於 32 字元時處理器會拒絕所有請求）。
+3. 處理器放在 compose profile `knowledge-processor` 裡：自己下 `docker compose` 指令啟動或停止時，
+   要加 `--profile knowledge-processor`，例如
+   `docker compose -f docker-compose.yml -f compose.frontend.yml --profile knowledge-processor up -d`。
+
+關閉：把 `KNOWLEDGE_PROCESSOR_ENABLED` 改回 `0` 再重跑安裝程式，處理器容器會停止並移除、
+網址會清空；已匯入的頁面與原檔不受影響。
 
 ### 用 HTTPS 網域對外（Cloudflare Tunnel 等）
 

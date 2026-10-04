@@ -4,3 +4,4 @@ export interface SchemaUpgradeAdapter {
   log?(message: string): void;
 }
 export function applyPostTenantSchemaUpgrades(adapter: SchemaUpgradeAdapter): Promise<string[]>;
+export function sqlTriggerTargets(sql: string): string[];

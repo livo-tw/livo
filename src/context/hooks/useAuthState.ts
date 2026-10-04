@@ -47,10 +47,14 @@ export function useAuthState(users: User[], usersLoaded: boolean) {
         .eq('auth_id', user.id)
         .maybeSingle();
 
+      // Logins are matched by e-mail without case (GoTrue stores it lower-case);
+      // a case-sensitive compare cleared the link of a member whose e-mail was
+      // saved with capitals on every sign-in and locked them out.
+      const sameEmail = (a?: string | null, b?: string | null) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
       if (memberByAuth) {
         const matchedUser = users.find(u => u.id === memberByAuth.id);
         // Verify email still matches — if member data was corrected, auth_id may be stale
-        if (matchedUser && user.email && matchedUser.email !== user.email) {
+        if (matchedUser && user.email && !sameEmail(matchedUser.email, user.email)) {
           console.warn(`[LIVO] stale auth link cleared: auth=${user.email} member=${matchedUser.email} (${memberByAuth.id})`);
           await supabase.from('members').update({ auth_id: null } as Record<string, unknown>).eq('id', memberByAuth.id);
           // Fall through to email-based matching below
@@ -68,7 +72,7 @@ export function useAuthState(users: User[], usersLoaded: boolean) {
       }
 
       if (user.email) {
-        const match = users.find(u => u.email === user.email);
+        const match = users.find(u => sameEmail(u.email, user.email));
         if (match) {
           if (match.isActive === false) {
             toast.error(i18n.t('auth.accountDisabled'));
@@ -85,6 +89,10 @@ export function useAuthState(users: User[], usersLoaded: boolean) {
 
       const authEmail = user.email || '(unknown)';
       const superAdmins = users.filter(u => u.role === 'super_admin');
+      // On Docker a login with no active member cannot read members or write
+      // notifications, so nobody can be told and it may as well be a deactivated
+      // member: say only that the account cannot be used.
+      let notified = false;
       if (superAdmins.length > 0) {
         const notifications = superAdmins.map(admin => ({
           recipient_id: admin.id,
@@ -94,9 +102,10 @@ export function useAuthState(users: User[], usersLoaded: boolean) {
           content: i18n.t('auth.unknownAccountNotify', { email: authEmail }),
           is_read: false,
         }));
-        await supabase.from('notifications').insert(notifications);
+        const { error } = await supabase.from('notifications').insert(notifications);
+        notified = !error;
       }
-      toast.error(i18n.t('auth.accountNotLinked', { email: authEmail }));
+      toast.error(i18n.t(notified ? 'auth.accountNotLinked' : 'auth.accountUnavailable', { email: authEmail }));
       await supabase.auth.signOut();
     };
     linkAuthToMember().catch(err => {

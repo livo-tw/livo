@@ -97,13 +97,8 @@ async function resolveImporterMemberId(supabase: any, req: Request): Promise<str
       const user = userData?.user;
       if (user) {
         const { data: byAuthId } = await supabase
-          .from('members').select('id').eq('auth_id', user.id).limit(1);
+          .from('members').select('id').eq('auth_id', user.id).eq('is_active', true).limit(1);
         if (byAuthId && byAuthId[0]?.id) return byAuthId[0].id;
-        if (user.email) {
-          const { data: byEmail } = await supabase
-            .from('members').select('id').eq('email', user.email).limit(1);
-          if (byEmail && byEmail[0]?.id) return byEmail[0].id;
-        }
       }
     }
   } catch (e) {
@@ -220,7 +215,7 @@ Deno.serve(async (req) => {
     // ── Permission floor: caller must be an admin/super_admin member ────────
     // The import wipes and rewrites tasks/sprints/comments — a plain member
     // JWT must never reach it. Same caller-role pattern as manage-member
-    // (members.auth_id first, email fallback). A caller presenting the
+    // (the active member linked by members.auth_id). A caller presenting the
     // service-role key itself (server-side scripting) is allowed through.
     let callerRole = 'super_admin';
     let callerName = '';
@@ -235,14 +230,11 @@ Deno.serve(async (req) => {
           await supabase.auth.getUser(callerToken);
         if (callerErr || !callerAuth) return json({ error: 'Invalid token' }, 401);
         type CallerRow = { role?: string; name?: string } | null;
+        // No e-mail fallback and only active members: an unlinked login may carry an
+        // admin's address, and a member deactivated within the hour still has a token.
         const { data: byAuth } = await supabase
-          .from('members').select('role, name').eq('auth_id', callerAuth.id).maybeSingle();
-        let caller = byAuth as CallerRow;
-        if (!caller && callerAuth.email) {
-          const { data: byEmail } = await supabase
-            .from('members').select('role, name').eq('email', callerAuth.email).maybeSingle();
-          caller = byEmail as CallerRow;
-        }
+          .from('members').select('role, name').eq('auth_id', callerAuth.id).eq('is_active', true).maybeSingle();
+        const caller = byAuth as CallerRow;
         if (!caller?.role || !['admin', 'super_admin'].includes(caller.role)) {
           return json({ error: 'Permission denied: admin role required' }, 403);
         }
@@ -489,6 +481,10 @@ Deno.serve(async (req) => {
     // Both approval and planning guards run before child writes in one transaction.
     const { error: clearError } = await supabase.rpc('livo_jira_clear_tasks');
     if (clearError) {
+      if (clearError.message === 'knowledge_requires_server_restore') {
+        return json({ error: 'knowledge_requires_server_restore',
+          message: '知識庫文件引用了現有任務或 QA，無法覆蓋匯入。請使用完整伺服器備份還原，原資料已保留。' }, 409);
+      }
       const pending = clearError.message === 'approval_pending';
       const planning = clearError.message === 'planning_history_requires_restore';
       const work = clearError.message === 'work_history_requires_restore' || clearError.message === 'release_history_requires_restore';

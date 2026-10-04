@@ -1,3 +1,4 @@
+import { safeLinkHref } from '@/lib/safeLink';
 import RichTextEditor from '@/components/RichTextEditorLazy';
 import { Paperclip, Download, HardDrive, X, FileText } from 'lucide-react';
 import { getDepartment, deptColors } from '@/lib/department';
@@ -74,8 +75,8 @@ const TaskCommentsTab = ({ detail }: Props) => {
                     {comment.content && (
                       <div className="text-sm leading-relaxed px-3 py-2 rich-content bg-muted text-foreground" style={{ borderRadius: '0 8px 8px 8px' }} dangerouslySetInnerHTML={{ __html: fixHtml(comment.content) }} />
                     )}
-                    {comment.attachmentUrl && (
-                      <a href={comment.attachmentUrl} target="_blank" rel="noopener noreferrer"
+                    {safeLinkHref(comment.attachmentUrl) && (
+                      <a href={safeLinkHref(comment.attachmentUrl)!} target="_blank" rel="noopener noreferrer"
                         className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-muted hover:bg-accent transition-colors border border-border">
                         <Paperclip size={12} className="text-muted-foreground" />
                         <span className="text-foreground truncate max-w-[200px]">{comment.attachmentName || t('taskDetail.comments.attachment')}</span>

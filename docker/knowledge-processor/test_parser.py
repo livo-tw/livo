@@ -3,16 +3,23 @@ import importlib.util
 import io
 import json
 import os
+import re
+import socket
+import subprocess
 import sys
+import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 import zipfile
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from parser import ImportFailure, checked_zip, markdown, parse, sanitize
+import server
 
 
 def docx_fixture():
@@ -102,6 +109,12 @@ class ParserTests(unittest.TestCase):
             result=parse(payload('pdf',pdf_fixture(mixed=True)))
         self.assertEqual([p['state'] for p in result['pages']],['text','ocr_pending'])
         self.assertTrue(result['incomplete'])
+    def test_pdf_with_broken_xref_offset_is_still_parsed(self):
+        broken=re.sub(rb'startxref\s+\d+',b'startxref\n9',pdf_fixture())
+        with patch.dict(os.environ,{'KNOWLEDGE_OCR_ENABLED':'0'}):
+            result=parse(payload('pdf',broken))
+        self.assertEqual([p['state'] for p in result['pages']],['text'])
+        self.assertIn('Project Alpha',result['body'])
     def test_pdf_encrypted_rejected(self):
         from pypdf import PdfWriter
         writer=PdfWriter();writer.add_blank_page(200,200);writer.encrypt('test-only');out=io.BytesIO();writer.write(out)
@@ -109,6 +122,83 @@ class ParserTests(unittest.TestCase):
     def test_invalid_and_empty_rejected(self):
         for value in [{'source':'docm','data':'YQ=='},{'source':'md','data':'%%%'}]:
             with self.assertRaises(ImportFailure):parse(value)
+
+
+TOKEN='t'*40
+REAL_WORK=server.work
+# The caller must be another process: a forked parse child would otherwise keep
+# a copy of the caller's socket open, so closing it would not disconnect.
+ABANDONING_CLIENT='''import socket,sys,time
+raw=sys.argv[3].encode()
+client=socket.create_connection((sys.argv[1],int(sys.argv[2])))
+client.sendall(b"POST /parse HTTP/1.1\\r\\nHost: x\\r\\nContent-Type: application/json\\r\\nAuthorization: Bearer "+sys.argv[4].encode()+b"\\r\\nContent-Length: "+str(len(raw)).encode()+b"\\r\\n\\r\\n"+raw)
+time.sleep(float(sys.argv[5]))
+'''
+
+
+def slow_or_real_work(payload,pipe):
+    if payload.get('slow'):
+        time.sleep(60)
+    REAL_WORK(payload,pipe)
+
+
+class LocalServerTests(unittest.TestCase):
+    """The real handler on an ephemeral port; parse runs in its child process."""
+    def setUp(self):
+        self.env=patch.dict(os.environ,{'KNOWLEDGE_PROCESSOR_TOKEN':TOKEN,'KNOWLEDGE_OCR_ENABLED':'0'})
+        self.env.start()
+        self.httpd=ThreadingHTTPServer(('127.0.0.1',0),server.Handler)
+        self.httpd.daemon_threads=True
+        threading.Thread(target=self.httpd.serve_forever,daemon=True).start()
+        self.url='http://127.0.0.1:%d/parse'%self.httpd.server_address[1]
+    def tearDown(self):
+        self.httpd.shutdown();self.httpd.server_close();self.env.stop()
+    def post(self,body,token=TOKEN):
+        request=urllib.request.Request(self.url,json.dumps(body).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+token})
+        try:
+            with urllib.request.urlopen(request,timeout=30) as response:return response.status,json.load(response)
+        except urllib.error.HTTPError as error:return error.code,json.load(error)
+    def test_missing_token_refuses_every_request(self):
+        with patch.dict(os.environ,{'KNOWLEDGE_PROCESSOR_TOKEN':''}):
+            self.assertEqual(self.post(payload('md',b'# Title'),''),(503,{'error':'processor_not_configured'}))
+        self.assertEqual(self.post(payload('md',b'# Title'),'x'*40)[0],401)
+        status,body=self.post(payload('md',b'# Title'))
+        self.assertEqual(status,200);self.assertIn('<h1>Title</h1>',body['result']['body'])
+    def test_abandoned_request_frees_the_only_slot(self):
+        with patch.object(server,'work',slow_or_real_work):
+            raw=json.dumps({**payload('md',b'# Slow'),'slow':True})
+            host,port=self.httpd.server_address
+            client=subprocess.Popen([sys.executable,'-c',ABANDONING_CLIENT,host,str(port),raw,TOKEN,'2'])
+            time.sleep(1)
+            self.assertEqual(self.post(payload('md',b'# Busy'))[0],429)
+            self.assertEqual(client.wait(timeout=10),0)  # the caller gives up and disconnects
+            deadline=time.monotonic()+10
+            while True:
+                status,body=self.post(payload('md',b'# Next'))
+                if status!=429 or time.monotonic()>deadline:break
+                time.sleep(0.2)
+            self.assertEqual(status,200)
+            self.assertIn('<h1>Next</h1>',body['result']['body'])
+    def test_budget_bounds_a_parse(self):
+        self.assertLess(server.BUDGET,95)  # knowledgeImport.ts waits 95 s for the processor
+        import parser as module
+        self.assertLessEqual(module.OCR_START_BUDGET+15+25,server.BUDGET)
+
+
+class StartupTests(unittest.TestCase):
+    def test_missing_token_does_not_exit(self):
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
+        env={**os.environ,'KNOWLEDGE_PROCESSOR_TOKEN':'','KNOWLEDGE_PROCESSOR_PORT':str(port),'PYTHONDONTWRITEBYTECODE':'1'}
+        process=subprocess.Popen([sys.executable,str(Path(__file__).parent/'server.py')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            time.sleep(1.5)
+            self.assertIsNone(process.poll())  # a crash would make Docker restart it in a loop
+            request=urllib.request.Request('http://127.0.0.1:%d/parse'%port,b'{}',headers={'Authorization':'Bearer '})
+            with self.assertRaises(urllib.error.HTTPError) as raised:urllib.request.urlopen(request,timeout=10)
+            self.assertEqual(raised.exception.code,503)
+        finally:
+            process.terminate();process.wait(timeout=10);process.stderr.close()
 
 
 class HTTPTests(unittest.TestCase):

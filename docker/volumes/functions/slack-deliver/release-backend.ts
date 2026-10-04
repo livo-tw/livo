@@ -1,4 +1,4 @@
-import { Database,type Environment } from '../slack-interact/backend.ts';
+import { Database,trustedAdminBinding,type Environment } from '../slack-interact/backend.ts';
 import { deliverRelease,type ReleaseDeliveryStore } from './release-core.ts';
 import type { Row } from './core.ts';
 export function releaseDeliveryStore(env:Environment):ReleaseDeliveryStore {
@@ -13,11 +13,12 @@ export function releaseDeliveryStore(env:Environment):ReleaseDeliveryStore {
    const [batches,events,bindings,links]=await Promise.all([
     db.rows('release_batches',{select:'data',workspace_id:`eq.${job.workspace_id}`,id:`eq.${job.batch_id}`,limit:'1'}),
     db.rows('release_events',{select:'id,operation,version,revision',workspace_id:`eq.${job.workspace_id}`,id:`eq.${job.event_id}`,limit:'1'}),
-    db.rows('external_account_bindings',{select:'platform_user_id',id:`eq.${publication.binding_id}`,member_id:`eq.${publication.published_by}`,platform:'eq.slack',platform_team_id:`eq.${publication.team_id}`,is_verified:'eq.true',verified_by:'in.(email,admin)',limit:'1'}),
+    db.rows('external_account_bindings',{select:'platform_user_id,is_verified,verified_by,verified_by_member_id',id:`eq.${publication.binding_id}`,member_id:`eq.${publication.published_by}`,platform:'eq.slack',platform_team_id:`eq.${publication.team_id}`,is_verified:'eq.true',verified_by:'in.(email,admin)',limit:'1'}),
     db.rows('release_slack_links',{select:'thread_ts',workspace_id:`eq.${job.workspace_id}`,batch_id:`eq.${job.batch_id}`,team_id:`eq.${publication.team_id}`,channel_id:`eq.${publication.channel_id}`,limit:'1'})
    ]);
    const batch=batches[0]?.data,event=events[0];
    if(!batch||!event||!bindings[0]||!Array.isArray(batch.components)||!batch.components.length)return undefined;
+   if(bindings[0].verified_by==='admin'&&!await trustedAdminBinding(db,bindings[0]))return undefined;
    const projectIds=[...new Set<string>(batch.components.map((c:Row)=>String(c.projectId)))];
    if(projectIds.some(id=>!/^\w[\w-]{0,199}$/.test(id)))return undefined;
    const [projects,owners]=await Promise.all([

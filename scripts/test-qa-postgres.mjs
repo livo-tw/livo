@@ -15,7 +15,7 @@ export const IMAGE = 'postgres:15.8-alpine'; // PostgreSQL 15.8, same major/mino
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS = ['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql',
   '20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261013_qa_manual_state.sql',
-  '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql'];
+  '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql','20261017_notifications_task_optional.sql'];
 // Keep the shared base fixture compatible with the separate environment suite,
 // which installs its complete permission-floor fixture itself.
 const ENVIRONMENT_FIXTURE = `

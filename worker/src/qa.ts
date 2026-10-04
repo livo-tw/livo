@@ -13,6 +13,7 @@ import {
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
 import { handleQaStorage, qaAttachmentWire, qaFileInput } from './qaStorage';
+import { commandAuthId } from './liveMember';
 
 type C = Context<AppContext>;
 type Body = Record<string, unknown>;
@@ -99,12 +100,15 @@ export function qaErrorResponse(c:C, err:unknown): Response {
 }
 async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, after:QaIssue, type:string, result:unknown, comment?:QaComment, fieldConfigurationRaw?:string|null):Promise<unknown> {
   const env=c.env, auth=c.get('auth'), ws=auth.member.workspaceId, now=new Date().toISOString();
+  // The command trigger re-checks the actor's login; a personal API key records its member's login.
+  const authId=await commandAuthId(env,auth);
+  if(!authId) throw new QaError('qa_forbidden',403);
   const event:QaEvent={id:crypto.randomUUID(),issueId:after.id,actorId:auth.member.id,type,detail:type,version:after.version,createdAt:now};
   // A changed catalog must abort the complete D1 batch, including its receipt.
   // NOT NULL request_hash deliberately turns a stale snapshot into a SQL error.
   const hashSql=fieldConfigurationRaw===undefined?'?':"CASE WHEN (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ? THEN ? ELSE NULL END";
   const hashArgs=fieldConfigurationRaw===undefined?[hash]:[ws,fieldConfigurationRaw,hash];
-  const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at,actor_auth_id) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now,auth.userId)];
+  const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at,actor_auth_id) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now,authId)];
   const fields=[after.projectId,after.state,after.assigneeId,after.qaOwnerId,after.reporterId,after.title,after.version,after.updatedAt,JSON.stringify(after)];
   if(!before) statements.push(env.DB.prepare('INSERT INTO qa_issues(project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data,workspace_id,id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(...fields,ws,after.id));
   else statements.push(env.DB.prepare('UPDATE qa_issues SET project_id=?,state=?,assignee_id=?,qa_owner_id=?,reporter_id=?,title=?,version=?,updated_at=?,data=? WHERE workspace_id=? AND id=? AND version=?').bind(...fields,ws,after.id,before.version));
@@ -284,8 +288,9 @@ export async function handleQa(c:C):Promise<Response> {
       const cid=qaId(body.commandId),hash=await qaHash(canonicalQaJson(body)),result={projectId,coordinatorId,version:Number(expectedVersion)+1},now=new Date().toISOString();
       const prior=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();
       if(prior){if(prior.actor_id!==auth.member.id||prior.payload_hash!==hash)throw new QaError('qa_command_id_reused',409);return c.json(JSON.parse(prior.response));}
+      const authId=await commandAuthId(c.env,auth);if(!authId)throw new QaError('qa_forbidden',403);
       try{await c.env.DB.batch([
-        c.env.DB.prepare('INSERT INTO qa_coordination_commands(workspace_id,id,project_id,actor_id,actor_auth_id,payload_hash,expected_version,response,created_at) VALUES(?,?,?,?,?,?,?,?,?)').bind(ws,cid,projectId,auth.member.id,auth.userId,hash,expectedVersion as number,JSON.stringify(result),now),
+        c.env.DB.prepare('INSERT INTO qa_coordination_commands(workspace_id,id,project_id,actor_id,actor_auth_id,payload_hash,expected_version,response,created_at) VALUES(?,?,?,?,?,?,?,?,?)').bind(ws,cid,projectId,auth.member.id,authId,hash,expectedVersion as number,JSON.stringify(result),now),
         c.env.DB.prepare('INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET coordinator_id=excluded.coordinator_id,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(ws,projectId,coordinatorId,result.version,auth.member.id,now)
       ]);}catch(error){const retry=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();if(retry&&retry.actor_id===auth.member.id&&retry.payload_hash===hash)return c.json(JSON.parse(retry.response));throw sqlError(error);}
       return c.json(result);

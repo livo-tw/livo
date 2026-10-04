@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS approval_delivery_threads (
   PRIMARY KEY(workspace_id,team_id,task_id,channel_id)
 );
 
+-- Dropped and recreated on every run so existing databases receive policy changes.
+DROP TRIGGER IF EXISTS approval_command_validate;
 CREATE TRIGGER IF NOT EXISTS approval_command_validate BEFORE INSERT ON approval_command_contexts
 BEGIN
   SELECT RAISE(ABORT,'approval_invalid_input') WHERE NEW.operation NOT IN ('submit','approve','reject','return','withdraw','set_requirement')
@@ -57,6 +59,10 @@ BEGIN
     (SELECT CASE WHEN json_type(value,'$.approvals') IN ('true','false') THEN json_extract(value,'$.approvals') END
       FROM system_settings WHERE workspace_id=NEW.workspace_id AND key='feature_toggles'),
     EXISTS(SELECT 1 FROM approval_rules WHERE workspace_id=NEW.workspace_id) OR EXISTS(SELECT 1 FROM approval_requests WHERE workspace_id=NEW.workspace_id));
+  -- Anyone who may edit a task can require approval; only a live administrator may remove it.
+  SELECT RAISE(ABORT,'approval_requirement_admin_only') WHERE NEW.operation='set_requirement'
+    AND json_type(NEW.payload,'$.enabled') IS NOT 'true' AND NOT EXISTS(
+      SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id AND is_active=1 AND role IN ('admin','super_admin'));
   SELECT RAISE(ABORT,'approval_conflict') WHERE NEW.operation='set_requirement' AND (
     json_extract(NEW.payload,'$.taskId') IS NOT NEW.task_id OR NOT EXISTS(
       SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND id=NEW.task_id
@@ -105,6 +111,10 @@ BEGIN
     SELECT 1 FROM approval_requests r JOIN members m ON m.id=NEW.actor_id AND m.workspace_id=r.workspace_id
     WHERE r.workspace_id=NEW.workspace_id AND r.id=NEW.request_id
       AND (r.requested_by=NEW.actor_id OR m.role IN ('admin','super_admin')));
+  -- A requester never decides their own request, whatever their role; it waits for
+  -- another approver or is withdrawn.
+  SELECT RAISE(ABORT,'approval_self_decision_forbidden') WHERE NEW.operation IN ('approve','reject','return') AND EXISTS(
+    SELECT 1 FROM approval_requests WHERE workspace_id=NEW.workspace_id AND id=NEW.request_id AND requested_by=NEW.actor_id);
   -- Legacy pending requests have no trustworthy snapshot. They can be withdrawn
   -- and resubmitted, but must never be reinterpreted using an edited live rule.
   SELECT RAISE(ABORT,'approval_rule_invalid') WHERE NEW.operation IN ('approve','reject','return') AND NOT EXISTS(
@@ -129,6 +139,7 @@ BEGIN
       AND NOT EXISTS(SELECT 1 FROM status_logs l WHERE l.workspace_id=NEW.workspace_id AND l.task_id=NEW.task_id AND l.to_status_id=x.required_status_id));
 END;
 
+DROP TRIGGER IF EXISTS approval_command_apply;
 CREATE TRIGGER IF NOT EXISTS approval_command_apply AFTER INSERT ON approval_command_contexts
 BEGIN
   INSERT INTO approval_requests(workspace_id,id,task_id,rule_id,requested_by,from_status,to_status,current_step,status,created_at,version,steps_snapshot,rule_snapshot)
@@ -188,7 +199,7 @@ BEGIN
     FROM approval_requests r JOIN tasks t ON t.workspace_id=r.workspace_id AND t.id=r.task_id
     JOIN members m ON m.workspace_id=r.workspace_id AND m.is_active=1 AND m.id<>NEW.actor_id
     WHERE r.workspace_id=NEW.workspace_id AND r.id=NEW.request_id AND NEW.operation IN ('submit','approve','reject','return')
-      AND ((r.status<>'pending' AND m.id=r.requested_by) OR (r.status='pending' AND EXISTS(
+      AND ((r.status<>'pending' AND m.id=r.requested_by) OR (r.status='pending' AND m.id<>r.requested_by AND EXISTS(
         SELECT 1 FROM json_each(r.steps_snapshot) s WHERE CAST(s.key AS INTEGER)+1=r.current_step AND (
           (json_extract(s.value,'$.approver_type')='user' AND json_extract(s.value,'$.approver_user_id')=m.id)
           OR (json_extract(s.value,'$.approver_type')='role' AND json_extract(s.value,'$.approver_role')=m.role)

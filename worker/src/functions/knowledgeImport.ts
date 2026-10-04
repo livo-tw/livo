@@ -1,8 +1,8 @@
 import type { Env, AuthCtx, Ctx } from '../env';
 import { DEFAULT_WORKSPACE, isDemoMember } from '../env';
 import { knowledgePermissionSql } from '../knowledgeSql';
+import { liveMember, liveMemberSql } from '../liveMember';
 import { createKnowledgeImport, defaultImportPolicy, ImportError, sha256, type ImportRepository, type ImportJob, type ImportPage, type ImportPolicy, type ImportStoredSource, type ImportConfig } from '../knowledgeImport';
-import type { KnowledgeActor } from '../knowledgeAccess';
 import { notifyChanges } from '../notify';
 import { accountExistingKnowledgeImportObject, deleteKnowledgeImportObject, putKnowledgeImportObject } from '../knowledgeImportStorage';
 import { hydrateKnowledgeImportJob, saveKnowledgeImportJob } from '../knowledgeImportJobStorage';
@@ -12,18 +12,20 @@ export async function handleKnowledgeImport(env: ImportEnv, ctx: Ctx, auth: Auth
   const ws=auth.member.workspaceId||DEFAULT_WORKSPACE, actorId=auth.member.id;
   const action=body&&typeof body==='object'?(body as {action?:string}).action:undefined;
   if(isDemoMember(env,auth)){if(action==='capability')return {allowed:false,can_manage:false,notion_available:false,processor_configured:false};if(action!=='sources'&&action!=='download_source')throw new ImportError('demo_import_disabled',403);}
-  const capSql=`EXISTS(SELECT 1 FROM members m LEFT JOIN knowledge_import_policy ip ON ip.workspace_id=m.workspace_id WHERE m.workspace_id=? AND m.id=? AND m.auth_id=? AND m.is_active=1 AND (
+  // Sessions and personal API keys alike: the live member row, never a cached role.
+  const live=liveMemberSql(auth,'m');
+  const capSql=`EXISTS(SELECT 1 FROM members m LEFT JOIN knowledge_import_policy ip ON ip.workspace_id=m.workspace_id WHERE ${live.sql} AND (
     (ip.workspace_id IS NULL AND m.role='super_admin') OR EXISTS(SELECT 1 FROM json_each(ip.data,'$.subjects.roles') WHERE value=m.role) OR EXISTS(SELECT 1 FROM json_each(ip.data,'$.subjects.positions') WHERE value=m.job_title) OR EXISTS(SELECT 1 FROM json_each(ip.data,'$.subjects.member_ids') WHERE value=m.id)))`;
   const fileKey=(key:string)=>`kb-imports/${ws}/${key}`;
   const pending:Promise<unknown>[]=[];
   const repo:ImportRepository={
-    actor:()=>env.DB.prepare('SELECT id,role,job_title,is_active FROM members WHERE workspace_id=? AND id=? AND auth_id=?').bind(ws,actorId,auth.userId).first<KnowledgeActor>(),
+    actor:()=>liveMember(env,auth),
     async pages(){const p=knowledgePermissionSql('kb_pages.id','view',auth);return(await env.DB.prepare(`SELECT * FROM kb_pages WHERE workspace_id=? AND ${p.sql}`).bind(ws,...p.params).all<ImportPage>()).results.map(row=>({...row,access_policy:typeof row.access_policy==='string'?JSON.parse(row.access_policy):row.access_policy}));},
     async policy(){const row=await env.DB.prepare('SELECT data FROM knowledge_import_policy WHERE workspace_id=?').bind(ws).first<{data:string}>();return row?JSON.parse(row.data) as ImportPolicy:defaultImportPolicy();},
-    async savePolicy(policy,expected){const result=await env.DB.prepare(`INSERT INTO knowledge_import_policy(workspace_id,version,data,updated_by,updated_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND auth_id=? AND role='super_admin' AND is_active=1) AND coalesce((SELECT version FROM knowledge_import_policy WHERE workspace_id=?),0)=? ON CONFLICT(workspace_id) DO UPDATE SET version=excluded.version,data=excluded.data,updated_by=excluded.updated_by,updated_at=excluded.updated_at RETURNING workspace_id`).bind(ws,policy.version,JSON.stringify(policy),actorId,new Date().toISOString(),ws,actorId,auth.userId,ws,expected).first();if(!result)throw new ImportError('policy_changed',409);},
-    async getJob(id){const row=await env.DB.prepare(`SELECT data FROM knowledge_import_jobs WHERE workspace_id=? AND id=? AND actor_id=? AND ${capSql}`).bind(ws,id,actorId,ws,actorId,auth.userId).first<{data:string}>();return row?hydrateKnowledgeImportJob(env,ws,JSON.parse(row.data)):null;},
-    async listJobs(){return(await env.DB.prepare(`SELECT data FROM knowledge_import_jobs WHERE workspace_id=? AND actor_id=? AND expires_at>? AND ${capSql} ORDER BY created_at DESC LIMIT 30`).bind(ws,actorId,new Date().toISOString(),ws,actorId,auth.userId).all<{data:string}>()).results.map(x=>JSON.parse(x.data));},
-    async saveJob(job,expected){return saveKnowledgeImportJob(env,ws,actorId,job,expected,{sql:capSql,params:[ws,actorId,auth.userId]});},
+    async savePolicy(policy,expected){const result=await env.DB.prepare(`INSERT INTO knowledge_import_policy(workspace_id,version,data,updated_by,updated_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM members m WHERE ${live.sql} AND m.role='super_admin') AND coalesce((SELECT version FROM knowledge_import_policy WHERE workspace_id=?),0)=? ON CONFLICT(workspace_id) DO UPDATE SET version=excluded.version,data=excluded.data,updated_by=excluded.updated_by,updated_at=excluded.updated_at RETURNING workspace_id`).bind(ws,policy.version,JSON.stringify(policy),actorId,new Date().toISOString(),...live.params,ws,expected).first();if(!result)throw new ImportError('policy_changed',409);},
+    async getJob(id){const row=await env.DB.prepare(`SELECT data FROM knowledge_import_jobs WHERE workspace_id=? AND id=? AND actor_id=? AND ${capSql}`).bind(ws,id,actorId,...live.params).first<{data:string}>();return row?hydrateKnowledgeImportJob(env,ws,JSON.parse(row.data)):null;},
+    async listJobs(){return(await env.DB.prepare(`SELECT data FROM knowledge_import_jobs WHERE workspace_id=? AND actor_id=? AND expires_at>? AND ${capSql} ORDER BY created_at DESC LIMIT 30`).bind(ws,actorId,new Date().toISOString(),...live.params).all<{data:string}>()).results.map(x=>JSON.parse(x.data));},
+    async saveJob(job,expected){return saveKnowledgeImportJob(env,ws,actorId,job,expected,{sql:capSql,params:live.params});},
     async putFile(key,data,type){await putKnowledgeImportObject(env,ws,fileKey(key),data,type);},
     async getFile(key){const object=await env.ATTACHMENTS.get(fileKey(key));if(!object)return null;const bytes=new Uint8Array(await object.arrayBuffer());await accountExistingKnowledgeImportObject(env,ws,fileKey(key),bytes.length);return bytes;},
     async deleteFile(key){await deleteKnowledgeImportObject(env,ws,fileKey(key));},
@@ -35,7 +37,7 @@ export async function handleKnowledgeImport(env: ImportEnv, ctx: Ctx, auth: Auth
     async commit(job,item,mapping,source){
       const existing=await env.DB.prepare('SELECT page_id,snapshot_id FROM knowledge_import_sources WHERE workspace_id=? AND job_id=? AND item_id=?').bind(ws,job.id,item.id).first<{page_id:string;snapshot_id:string}>();
       if(existing){const p=knowledgePermissionSql('kb_pages.id','view',auth);if(!await env.DB.prepare(`SELECT id FROM kb_pages WHERE workspace_id=? AND id=? AND ${p.sql}`).bind(ws,existing.page_id,...p.params).first())throw new ImportError('import_forbidden',403);return existing;}
-      const d=mapping.destination,stamp=new Date().toISOString();const params:unknown[]=[ws,job.id,actorId,job.version,stamp,ws,job.policy_version,ws,actorId,auth.userId];
+      const d=mapping.destination,stamp=new Date().toISOString();const params:unknown[]=[ws,job.id,actorId,job.version,stamp,ws,job.policy_version,...live.params];
       let guard=`EXISTS(SELECT 1 FROM knowledge_import_jobs WHERE workspace_id=? AND id=? AND actor_id=? AND version=? AND expires_at>? AND json_extract(data,'$.status')='committing') AND coalesce((SELECT version FROM knowledge_import_policy WHERE workspace_id=?),0)=? AND ${capSql}`;
       if(job.source==='notion'){guard+=` AND EXISTS(SELECT 1 FROM members m JOIN knowledge_import_policy ip ON ip.workspace_id=m.workspace_id WHERE m.workspace_id=? AND m.id=? AND m.is_active=1 AND json_extract(ip.data,'$.notion_secret') IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(ip.data,'$.notion_pages') WHERE value=?) AND (EXISTS(SELECT 1 FROM json_each(ip.data,'$.notion_subjects.roles') WHERE value=m.role) OR EXISTS(SELECT 1 FROM json_each(ip.data,'$.notion_subjects.positions') WHERE value=m.job_title) OR EXISTS(SELECT 1 FROM json_each(ip.data,'$.notion_subjects.member_ids') WHERE value=m.id)))`;params.push(ws,actorId,item.source_key.replace('notion:',''));}
       if(d.parent_id){const acl=knowledgePermissionSql('p.id','edit',auth);guard+=` AND EXISTS(SELECT 1 FROM kb_pages p WHERE p.workspace_id=? AND p.id=? AND p.project_id IS ? AND ${acl.sql})`;params.push(ws,d.parent_id,d.project_id,...acl.params);}

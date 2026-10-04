@@ -15,7 +15,7 @@ function fixture(jwt=token()){let role='admin',active=true,features=true,receipt
   else if(u.pathname.endsWith('/system_settings'))data=u.searchParams.get('key')==='eq.feature_toggles'?[{value:{slackActions:features}}]:[];
   else if(u.pathname.endsWith('/projects'))data=[{id:'p'}];else if(u.pathname.endsWith('/tasks'))data=[{id:'t',project_id:'p'}];
   else if(u.pathname.endsWith('/release_commands'))data=receipt?[receipt]:[];
-  else if(u.pathname.endsWith('/release_batches'))data=[{data:{id:'synthetic-release',title:'Fresh private title'}}];
+  else if(u.pathname.endsWith('/release_batches'))data=[{data:{id:'synthetic-release',title:'Fresh private title',ownerId:'admin',components:command.manifest.components}}];
   else if(u.pathname.endsWith('/livo_release_commit')){data=rpcDenied?{message:'release_forbidden'}:{commandId:body.p_command.commandId,batch:body.p_after,event:body.p_event,replayed:!!receipt};status=rpcDenied?403:200;}
   return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
  }) as typeof fetch;
@@ -30,4 +30,8 @@ describe('release edge authentication and commit boundary',()=>{
  it('revalidates a receipt through native commit so a binding revoked after lookup cannot replay private body',async()=>{const f=fixture(token(claims));await f.prior();f.denyRpc();await expect(f.api.handle({action:'command',command})).rejects.toThrow('release_forbidden');const rpc=f.seen.find(r=>r.url.pathname.endsWith('/livo_release_commit'))!;expect(rpc.body?.p_slack_identity).toEqual({bindingId:'binding-synthetic',teamId:'TTEST',userId:'UADMIN'});expect(f.seen.some(r=>r.url.pathname.endsWith('/release_batches'))).toBe(false);});
  it('returns a freshly authorized batch after native receipt revalidation',async()=>{const f=fixture(token(claims));await f.prior();const result=await f.api.handle({action:'command',command}) as Row;expect(result.replayed).toBe(true);expect(result.batch.title).toBe('Fresh private title');});
  it('recovers only the actor own receipt with fresh native binding validation and fresh body ACL',async()=>{const f=fixture(token(claims));await f.prior();const p={action:'receipt',commandId:command.commandId,batchId:command.batchId};expect(await f.api.handle(p)).toMatchObject({found:true,result:{replayed:true,batch:{title:'Fresh private title'}}});f.denyRpc();await expect(f.api.handle(p)).rejects.toThrow('release_forbidden');const other=fixture(token(claims));await other.prior('other-admin');await expect(other.api.handle(p)).rejects.toThrow('release_forbidden');expect(other.seen.some(r=>r.url.pathname.endsWith('/livo_release_commit'))).toBe(false);});
+ it('reads QA evidence with the service role, because QA tables are closed to member tokens',async()=>{const f=fixture();
+  const evidence={commandId:'synthetic-evidence',batchId:'synthetic-release',expectedVersion:1,operation:'link_evidence',componentId:'component',environment:'Stage',kind:'qa',note:'Verified',url:null as string|null,issueId:'qa-synthetic',targetId:'target',runId:'run',issueVersion:1};
+  await f.api.handle({action:'command',command:evidence}).catch(():undefined=>undefined);
+  const read=f.seen.find(r=>r.url.pathname.endsWith('/qa_issues'))!;expect(read.authorization).toBe('Bearer service-synthetic');expect(read.url.searchParams.get('id')).toBe('eq.qa-synthetic');});
 });

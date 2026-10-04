@@ -180,7 +180,10 @@
     "unavailable": "This approval could not be loaded. Please reload.",
     "invalid": "The approval details are incomplete. Please review them.",
     "prerequisite": "Complete the prerequisite workflow before moving to this status.",
-    "failed": "The approval outcome is not yet confirmed. Retry safely without duplicating the action."
+    "failed": "The approval outcome is not yet confirmed. Retry safely without duplicating the action.",
+    "selfDecision": "You cannot approve, return or reject a request you submitted. Wait for another approver, or withdraw it.",
+    "selfDecisionHint": "You submitted this request, so another approver must decide it. You can still withdraw it.",
+    "requirementAdminOnly": "Only administrators can turn off \"Requires Approval\"."
   },
   "taskPlanning": {
     "history": "Deadline history",
@@ -249,7 +252,7 @@
       "byAdmin": "Set by admin",
       "byEmail": "Matched by email",
       "ownerOnly": "Only the highest administrator can change account mappings.",
-      "reconfirm": "The highest administrator must confirm this existing mapping before knowledge search is available."
+      "reconfirm": "The highest administrator must map this account again below before it can use Slack features."
     },
     "title": "Create cards and comments from Slack",
     "demo": "Demo mode does not connect to Slack. Configure a Docker installation to use this feature.",
@@ -393,6 +396,7 @@
     "loadFailed": "Load failed: ",
     "createFailed": "Create failed: ",
     "updateFailed": "Update failed: ",
+    "approvalPending": "This task or one of its subtasks has a pending approval request. Complete or withdraw it first.",
     "deleteFailed": "Delete failed: ",
     "uploadFailed": "Upload failed: ",
     "fileSizeExceeded": "File size exceeds the limit",
@@ -435,6 +439,7 @@
     "switchIdentity": "Switch Identity",
     "accountDisabled": "This account has been disabled. Please contact the administrator.",
     "accountNotLinked": "This account ({{email}}) is not linked to any member. Administrator has been notified.",
+    "accountUnavailable": "This account ({{email}}) cannot be used: it is not linked to an active member. Please contact the administrator.",
     "unknownAccountNotify": "Unknown account login attempt: {{email}}. Please verify if this member should be added.",
     "orTryDemo": "or just explore",
     "oneClickDemo": "One-click demo (no signup)",
@@ -1192,6 +1197,7 @@
     "createTitle": "New Project",
     "viewing": "{{name}} is viewing",
     "lineLabel": "Product Line",
+    "noProductLine": "There is no product line yet. Add one in Team Management → Task Config → Manage Product Lines, then create the project.",
     "nameLabel": "Project Name *",
     "namePlaceholder": "e.g., Main Store",
     "keyLabel": "Project Key *",
@@ -1353,6 +1359,8 @@
     "lockedByOther": "{{name}} is currently editing this member",
     "requiredFields": "Please fill in required fields",
     "addFailed": "Failed to add: ",
+    "addEmailTaken": "The login with this email belongs to another member. The member was not added.",
+    "addDuplicate": "A member with this email already exists.",
     "added": "Member added",
     "cannotDeactivateSelf": "Cannot deactivate yourself",
     "deactivate": "Deactivate",
@@ -1386,6 +1394,7 @@
     "confirmPasswordLabel": "Confirm New Password",
     "resetPasswordButton": "Reset",
     "resetPasswordFailed": "Failed to reset: ",
+    "resetPasswordEmailTaken": "The login with this email belongs to another member. Nothing was changed.",
     "passwordResetDone": "Password for \"{{name}}\" has been reset",
     "createLogin": "Enable login",
     "createLoginTitle": "Enable login for \"{{name}}\"",
@@ -1423,7 +1432,18 @@
       "commentReply": "commented on a task you participated in",
       "statusChanged": "updated the task status",
       "dueSoon": "Reminder: task is due soon",
-      "system": "System notification"
+      "system": "System notification",
+      "approvalRequested": "requested your approval",
+      "approvalCompleted": "updated an approval"
+    },
+    "approval": {
+      "submit": "Submitted for approval",
+      "approve": "Approved",
+      "reject": "Rejected",
+      "return": "Returned for changes",
+      "withdraw": "Withdrawn",
+      "updated": "Approval updated",
+      "withTitle": "{{action}}: {{title}}"
     },
     "panelTitle": "Notifications",
     "systemSender": "System",
@@ -2867,6 +2887,7 @@
     "saving": "Working…",
     "saved": "Saved",
     "cancel": "Cancel",
+    "close": "Close",
     "create": "Create",
     "archive": "Archive",
     "unarchive": "Unarchive",
@@ -2910,7 +2931,9 @@
       "kb_self_lockout": "Keep your own view permission so you can continue managing this page.",
       "kb_policy_invalid": "The permission settings are invalid. Select the allowed people again.",
       "kb_legacy_public_attachments": "This page or a child still has legacy public files. Download a backup, remove those attachments and upload them again as private files before restricting view access. Public inline images must also be replaced with private attachments.",
-      "kb_comment_invalid": "Comments must contain 1 to 10,000 characters of plain text."
+      "kb_comment_invalid": "Comments must contain 1 to 10,000 characters of plain text.",
+      "kb_delete_blocked": "This page cannot be deleted because other content still depends on it, such as child pages (including pages you cannot see). Move or delete that content first, or ask an administrator.",
+      "kb_private_draft_parent": "A shared page cannot be moved into a private draft. Share the draft first, or choose another parent page."
     },
     "category": "Category",
     "allCategories": "All categories",
@@ -3187,6 +3210,8 @@
     "view": "View / download",
     "download": "Download file",
     "closePreview": "Close preview",
+    "reload": "Reload",
+    "retry": "Retry",
     "uploadProgress": "Uploading {{percent}}%",
     "retryUpload": "Retry upload",
     "disabled": "QA is turned off. An administrator can enable it in system settings.",
@@ -3321,6 +3346,7 @@
     "processor_not_configured": "The private document processor has not been configured.",
     "processor_busy": "The private processor is busy. Retry this item shortly.",
     "processing_timeout": "Processing reached its time limit. Split the document or retry.",
+    "processor_unavailable": "The private document processor is not reachable. Ask the system operator to check that it is running, then retry this item.",
     "page_limit": "The PDF exceeds the 40-page processing limit. Split it into smaller files.",
     "encrypted_pdf": "Password-protected PDFs cannot be parsed. Provide an authorized unlocked copy.",
     "invalid_document": "The document is damaged or unsupported. The original was not published.",
@@ -3501,6 +3527,7 @@
     }
   },
   "releaseWorkspace": {
+    "selfDecisionHint": "Exceptions you requested are not listed here; another administrator must decide them.",
     "title": "Release workspace",
     "intro": "Organize release manifests, verification evidence and human activity records. Saving does not deploy code or change task or QA status.",
     "create": "Create release batch",
@@ -3635,7 +3662,8 @@
       "release_confirmation_required": "Exceptions, deployment results or maintenance records still need confirmation. Review the manifest before completing.",
       "release_limit_reached": "This batch has reached its record limit.",
       "release_unavailable": "The service is unavailable. Please try again later.",
-      "release_transport_error": "The connection was interrupted and the outcome is unconfirmed. Retry the same operation."
+      "release_transport_error": "The connection was interrupted and the outcome is unconfirmed. Retry the same operation.",
+      "release_self_decision_forbidden": "The person who requested an exception cannot decide it. Another administrator must approve or reject it."
     }
   },
   "myAssignments": {

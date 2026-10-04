@@ -1,5 +1,6 @@
 import type { AuthCtx, Env } from './env';
 import { DEFAULT_WORKSPACE } from './env';
+import { liveMemberSql } from './liveMember';
 import { calendarDate, dueDateKind, reminderUntil, TaskPlanningError } from './taskPlanningCore';
 
 export const PLANNING_FNS = new Set(['livo_set_task_deadline','livo_set_task_reminder']);
@@ -37,10 +38,9 @@ export function deadlineVersionSql(patch: Record<string, unknown>, upsert = fals
 }
 export async function livePlanningMember(env: Env, auth: AuthCtx) {
   const ws=auth.member.workspaceId || DEFAULT_WORKSPACE;
-  const row=await env.DB.prepare(`SELECT m.id FROM members m JOIN auth_users u ON u.id=m.auth_id
-    WHERE m.workspace_id=? AND m.id=? AND m.auth_id=? AND m.is_active=1 AND COALESCE(u.banned,0)=0
-    AND (SELECT count(*) FROM members x WHERE x.workspace_id=m.workspace_id AND x.auth_id=m.auth_id AND x.is_active=1)=1`)
-    .bind(ws,auth.member.id,auth.userId).first();
+  // A session or a personal API key, re-checked against the live member row.
+  const live=liveMemberSql(auth,'m',{strict:true});
+  const row=await env.DB.prepare(`SELECT m.id FROM members m WHERE ${live.sql}`).bind(...live.params).first();
   if (!row) throw new TaskPlanningError('planning_forbidden',403);
   return ws;
 }
@@ -51,11 +51,10 @@ export async function taskPlanningRpc(env: Env, auth: AuthCtx, fn: string, args:
   if (!task || !Number.isSafeInteger(version) || Number(version)<0) throw new TaskPlanningError('planning_invalid_input');
   // Repeat live identity/task checks in the mutation: a cached/preflight member
   // must not authorize a concurrent deactivation or project archive.
+  const live=liveMemberSql(auth,'m',{strict:true});
   const visible=`EXISTS(SELECT 1 FROM tasks t JOIN projects p ON p.id=t.project_id AND p.workspace_id=t.workspace_id
-    JOIN members m ON m.workspace_id=t.workspace_id AND m.id=? AND m.auth_id=? AND m.is_active=1
-    JOIN auth_users u ON u.id=m.auth_id AND COALESCE(u.banned,0)=0
-    WHERE t.workspace_id=? AND t.id=? AND COALESCE(p.is_archived,0)=0
-    AND (SELECT count(*) FROM members x WHERE x.workspace_id=m.workspace_id AND x.auth_id=m.auth_id AND x.is_active=1)=1)`;
+    JOIN members m ON m.workspace_id=t.workspace_id AND ${live.sql}
+    WHERE t.workspace_id=? AND t.id=? AND COALESCE(p.is_archived,0)=0)`;
   let row: Record<string,unknown>|null;
   if (fn==='livo_set_task_reminder') {
     const until=reminderUntil(args.p_until);
@@ -63,7 +62,7 @@ export async function taskPlanningRpc(env: Env, auth: AuthCtx, fn: string, args:
       SELECT ?,?,?,?,?,1,? WHERE ${visible} AND (?=0 OR EXISTS(SELECT 1 FROM task_reminder_preferences WHERE workspace_id=? AND task_id=? AND member_id=?))
       ON CONFLICT(workspace_id,task_id,member_id) DO UPDATE SET snoozed_until=excluded.snoozed_until,version=task_reminder_preferences.version+1,updated_at=excluded.updated_at
       WHERE task_reminder_preferences.version=? RETURNING *`)
-      .bind(ws,crypto.randomUUID(),task,actor,until,new Date().toISOString(),actor,auth.userId,ws,task,version,ws,task,actor,version).first();
+      .bind(ws,crypto.randomUUID(),task,actor,until,new Date().toISOString(),...live.params,ws,task,version,ws,task,actor,version).first();
   } else {
     const date=calendarDate(args.p_due_date), kind=dueDateKind(args.p_kind);
     if (date===null && kind!==null) throw new TaskPlanningError('planning_date_required');
@@ -78,7 +77,7 @@ export async function taskPlanningRpc(env: Env, auth: AuthCtx, fn: string, args:
       due_date_version=due_date_version+CASE WHEN NULLIF(due_date,'') IS NOT ? OR due_date_kind IS NOT ? THEN 1 ELSE 0 END
       WHERE workspace_id=? AND id=? AND due_date_version=? AND (?=0 OR NULLIF(started_at,'') IS ?) AND ${visible}
       RETURNING id,due_date,due_date_kind,due_date_version,started_at`)
-      .bind(date,kind,patch.due_date_change_reason,actor,changeStart?1:0,start,date,kind,ws,task,version,changeStart?1:0,expectedStart,actor,auth.userId,ws,task).first();
+      .bind(date,kind,patch.due_date_change_reason,actor,changeStart?1:0,start,date,kind,ws,task,version,changeStart?1:0,expectedStart,...live.params,ws,task).first();
   }
   if (!row) throw new TaskPlanningError('planning_conflict',409);
   return row;

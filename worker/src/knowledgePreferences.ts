@@ -1,6 +1,7 @@
 import type { AuthCtx, Env } from './env';
 import { DEFAULT_WORKSPACE } from './env';
 import { knowledgePermissionSql } from './knowledgeSql';
+import { liveMember } from './liveMember';
 import { applyNavigation, emptyNavigation, visibleNavigation, type NavigationCommand, type NavigationPage, type NavigationPreferences } from './knowledgePreferenceModel';
 
 export async function handleKnowledgePreferences(env: Env, auth: AuthCtx, input: unknown) {
@@ -8,7 +9,7 @@ export async function handleKnowledgePreferences(env: Env, auth: AuthCtx, input:
   const command = input as NavigationCommand;
   if (!command || typeof command !== 'object' || Object.keys(command).some(key => !['p_action','p_page_id','p_value','p_before_id','p_order_kind','p_version'].includes(key))) return fail('kb_invalid_request');
   const ws = auth.member.workspaceId || DEFAULT_WORKSPACE, member = auth.member.id;
-  const actor = await env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND id=? AND auth_id=? AND is_active=1').bind(ws, member, auth.userId).first();
+  const actor = await liveMember(env, auth);
   if (!actor) return fail('kb_forbidden');
   const permission = knowledgePermissionSql('kb_pages.id', 'view', auth);
   const loadPages = async () => (await env.DB.prepare(`SELECT id,parent_id,project_id,sort_order,title FROM kb_pages WHERE workspace_id=? AND ${permission.sql}`).bind(ws, ...permission.params).all<NavigationPage>()).results;

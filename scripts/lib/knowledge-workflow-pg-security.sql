@@ -36,12 +36,22 @@ SELECT qa_test.check(public.kb_workflow('{"action":"create_task","pageId":"kw-pr
 SELECT qa_test.check((SELECT count(*) FROM public.tasks WHERE title='Public delivery')=1,'workflow no duplicate created task');
 SELECT qa_test.expect_error('workflow no create in completed status',$$SELECT public.kb_workflow('{"action":"create_task","pageId":"kw-private","commandId":"kw-create-done","expectedPageVersion":1,"input":{"projectId":"p-test","statusId":"s-done","title":"Invalid done"}}')$$,'22023','invalid');
 SELECT qa_test.check(public.kb_workflow('{"action":"create_qa","pageId":"kw-private","commandId":"kw-create-bug","expectedPageVersion":1,"input":{"projectId":"p-test","title":"Expected behavior differs","actual":"Actual result","observedEnvironment":"QA"}}')->>'targetKind'='qa','workflow QA creation uses existing transaction');
+SELECT qa_test.check(public.kb_workflow('{"action":"create_qa","pageId":"kw-private","commandId":"kw-create-bug-fields","expectedPageVersion":1,"input":{"projectId":"p-test","title":"Build differs","actual":"Actual result","observedEnvironment":"QA","customFields":{"build":"1.2.3"}}}')->>'targetKind'='qa','workflow QA creation with custom fields');
 RESET ROLE;
+SELECT qa_test.check((SELECT data->'customFields'='{"build":"1.2.3"}'::jsonb FROM public.qa_issues WHERE title='Build differs'),'workflow QA creation keeps custom fields');
+SELECT qa_test.check((SELECT data->'customFields'='{}'::jsonb FROM public.qa_issues WHERE title='Expected behavior differs'),'workflow QA creation without custom fields stores an empty set');
 SELECT qa_test.check((SELECT state='new' AND (data->>'fixCycle')::integer=0 AND data->'runs'='[]' FROM public.qa_issues WHERE title='Expected behavior differs'),'workflow no fabricated PASS or runs');
 SELECT qa_test.check((SELECT count(*)=1 FROM public.kb_work_links l JOIN public.tasks t ON t.id=l.target_id JOIN public.kb_source_snapshots s ON s.id=l.snapshot_id WHERE t.title='Public delivery' AND s.body='<p id="original">Original evidence [ ]</p>'),'workflow created task keeps immutable source in same transaction');
 SELECT qa_test.check((SELECT count(*)=1 FROM public.kb_work_links l JOIN public.qa_issues q ON q.id=l.target_id JOIN public.kb_source_snapshots s ON s.id=l.snapshot_id WHERE q.title='Expected behavior differs' AND s.page_id=l.page_id),'workflow created QA keeps original source link');
 SELECT qa_test.expect_error('workflow snapshot update immutable',$$UPDATE public.kb_source_snapshots SET body='Changed' WHERE page_id='kw-private'$$,'42501','immutable');
-SELECT qa_test.expect_error('workflow duplicate task key blocked',$$INSERT INTO public.tasks(id,project_id,task_key) VALUES('duplicate-key','p-test','EX-1')$$,'23505','task_key_conflict');
+-- Keys are unique across projects. A new task given a taken key (a moved task keeps its
+-- key, so per-project generators can repeat it) is stored with the next free number;
+-- renaming a task to a taken key is still refused.
+INSERT INTO public.tasks(id,project_id,task_key) VALUES('moved-key','p-test','EX-41');
+INSERT INTO public.tasks(id,project_id,task_key) VALUES('duplicate-key','p-test','EX-41');
+SELECT qa_test.check((SELECT task_key FROM public.tasks WHERE id='duplicate-key')='EX-42','workflow duplicate new task key takes the next free number');
+SELECT qa_test.expect_error('workflow renaming to a taken task key blocked',$$UPDATE public.tasks SET task_key='EX-1' WHERE id='duplicate-key'$$,'23505','task_key_conflict');
+DELETE FROM public.tasks WHERE id IN('moved-key','duplicate-key');
 SELECT set_config('request.jwt.claim.sub','',false);
 UPDATE public.members SET job_title='Engineer' WHERE id='m-member';
 SET ROLE authenticated;

@@ -146,10 +146,10 @@ async function resolveAdmin(db: SupabaseClient, authorization: string | null): P
 
   const { data: { user }, error } = await db.auth.getUser(bearer);
   if (error || !user) return { status: 401, body: { error: 'Invalid token' } };
-  let member = check(await db.from('members').select(MEMBER_COLUMNS).eq('auth_id', user.id).maybeSingle()) as MemberRow | null;
-  if (!member && user.email) {
-    member = check(await db.from('members').select(MEMBER_COLUMNS).eq('email', user.email).maybeSingle()) as MemberRow | null;
-  }
+  // Only the active member linked to this login. No e-mail fallback: an unlinked
+  // login may carry an admin's address (self-registered while public sign-up
+  // was open), and could then mint keys for anyone.
+  const member = check(await db.from('members').select(MEMBER_COLUMNS).eq('auth_id', user.id).eq('is_active', true).maybeSingle()) as MemberRow | null;
   if (!isAdminMember(member)) {
     return { status: 403, body: { error: 'Permission denied: admin role required' } };
   }

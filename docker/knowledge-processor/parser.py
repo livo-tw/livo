@@ -4,6 +4,7 @@ import csv
 import hashlib
 import html
 import io
+import logging
 import os
 import re
 import shutil
@@ -20,7 +21,15 @@ MAX_FILE = 10 * 1024 * 1024
 MAX_TEXT = 800_000
 MAX_PAGES = 40
 MAX_ASSETS = 24
+# New OCR pages start only during this many seconds; one page takes at most
+# 15 s (pdftoppm) + 25 s (tesseract), which keeps a parse inside server.BUDGET.
+OCR_START_BUDGET = 40
 VERSION = 'livo-import-1'
+
+
+# Non-strict PDF parsing logs repair warnings that can quote document bytes.
+# Keep container logs free of document content.
+logging.getLogger('pypdf').setLevel(logging.CRITICAL)
 
 
 class ImportFailure(Exception):
@@ -201,7 +210,10 @@ def ocr_page(path, number, work):
 
 def pdf(raw, previous=None):
     from pypdf import PdfReader
-    reader = PdfReader(io.BytesIO(raw), strict=True)
+    # Non-strict tolerates the small structural faults common in real PDFs (bad
+    # xref offsets, missing EOF). The file, page, stream, time and memory limits
+    # still bound the work, and anything unreadable fails as invalid_document.
+    reader = PdfReader(io.BytesIO(raw), strict=False)
     if reader.is_encrypted:
         raise ImportFailure('encrypted_pdf')
     if len(reader.pages) > MAX_PAGES:
@@ -219,7 +231,7 @@ def pdf(raw, previous=None):
                     pages.append(item)
                     result.append('<h2>Page ' + str(number) + '</h2><p>' + html.escape(item['text']).replace('\n', '<br>') + '</p>')
                     continue
-                if time.monotonic() - started > 65:
+                if time.monotonic() - started > OCR_START_BUDGET:
                     pages.append({'page': number, 'state': 'ocr_pending', 'text': '', 'confidence': None})
                     result.append('<h2>Page ' + str(number) + '</h2>')
                     continue

@@ -80,10 +80,16 @@ export function approvalSnapshotSteps(request: Pick<ApprovalRequestState,'steps_
     (step.approver_type === 'role' ? ['member','admin','super_admin'].includes(step.approver_role ?? '') && step.approver_user_id === null
       : step.approver_type === 'user' && typeof step.approver_user_id === 'string' && !!step.approver_user_id && step.approver_role === null)) ? sorted : null;
 }
-export function canActOnApproval(request: Pick<ApprovalRequestState,'status'|'rule_id'|'current_step'|'steps_snapshot'>, actor: {id:string;role:string;active?:boolean}): boolean {
-  if (actor.active === false || request.status !== 'pending') return false;
+export const APPROVAL_ADMIN_ROLES: readonly string[] = ['admin','super_admin'];
+/** Product rule: whoever requested a change never decides it, whatever their role. The request waits for another approver or is withdrawn. */
+export function canActOnApproval(request: Pick<ApprovalRequestState,'status'|'rule_id'|'current_step'|'steps_snapshot'|'requested_by'>, actor: {id:string;role:string;active?:boolean}): boolean {
+  if (actor.active === false || request.status !== 'pending' || request.requested_by === actor.id) return false;
   const steps = approvalSnapshotSteps(request), step = steps?.find(s => s.step_order === request.current_step);
   if (!step) return false;
-  if (request.rule_id === null) return request.current_step === 1 && ['admin','super_admin'].includes(actor.role);
+  if (request.rule_id === null) return request.current_step === 1 && APPROVAL_ADMIN_ROLES.includes(actor.role);
   return step.approver_type === 'user' ? step.approver_user_id === actor.id : step.approver_role === actor.role;
+}
+/** Anyone who may edit the task can require approval; only administrators may remove the requirement. */
+export function canSetApprovalRequirement(enabled: boolean, actor: {role:string;active?:boolean}): boolean {
+  return actor.active !== false && (enabled || APPROVAL_ADMIN_ROLES.includes(actor.role));
 }

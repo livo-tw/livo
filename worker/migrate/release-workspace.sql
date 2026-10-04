@@ -66,6 +66,14 @@ CREATE TRIGGER IF NOT EXISTS release_command_validate BEFORE INSERT ON release_c
  SELECT RAISE(ABORT,'release_evidence_stale') WHERE NEW.operation='link_evidence' AND json_extract(NEW.command,'$.kind')='qa'
   AND NOT EXISTS(SELECT 1 FROM qa_issues q WHERE q.workspace_id=NEW.workspace_id AND q.id=json_extract(NEW.command,'$.issueId') AND q.version=json_extract(NEW.command,'$.issueVersion') AND json_extract(q.data,'$.fixCycle')=json_extract(NEW.data,'$.evidence[#-1].qa.fixCycle'));
 END;
+-- Whoever requested a release exception never decides it, whatever their role. Checked
+-- against the stored batch before release_command_apply replaces it.
+CREATE TRIGGER IF NOT EXISTS release_exception_self_decision BEFORE INSERT ON release_commands
+WHEN NEW.operation='decide_exception' AND json_valid(NEW.command) BEGIN
+ SELECT RAISE(ABORT,'release_self_decision_forbidden') WHERE EXISTS(SELECT 1 FROM release_batches b JOIN json_each(b.data,'$.exceptions') e
+  WHERE b.workspace_id=NEW.workspace_id AND b.id=NEW.batch_id AND json_extract(e.value,'$.id')=json_extract(NEW.command,'$.exceptionId')
+  AND json_extract(e.value,'$.requestedBy')=NEW.actor_id);
+END;
 CREATE TRIGGER IF NOT EXISTS release_command_apply AFTER INSERT ON release_commands BEGIN
  INSERT INTO release_batches(workspace_id,id,title,owner_id,status,version,revision,data,updated_at)
  VALUES(NEW.workspace_id,NEW.batch_id,json_extract(NEW.data,'$.title'),json_extract(NEW.data,'$.ownerId'),json_extract(NEW.data,'$.status'),json_extract(NEW.data,'$.version'),json_extract(NEW.data,'$.manifestRevision'),NEW.data,NEW.created_at)

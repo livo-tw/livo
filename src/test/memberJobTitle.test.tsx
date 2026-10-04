@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
     { id:'self',name:'Alex',avatar:'A',color:'#0065FF',role:'super_admin',jobTitle:'Lead',isActive:true,email:'alex@example.com' },
     { id:'other',name:'Morgan',avatar:'M',color:'#0065FF',role:'member',jobTitle:'Engineer',isActive:false,email:'morgan@example.com' },
   ],
-  refresh: vi.fn(), acquire: vi.fn(), release: vi.fn(), update: vi.fn(), eq: vi.fn(), success: vi.fn(),
+  refresh: vi.fn(), acquire: vi.fn(), release: vi.fn(), update: vi.fn(), eq: vi.fn(), success: vi.fn(), error: vi.fn(), invoke: vi.fn(),
   result: { data:{id:'other'} as {id:string}|null, error:null as {message:string}|null },
 }));
 vi.mock('@/context/MemberContext',()=>({useMemberContext:()=>({users:state.users,refreshUsers:state.refresh})}));
@@ -29,8 +29,9 @@ vi.mock('@/components/ConfirmDialog',()=>({useConfirmDialog:()=>({confirm:vi.fn(
 vi.mock('@/lib/activityLog',()=>({logActivity:vi.fn()}));
 vi.mock('@/lib/department',()=>({sortUsersByDept:(users:unknown[])=>users}));
 vi.mock('@/i18n',()=>({default:{t:(key:string)=>key}}));
-vi.mock('sonner',()=>({toast:{success:state.success,error:vi.fn()}}));
+vi.mock('sonner',()=>({toast:{success:state.success,error:state.error}}));
 vi.mock('@/integrations/supabase/client',()=>({supabase:{
+  functions:{invoke:state.invoke},
   from:(table:string)=>table==='activity_logs'
     ? {select:()=>({order:()=>({limit:async()=>({data:[] as never[]})})})}
     : {update:(patch:unknown)=>{
@@ -142,4 +143,46 @@ describe('member title entry points',()=>{
    expect(!!screen.queryByPlaceholderText(i18n.t('memberList.jobTitlePlaceholder'))).toBe(canEditJobTitle);
    expect(screen.getAllByRole('option')).toHaveLength(canEditJobTitle ? 4 : 1);
  });
+});
+
+describe('resetting a member password',()=>{
+  const reset=async()=>{
+    const {result}=renderHook(()=>useMemberManage());
+    act(()=>result.current.openResetPassword('other','Morgan'));
+    act(()=>result.current.setResetForm({password:'long-password',confirm:'long-password'}));
+    await act(async()=>{await result.current.handleResetPassword(submit);});
+  };
+  it('says so when the login with that email belongs to another member',async()=>{
+    // supabase-js answers a non-2xx with data null and the body on error.context.
+    state.invoke.mockResolvedValue({data:null,error:Object.assign(new Error('Edge Function returned a non-2xx status code'),
+      {context:new Response(JSON.stringify({error:'email_taken',message:'taken'}),{status:409})})});
+    await reset();
+    expect(state.error).toHaveBeenCalledWith('member.resetPasswordEmailTaken');
+  });
+  it('shows the server message for other failures',async()=>{
+    state.invoke.mockResolvedValue({data:null,error:Object.assign(new Error('Edge Function returned a non-2xx status code'),
+      {context:new Response(JSON.stringify({error:'Member not found'}),{status:404})})});
+    await reset();
+    expect(state.error).toHaveBeenCalledWith('member.resetPasswordFailedMember not found');
+  });
+});
+
+describe('adding a member',()=>{
+  it('says so when the login with that email belongs to another member',async()=>{
+    state.invoke.mockResolvedValue({data:null,error:Object.assign(new Error('Edge Function returned a non-2xx status code'),
+      {context:new Response(JSON.stringify({error:'email_taken',message:'taken'}),{status:409})})});
+    const {result}=renderHook(()=>useMemberManage());
+    act(()=>result.current.setAddForm({email:'Boss@example.com',name:'Boss',role:'member',jobTitle:'',password:''}));
+    await act(async()=>{await result.current.handleAddMember(submit);});
+    expect(state.error).toHaveBeenCalledWith('member.addEmailTaken');
+    expect(state.success).not.toHaveBeenCalled();
+  });
+  it('names a duplicate member in the current language',async()=>{
+    state.invoke.mockResolvedValue({data:null,error:Object.assign(new Error('Edge Function returned a non-2xx status code'),
+      {context:new Response(JSON.stringify({error:'此 Email 的成員已存在',code:'member_exists'}),{status:400})})});
+    const {result}=renderHook(()=>useMemberManage());
+    act(()=>result.current.setAddForm({email:'member2@example.com',name:'Dup',role:'member',jobTitle:'',password:''}));
+    await act(async()=>{await result.current.handleAddMember(submit);});
+    expect(state.error).toHaveBeenCalledWith('member.addDuplicate');
+  });
 });

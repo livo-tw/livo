@@ -131,11 +131,13 @@ export function useCreateTaskForm() {
   const generateTaskKey = () => {
     const project = allProjects.find(p => p.id === projectId);
     if (!project) return 'TASK-1';
-    const projectTasks = allTasks.filter(t => t.projectId === projectId);
-    const maxNum = projectTasks.reduce((max, t) => {
-      const parts = t.taskKey.split('-');
-      const num = parseInt(parts[parts.length - 1], 10);
-      return isNaN(num) ? max : Math.max(max, num);
+    // Count every task that carries this project's prefix, including tasks moved to
+    // another project (they keep their key): keys are unique across projects.
+    const prefix = `${project.key}-`;
+    const maxNum = allTasks.reduce((max, t) => {
+      if (!t.taskKey.startsWith(prefix)) return max;
+      const rest = t.taskKey.slice(prefix.length);
+      return /^\d+$/.test(rest) ? Math.max(max, Number(rest)) : max;
     }, 0);
     return `${project.key}-${maxNum + 1}`;
   };

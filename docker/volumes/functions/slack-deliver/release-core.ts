@@ -46,7 +46,7 @@ export async function deliverRelease(job:ReleaseDeliveryJob,owner:string,store:R
    const slack=slackTransport(token,fetcher),auth=await slack('auth.test',{});
    if(auth.team_id!==state.publication.team_id)throw new DeliveryError('slack_workspace_mismatch');
    const publisher=(await slack('users.info',{user:state.publisherUser})).user;
-   if(!publisher||publisher.deleted||publisher.is_bot||publisher.team_id!==state.publication.team_id)throw new DeliveryError('publication_member_unavailable');
+   if(!publisher||publisher.deleted||publisher.is_bot||publisher.is_restricted||publisher.is_ultra_restricted||publisher.team_id!==state.publication.team_id)throw new DeliveryError('publication_member_unavailable');
    if(!/^[UW][A-Z0-9]+$/.test(state.publisherUser)||!auth.user_id||
      !await isChannelMember(slack,state.publication.channel_id,state.publisherUser)||
      !await isChannelMember(slack,state.publication.channel_id,auth.user_id))throw new DeliveryError('publication_member_unavailable');

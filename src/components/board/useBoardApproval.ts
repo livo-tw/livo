@@ -8,7 +8,7 @@ interface UseBoardApprovalDeps {
   allTasks: Task[];
   statuses: { id: string; name?: string; color?: string; autoStart?: boolean; isDone?: boolean }[];
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
-  updateTaskInDb: (taskId: string, updates: Record<string, unknown>) => Promise<void>;
+  updateTaskInDb: (taskId: string, updates: Record<string, unknown>) => Promise<boolean | void>;
   getRuleForTransition: (projectId: string, fromStatusId: string, toStatusId: string) => Promise<{ rule: { id: string } } | null>;
   requestApproval: (taskId: string, ruleId: string, fromStatusId: string, toStatusId: string, task: Task, enableRequirement?: boolean) => Promise<import('@/lib/approvalQueries').ApprovalRequest | null>;
   t: (key: string, options?: Record<string, unknown>) => string;

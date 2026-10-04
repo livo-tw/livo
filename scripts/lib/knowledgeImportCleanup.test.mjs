@@ -210,6 +210,10 @@ describe('maintenance deployment entry points', () => {
     expect(cloud).not.toMatch(/app\.(?:post|get)\([^\n]*knowledge-import-cleanup/);
     const compose = fs.readFileSync(path.join(app, 'docker/docker-compose.yml'), 'utf8');
     expect(compose).toContain('/functions/v1/knowledge-import-cleanup');
-    expect(compose).toContain('Authorization: Bearer $${SERVICE_ROLE_KEY}');
+    // The service-role key reaches curl on stdin, never on its command line (ps / /proc).
+    const scheduler = compose.slice(compose.indexOf('livo-scheduler:'), compose.indexOf('\n  analytics:'));
+    expect(scheduler).toContain("printf 'Authorization: Bearer %s\\nContent-Type: application/json\\n' \"$${SERVICE_ROLE_KEY}\"");
+    expect(scheduler).toContain('-H @-');
+    expect(scheduler).not.toMatch(/-H\s+"Authorization: Bearer \$\$\{SERVICE_ROLE_KEY\}"/);
   });
 });

@@ -42,7 +42,7 @@ describe('isolated QA PostgreSQL acceptance runner',()=>{
     expect(plan.summary.migrations.map(({name})=>name)).toEqual([
       '20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql',
       '20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261013_qa_manual_state.sql',
-      '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql',
+      '20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql','20261017_notifications_task_optional.sql',
     ]);
     for(const {name} of plan.summary.migrations) {
       const source=readFileSync(path.join(root,'supabase/migrations',name),'utf8').trimEnd();

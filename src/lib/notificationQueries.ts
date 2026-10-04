@@ -77,7 +77,8 @@ export function buildNotificationContext(
 ): TemplateContext {
   return {
     task_name: task.title,
-    task_url: `${window.location.origin}${import.meta.env.BASE_URL}task/${task.id}`,
+    // Same deep link as "copy link" (useTaskActions): the app routes ?task=<key>, not /task/<id>.
+    task_url: `${window.location.origin}${import.meta.env.BASE_URL}?task=${encodeURIComponent(task.taskKey)}`,
     assignee: task.assigneeId ?? '',
     priority: task.priority,
     due_date: task.dueDate ?? '',

@@ -54,7 +54,7 @@ export function taskWorkHandler(env: Environment, fetcher: typeof fetch = fetch)
       if (!response.ok) {
         const known=typeof result?.message==='string'&&errors.has(result.message);
         const code=known?result.message:'work_unavailable';
-        const status=!known?503:result?.code==='42501'?403:result?.code==='40001'?409:result?.code==='P0002'?404:400;
+        const status=!known?503:result?.code==='42501'?403:['40001','PT409'].includes(result?.code)?409:result?.code==='P0002'?404:400;
         throw new TaskWorkError(code,status);
       }
       return json(result);

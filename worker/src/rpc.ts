@@ -18,6 +18,7 @@ import { requireMember, resolveActiveMember, verifyAccessToken } from './auth';
 import { notifyChanges } from './notify';
 import { nowIso, rowToWire, type TableMeta } from './meta';
 import { TABLES } from './tables';
+import { withFullTaskRows } from './taskEvents';
 import { knowledgeLockAllowed } from './knowledge';
 import { handleKnowledgePreferences } from './knowledgePreferences';
 import { PLANNING_FNS, taskPlanningRpc, planningError } from './taskPlanning';
@@ -184,7 +185,8 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
       try {
         const data=await taskPlanningRpc(c.env,c.get('auth'),fn,args);
         if (fn==='livo_set_task_deadline') {
-          notifyChanges(c.env,c.executionCtx,[{table:'tasks',eventType:'UPDATE',new:data,old:{id:data.id}}],c.get('auth').member.workspaceId || DEFAULT_WORKSPACE);
+          const ws=c.get('auth').member.workspaceId || DEFAULT_WORKSPACE;
+          notifyChanges(c.env,c.executionCtx,await withFullTaskRows(c.env,ws,[{table:'tasks',eventType:'UPDATE',new:data,old:{id:data.id}}]),ws);
         }
         return c.json({data,error:null});
       } catch(error) {
@@ -276,8 +278,10 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
           return c.json({ data: null, error: { message: 'kb_forbidden' } } satisfies RpcResponse, 403);
         }
         const rawTtl = args['p_ttl_seconds'];
+        // At most 5 minutes, as on Docker (20261020_field_lock_caller.sql); the
+        // app renews a 15-second lock while a field is being edited.
         const ttl =
-          typeof rawTtl === 'number' && Number.isFinite(rawTtl) && rawTtl > 0 ? rawTtl : 30;
+          typeof rawTtl === 'number' && Number.isFinite(rawTtl) && rawTtl > 0 ? Math.min(rawTtl, 300) : 30;
         const data = await acquireFieldLock(c.env, c.executionCtx, lockWs, lockKey, memberId, ttl);
         return c.json({ data, error: null } satisfies RpcResponse);
       }

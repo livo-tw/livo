@@ -1,0 +1,13 @@
+-- kb_workflow (20261010_knowledge_workflow.sql) creates a task from a knowledge
+-- page and inserts its task_specs row without an id. In the delivery baseline
+-- (20260308173019_*.sql) task_specs.id is a text primary key with no default,
+-- so on real installs "create task" from a knowledge page failed with
+-- 'null value in column "id"'. Cloudflare D1 (worker/src/knowledgeWorkflow.ts)
+-- always supplies an id.
+--
+-- A column default fills the id the same way the task-work commands do
+-- ('spec_' + UUID). Every other writer supplies its own id and is unaffected.
+--
+-- Non-destructive and repeatable: no row is touched, and setting the same
+-- default again is a no-op.
+ALTER TABLE public.task_specs ALTER COLUMN id SET DEFAULT ('spec_'||gen_random_uuid()::text);

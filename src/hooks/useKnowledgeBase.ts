@@ -10,7 +10,8 @@ const EMPTY_DETAILS = { attachments: [] as KnowledgeAttachment[], revisions: [] 
 /** Backend filtering is authoritative; local checks also discard stale, revoked data. */
 export function useKnowledgeBase(pageId: string | null, actor: KnowledgeActor | null) {
   const identity = JSON.stringify(actor);
-  const [snapshot, setSnapshot] = useState({ identity, pages: [] as KnowledgePage[] });
+  // `loaded` stays false until a read for this identity has completed.
+  const [snapshot, setSnapshot] = useState({ identity, pages: [] as KnowledgePage[], loaded: false });
   const [details, setDetails] = useState({ identity, pageId, ...EMPTY_DETAILS });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,10 +31,10 @@ export function useKnowledgeBase(pageId: string | null, actor: KnowledgeActor | 
         if (batch.length < 500) break;
         cursor = batch[batch.length - 1].id;
       }
-      if (ticket === generation.current) { setSnapshot({ identity, pages: all }); setError(null); }
+      if (ticket === generation.current) { setSnapshot({ identity, pages: all, loaded: true }); setError(null); }
     } catch (failure) {
       if (ticket === generation.current) {
-        setSnapshot({ identity, pages: [] }); setDetails({ identity, pageId: null, ...EMPTY_DETAILS });
+        setSnapshot({ identity, pages: [], loaded: true }); setDetails({ identity, pageId: null, ...EMPTY_DETAILS });
         setError(failure instanceof Error ? failure.message : 'kb_load_failed');
       }
     } finally { if (ticket === generation.current) setLoading(false); }
@@ -87,7 +88,7 @@ export function useKnowledgeBase(pageId: string | null, actor: KnowledgeActor | 
         if (alive && ticket === loadGeneration) setDetails({ identity, pageId, attachments: files.data || [], revisions: history.data || [], comments: discussion });
       } catch {
         if (alive && ticket === loadGeneration) {
-          setDetails({ identity, pageId, ...EMPTY_DETAILS }); setSnapshot({ identity, pages: [] }); setError('kb_load_failed');
+          setDetails({ identity, pageId, ...EMPTY_DETAILS }); setSnapshot({ identity, pages: [], loaded: true }); setError('kb_load_failed');
         }
       }
     };
@@ -102,7 +103,9 @@ export function useKnowledgeBase(pageId: string | null, actor: KnowledgeActor | 
   }, [pageId, snapshot, identity, readable]);
 
   const safeDetails = readable && details.identity === identity && details.pageId === pageId ? details : EMPTY_DETAILS;
-  return { pages, ...safeDetails, loading, error, refresh };
+  /** Pages reflect the current actor (not a previous identity or the initial empty state). */
+  const ready = snapshot.loaded && snapshot.identity === identity;
+  return { pages, ...safeDetails, loading, error, ready, refresh };
 }
 
 export async function uploadKnowledgeFile(pageId: string, memberId: string, file: File) {

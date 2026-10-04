@@ -5,14 +5,16 @@ import { rowToWire } from './meta';
 import { TABLES } from './tables';
 import { isDemoMember } from './env';
 import { knowledgePermissionSql } from './knowledgeSql';
+import { commandAuthId, liveMemberSql } from './liveMember';
 import { createQaIssue, QaError, type QaCreateInput } from './qa/domain';
 import { parseDeploymentEnvironments } from './qa/environments';
+import { parseQaFieldConfiguration } from './qa/fields';
 import { KnowledgeWorkflowError, canonicalWorkflow, workflowDescription, workflowDue, workflowFail, workflowHash,
   workflowId, workflowRecord, workflowRelation, workflowTarget, workflowText, workflowVersion } from './knowledgeWorkflow/domain';
 
 type Row = Record<string, any>;
 type Params = (string | number | null)[];
-const freshActor = (auth: AuthCtx) => ({ sql: 'EXISTS(SELECT 1 FROM members km WHERE km.workspace_id=? AND km.id=? AND km.auth_id=? AND km.is_active=1)', params: [auth.member.workspaceId, auth.member.id, auth.userId] });
+const freshActor = (auth: AuthCtx) => { const live = liveMemberSql(auth, 'km'); return { sql: `EXISTS(SELECT 1 FROM members km WHERE ${live.sql})`, params: live.params }; };
 const qaEnabled = "EXISTS(SELECT 1 FROM system_settings kf WHERE kf.workspace_id=? AND kf.key='feature_toggles' AND json_valid(kf.value) AND json_extract(kf.value,'$.qa')=1)";
 const optionalId = (value: unknown) => value == null || value === '' ? null : workflowId(value);
 const fields = (alias: string) => `${alias}.id,${alias}.page_id AS pageId,${alias}.anchor_id AS anchorId,${alias}.text,${alias}.is_done AS isDone,${alias}.version,${alias}.updated_by AS updatedBy,${alias}.updated_at AS updatedAt,${alias}.completed_by AS completedBy,${alias}.completed_at AS completedAt`;
@@ -143,7 +145,7 @@ export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unk
       addGuard("COALESCE((SELECT value FROM system_settings WHERE workspace_id=? AND key='required_fields'),'{}')=?", [ws, required?.value || '{}']);
       for (const [field, needed] of Object.entries(requirements)) if (needed === true && !['title','project','status','priority'].includes(field) && !({assignee, dueDate: due, requirement: description} as Row)[field]) workflowFail('kb_workflow_required_fields');
       add(`INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,priority,creator_id,assignee_id,due_date,created_at)
-        SELECT ?,?,p.key||'-'||(COALESCE((SELECT MAX(CAST(substr(t.task_key,length(p.key)+2) AS INTEGER)) FROM tasks t WHERE t.workspace_id=p.workspace_id AND t.project_id=p.id AND substr(t.task_key,1,length(p.key)+1)=p.key||'-'),0)+1),?,?,?,'medium',?,?,?,?
+        SELECT ?,?,p.key||'-'||(COALESCE((SELECT MAX(CAST(substr(t.task_key,length(p.key)+2) AS INTEGER)) FROM tasks t WHERE t.workspace_id=p.workspace_id AND substr(t.task_key,1,length(p.key)+1)=p.key||'-'),0)+1),?,?,?,'medium',?,?,?,?
         FROM projects p WHERE p.workspace_id=? AND p.id=?`, [ws, targetId, projectId, title, statusId, memberId, assignee, due, now, ws, projectId]);
       add('INSERT INTO task_specs(workspace_id,id,task_id,background,requirement,notes) VALUES(?,?,?,?,?,?)', [ws, crypto.randomUUID(), targetId, '', description, '']);
       add("INSERT INTO activity_logs(workspace_id,id,user_id,action,target_type,task_id,detail,created_at) VALUES(?,?,?,'create','task',?,'Task created',?)", [ws, crypto.randomUUID(), memberId, targetId, now]);
@@ -152,12 +154,19 @@ export async function executeKnowledgeWorkflow(env: Env, auth: AuthCtx, raw: unk
       const input = workflowRecord(body.input), projectId = workflowId(input.projectId);
       const actor = await first('SELECT id,role FROM members WHERE workspace_id=? AND id=? AND is_active=1', [ws, memberId]);
       const environment = await first("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'", [ws]);
+      // The team's QA custom fields, as the QA page validates them; the guard below
+      // refuses the batch if they change before it commits.
+      const fieldRow = await first("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'", [ws]);
       const environments = parseDeploymentEnvironments(environment ? JSON.parse(environment.value) : undefined);
       if (!actor || !environments) workflowFail('kb_workflow_invalid');
-      const issue = createQaIssue(input as unknown as QaCreateInput, targetId, {actor:{id:memberId,role:actor.role},workspaceId:ws,now,newId:()=>crypto.randomUUID(),memberIds:new Set([memberId]),projectIds:new Set([projectId]),taskIds:new Set(),environmentValues:environments.values});
+      // The QA command trigger re-checks the actor's login; a key records its member's login.
+      const authId = await commandAuthId(env, auth);
+      if (!authId) workflowFail('kb_workflow_forbidden', 403);
+      const issue = createQaIssue(input as unknown as QaCreateInput, targetId, {actor:{id:memberId,role:actor.role},fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),workspaceId:ws,now,newId:()=>crypto.randomUUID(),memberIds:new Set([memberId]),projectIds:new Set([projectId]),taskIds:new Set(),environmentValues:environments.values});
       addGuard(qaEnabled, [ws]);
+      addGuard("(SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ?", [ws, fieldRow?.value ?? null]);
       const data = JSON.stringify(issue);
-      add('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,-1,?,?,?,?,?)', [ws, `kb_${commandId}`, targetId, memberId, actor.role, auth.userId, 'create', hash, data, data, now]);
+      add('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,-1,?,?,?,?,?)', [ws, `kb_${commandId}`, targetId, memberId, actor.role, authId, 'create', hash, data, data, now]);
       add('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,1,?,?)', [ws, targetId, projectId, 'new', memberId, issue.title, now, data]);
       add('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,1,?)', [ws, crypto.randomUUID(), targetId, memberId, 'create', 'create', now]);
     } else addGuard(targetExists(kind, '?'), [...targetParams(kind), targetId]);

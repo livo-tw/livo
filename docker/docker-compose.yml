@@ -457,7 +457,9 @@ services:
       # functions fall back to their built-in default.
       APP_BASE_URL: ${APP_BASE_URL:-}
       SLACK_INTERNAL_SECRET: ${SLACK_INTERNAL_SECRET:-}
-      KNOWLEDGE_PROCESSOR_URL: http://knowledge-processor:8091
+      # Empty unless the optional knowledge-processor below is enabled; the
+      # import dialog then reports that the processor is not configured.
+      KNOWLEDGE_PROCESSOR_URL: ${KNOWLEDGE_PROCESSOR_URL:-}
       KNOWLEDGE_PROCESSOR_TOKEN: ${KNOWLEDGE_PROCESSOR_TOKEN:-}
       KNOWLEDGE_IMPORT_SECRET: ${KNOWLEDGE_IMPORT_SECRET:-}
     networks:
@@ -485,25 +487,25 @@ services:
         condition: service_healthy
     environment:
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
-    # $$ defers expansion to the container shell (reads the env var above)
-    # so the key is not baked into the command line.
+    # $$ defers expansion to the container shell (reads the env var above).
+    # Headers go to curl on stdin (-H @-) from the shell's printf builtin, so the
+    # service-role key never appears in a process command line (/proc/*/cmdline,
+    # ps), which every account on the host can read.
     entrypoint:
       - /bin/sh
       - -c
       - |
+        post() {
+          printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$${SERVICE_ROLE_KEY}" |
+            curl -s "$$@" -X POST -H @- -d '{}' > /dev/null 2>&1 || true
+        }
+        # The installer restarts the functions right after starting this container;
+        # wait so the first run after an install or upgrade does not hit a restart.
+        sleep 120
         while true; do
-          curl -s -X POST http://kong:8000/functions/v1/scheduled-backup \
-            -H "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{}' > /dev/null 2>&1 || true
-          curl -s -X POST http://kong:8000/functions/v1/due-reminders \
-            -H "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{}' > /dev/null 2>&1 || true
-          curl -s --max-time 300 -X POST http://kong:8000/functions/v1/knowledge-import-cleanup \
-            -H "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{}' > /dev/null 2>&1 || true
+          post http://kong:8000/functions/v1/scheduled-backup
+          post http://kong:8000/functions/v1/due-reminders
+          post --max-time 300 http://kong:8000/functions/v1/knowledge-import-cleanup
           sleep 3600
         done
 
@@ -695,7 +697,12 @@ services:
         "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
       ]
 
+  # Optional document import parser (PDF / Word / Markdown, OCR). Off by
+  # default: it is built on this machine and needs about 1 GB of free memory.
+  # The installer enables it when docker/.env has KNOWLEDGE_PROCESSOR_ENABLED=1
+  # (builds it, sets KNOWLEDGE_PROCESSOR_URL, runs compose with this profile).
   knowledge-processor:
+    profiles: [knowledge-processor]
     build: ./knowledge-processor
     restart: unless-stopped
     environment:

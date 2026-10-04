@@ -11,7 +11,11 @@ CREATE FUNCTION auth.email() RETURNS text LANGUAGE sql STABLE AS $$ SELECT auth.
 GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon,authenticated,service_role;
 CREATE TYPE task_priority AS ENUM('highest','high','medium','low','lowest');
-CREATE TABLE members(id text PRIMARY KEY,auth_id uuid,role text NOT NULL,name text,email text,is_active boolean NOT NULL DEFAULT true,theme text,sort_order integer DEFAULT 0);
+-- members.role is the app_member_role enum, as in the delivery baseline
+-- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
+-- comparison bugs that failed on real installs.
+CREATE TYPE app_member_role AS ENUM ('admin','member','super_admin');
+CREATE TABLE members(id text PRIMARY KEY,auth_id uuid,role app_member_role NOT NULL,name text,email text,is_active boolean NOT NULL DEFAULT true,theme text,sort_order integer DEFAULT 0);
 CREATE TABLE projects(id text PRIMARY KEY,line_id text,name text,key text,is_archived boolean NOT NULL DEFAULT false);
 CREATE TABLE statuses(id text PRIMARY KEY,name text,is_done boolean DEFAULT false,auto_start boolean DEFAULT false,auto_done boolean DEFAULT false);
 CREATE TABLE tasks(
@@ -30,7 +34,7 @@ CREATE TABLE activity_logs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id
 CREATE TABLE comments(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE,user_id text,content text,source text);
 CREATE TABLE custom_fields(id text PRIMARY KEY,project_id text,is_required boolean DEFAULT false);
 CREATE TABLE system_settings(key text PRIMARY KEY,value jsonb);
-CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),recipient_id text,sender_id text,task_id text,type text,content text);
+CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),recipient_id text,sender_id text,task_id text,type text,content text,is_read boolean NOT NULL DEFAULT false);
 CREATE TABLE status_transition_rules(id text PRIMARY KEY,target_status_id text,required_status_id text);
 CREATE TABLE backup_settings(task_notify_types text[]);
 CREATE TABLE external_account_bindings(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),member_id text,platform text,platform_team_id text,platform_user_id text,is_verified boolean,verified_by text);

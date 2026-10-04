@@ -6,7 +6,11 @@ CREATE SCHEMA auth;
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
 CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;
 GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
-CREATE TABLE members(id text PRIMARY KEY,auth_id uuid,role text NOT NULL,name text,is_active boolean NOT NULL DEFAULT true);
+-- members.role is the app_member_role enum, as in the delivery baseline
+-- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
+-- comparison bugs that failed on real installs.
+CREATE TYPE app_member_role AS ENUM ('admin','member','super_admin');
+CREATE TABLE members(id text PRIMARY KEY,auth_id uuid,role app_member_role NOT NULL,name text,is_active boolean NOT NULL DEFAULT true);
 CREATE TABLE projects(id text PRIMARY KEY,line_id text,name text,key text,is_archived boolean NOT NULL DEFAULT false);
 CREATE TABLE statuses(id text PRIMARY KEY,name text,is_done boolean DEFAULT false,auto_start boolean DEFAULT false);
 CREATE TABLE tasks(id text PRIMARY KEY,task_key text,project_id text REFERENCES projects(id),title text,status_id text REFERENCES statuses(id),
@@ -94,7 +98,8 @@ $$;
 CREATE FUNCTION approval_test.race(command jsonb) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER AS $$
 DECLARE result jsonb;
 BEGIN
-  result:=approval_test.command('admin',command);
+  -- A member submits and an administrator decides: requesters never decide their own request.
+  result:=approval_test.command(CASE WHEN command->>'operation'='submit' THEN 'member' ELSE 'admin' END,command);
   RETURN jsonb_build_object('status','ok','replayed',result->'replayed');
 EXCEPTION WHEN OTHERS THEN RETURN jsonb_build_object('status','error','sqlstate',SQLSTATE);
 END;

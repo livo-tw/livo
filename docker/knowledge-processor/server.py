@@ -3,12 +3,35 @@ import hmac
 import json
 import multiprocessing
 import os
+import select
+import socket
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from parser import ImportFailure, parse
 
 LIMIT = 20 * 1024 * 1024  # Includes server-held page results when retrying OCR.
+# Wall-clock budget for one parse. It must stay below the caller's wait (95 s in
+# knowledgeImport.ts), which stays below the self-host function limit (150 s in
+# functions/main): parser.py starts OCR pages only during its first 40 s and a
+# page takes at most 40 s, so a normal parse ends before this budget.
+BUDGET = 85
 SLOTS = threading.BoundedSemaphore(1)
+
+
+def configured_token():
+    token = os.environ.get('KNOWLEDGE_PROCESSOR_TOKEN', '')
+    return token if len(token) >= 32 else ''
+
+
+def client_gone(connection):
+    """True once the caller has closed the connection (timeout or cancelled import)."""
+    try:
+        readable, _, _ = select.select([connection], [], [], 0)
+        return bool(readable) and connection.recv(1, socket.MSG_PEEK) == b''
+    except (OSError, ValueError):
+        return True
 
 
 def work(payload, pipe):
@@ -41,8 +64,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
     def do_POST(self):
-        token = os.environ.get('KNOWLEDGE_PROCESSOR_TOKEN', '')
-        if len(token) < 32 or not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + token):
+        token = configured_token()
+        if not token:
+            return self.reply(503, {'error': 'processor_not_configured'})
+        if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + token):
             return self.reply(401, {'error': 'unauthorized'})
         if self.path != '/parse':
             return self.reply(404, {'error': 'not_found'})
@@ -60,8 +85,14 @@ class Handler(BaseHTTPRequestHandler):
             process = multiprocessing.Process(target=work, args=(payload, sender))
             process.start()
             sender.close()
-            if not receiver.poll(110):
-                return self.reply(422, {'error': 'processing_timeout'})
+            deadline = time.monotonic() + BUDGET
+            while not receiver.poll(0.5):
+                # Nobody waits for an abandoned request: free the only slot now.
+                if client_gone(self.connection):
+                    self.close_connection = True
+                    return None
+                if time.monotonic() >= deadline:
+                    return self.reply(422, {'error': 'processing_timeout'})
             result = receiver.recv()
             return self.reply(200 if 'result' in result else 422, result)
         except (ValueError, EOFError, OSError):
@@ -74,8 +105,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    if len(os.environ.get('KNOWLEDGE_PROCESSOR_TOKEN', '')) < 32:
-        raise SystemExit('KNOWLEDGE_PROCESSOR_TOKEN must be at least 32 characters')
-    server = ThreadingHTTPServer(('0.0.0.0', 8091), Handler)
+    # Exiting here would only make Docker restart the container in a loop.
+    # Stay up and refuse every request until the operator sets the token.
+    if not configured_token():
+        print('KNOWLEDGE_PROCESSOR_TOKEN must be at least 32 characters; refusing all requests.', file=sys.stderr)
+    server = ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('KNOWLEDGE_PROCESSOR_PORT', '8091'))), Handler)
     server.daemon_threads = True
     server.serve_forever()

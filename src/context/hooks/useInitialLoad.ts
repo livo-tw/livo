@@ -173,7 +173,9 @@ export function useInitialLoad(deps: InitialLoadDeps) {
       }
 
       await Promise.all([sprintsPromise, featureTogglesPromise]);
-      if (!activeCheck || activeCheck.length === 0) {
+      // memberRows is empty when this login sees no data (Docker: not an active
+      // member); it is about to be signed out, so do not try to write.
+      if ((!activeCheck || activeCheck.length === 0) && (memberRows?.length ?? 0) > 0) {
         const now = new Date();
         const y = now.getFullYear();
         const m = String(now.getMonth() + 1).padStart(2, '0');

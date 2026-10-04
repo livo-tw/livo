@@ -1,3 +1,26 @@
+import { readFileSync } from 'node:fs';
+
+/** Tables a SQL file attaches triggers or indexes to, minus the tables it creates itself.
+ *  SQLite refuses CREATE TRIGGER/INDEX on a missing table ("no such table: main.x"). */
+export function sqlTriggerTargets(sql) {
+  const targets = new Set();
+  const trigger = /CREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(?:INSERT|DELETE|UPDATE(?:\s+OF\s+[\w\s,]+?)?)\s+ON\s+(\w+)/gi;
+  const index = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+(\w+)/gi;
+  for (const match of sql.matchAll(trigger)) targets.add(match[1]);
+  for (const match of sql.matchAll(index)) targets.add(match[1]);
+  for (const match of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/gi)) targets.delete(match[1]);
+  return [...targets].sort();
+}
+
+/** Missing tables that `file` (in this directory) needs before it can be applied. */
+async function missingTargets(queryRows, file) {
+  const required = sqlTriggerTargets(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'));
+  if (!required.length) return [];
+  const rows = await queryRows(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${required.map(name => `'${name}'`).join(',')})`);
+  const present = new Set(rows.map(row => row.name));
+  return required.filter(name => !present.has(name));
+}
+
 // Dependency-injected so the same probes can run against disposable SQLite.
 // Call only after the tenancy migration has completed successfully.
 export async function applyPostTenantSchemaUpgrades({ queryRows, applyFile, log = () => {} }) {
@@ -92,7 +115,12 @@ export async function applyPostTenantSchemaUpgrades({ queryRows, applyFile, log 
       ...['title','document_metadata'].map(name=>revisions.some(c=>c.name===name))];
     if(present.some(Boolean)&&!present.every(Boolean))throw new Error('Partial knowledge work schema; refusing to guess');
     if(!present.some(Boolean)){await applyFile('knowledge-work-alters.sql');applied.push('knowledge-work-alters.sql');}
-    await applyFile('knowledge-work.sql');applied.push('knowledge-work.sql');
+    // A knowledge base can predate QA (stale local or open-source databases). Its
+    // guards attach to qa_issues/qa_attachments, which schema.sql creates next and
+    // then installs the same guards for; the following run applies this file again.
+    const missing=await missingTargets(queryRows,'knowledge-work.sql');
+    if(missing.length)log(`[knowledge-work] deferred to schema.sql: ${missing.join(', ')} not created yet.`);
+    else{await applyFile('knowledge-work.sql');applied.push('knowledge-work.sql');}
   }
   await applyFile('release-workspace.sql');applied.push('release-workspace.sql');
   return applied;

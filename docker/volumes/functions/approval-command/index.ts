@@ -8,7 +8,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const errors = new Set(['approval_forbidden','approval_invalid_input','approval_command_reused','approval_unavailable','approval_disabled',
   'approval_conflict','approval_pending','approval_invalid_transition','approval_not_required','approval_transition_prerequisite',
   'approval_invalid_steps','approval_legacy_snapshot','approval_rule_changed','approval_rule_in_use','approval_rule_has_history',
-  'approval_ambiguous_rule','approval_command_required','approval_required']);
+  'approval_ambiguous_rule','approval_command_required','approval_required','approval_self_decision_forbidden',
+  'approval_requirement_admin_only']);
 
 /** Call only after GoTrue accepted this exact bearer token. Claims never come
  * from the HTTP body, and partial Slack identities cannot fall back to App auth. */
@@ -57,7 +58,7 @@ export function approvalHandler(env: Environment, fetcher: typeof fetch = fetch)
       if (!response.ok) {
         const known=typeof result?.message==='string'&&errors.has(result.message);
         const code=known?result.message:'approval_unavailable';
-        const status=!known?503:result?.code==='42501'?403:result?.code==='40001'?409:result?.code==='P0002'?404:400;
+        const status=!known?503:result?.code==='42501'?403:['40001','PT409'].includes(result?.code)?409:result?.code==='P0002'?404:400;
         throw new ApprovalCommandError(code,status);
       }
       return json(result);

@@ -115,7 +115,10 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
 
   if (!progress) return null;
 
-  const canAct = isCurrentApprover();
+  // A requester never decides their own request, whatever their role; it waits for another approver.
+  const matchesCurrentStep = isCurrentApprover();
+  const isRequester = progress.requestedBy === currentMemberId;
+  const canAct = matchesCurrentStep && !isRequester;
 
   return (
     <div className="space-y-3">
@@ -185,8 +188,14 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
         </div>
       )}
 
-      {/* Cancel button — only visible to the requester when still pending */}
-      {progress.requestStatus === 'pending' && progress.requestedBy === currentMemberId && (
+      {matchesCurrentStep && isRequester && (
+        <p className="text-xs text-muted-foreground">{t('approvalCommand.selfDecisionHint')}</p>
+      )}
+
+      {/* Withdraw — the requester or an administrator, like the withdraw command allows. Administrators
+          need it for requests from before the upgrade, which have no fixed workflow and can only be withdrawn. */}
+      {progress.requestStatus === 'pending'
+        && (progress.requestedBy === currentMemberId || ['admin', 'super_admin'].includes(currentMember?.role ?? '')) && (
         <div className="pt-1">
           <button
             onClick={() => void handleCancel()}

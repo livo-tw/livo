@@ -8,12 +8,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 vi.mock('../../worker/src/license',()=>({isProfessional:async()=>true}));
-vi.mock('../../worker/src/notify',()=>({notifyChanges:()=>Promise.resolve()}));
+vi.mock('../../worker/src/notify',()=>({notifyChanges:vi.fn(()=>Promise.resolve())}));
 vi.mock('../../worker/src/functions/emailNotify',()=>({sendNotificationEmails:()=>Promise.resolve()}));
 vi.mock('../../worker/src/functions/webhooks',()=>({dispatchWebhooks:()=>Promise.resolve()}));
 import {executeTaskWorkCommand} from '../../worker/src/taskWork';
 import {canonicalTaskWorkPayload,parseTaskWorkCommand} from '../../worker/src/taskWorkCore';
 import {runQuery} from '../../worker/src/db';
+import {notifyChanges} from '../../worker/src/notify';
 import {applyPostTenantSchemaUpgrades} from '../../worker/migrate/schema-upgrades.mjs';
 import {assertTaskWorkImportSafe} from '../../worker/migrate/task-work-import-guard.mjs';
 
@@ -136,6 +137,83 @@ describe('TaskWork native SQLite parity',()=>{
   await expect(run(child())).rejects.toThrow('work_required_fields');await run(child({dueDate:'2027-01-31'}));
   db.exec(`UPDATE system_settings SET value='{}'; INSERT INTO custom_fields(workspace_id,id,project_id,field_name,field_type,is_required) VALUES('a','required','p','Required','text',1)`);
   await expect(run(child())).rejects.toThrow('work_required_fields');assertAtomic();
+ });
+ it('shipped required_fields default lets a dated subtask through and keeps uncarried fields blocking',async()=>{
+  const shipped=fs.readFileSync(new URL('../../worker/seed.sql',import.meta.url),'utf8').match(/'required_fields',\s*'(\{[^']*\})'/)[1];
+  const setRequired=value=>db.prepare("INSERT INTO system_settings(workspace_id,key,value) VALUES('a','required_fields',?) ON CONFLICT DO UPDATE SET value=excluded.value").run(value);
+  setRequired(shipped);
+  expect(JSON.parse(shipped)).toMatchObject({title:true,project:true,dueDate:true});
+  await expect(run(child())).rejects.toThrow('work_required_fields');
+  expect((await run(child({dueDate:'2027-02-01'}))).record).toMatchObject({parent_task_id:'t',due_date:'2027-02-01'});
+  setRequired(JSON.stringify({title:true,project:true,status:true,priority:true}));
+  expect((await run(child({assigneeId:null,reviewerId:null}))).record).toMatchObject({parent_task_id:'t',due_date:null});
+  setRequired(JSON.stringify({assignee:true,reviewer:true}));
+  await expect(run(child({assigneeId:null}))).rejects.toThrow('work_required_fields');
+  await expect(run(child({reviewerId:null}))).rejects.toThrow('work_required_fields');
+  setRequired(JSON.stringify({title:true,project:true,background:true}));
+  await expect(run(child({dueDate:'2027-02-01'}))).rejects.toThrow('work_required_fields');
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(2);assertAtomic();
+ });
+ it('a new subtask key skips a number held by a task moved to another project',async()=>{
+  // P-7 moved to Q keeps its key; counting only P's tasks would hand out P-7 again and the
+  // workspace-wide key check would refuse every retry.
+  db.exec("INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,creator_id) VALUES('a','stay','P-6','p','Stays','todo','member'),('a','moved','P-7','q','Moved away','todo','member')");
+  expect((await run(child())).record.task_key).toBe('P-8');
+ });
+ it('moving a parent moves its subtasks in the same statement and publishes them',async()=>{
+  db.exec(`INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,creator_id,parent_task_id) VALUES
+   ('a','c1','c1','p','Child one','todo','member','t'),('a','c2','c2','p','Child two','todo','member','t')`);
+  // A legacy duplicate key (kept by the knowledge key guard) makes the move of t2 clash in project q.
+  db.exec(`DROP TRIGGER kb_task_key_insert; INSERT INTO tasks(workspace_id,id,task_key,project_id,title,status_id,creator_id,parent_task_id) VALUES('a','clash','tq','p','Clashing child','todo','member','t2')`);
+  vi.mocked(notifyChanges).mockClear();
+  expect((await query('tasks','update',{project_id:'q'})).error).toBeFalsy();
+  expect(rows("SELECT id,project_id,parent_task_id FROM tasks WHERE id IN ('t','c1','c2') ORDER BY id")).toEqual([
+   {id:'c1',project_id:'q',parent_task_id:'t'},{id:'c2',project_id:'q',parent_task_id:'t'},{id:'t',project_id:'q',parent_task_id:null}]);
+  const published=vi.mocked(notifyChanges).mock.calls.flatMap(call=>call[2]).filter(event=>event.table==='tasks').map(event=>[event.new.id,event.new.project_id]);
+  expect(published.sort()).toEqual([['c1','q'],['c2','q'],['t','q']]);
+  expect((await query('tasks','update',{project_id:'p'},'c1')).error?.message).toMatch('work_invalid_parent');
+  expect((await query('tasks','update',{project_id:'q'},'t2')).error?.message).toMatch('work_conflict');
+  expect(rows("SELECT id,project_id FROM tasks WHERE id IN ('t2','clash') ORDER BY id")).toEqual([{id:'clash',project_id:'p'},{id:'t2',project_id:'p'}]);
+  expect((await query('tasks','update',{project_id:'p'})).error).toBeFalsy();
+  expect(rows("SELECT DISTINCT project_id FROM tasks WHERE id IN ('t','c1','c2')")).toEqual([{project_id:'p'}]);
+ });
+ it('notifications can only be sent as the caller, except a super admin restoring history',async()=>{
+  const write=(who,op,values,filters)=>runQuery(env,{waitUntil:()=>{}},who,{table:'notifications',op,values,...(filters?{filters}:{})});
+  const note=(sender,content,fields={})=>({recipient_id:'other',sender_id:sender,type:'mention',task_id:'t',content,...fields});
+  expect((await write(actor('member'),'insert',note('super','Spoofed'))).error?.code).toBe('42501');
+  expect((await write(actor('member'),'insert',[note('member','Spoofed'),note('admin','Spoofed')])).error?.code).toBe('42501');
+  expect((await write(actor('member'),'upsert',note('super','Spoofed',{id:'spoof-upsert',recipient_id:'member'}))).error?.code).toBe('42501');
+  expect((await write(actor('admin'),'insert',note('member','Spoofed'))).error?.code).toBe('42501');
+  expect((await write(actor('member'),'insert',note('member','Own mention'))).error).toBeFalsy();
+  expect((await write(actor('super'),'insert',note('member','Restored history'))).error).toBeFalsy();
+  const own=rows("SELECT id FROM notifications WHERE content='Own mention'")[0].id;
+  // The recipient may mark it read but cannot re-address or re-attribute it.
+  expect((await write(actor('other'),'update',{recipient_id:'member',sender_id:'super'},[{col:'id',op:'eq',val:own}])).error?.code).toBe('42501');
+  expect((await write(actor('other'),'update',{is_read:true},[{col:'id',op:'eq',val:own}])).error).toBeFalsy();
+  // An upsert naming an existing notification's id must not overwrite it.
+  await write(actor('other'),'upsert',note('other','Taken over',{id:own,recipient_id:'other'}));
+  expect(rows('SELECT recipient_id,sender_id,content,is_read FROM notifications ORDER BY content')).toEqual([
+   {recipient_id:'other',sender_id:'member',content:'Own mention',is_read:1},{recipient_id:'other',sender_id:'member',content:'Restored history',is_read:0}]);
+ });
+ it('comments can only be written as the caller, except a super admin restoring history',async()=>{
+  const write=(who,op,values,filters)=>runQuery(env,{waitUntil:()=>{}},who,{table:'comments',op,values,...(filters?{filters}:{})});
+  const comment=(user,content,fields={})=>({task_id:'t',user_id:user,content,...fields});
+  expect((await write(actor('member'),'insert',comment('super','Spoofed'))).error?.code).toBe('42501');
+  expect((await write(actor('member'),'insert',[comment('member','Spoofed'),comment('admin','Spoofed')])).error?.code).toBe('42501');
+  expect((await write(actor('member'),'upsert',comment('super','Spoofed',{id:'spoof-upsert'}))).error?.code).toBe('42501');
+  expect((await write(actor('admin'),'insert',comment('member','Spoofed'))).error?.code).toBe('42501');
+  expect((await write(actor('member'),'insert',comment('member','Own comment',{id:'own-comment'}))).error).toBeFalsy();
+  expect((await write(actor('super'),'insert',comment('member','Restored history'))).error).toBeFalsy();
+  // An admin may moderate the text but cannot re-attribute it.
+  expect((await write(actor('admin'),'update',{user_id:'admin'},[{col:'id',op:'eq',val:'own-comment'}])).error?.code).toBe('42501');
+  expect((await write(actor('member'),'update',{content:'Edited own comment'},[{col:'id',op:'eq',val:'own-comment'}])).error).toBeFalsy();
+  // An upsert naming someone else's comment id must not overwrite or take it over.
+  await write(actor('other'),'upsert',comment('other','Taken over',{id:'own-comment'}));
+  await write(actor('admin'),'upsert',comment('admin','Taken over',{id:'own-comment'}));
+  expect(rows("SELECT user_id,content FROM comments WHERE workspace_id='a' ORDER BY content")).toEqual([
+   {user_id:'member',content:'Edited own comment'},{user_id:'member',content:'Restored history'}]);
+  expect((await write(actor('member'),'upsert',comment('member','Upserted own comment',{id:'own-comment'}))).error).toBeFalsy();
+  expect(rows("SELECT content FROM comments WHERE id='own-comment'")).toEqual([{content:'Upserted own comment'}]);
  });
  it('dependency preserves cross-project, rejects cross-tenant and multi-node cycles',async()=>{
   const edge=await run(command('add_dependency',{dependsOnTaskId:'tq'}));

@@ -5,7 +5,7 @@ let sequence=0;
 const ctx=():ReleaseContext=>({workspaceId:'default',actorId:'admin',role:'admin',now:'2026-10-03T00:00:00Z',newId:()=>`record-${++sequence}`,memberIds:new Set(['admin']),projectIds:new Set(['project']),taskProjects:new Map([['task','project']]),environments:['Stage'],qaSources:new Map()});
 const command=(operation:string,rest:Record<string,unknown>={},version=0)=>parseReleaseCommand({commandId:`command-${++sequence}`,batchId:'batch',expectedVersion:version,operation,...rest});
 const create=()=>applyReleaseCommand(null,command('create',{manifest}),ctx());
-const apply=(batch:ReleaseBatch,operation:string,fields:Record<string,unknown>)=>applyReleaseCommand(batch,command(operation,fields,batch.version),ctx());
+const apply=(batch:ReleaseBatch,operation:string,fields:Record<string,unknown>,actorId='admin')=>applyReleaseCommand(batch,command(operation,fields,batch.version),{...ctx(),actorId,memberIds:new Set(['admin','owner'])});
 describe('release command trust boundary',()=>{
  it('rejects partial get/list/receipt payloads before they are considered successful',()=>{const b=create();expect(validReleaseResponse({action:'get',batchId:b.id},b)).toBe(true);expect(validReleaseResponse({action:'get',batchId:b.id},{...b,attempts:[{records:null}]})).toBe(false);expect(validReleaseResponse({action:'list',page:0},{batches:[b],page:0,hasMore:false})).toBe(true);expect(validReleaseResponse({action:'list',page:0},{batches:null,page:0,hasMore:false})).toBe(false);expect(validReleaseResponse({action:'receipt',commandId:'request-1',batchId:b.id},{found:'true'})).toBe(false);expect(validReleaseResponse({action:'receipt',commandId:'request-1',batchId:b.id},{found:true,result:{batch:{id:b.id}}})).toBe(false);});
  it('rejects client identities, unknown nested keys, non-calendar fields and prototype schemes',()=>{
@@ -22,10 +22,18 @@ describe('release command trust boundary',()=>{
  });
  it('binds approvals to manifest revision and retains the prior decision as history',()=>{
   let b=apply(create(),'request_exception',{scope:'Pending UAT',reason:'Explicit exception'}),id=b.exceptions[0].id;
-  b=apply(b,'decide_exception',{exceptionId:id,decision:'approved',note:'Accepted'});
+  b=apply(b,'decide_exception',{exceptionId:id,decision:'approved',note:'Accepted'},'owner');
   b=apply(b,'edit_manifest',{manifest:{...manifest,title:'Updated release'}});
   expect(b.manifestRevision).toBe(2);expect(b.exceptions[0].revision).toBe(1);
-  expect(()=>apply(b,'decide_exception',{exceptionId:id,decision:'approved',note:'Reuse'})).toThrow('release_exception_stale');
+  expect(()=>apply(b,'decide_exception',{exceptionId:id,decision:'approved',note:'Reuse'},'owner')).toThrow('release_exception_stale');
+ });
+ it('never lets the requester decide their own release exception, whatever their role',()=>{
+  const b=apply(create(),'request_exception',{scope:'Pending UAT',reason:'Explicit exception'}),id=b.exceptions[0].id;
+  for(const decision of ['approved','rejected'])
+   expect(()=>applyReleaseCommand(b,command('decide_exception',{exceptionId:id,decision,note:'Self'},b.version),{...ctx(),role:'super_admin'})).toThrow('release_self_decision_forbidden');
+  expect(b.exceptions[0].decision).toBe('pending');
+  const decided=apply(b,'decide_exception',{exceptionId:id,decision:'rejected',note:'Reviewed'},'owner');
+  expect(decided.exceptions[0]).toMatchObject({requestedBy:'admin',decidedBy:'owner',decision:'rejected'});
  });
  it('does not start a selected unresolved exception and rejects completion without actual recorded results',()=>{
   const b=apply(create(),'request_exception',{scope:'QA',reason:'Pending decision'});
