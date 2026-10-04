@@ -23,7 +23,8 @@ describe('knowledge navigation interactions',()=>{
   });
   it('temporarily expands filtered results without overwriting ordinary preferences',async()=>{
     const view=render(<Harness filtered/>);
-    expect(screen.getByRole('button',{name:'Adjust my order'})).toBeDisabled();
+    fireEvent.click(screen.getByRole('button',{name:'Directory actions'}));
+    expect(screen.getByRole('menuitem',{name:'Adjust my order'})).toBeDisabled();
     expect(screen.getByRole('button',{name:'Guide A'})).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'Collapse: Example folder'}));
     fireEvent.click(screen.getByRole('button',{name:'Expand: Example folder'}));await screen.findByRole('button',{name:'Guide A'});expect(change).not.toHaveBeenCalled();
@@ -31,9 +32,10 @@ describe('knowledge navigation interactions',()=>{
   });
   it('offers keyboard/mobile move actions that only reorder siblings',async()=>{
     render(<Harness/>);fireEvent.click(screen.getByRole('button',{name:'Expand: Example folder'}));
-    fireEvent.click(screen.getByRole('button',{name:'Adjust my order'}));
+    fireEvent.click(screen.getByRole('button',{name:'Directory actions'}));
+    fireEvent.click(screen.getByRole('menuitem',{name:'Adjust my order'}));
     const menu=screen.getByLabelText('Move options: Guide B');fireEvent.click(menu);
-    const details=menu.closest('details')!;fireEvent.click(details.querySelectorAll('button')[0]);
+    fireEvent.click(screen.getByRole('menuitem',{name:'Move up'}));
     await waitFor(()=>expect(change).toHaveBeenCalledWith({p_action:'reorder',p_page_id:'b',p_before_id:'a',p_order_kind:'tree'}));
   });
   it('moves a focused child with the real keyboard sensor without colliding with its expanded parent',async()=>{
@@ -43,7 +45,8 @@ describe('knowledge navigation interactions',()=>{
     });
     render(<Harness selectedId="b"/>);
     await screen.findByRole('button',{name:'Guide B'});
-    fireEvent.click(screen.getByRole('button',{name:'Adjust my order'}));
+    fireEvent.click(screen.getByRole('button',{name:'Directory actions'}));
+    fireEvent.click(screen.getByRole('menuitem',{name:'Adjust my order'}));
     const handle=screen.getByRole('button',{name:'Move in my order: Guide B'});handle.focus();
     fireEvent.keyDown(handle,{key:' ',code:'Space'});
     await waitFor(()=>expect(handle).toHaveAttribute('aria-pressed','true'));
@@ -60,12 +63,15 @@ describe('knowledge navigation interactions',()=>{
     expect(change).toHaveBeenCalledWith({p_action:'collapse',p_page_id:'parent',p_value:true});
   });
   it('pins imply favorites, unpin keeps favorite, and favorites have their own view',async()=>{
-    render(<Harness/>);fireEvent.click(screen.getByRole('button',{name:'Pin for me: Example folder'}));
-    await waitFor(()=>expect(screen.getAllByRole('button',{name:'Remove favorite: Example folder'})[0]).toHaveAttribute('aria-pressed','true'));
-    fireEvent.click(screen.getAllByRole('button',{name:'Unpin: Example folder'})[0]);
+    render(<Harness/>);fireEvent.click(screen.getByRole('button',{name:'Page actions: Example folder'}));
+    fireEvent.click(screen.getByRole('menuitem',{name:'Pin for me: Example folder'}));
+    await waitFor(()=>expect(change).toHaveBeenCalledWith({p_action:'pin',p_page_id:'parent',p_value:true}));
+    fireEvent.click(screen.getByRole('button',{name:'Page actions: Example folder'}));
+    fireEvent.click(screen.getByRole('menuitem',{name:'Unpin: Example folder'}));
     fireEvent.click(screen.getByRole('button',{name:'My favorites'}));
-    expect(screen.getAllByRole('button',{name:'Remove favorite: Example folder'})).toHaveLength(1);
-    expect(screen.getByRole('button',{name:'Pin for me: Example folder'})).toHaveAttribute('aria-pressed','false');
+    fireEvent.click(screen.getByRole('button',{name:'Page actions: Example folder'}));
+    expect(screen.getByRole('menuitem',{name:'Remove favorite: Example folder'})).toBeInTheDocument();
+    expect(screen.getByRole('menuitem',{name:'Pin for me: Example folder'})).toBeInTheDocument();
   });
 });
 

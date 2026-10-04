@@ -6,8 +6,9 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLicense } from '@/context/LicenseContext';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, Lock, FileText, ClipboardCheck, Inbox, Bug } from 'lucide-react';
+import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, Lock, FileText, ClipboardCheck, Inbox, Bug, Plus } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
+import { MyAssignmentsDropdown } from '@/components/MyAssignments';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
 import { supabase } from '@/integrations/supabase/client';
 import { useState, useRef, useEffect, useMemo } from 'react';
@@ -157,7 +158,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   );
 
   return (
-    <div className="flex-shrink-0 shadow-md" style={{
+    <div className="relative flex-shrink-0 shadow-md" style={{
       background: 'linear-gradient(to bottom, hsl(var(--sidebar-background)), hsl(var(--tab-bar-bg, var(--sidebar-accent))))',
     }}>
       {/* Row 1: Logo + Search + Actions */}
@@ -217,7 +218,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
               onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
               aria-label={t('common.search')}
               aria-expanded={mobileSearchOpen}
-              className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
+              className="absolute left-3 top-14 flex items-center justify-center min-w-[44px] min-h-[44px] rounded text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
             >
               <Search size={18} aria-hidden="true" />
             </button>
@@ -227,18 +228,20 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
           {isMobile && (
             <button
               onClick={createItem}
-              className="flex items-center justify-center min-h-[44px] px-3 rounded text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              aria-label={t(qaView ? 'qa.report' : 'button.createAction')}
+              title={t(qaView ? 'qa.report' : 'button.createAction')}
+              className="absolute left-14 top-14 flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              {t(qaView ? 'qa.report' : 'button.createAction')}
+              <Plus size={18} aria-hidden="true" />
             </button>
           )}
 
           {/* Pending approvals button */}
-          {approvalsEnabled && <div className="relative" ref={approvalPanelRef}>
+          {approvalsEnabled && <div className={isMobile ? 'absolute left-[100px] top-14' : 'relative'} ref={approvalPanelRef}>
             <button
               onClick={() => setShowPendingApprovals(v => !v)}
               aria-label={t('approval.pending')}
-              className="relative flex items-center justify-center min-w-[36px] min-h-[36px] rounded text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
+              className="relative flex items-center justify-center min-w-[44px] min-h-[44px] md:min-w-[36px] md:min-h-[36px] rounded text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
             >
               <ClipboardCheck size={18} aria-hidden="true" />
               {pendingApprovalCount > 0 && (
@@ -265,6 +268,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
             )}
           </div>}
 
+          <MyAssignmentsDropdown />
           <NotificationPanel />
 
           {/* Current member selector - only for admin/super_admin, hidden on mobile */}
@@ -378,7 +382,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
       )}
 
       {/* Row 2: Nav tabs — aligned with search bar center on desktop, horizontal scroll on mobile */}
-      <div className="flex items-center px-3 md:px-4 pb-2 gap-2">
+      <div className={`flex min-h-[52px] items-center pr-3 md:min-h-0 md:px-4 pb-2 gap-2 ${approvalsEnabled ? 'pl-[150px]' : 'pl-[106px]'}`}>
         {/* Spacer matching logo width — desktop only */}
         <div className="hidden md:block flex-shrink-0 invisible">
           <img className="h-16 w-auto" src="" alt="" />

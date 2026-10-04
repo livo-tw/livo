@@ -78,6 +78,7 @@ describe('knowledge base user flow', () => {
     render(<KnowledgeBaseView />);
     await screen.findByRole('heading', { name: 'Archived example meeting' });
     expect(screen.getByText('Historical source remains available.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.kb.navigation.filters }));
     expect(screen.getByRole('checkbox', { name: en.kb.showArchived })).not.toBeChecked();
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();

@@ -2944,7 +2944,14 @@
         "member": "Member",
         "admin": "Administrator",
         "super_admin": "Super administrator"
-      }
+      },
+      "onlyMe": "Only me",
+      "workspaceMembers": "Workspace members can view",
+      "selfHint": "Only you can view, edit and comment.",
+      "workspaceHint": "Active members of this workspace can view and comment; only you can edit.",
+      "parentLimit": "Parent restrictions still apply. This choice cannot grant access denied by a parent page.",
+      "privateDraftHint": "This owner-only draft remains private. Publish or share it through Document status before opening access to others.",
+      "actionTabs": "Permission to configure"
     },
     "comments": {
       "title": "Comments",
@@ -2990,7 +2997,40 @@
       "showAll": "Show all",
       "importFile": "Import document",
       "importVersion": "Import source revision",
-      "historicalListHint": "Text check marks belong to the historical record. Use Tracking to create or link current work."
+      "historicalListHint": "Text check marks belong to the historical record. Use Tracking to create or link current work.",
+      "filters": "Filters",
+      "activeFilters": "{{count}} active filters",
+      "clearSearch": "Clear search",
+      "clearFiltersAction": "Clear all filters",
+      "removeScope": "Clear project filter",
+      "removeCategory": "Clear category filter",
+      "hideArchived": "Hide archived pages",
+      "pageActions": "Page actions: {{title}}",
+      "directoryActions": "Directory actions",
+      "directory": "Page directory",
+      "searchResults": "Search results ({{count}})",
+      "orderHint": "Drag or use the row menu. Only your personal order changes.",
+      "emptyPins": "No pinned pages in this scope.",
+      "recentPages": "Recently updated",
+      "openRecent": "Open recently updated page: {{title}}",
+      "favoriteAction": "Add to favorites",
+      "unfavoriteAction": "Remove from favorites",
+      "pinAction": "Pin for me",
+      "unpinAction": "Remove my pin"
+    },
+    "sharing": {
+      "copyLink": "Copy link",
+      "export": "Export / copy",
+      "copyContent": "Copy page content",
+      "exportPdf": "Export PDF (print / save)",
+      "linkCopied": "Page link copied. Recipients need to sign in and have access.",
+      "contentCopied": "Saved page content copied.",
+      "pdfReady": "Print dialog opened. Choose Save as PDF to export.",
+      "unavailable": "This page is unavailable or you no longer have access.",
+      "failed": "Could not copy or export. Please retry.",
+      "accessHint": "Links keep LIVO access checks. Account access alone does not grant permission to a restricted page.",
+      "copyNotice": "PDF and copied content are independent copies of the saved page body; download attachments separately. Changing LIVO permissions cannot revoke these copies.",
+      "updated": "Updated: {{date}}"
     }
   },
   "qa": {
@@ -3596,6 +3636,43 @@
       "release_limit_reached": "This batch has reached its record limit.",
       "release_unavailable": "The service is unavailable. Please try again later.",
       "release_transport_error": "The connection was interrupted and the outcome is unconfirmed. Retry the same operation."
+    }
+  },
+  "myAssignments": {
+    "title": "My tasks",
+    "trigger": "My tasks, {{count}} unfinished cards",
+    "triggerLoading": "My tasks, updating count",
+    "summary": "{{count}} unfinished cards",
+    "allProjects": "All projects",
+    "partial": "Bug count unavailable",
+    "loading": "Loading tasks and bugs…",
+    "refresh": "Refresh my tasks",
+    "typeFilter": "Card type",
+    "search": "Search title, ID or project",
+    "roleFilter": "My responsibility",
+    "allRoles": "All responsibilities",
+    "assignedRole": "Assigned to me / fix",
+    "reviewRole": "Review / verify",
+    "qaFailed": "Could not load bugs. The total is unknown; ordinary tasks are still available.",
+    "noResults": "No matching cards.",
+    "empty": "No unfinished cards in this view.",
+    "viewAll": "View all my tasks",
+    "openCard": "Open card: {{title}}",
+    "overdue": "Overdue",
+    "today": "Today",
+    "unknownProject": "Unknown project",
+    "taskTable": "Task table and history",
+    "backToAssignments": "Back to my unfinished tasks",
+    "types": {
+      "all": "All",
+      "task": "Tasks",
+      "bug": "Bugs"
+    },
+    "roles": {
+      "assignee": "I own",
+      "reviewer": "I review",
+      "fix": "I fix",
+      "verify": "I verify"
     }
   }
 }

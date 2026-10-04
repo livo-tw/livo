@@ -2944,7 +2944,14 @@
         "member": "一般成员",
         "admin": "管理员",
         "super_admin": "最高管理员"
-      }
+      },
+      "onlyMe": "仅限自己",
+      "workspaceMembers": "空间成员可看",
+      "selfHint": "只有你可以查看、编辑及评论。",
+      "workspaceHint": "本空间的启用成员可查看与评论；只有你可编辑。",
+      "parentLimit": "上层页面的限制仍会生效，这个选项不能开放上层未授权的人。",
+      "privateDraftHint": "这是私人草稿，仍仅限草稿拥有者。请先通过“文档状态”的发布或分享流程开放给他人。",
+      "actionTabs": "要设置的权限"
     },
     "comments": {
       "title": "评论",
@@ -2990,7 +2997,40 @@
       "showAll": "显示全部",
       "importFile": "导入文件",
       "importVersion": "导入来源新版本",
-      "historicalListHint": "文字勾选符号属于历史记录，请在工作跟踪区建立或关联当前的工作。"
+      "historicalListHint": "文字勾选符号属于历史记录，请在工作跟踪区建立或关联当前的工作。",
+      "filters": "筛选",
+      "activeFilters": "{{count}} 个筛选条件",
+      "clearSearch": "清除搜索",
+      "clearFiltersAction": "清除所有筛选",
+      "removeScope": "清除项目筛选",
+      "removeCategory": "清除类别筛选",
+      "hideArchived": "隐藏已归档页面",
+      "pageActions": "页面操作：{{title}}",
+      "directoryActions": "目录操作",
+      "directory": "页面目录",
+      "searchResults": "搜索结果（{{count}}）",
+      "orderHint": "拖动或使用页面菜单调整，只影响你的目录顺序。",
+      "emptyPins": "这个范围还没有置顶页面。",
+      "recentPages": "最近更新",
+      "openRecent": "打开最近更新页面：{{title}}",
+      "favoriteAction": "加入收藏",
+      "unfavoriteAction": "取消收藏",
+      "pinAction": "加入我的置顶",
+      "unpinAction": "取消我的置顶"
+    },
+    "sharing": {
+      "copyLink": "复制链接",
+      "export": "导出／复制",
+      "copyContent": "复制页面内容",
+      "exportPdf": "导出 PDF（打印／另存）",
+      "linkCopied": "页面链接已复制，对方须登录并拥有查看权限。",
+      "contentCopied": "已复制保存的页面内容。",
+      "pdfReady": "已打开打印窗口，选择“另存为 PDF”即可导出。",
+      "unavailable": "找不到此页面，或你目前没有查看权限。",
+      "failed": "复制或导出失败，请再试一次。",
+      "accessHint": "链接仍会检查 LIVO 登录与页面权限；有账号也不代表能看受限页面。",
+      "copyNotice": "PDF 与复制内容是已保存正文的独立副本；附件请另行下载。更改 LIVO 权限无法收回已导出的副本。",
+      "updated": "更新时间：{{date}}"
     }
   },
   "qa": {
@@ -3596,6 +3636,43 @@
       "release_limit_reached": "此批次已达到记录数量上限。",
       "release_unavailable": "当前无法处理，请稍后重试。",
       "release_transport_error": "连接中断，尚未确认结果。请重试同一条操作。"
+    }
+  },
+  "myAssignments": {
+    "title": "我的任务",
+    "trigger": "我的任务，{{count}} 张未完成卡片",
+    "triggerLoading": "我的任务，正在更新数量",
+    "summary": "{{count}} 张未完成卡片",
+    "allProjects": "所有项目",
+    "partial": "Bug 数量暂时无法获取",
+    "loading": "正在加载任务与 Bug…",
+    "refresh": "更新我的任务",
+    "typeFilter": "卡片类型",
+    "search": "搜索名称、编号或项目",
+    "roleFilter": "我的职责",
+    "allRoles": "所有职责",
+    "assignedRole": "我负责／修复",
+    "reviewRole": "我验收／验证",
+    "qaFailed": "Bug 加载失败，总数尚未确认；一般任务仍可查看。",
+    "noResults": "找不到符合的卡片。",
+    "empty": "这里目前没有未完成卡片。",
+    "viewAll": "查看全部我的任务",
+    "openCard": "打开卡片：{{title}}",
+    "overdue": "已逾期",
+    "today": "今天",
+    "unknownProject": "未知项目",
+    "taskTable": "任务表格与历史",
+    "backToAssignments": "返回我的未完成任务",
+    "types": {
+      "all": "全部",
+      "task": "一般任务",
+      "bug": "Bug"
+    },
+    "roles": {
+      "assignee": "我负责",
+      "reviewer": "我验收",
+      "fix": "我修复",
+      "verify": "我验证"
     }
   }
 }

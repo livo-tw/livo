@@ -122,6 +122,7 @@ describe('knowledge permissions and meeting notes', () => {
     const permissions = within(screen.getByRole('dialog', { name: 'Page permissions' }));
     fireEvent.click(permissions.getByRole('radio', { name: /Custom permissions/ }));
     for (const action of ['Can view', 'Can edit', 'Can comment']) {
+      fireEvent.click(permissions.getByRole('button', { name: action }));
       fireEvent.click(within(permissions.getByRole('group', { name: action })).getByRole('checkbox', { name: 'PM' }));
     }
     fireEvent.click(permissions.getByRole('button', { name: 'Save' }));
@@ -143,6 +144,7 @@ describe('knowledge permissions and meeting notes', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Page permissions' }));
     let dialog = within(screen.getByRole('dialog', { name: 'Page permissions' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Can comment' }));
     fireEvent.click(within(dialog.getByRole('group', { name: 'Can comment' })).getByRole('checkbox', { name: 'PM' }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

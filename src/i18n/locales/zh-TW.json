@@ -2944,7 +2944,14 @@
         "member": "一般成員",
         "admin": "管理員",
         "super_admin": "最高管理員"
-      }
+      },
+      "onlyMe": "僅限自己",
+      "workspaceMembers": "空間成員可看",
+      "selfHint": "只有你可以檢視、編輯及評論。",
+      "workspaceHint": "本空間的啟用成員可檢視與評論；只有你可編輯。",
+      "parentLimit": "上層頁面的限制仍會生效，這個選項不能開放上層未授權的人。",
+      "privateDraftHint": "這是私人草稿，仍僅限草稿擁有者。請先透過「文件狀態」的發佈或分享流程開放給他人。",
+      "actionTabs": "要設定的權限"
     },
     "comments": {
       "title": "評論",
@@ -2990,7 +2997,40 @@
       "showAll": "顯示全部",
       "importFile": "匯入文件",
       "importVersion": "匯入來源新版本",
-      "historicalListHint": "文字勾選符號屬於歷史紀錄，請在工作追蹤區建立或關聯目前的工作。"
+      "historicalListHint": "文字勾選符號屬於歷史紀錄，請在工作追蹤區建立或關聯目前的工作。",
+      "filters": "篩選",
+      "activeFilters": "{{count}} 個篩選條件",
+      "clearSearch": "清除搜尋",
+      "clearFiltersAction": "清除所有篩選",
+      "removeScope": "清除專案篩選",
+      "removeCategory": "清除類別篩選",
+      "hideArchived": "隱藏已封存頁面",
+      "pageActions": "頁面操作：{{title}}",
+      "directoryActions": "目錄操作",
+      "directory": "頁面目錄",
+      "searchResults": "搜尋結果（{{count}}）",
+      "orderHint": "拖曳或使用頁面選單調整，只影響你的目錄順序。",
+      "emptyPins": "這個範圍還沒有置頂頁面。",
+      "recentPages": "最近更新",
+      "openRecent": "開啟最近更新頁面：{{title}}",
+      "favoriteAction": "加入收藏",
+      "unfavoriteAction": "取消收藏",
+      "pinAction": "加入我的置頂",
+      "unpinAction": "取消我的置頂"
+    },
+    "sharing": {
+      "copyLink": "複製連結",
+      "export": "匯出／複製",
+      "copyContent": "複製頁面內容",
+      "exportPdf": "匯出 PDF（列印／另存）",
+      "linkCopied": "頁面連結已複製，對方須登入並擁有檢視權限。",
+      "contentCopied": "已複製儲存的頁面內容。",
+      "pdfReady": "已開啟列印視窗，選擇「另存為 PDF」即可匯出。",
+      "unavailable": "找不到此頁面，或你目前沒有檢視權限。",
+      "failed": "複製或匯出失敗，請再試一次。",
+      "accessHint": "連結仍會檢查 LIVO 登入與頁面權限；有帳號也不代表能看受限頁面。",
+      "copyNotice": "PDF 與複製內容是已儲存正文的獨立副本；附件請另行下載。變更 LIVO 權限無法收回已匯出的副本。",
+      "updated": "更新時間：{{date}}"
     }
   },
   "qa": {
@@ -3596,6 +3636,43 @@
       "release_limit_reached": "此批次已達紀錄數量上限。",
       "release_unavailable": "目前無法處理，請稍後再試。",
       "release_transport_error": "連線中斷，尚未確認結果。請重試同一筆操作。"
+    }
+  },
+  "myAssignments": {
+    "title": "我的任務",
+    "trigger": "我的任務，{{count}} 張未完成卡片",
+    "triggerLoading": "我的任務，正在更新數量",
+    "summary": "{{count}} 張未完成卡片",
+    "allProjects": "所有專案",
+    "partial": "Bug 數量暫時無法取得",
+    "loading": "正在載入任務與 Bug…",
+    "refresh": "更新我的任務",
+    "typeFilter": "卡片類型",
+    "search": "搜尋名稱、編號或專案",
+    "roleFilter": "我的職責",
+    "allRoles": "所有職責",
+    "assignedRole": "我負責／修復",
+    "reviewRole": "我驗收／驗證",
+    "qaFailed": "Bug 載入失敗，總數尚未確認；一般任務仍可查看。",
+    "noResults": "找不到符合的卡片。",
+    "empty": "這裡目前沒有未完成卡片。",
+    "viewAll": "查看全部我的任務",
+    "openCard": "開啟卡片：{{title}}",
+    "overdue": "已逾期",
+    "today": "今天",
+    "unknownProject": "未知專案",
+    "taskTable": "任務表格與歷史",
+    "backToAssignments": "返回我的未完成任務",
+    "types": {
+      "all": "全部",
+      "task": "一般任務",
+      "bug": "Bug"
+    },
+    "roles": {
+      "assignee": "我負責",
+      "reviewer": "我驗收",
+      "fix": "我修復",
+      "verify": "我驗證"
     }
   }
 }

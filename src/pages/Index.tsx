@@ -19,7 +19,8 @@ import StandupPanel from '@/components/StandupPanel';
 import CreateProjectModal from '@/components/CreateProjectModal';
 import CreateTaskModal from '@/components/CreateTaskModal';
 import ActivityLogView from '@/components/ActivityLogView';
-import MyTasksView from '@/components/MyTasksView';
+import MyTasksView from '@/components/MyAssignments';
+import { MyAssignmentsProvider } from '@/context/MyAssignmentsContext';
 import MySettingsView from '@/components/MySettingsView';
 import TeamManageView from '@/components/TeamManageView';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
@@ -218,7 +219,7 @@ const Index = () => (
       <LicenseProvider>
         <UndoStackProvider>
           <NotificationToastProvider>
-            <AppContent />
+            <MyAssignmentsProvider><AppContent /></MyAssignmentsProvider>
           </NotificationToastProvider>
         </UndoStackProvider>
       </LicenseProvider>

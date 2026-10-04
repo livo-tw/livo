@@ -2,7 +2,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, Plus, Search, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { BookOpen, Plus, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck, FileText } from 'lucide-react';
 import { renderKnowledgeHtml } from '@/lib/knowledgeHtml';
 import { toast } from 'sonner';
 import { useAuthContext } from '@/context/AuthContext';
@@ -12,6 +12,8 @@ import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile } from '@/hooks/useKnowledgeBase';
 import { validateKnowledgeTree } from '@/lib/knowledge';
 import KnowledgeNavigation, { KnowledgePageActions } from '@/components/knowledge/KnowledgeNavigation';
+import KnowledgeSidebar from '@/components/knowledge/KnowledgeSidebar';
+import KnowledgeShareActions from '@/components/knowledge/KnowledgeShareActions';
 import KnowledgeReadingBody, { KNOWLEDGE_READING_STYLE } from '@/components/knowledge/KnowledgeReadingBody';
 import { KnowledgeWorkflowPanel } from '@/components/knowledge/KnowledgeWorkflowPanel';
 import { useKnowledgeNavigation } from '@/hooks/useKnowledgeNavigation';
@@ -272,25 +274,15 @@ export default function KnowledgeBaseView() {
     </header>
     {error && <div role="alert" className="px-4 py-2 text-sm text-destructive">{t('kb.errors.kb_load_failed')} <button className="underline" onClick={() => void refresh()}>{t('kb.retry')}</button></div>}
     <div className="flex flex-1 min-h-0 overflow-hidden">
-      <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 flex-col border-r bg-card/60`} aria-label={t('kb.pages')}>
-        <div className="p-3 space-y-3 border-b">
-          <div className="relative"><Search size={15} className="absolute left-3 top-3 text-muted-foreground" /><Input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('kb.search')} aria-label={t('kb.search')} className="pl-9" /></div>
-          <SearchableSelect className={`${selectStyle} w-full`} aria-label={t('kb.scope')} value={scope} onChange={e => setScope(e.target.value)}>
-            <option value="all">{t('kb.allScopes')}</option>{scopeOptions}
-          </SearchableSelect>
-          <SearchableSelect className={`${selectStyle} w-full`} aria-label={t('kb.category')} value={category} onChange={e => setCategory(e.target.value as typeof category)}>
-            <option value="all">{t('kb.allCategories')}</option><option value="general">{t('kb.categories.general')}</option><option value="meeting">{t('kb.categories.meeting')}</option>
-          </SearchableSelect>
-          <label className="flex gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />{t('kb.showArchived')}</label>
-        </div>
-        <nav className="overflow-auto flex-1 p-2">
+      <KnowledgeSidebar selected={!!selectedId} query={query} onQuery={setQuery} scope={scope} onScope={setScope} scopeOptions={scopeOptions} scopeLabel={scope === 'all' ? t('kb.allScopes') : scopeName(scope === 'shared' ? null : scope)} category={category} onCategory={setCategory} archived={showArchived} onArchived={setShowArchived}>
+        <nav className="flex min-h-0 flex-1 flex-col" aria-label={t('kb.navigation.directory')}>
           {loading ? <p className="p-3 text-sm">{t('kb.loading')}</p> : <KnowledgeNavigation
             pages={visible} groups={groups.filter(g => scope === 'all' || scope === g.id)} query={query}
             filtered={scope !== 'all' || category !== 'all'} selectedId={selectedId}
             onSelect={id => void selectPage(id)} navigation={navigation} busy={busy} scopeName={scopeName} />}
 
         </nav>
-      </aside>
+      </KnowledgeSidebar>
       <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-auto p-4 md:p-7`}>
         {selectedId && <Button variant="ghost" className="md:hidden self-start mb-3 gap-2" disabled={busy} onClick={() => {
           if (!draft || window.confirm(t('kb.discard'))) {
@@ -299,12 +291,16 @@ export default function KnowledgeBaseView() {
             window.history.pushState({}, '', location); lastLocation.current = location.href;
           }
         }}><ArrowLeft size={16} />{t('kb.pages')}</Button>}
-        {!page ? <div className="m-auto text-center max-w-sm text-muted-foreground"><BookOpen size={36} className="mx-auto mb-4 text-primary/60" /><h2 className="font-semibold text-foreground">{t('kb.emptyTitle')}</h2><p className="text-sm mt-2">{t('kb.emptyHint')}</p></div> : <div className="w-full max-w-5xl mx-auto space-y-5">
+        {!page ? <div className="mx-auto my-auto w-full max-w-3xl py-6">
+          <div className="mb-8 text-center text-muted-foreground"><BookOpen size={30} className="mx-auto mb-3 text-primary/60" /><h2 className="font-semibold text-foreground">{t(selectedId && !loading ? 'kb.sharing.unavailable' : 'kb.emptyTitle')}</h2><p className="mt-2 text-sm">{t('kb.emptyHint')}</p></div>
+          {!selectedId && !loading && visible.length > 0 && <section aria-label={t('kb.navigation.recentPages')}><h3 className="mb-3 text-sm font-medium">{t('kb.navigation.recentPages')}</h3><div className="grid gap-3 lg:grid-cols-2">{visible.filter(candidate => scope === 'all' || (candidate.project_id || 'shared') === scope).slice().sort((left, right) => right.updated_at.localeCompare(left.updated_at)).slice(0, 6).map(candidate => <button key={candidate.id} type="button" aria-label={t('kb.navigation.openRecent', { title: candidate.title })} className="flex items-start gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5" onClick={() => void selectPage(candidate.id)}><FileText size={18} className="mt-0.5 shrink-0 text-primary" /><span className="min-w-0"><span className="block break-words text-sm font-medium">{candidate.title}</span><span className="mt-1.5 block text-xs text-muted-foreground">{scopeName(candidate.project_id)} · {t(`kb.categories.${candidate.category || 'general'}`)}</span></span></button>)}</div></section>}
+        </div> : <div className="w-full max-w-5xl mx-auto space-y-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0"><p className="text-xs text-primary mb-2">{scopeName(page.project_id)} · {t(`kb.categories.${page.category || 'general'}`)}</p><h2 className="text-2xl font-bold break-words">{page.title}</h2>
               <p className="text-xs text-muted-foreground mt-2">{t('kb.updated', { name: users.find(u => u.id === page.updated_by)?.name || t('kb.member'), date: new Date(page.updated_at).toLocaleString() })}</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              {!draft && <KnowledgeShareActions page={page} scope={scopeName(page.project_id)} disabled={busy} onUnavailable={() => { void refresh(); }} />}
               {!draft && <KnowledgePageActions page={page} navigation={navigation} busy={busy} />}
               {draft ? <><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></> : <>
                 <Button variant="outline" onClick={() => { setShowHistory(!showHistory); setPreview(null); }} className="gap-2"><History size={15} />{t('kb.history')}</Button>
@@ -387,7 +383,7 @@ export default function KnowledgeBaseView() {
       </form>
     </DialogContent></Dialog>
     {importOpen && member && <KnowledgeImportDialog open={importOpen} onOpenChange={setImportOpen} pages={pages} users={users} actor={member} initialTargetId={importTargetId} onImported={ids => { void refresh().then(() => { if (ids[0]) void selectPage(ids[0]); }); }} />}
-    <KnowledgePermissionsDialog open={!!permissionTarget} onOpenChange={open => { if (!open) setPermissionTarget(null); }} policy={permissionTarget === 'new' ? newPolicy : pagePolicy} users={users} hasParent={permissionTarget === 'page' && !!page?.parent_id} busy={busy} onSave={savePolicy} />
+    <KnowledgePermissionsDialog open={!!permissionTarget} onOpenChange={open => { if (!open) setPermissionTarget(null); }} policy={permissionTarget === 'new' ? newPolicy : pagePolicy} users={users} currentMemberId={currentMemberId || ''} hasParent={permissionTarget === 'page' && !!page?.parent_id} privateDraft={permissionTarget === 'page' && !!page?.private_draft_owner_id} busy={busy} onSave={savePolicy} />
     {workOpen && actor && <KnowledgeWorkSpace key={currentMemberId} client={workClient} projectId={scope === 'all' || scope === 'shared' ? undefined : scope} onClose={() => setWorkOpen(false)} onSaved={async id => { setSelectedId(id); setWorkPanelOpen(true); await refresh(); }} onOpen={async (item: KnowledgeSearchItem) => {
       if (item.kind === 'knowledge' || item.kind === 'knowledge_file') { await selectPage(item.pageId || item.id); setWorkPanelOpen(true); setWorkOpen(false); }
       else { const target = new URL(window.location.href); target.search = ''; if (item.issueId) target.searchParams.set('qa', item.issueId); else if (item.taskKey) target.searchParams.set('task', item.taskKey); else { toast.error(t('knowledgeWork.errors.knowledge_source_unavailable')); return; } window.location.assign(target.toString()); }
