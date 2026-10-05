@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { GanttGroup, EnrichedTask } from './types';
 import type { Status } from '@/types';
+import i18n from 'i18next';
 
 interface Props {
   grouped: GanttGroup[];
@@ -33,11 +34,11 @@ function getTimeProgress(task: EnrichedTask, cat: StatusCategory): number {
   return Math.min(100, Math.max(5, Math.round((elapsed / total) * 100)));
 }
 
-const CATEGORY_STYLE: Record<StatusCategory, { dot: string; bar: string; label: string; labelClass: string }> = {
-  done:    { dot: 'bg-green-500', bar: 'bg-green-500', label: '已完成', labelClass: 'text-green-700 dark:text-green-400' },
-  overdue: { dot: 'bg-red-500',   bar: 'bg-red-500',   label: '逾期',   labelClass: 'text-red-600 dark:text-red-400' },
-  active:  { dot: 'bg-blue-500',  bar: 'bg-blue-500',  label: '進行中', labelClass: 'text-blue-600 dark:text-blue-400' },
-  pending: { dot: 'bg-gray-400',  bar: 'bg-gray-300',  label: '未開始', labelClass: 'text-gray-500 dark:text-gray-400' },
+const CATEGORY_STYLE: Record<StatusCategory, { dot: string; bar: string; labelKey: string; labelClass: string }> = {
+  done:    { dot: 'bg-green-500', bar: 'bg-green-500', labelKey: 'gantt.status.done', labelClass: 'text-green-700 dark:text-green-400' },
+  overdue: { dot: 'bg-red-500',   bar: 'bg-red-500',   labelKey: 'gantt.status.overdue', labelClass: 'text-red-600 dark:text-red-400' },
+  active:  { dot: 'bg-blue-500',  bar: 'bg-blue-500',  labelKey: 'gantt.status.inProgress', labelClass: 'text-blue-600 dark:text-blue-400' },
+  pending: { dot: 'bg-gray-400',  bar: 'bg-gray-300',  labelKey: 'gantt.status.pending', labelClass: 'text-gray-500 dark:text-gray-400' },
 };
 
 const fmtDate = (d?: string) => (d ? format(new Date(d), 'MM/dd') : '—');
@@ -56,7 +57,7 @@ const TaskRow = ({ task, statuses, onSelectTask }: { task: EnrichedTask; statuse
       <div className="flex items-center gap-2 mb-1">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${style.dot}`} />
         <span className="text-[13px] font-medium truncate flex-1 leading-snug">{task.title}</span>
-        <span className={`text-[11px] font-semibold flex-shrink-0 ${style.labelClass}`}>{style.label}</span>
+        <span className={`text-[11px] font-semibold flex-shrink-0 ${style.labelClass}`}>{i18n.t(style.labelKey)}</span>
       </div>
       <div className="flex items-center gap-2 pl-4 mb-1.5">
         <span className="text-[11px] text-muted-foreground">
@@ -91,7 +92,7 @@ const GanttMobileTimeline = ({ grouped, statuses, onSelectTask }: Props) => {
   if (grouped.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-        目前沒有任務
+        {i18n.t('gantt.noTasks')}
       </div>
     );
   }

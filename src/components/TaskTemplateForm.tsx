@@ -6,12 +6,9 @@ import { TaskTemplate, Priority, Tag, User } from '@/types';
 import { useTranslation } from 'react-i18next';
 import type { ProjectGroup } from '@/lib/projectGroups';
 
-export const priorities: { value: Priority; label: string }[] = [
-  { value: 'highest', label: 'Highest' },
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
-  { value: 'lowest', label: 'Lowest' },
+// Shown with t(`priority.${value}`), the same labels as the rest of the app.
+export const priorities: { value: Priority }[] = [
+  { value: 'highest' }, { value: 'high' }, { value: 'medium' }, { value: 'low' }, { value: 'lowest' },
 ];
 
 export type GroupedProject = ProjectGroup;
@@ -106,7 +103,7 @@ const TaskTemplateForm = ({
           <SearchableSelect value={formPriority} onChange={e => setFormPriority(e.target.value as Priority | '')}
             className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
             <option value="">{t('taskTemplate.noPriority')}</option>
-            {priorities.map(p => (<option key={p.value} value={p.value}>{p.label}</option>))}
+            {priorities.map(p => (<option key={p.value} value={p.value}>{t(`priority.${p.value}`)}</option>))}
           </SearchableSelect>
         </div>
         <div>

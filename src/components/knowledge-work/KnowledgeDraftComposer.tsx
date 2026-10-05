@@ -4,7 +4,10 @@ import { knowledgeWorkErrorCode, type KnowledgeDraftPreview, type KnowledgeSearc
 import { QaField, QaSelect, qaButton, qaPrimary } from '@/components/qa/QaFields';
 import KnowledgeWorkSearch from './KnowledgeWorkSearch';
 
-export default function KnowledgeDraftComposer({ client, projectId, onSaved, onStateChange }: { client: KnowledgeWorkClient; projectId?: string; onSaved: (pageId: string) => Promise<void>; onStateChange?: (state: { busy: boolean; dirty: boolean }) => void }) {
+/** Today as YYYY-MM-DD in local time, the same form as the weekly period dates. */
+const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+export default function KnowledgeDraftComposer({ client, projectId, onSaved, onOpenDraft, onStateChange }: { client: KnowledgeWorkClient; projectId?: string; onSaved: (pageId: string) => Promise<void>; onOpenDraft?: (pageId: string) => Promise<void>; onStateChange?: (state: { busy: boolean; dirty: boolean }) => void }) {
   const { t } = useTranslation();
   const [kind, setKind] = useState<'meeting' | 'weekly'>('meeting');
   const [notes, setNotes] = useState(''), [title, setTitle] = useState('');
@@ -29,7 +32,9 @@ export default function KnowledgeDraftComposer({ client, projectId, onSaved, onS
     event.preventDefault(); if (submitting.current || !event.currentTarget.reportValidity()) return;
     submitting.current = true; setBusy(true); setError(''); const epoch = generation.current;
     try {
-      const result = await client.prepare({ kind, ...(title.trim() ? { title: title.trim() } : {}), notes, sourceRefs: refs, ...(kind === 'weekly' ? { period: { from, to } } : {}) });
+      // An empty title gets one in the interface language (the server's fallback is English).
+      const defaultTitle = kind === 'weekly' ? t('knowledgeWork.defaultWeeklyTitle', { from, to }) : t('knowledgeWork.defaultMeetingTitle', { date: localDay(new Date()) });
+      const result = await client.prepare({ kind, title: title.trim() || defaultTitle.slice(0, 200), notes, sourceRefs: refs, ...(kind === 'weekly' ? { period: { from, to } } : {}) });
       if (epoch !== generation.current) return;
       setPreview(result); setDraftTitle(result.title); setText(result.text); setConfirmed(false);
     } catch (failure) { if (epoch === generation.current) setError(knowledgeWorkErrorCode(failure)); }
@@ -54,7 +59,7 @@ export default function KnowledgeDraftComposer({ client, projectId, onSaved, onS
   return <div className="space-y-4">
     <p className="text-sm text-muted-foreground">{t('knowledgeWork.draftHint')}</p>
     {error && <p role="alert" className="text-sm text-destructive">{t(`knowledgeWork.errors.${error}`)}</p>}
-    {savedPageId ? <div role="status" className="space-y-3"><p>{t('knowledgeWork.draftSaved')}</p><button className={qaButton} onClick={() => void onSaved(savedPageId).catch(() => setError('saved_refresh_failed'))}>{t('knowledgeWork.openDraft')}</button></div> : preview ? <>
+    {savedPageId ? <div role="status" className="space-y-3"><p>{t('knowledgeWork.draftSaved')}</p><button className={qaButton} onClick={() => void (onOpenDraft ?? onSaved)(savedPageId).catch(() => setError('saved_refresh_failed'))}>{t('knowledgeWork.openDraft')}</button></div> : preview ? <>
       {!preview.coverage.complete && <p role="alert">{t('knowledgeWork.incompletePreview')}</p>}
       <form className="space-y-3" onSubmit={event => { event.preventDefault(); if (event.currentTarget.reportValidity()) void save(); }}><fieldset disabled={busy} className="space-y-3">
         <QaField label={t('knowledgeWork.draftTitle')} required maxLength={200} value={draftTitle} onChange={event => { setDraftTitle(event.target.value); setConfirmed(false); }} />
@@ -63,6 +68,8 @@ export default function KnowledgeDraftComposer({ client, projectId, onSaved, onS
         <button className={qaPrimary} type="submit" disabled={!confirmed || !preview.coverage.complete}>{t('knowledgeWork.savePrivateDraft')}</button> <button className={qaButton} type="button" onClick={() => { setPreview(null); setConfirmed(false); }}>{t('knowledgeWork.backToNotes')}</button>
       </fieldset></form>
     </> : <>
+      {/* Pick sources first; the preview button comes last (it sat above this picker before). */}
+      <details><summary className="cursor-pointer text-sm font-medium">{t('knowledgeWork.chooseSources')}</summary><div className="mt-3"><KnowledgeWorkSearch client={client} projectId={projectId} selected={refs} onSelect={pick} /></div></details>
       <form className="space-y-3" onSubmit={event => void prepare(event)}><fieldset disabled={busy} className="space-y-3">
         <QaSelect label={t('knowledgeWork.draftKind')} value={kind} onChange={event => setKind(event.target.value as 'meeting' | 'weekly')}><option value="meeting">{t('knowledgeWork.meeting')}</option><option value="weekly">{t('knowledgeWork.weekly')}</option></QaSelect>
         <QaField label={t('knowledgeWork.optionalTitle')} maxLength={200} value={title} onChange={event => setTitle(event.target.value)} />
@@ -72,7 +79,6 @@ export default function KnowledgeDraftComposer({ client, projectId, onSaved, onS
         <ul className="space-y-2">{sources.map(source => <li className="flex items-center justify-between gap-2 text-sm" key={`${source.kind}:${source.id}`}><span>{source.title}</span><button type="button" className={qaButton} onClick={() => setSources(previous => previous.filter(value => value.kind !== source.kind || value.id !== source.id))}>{t('knowledgeWork.removeReference')}</button></li>)}</ul>
         <button className={qaPrimary} type="submit" disabled={!notes.trim() && !sources.length}>{t('knowledgeWork.preparePreview')}</button>
       </fieldset></form>
-      <details><summary className="cursor-pointer text-sm font-medium">{t('knowledgeWork.chooseSources')}</summary><div className="mt-3"><KnowledgeWorkSearch client={client} projectId={projectId} selected={refs} onSelect={pick} /></div></details>
     </>}
     {busy && <p role="status">{t('kb.loading')}</p>}
   </div>;

@@ -63,13 +63,13 @@ export default function QaHandoffPanel({ issue, actor, busy, onCommand }: {
     {draft && <form className="mt-4 space-y-3" onSubmit={event => void request(event)}><fieldset disabled={busy} className="space-y-3">
       {handoff && !handoff.resolvedAt && <p className="text-sm text-muted-foreground">{t('qaHandoff.replaceHint')}</p>}
       <UserSelect name="nextOwnerId" label={t('qaHandoff.nextOwner')} activeOnly required disabled={busy} value={draft.nextOwnerId} onChange={nextOwnerId => setDraft(previous => previous && { ...previous, nextOwnerId })} emptyLabel={t('qa.choose')} />
-      <QaField label={t('qaHandoff.reason')} multiline required maxLength={10000} value={draft.reason} onChange={event => setDraft(previous => previous && { ...previous, reason: event.target.value })} />
+      <QaField label={t('qaHandoff.reason')} multiline required maxLength={8000} value={draft.reason} onChange={event => setDraft(previous => previous && { ...previous, reason: event.target.value })} />
       <QaField label={t('qaHandoff.replyTime', { timezone })} type="datetime-local" value={draft.replyBy} onChange={event => setDraft(previous => previous && { ...previous, replyBy: event.target.value })} />
-      <QaField label={t('qaHandoff.externalDependency')} multiline maxLength={10000} value={draft.externalDependency} onChange={event => setDraft(previous => previous && { ...previous, externalDependency: event.target.value })} />
+      <QaField label={t('qaHandoff.externalDependency')} multiline maxLength={2000} value={draft.externalDependency} onChange={event => setDraft(previous => previous && { ...previous, externalDependency: event.target.value })} />
       <button className={qaPrimary} type="submit">{t('qaHandoff.confirmRequest')}</button> <button className={qaButton} type="button" onClick={() => setDraft(null)}>{t('qa.cancel')}</button>
     </fieldset></form>}
     {resolving && <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); if (event.currentTarget.reportValidity()) void run({ type: 'resolve_handoff', handoffId: resolving.id, evidence: resolving.evidence.trim() }, resolving.version); }}><fieldset disabled={busy} className="space-y-3">
-      <QaField label={t('qaHandoff.evidence')} multiline required maxLength={10000} value={resolving.evidence} onChange={event => setResolving(previous => previous && { ...previous, evidence: event.target.value })} />
+      <QaField label={t('qaHandoff.evidence')} multiline required maxLength={8000} value={resolving.evidence} onChange={event => setResolving(previous => previous && { ...previous, evidence: event.target.value })} />
       <button className={qaPrimary} type="submit">{t('qaHandoff.confirmResolve')}</button> <button className={qaButton} type="button" onClick={() => setResolving(null)}>{t('qa.cancel')}</button>
     </fieldset></form>}
   </QaSection>;

@@ -25,8 +25,9 @@ describe('QA lifecycle and authorization', () => {
   it('creates a report without a fake version or shadow task', () => {
     expect(report()).toMatchObject({ state: 'new', observedVersion: '', fixCycle: 0, version: 1, taskIds: [], assigneeId: null });
   });
-  it('does not let a reporter grant themselves QA ownership', () => {
-    expect(() => applyQaCommand(report(), { type: 'triage', assigneeId: 'reporter', qaOwnerId: 'reporter', severity: 'high', priority: 1, dueDate: null }, context('reporter', 'member'))).toThrow('qa_forbidden');
+  it('lets any active member set or change the owners, the reporter included (team decision)', () => {
+    expect(applyQaCommand(report(), { type: 'triage', assigneeId: 'reporter', qaOwnerId: 'reporter', severity: 'high', priority: 1, dueDate: null }, context('reporter', 'member'))).toMatchObject({ state: 'triaged', assigneeId: 'reporter', qaOwnerId: 'reporter' });
+    expect(canQaCommand(triaged(), { id: 'someone-else', role: 'member' }, 'triage')).toBe(true);
     expect(() => createQaIssue({ ...report(), projectId: 'p1' } as never, 'id1', context())).toThrow('qa_invalid_request');
   });
   it('allows a designated QA lead without granting workspace admin', () => {

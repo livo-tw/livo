@@ -66,7 +66,9 @@ describe('refused knowledge page deletion is explained', () => {
     window.history.replaceState({}, '', `${window.location.pathname}?kb=kb-demo-howto`);
     render(<KnowledgeBaseView />);
     await screen.findByRole('heading', { name: 'How to share a decision' });
-    fireEvent.click(screen.getByRole('button', { name: en.kb.delete }));
+    // Delete sits in the page's "More actions" menu.
+    fireEvent.click(screen.getByRole('button', { name: en.kb.moreActions }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.kb.delete }));
     await waitFor(() => expect(error).toHaveBeenCalledWith(en.kb.errors.kb_delete_blocked));
     expect(screen.getByRole('heading', { name: 'How to share a decision' })).toBeInTheDocument();
   });
@@ -79,7 +81,9 @@ describe('refused knowledge page deletion is explained', () => {
     window.history.replaceState({}, '', `${window.location.pathname}?kb=${saved.page.pageId}`);
     render(<KnowledgeBaseView />);
     await screen.findByRole('heading', { name: 'Example private draft' });
-    fireEvent.click(screen.getByRole('button', { name: en.kb.delete }));
+    // Delete sits in the page's "More actions" menu.
+    fireEvent.click(screen.getByRole('button', { name: en.kb.moreActions }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.kb.delete }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Example private draft' })).not.toBeInTheDocument());
     expect((await knowledgeClient.from('kb_pages').select('id').eq('id', saved.page.pageId)).data).toEqual([]);
     expect(error).not.toHaveBeenCalled();

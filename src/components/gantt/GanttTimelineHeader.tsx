@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Col, ViewMode } from './types';
-import { CELL_WIDTHS, HEADER_H, weekDayLabels } from './types';
+import { CELL_WIDTHS, HEADER_H } from './types';
+import { weekdayLabel } from '@/lib/dateLabels';
 
 interface GanttTimelineHeaderProps {
   viewMode: ViewMode;
@@ -38,7 +39,7 @@ const GanttTimelineHeader = React.memo(({
               const isWeekend = day.getDay() === 0 || day.getDay() === 6;
               return (
                 <div key={i} className={`flex-shrink-0 flex items-center justify-center text-[9px] border-r border-border ${isToday ? 'bg-primary/10 text-primary font-bold' : isWeekend ? 'bg-muted/30 text-muted-foreground' : 'text-muted-foreground'}`} style={{ width: cellW }}>
-                  {weekDayLabels[day.getDay()]}
+                  {weekdayLabel(day)}
                 </div>
               );
             })}

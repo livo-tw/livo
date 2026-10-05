@@ -51,7 +51,8 @@ export function useProjectState() {
       return false;
     }
     const { error } = await supabase.from('product_lines').delete().eq('id', lineId);
-    if (error) { toast.error(i18n.t('productLine.deleteFailed')); return false; }
+    // The server refuses too when the line still has projects the caller cannot see.
+    if (error) { toast.error(i18n.t(/product_line_has_projects/.test(error.message || '') ? 'productLine.hasProjects' : 'productLine.deleteFailed')); return false; }
     setProductLines(prev => prev.filter(l => l.id !== lineId));
     toast.success(i18n.t('productLine.deleted'));
     return true;

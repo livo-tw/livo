@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Priority } from '@/types';
+import i18n from 'i18next';
 import { ChevronsUp, ChevronUp, Minus, ArrowDown } from 'lucide-react';
 
 /* ── Status Badge ── */
@@ -33,7 +34,7 @@ export const priorityConfig: Record<Priority, { icon: React.ReactNode; label: st
 export const PriorityBadge = ({ priority }: { priority: Priority }) => {
   const pri = priorityConfig[priority];
   return (
-    <span title={pri.label} className={`inline-flex items-center justify-center ${pri.className}`}>
+    <span title={i18n.t(`priority.${priority}`, { defaultValue: pri.label })} className={`inline-flex items-center justify-center ${pri.className}`}>
       {pri.icon}
     </span>
   );

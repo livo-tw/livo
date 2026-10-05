@@ -12,7 +12,7 @@
 //   GET  → masked status (any authenticated member). Response:
 //            configured: { configured:true, source:'app', fromAddress, configuredAt }
 //            else:       { configured:false, source:null, fromAddress:null }
-//   POST { apiKey, fromAddress } → set/clear (admin / super_admin only;
+//   POST { apiKey, fromAddress } → set/clear (super_admin only;
 //         callers presenting the service-role key are exempt):
 //            empty apiKey             → disconnect → { ok:true, configured:false }
 //            apiKey not 're_…'        → { ok:false, error:'invalid_key', message } (400)
@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
 
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
-    // ── POST: set/clear — admin / super_admin only (service key exempt) ────
+    // ── POST: set/clear — super_admin only (service key exempt) ────
     let memberId: string | null = null;
     if (!isServiceCaller) {
       // No e-mail fallback and only active members: an unlinked login may carry an
@@ -96,8 +96,8 @@ Deno.serve(async (req) => {
         .eq('is_active', true)
         .maybeSingle();
       member = byAuth as typeof member;
-      if (!member || !['admin', 'super_admin'].includes(member.role || '')) {
-        return json({ error: 'Permission denied: admin role required' }, 403);
+      if (!member || !member.role === 'super_admin') {
+        return json({ error: 'Permission denied: super_admin role required' }, 403);
       }
       memberId = member.id ?? null;
     }

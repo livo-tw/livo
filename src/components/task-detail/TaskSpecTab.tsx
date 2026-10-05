@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { TaskDetailState } from './hooks/useTaskDetail';
 import { fixHtml } from './utils';
 import TaskSidebarFields from './TaskSidebarFields';
+import { useUnsavedDraft } from '@/lib/unsavedDrafts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RichFieldEditor — inline editor component
@@ -26,6 +27,8 @@ type RichFieldEditorProps = {
 const RichFieldEditor = memo(({ value, onChange, placeholder, users, onMention, onConfirm, onCancel }: RichFieldEditorProps) => {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
+  const empty = (html: string) => !html || html === '<p></p>';
+  useUnsavedDraft('task', draft !== value && !(empty(draft) && empty(value)), t('taskDetail.spec.discardDraft'));
   return (
     <div>
       <RichTextEditor content={draft} onChange={setDraft} placeholder={placeholder} members={users} onMention={onMention} />

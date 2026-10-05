@@ -154,6 +154,13 @@ describe('Docker slack-notify', () => {
     expect(t.text(dms[0])).toContain('你的任務有新留言');
     expect(t.text(dms[0])).not.toContain('Spoofed');
   });
+  it('sends no DM to a member who unlinked Slack in My settings', async () => {
+    const t = backend({ slack_link_preferences: [{ member_id: 'reviewer', linking_disabled: true }, { member_id: 'assignee', linking_disabled: false }] });
+    await t.send({ type: 'assignee_changed', taskId: 'task',
+      dmTargets: [{ email: 'assignee@example.com', reason: 'x' }, { email: 'reviewer@example.com', reason: 'x' }] });
+    expect(t.posts().filter(post => String(post.channel).startsWith('D')).map(post => post.channel)).toEqual(['DUASSIGNEE']);
+    expect(t.slack.filter(call => call.method === 'users.lookupByEmail').map(call => call.args.email)).toEqual(['assignee@example.com']);
+  });
   it('keeps the database outbox as the single sender when durable delivery is on', async () => {
     const t = backend({ system_settings: [{ key: 'slack_delivery', value: { enabled: true, routes: [] } }] });
     expect((await t.send({ type: 'status_changed', taskId: 'task' })).body).toEqual({ accepted: true, managedBy: 'database' });

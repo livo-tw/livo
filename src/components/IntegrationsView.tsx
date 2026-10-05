@@ -10,8 +10,6 @@ import WebhooksCard from './integrations/WebhooksCard';
 import ApiTokensCard from './integrations/ApiTokensCard';
 import GitLabCard from './integrations/GitLabCard';
 import CalendarCard from './integrations/CalendarCard';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import NotificationPolicyView from './notifications/NotificationPolicyView';
 
 // Email(SMTP) / GitLab / Calendar cards collect config that NOTHING consumes:
 // no worker or frontend code reads integration_email / integration_gitlab /
@@ -71,23 +69,19 @@ const IntegrationsView = ({ embedded }: { embedded?: boolean }) => {
           </div>
         )}
 
-        <Tabs defaultValue="integrations">
-          <TabsList className="mb-4">
-            <TabsTrigger value="integrations">{t('integrations.servicesTab')}</TabsTrigger>
-            <TabsTrigger value="notification-policy">{t('integrations.policiesTab')}</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="integrations" className="space-y-3">
+        {/* Notification rules and templates are managed once, in Team management → Notifications. */}
+        <div className="space-y-3">
             <SlackCard />
             <EmailNotifyCard />
             <WebhooksCard />
             <ApiTokensCard />
-            <WebhookCard
-              webhook={webhook}
-              onChange={setWebhook}
-              onSave={() => save('integration_webhook', webhook)}
-              saving={!!saving['integration_webhook']}
-            />
+            {(webhook.enabled || !!webhook.url || !!webhook.secret) && (
+              <WebhookCard
+                webhook={webhook}
+                onClear={() => { const cleared = { ...webhook, enabled: false, url: '', secret: '' }; setWebhook(cleared); save('integration_webhook', cleared); }}
+                saving={!!saving['integration_webhook']}
+              />
+            )}
             {SHOW_UNIMPLEMENTED_INTEGRATIONS && (
               <>
                 <EmailCard
@@ -110,12 +104,7 @@ const IntegrationsView = ({ embedded }: { embedded?: boolean }) => {
                 />
               </>
             )}
-          </TabsContent>
-
-          <TabsContent value="notification-policy">
-            <NotificationPolicyView />
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
       </div>
     </div>

@@ -20,6 +20,8 @@ import { useLicense } from '@/context/LicenseContext';
 import { useColumnConfig, type ColumnDef } from '@/hooks/useColumnConfig';
 import { FIXED_COLUMNS, OPTIONAL_COLUMNS } from '@/lib/columnDefs';
 import type { Priority, Task } from '@/types';
+import { taskDepartment } from '@/lib/department';
+import { monthDayLabel } from '@/lib/dateLabels';
 import {
   StatusBadge,
   ProjectBadge,
@@ -44,11 +46,11 @@ export interface ListCellContext {
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
-/** Default date formatter: "3月31日" */
+/** Default date formatter, in the interface language ("3月31日", "Mar 31"). */
 const defaultFormatDate = (d?: string): string => {
   if (!d) return '—';
   const dt = new Date(d);
-  return `${dt.getMonth() + 1}月${dt.getDate()}日`;
+  return Number.isFinite(dt.getTime()) ? monthDayLabel(dt) : '—';
 };
 
 /**
@@ -123,7 +125,7 @@ export function buildRenderCell(
 
       case 'department':
         return (
-          <span className="text-[13px] text-muted-foreground">{task.department || '—'}</span>
+          <span className="text-[13px] text-muted-foreground">{taskDepartment(task, users) || '—'}</span>
         );
 
       case 'assignee':

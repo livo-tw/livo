@@ -1,34 +1,22 @@
-import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Settings2 } from 'lucide-react';
 import type { User, Status, Project, CustomField } from '@/types';
 import { type CardFieldVisibility, KANBAN_CARD_FIELD_OPTIONS } from '@/lib/fieldRegistry';
-import DepartmentFilter from '@/components/DepartmentFilter';
-import MultiSelectDropdown from '@/components/MultiSelectDropdown';
-import { priorityConfig } from '@/components/ui/badges';
-import { sortUsersByDept, type Department } from '@/lib/department';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslation } from 'react-i18next';
+import type { BoardFilterState } from '@/hooks/useBoardFilters';
+import type { BoardSort } from '@/lib/boardSort';
+import BoardFilterChips from './BoardFilterChips';
+import BoardSortMenu from './BoardSortMenu';
 
 interface BoardFiltersProps {
   users: User[];
   statuses: Status[];
   allProjects: Project[];
   selectedProjectId: string | null;
-  filterDept: Department[];
-  setFilterDept: (v: Department[]) => void;
-  filterAssignees: string[];
-  setFilterAssignees: React.Dispatch<React.SetStateAction<string[]>>;
-  filterStatuses: string[];
-  setFilterStatuses: React.Dispatch<React.SetStateAction<string[]>>;
-  filterPriorities: string[];
-  setFilterPriorities: React.Dispatch<React.SetStateAction<string[]>>;
-  filterReviewers: string[];
-  setFilterReviewers: React.Dispatch<React.SetStateAction<string[]>>;
-  filterProjects: string[];
-  setFilterProjects: React.Dispatch<React.SetStateAction<string[]>>;
-  hasFilters: boolean;
-  clearFilters: () => void;
+  filters: BoardFilterState;
+  sort: BoardSort;
+  onSortChange: (sort: BoardSort) => void;
   // Card field settings
   cardFields: CardFieldVisibility;
   toggleCardField: (field: keyof CardFieldVisibility) => void;
@@ -42,14 +30,7 @@ interface BoardFiltersProps {
 }
 
 const BoardFilters = ({
-  users, statuses, allProjects, selectedProjectId,
-  filterDept, setFilterDept,
-  filterAssignees, setFilterAssignees,
-  filterStatuses, setFilterStatuses,
-  filterPriorities, setFilterPriorities,
-  filterReviewers, setFilterReviewers,
-  filterProjects, setFilterProjects,
-  hasFilters, clearFilters,
+  users, statuses, allProjects, selectedProjectId, filters, sort, onSortChange,
   cardFields, toggleCardField,
   subtaskDisplayMode, setSubtaskDisplayMode,
   hasSubtasksFeature,
@@ -72,30 +53,14 @@ const BoardFilters = ({
     return () => document.removeEventListener('pointerdown', handler);
   }, [showCardSettings]);
 
-  const toggleArr = useCallback((setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
-    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
-
-  const priorityOptions = useMemo(() => Object.entries(priorityConfig).map(([id, p]) => ({
-    id, label: p.label, icon: p.icon as React.ReactElement,
-  })), []);
-
   const projectCustomFields = customFields.filter(f => visibleProjectIds.includes(f.projectId));
 
   return (
-    <div className="flex items-center gap-1.5 md:gap-2 px-3 md:px-5 pb-3 md:pb-4 flex-wrap">
-      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 hidden md:inline">{t('filter.label')}</span>
-      <DepartmentFilter value={filterDept} onChange={setFilterDept} />
-      <MultiSelectDropdown label={isMobile ? t('filter.assigneeMobile') : t('filter.assignee')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
-      <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
-      <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={priorityOptions} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
-      <MultiSelectDropdown label={isMobile ? t('filter.reviewerMobile') : t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
-      {!selectedProjectId && (
-        <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />
-      )}
-      {hasFilters && (
-        <button onClick={clearFilters} className="text-[13px] text-primary hover:text-primary/80 font-medium">{t('button.clearFilters')}</button>
-      )}
-      <div className="relative ml-auto" ref={cardSettingsRef}>
+    <div className="px-3 md:px-5 pb-3 md:pb-4">
+    <BoardFilterChips users={users} statusOptions={statuses.map(status => ({ id: status.id, label: status.name, color: status.color }))}
+      allProjects={allProjects} showProjects={!selectedProjectId} filters={filters} trailing={<>
+      <BoardSortMenu value={sort} onChange={onSortChange} />
+      <div className="relative" ref={cardSettingsRef}>
         <button
           onClick={() => setShowCardSettings(!showCardSettings)}
           className={`flex items-center gap-1 px-2 py-1.5 text-[13px] font-medium rounded-md border transition-colors ${
@@ -165,6 +130,7 @@ const BoardFilters = ({
           </div>
         )}
       </div>
+    </>} />
     </div>
   );
 };

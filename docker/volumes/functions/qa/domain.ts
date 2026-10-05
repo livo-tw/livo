@@ -25,7 +25,11 @@ export interface QaIssue {
   reporterId: string; assigneeId: string | null; qaOwnerId: string | null;
   severity: QaSeverity; priority: number; dueDate: string | null; state: QaState;
   resolution: QaResolution | null; resolutionReason: string; duplicateOfId: string | null;
-  fixCycle: number; version: number; fixSummary: string; holdReason: string;
+  fixCycle: number; version: number; fixSummary: string;
+  /** What blocks the bug now; empty when nothing does. Cleared by a new fix or a reopen. */
+  holdReason: string;
+  /** Why the bug was last reopened. Records reopened before this field existed kept it in holdReason. */
+  reopenReason?: string;
   targets: QaTarget[]; runs: QaRun[]; taskIds: string[];
   handoff?: QaHandoff | null;
   createdAt: string; updatedAt: string; closedAt: string | null; reopenedAt: string | null;
@@ -68,7 +72,16 @@ export interface QaComment { id: string; issueId: string; actorId: string; body:
 export interface QaEvent { id: string; issueId: string; actorId: string; type: string; detail: string; createdAt: string; version: number; }
 export interface QaAttachment { id: string; issueId: string; fileName: string; mimeType: string; size: number; uploadedBy: string; createdAt: string; }
 export interface QaDetail { memberNames?: Record<string,string>; coordination?: QaCoordination; issue: QaIssue; comments: QaComment[]; events: QaEvent[]; attachments: QaAttachment[]; }
-export interface QaListInput { projectId?: string; state?: QaState; states?: QaState[]; search?: string; mine?: 'assigned' | 'testing' | 'reported'; offset?: number; limit?: number; }
+/** Board sort keys shared with the task board (src/lib/boardSort.ts); 'updated' is the default. */
+export type QaSortField = 'updated' | 'priority' | 'dueDate' | 'createdAt';
+export type QaSortDirection = 'asc' | 'desc';
+export interface QaListInput {
+  projectId?: string; state?: QaState; states?: QaState[]; search?: string; mine?: 'assigned' | 'testing' | 'reported' | 'involved' | 'handoff'; offset?: number; limit?: number;
+  projectIds?: string[]; assigneeIds?: string[]; qaOwnerIds?: string[]; reporterIds?: string[];
+  /** 1 (highest) to 5 (lowest), the stored QA priority. */
+  priorities?: number[]; severities?: QaSeverity[];
+  sort?: QaSortField; direction?: QaSortDirection;
+}
 export interface QaListResult { issues: QaIssue[]; total: number; hasMore: boolean; }
 export interface QaUpload { id: string; provider: 'r2' | 'supabase'; partSize: number; bucket?: string; path?: string; token?: string; }
 export class QaError extends Error {
@@ -78,6 +91,78 @@ export const QA_MAX_FILE_BYTES = 200 * 1024 * 1024;
 export const QA_PART_BYTES = 5 * 1024 * 1024;
 export const QA_STATES: QaState[] = ['new', 'triaged', 'in_progress', 'verification', 'verified', 'failed', 'closed', 'dismissed'];
 export const isQaTerminal = (state: QaState) => state === 'closed' || state === 'dismissed';
+export const QA_SEVERITIES: QaSeverity[] = ['untriaged', 'low', 'medium', 'high'];
+export const QA_SORT_FIELDS: QaSortField[] = ['updated', 'priority', 'dueDate', 'createdAt'];
+/** Natural first direction: newest, most important, or earliest due first. */
+export const qaDefaultSortDirection = (field: QaSortField): QaSortDirection => field === 'dueDate' ? 'asc' : 'desc';
+export interface QaListFilters {
+  projectIds?: string[]; assigneeIds?: string[]; qaOwnerIds?: string[]; reporterIds?: string[];
+  priorities?: number[]; severities?: QaSeverity[]; sort: QaSortField; direction: QaSortDirection;
+}
+const QA_FILTER_MAX = 200;
+
+/**
+ * Validates the list filters every backend applies the same way. Each id goes
+ * through the runtime's own id check. An empty list is rejected: "match
+ * nothing" and "no filter" must not be confused.
+ */
+/**
+ * A search for a bug id rather than title words: the short id shown on cards
+ * ("#1a2b3c4d", any part after the #) or a full id. Returns the id part to
+ * match, or null for an ordinary title search. Both servers and the demo use it.
+ */
+export function qaIdSearch(search: string | undefined): string | null {
+  const value = (search ?? '').trim();
+  const short = /^#([0-9A-Za-z_-]{1,64})$/.exec(value);
+  if (short) return short[1];
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
+}
+
+export function normalizeQaListFilters(input: QaListInput, id: (value: unknown) => string): QaListFilters {
+  const list = <T>(value: unknown, item: (entry: unknown) => T): T[] | undefined => {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || !value.length || value.length > QA_FILTER_MAX) return fail('qa_invalid_filter');
+    const items = value.map(item);
+    if (new Set(items).size !== items.length) return fail('qa_invalid_filter');
+    return items;
+  };
+  const sort = input.sort === undefined ? 'updated' : input.sort;
+  if (!QA_SORT_FIELDS.includes(sort)) return fail('qa_invalid_filter');
+  const direction = input.direction === undefined ? qaDefaultSortDirection(sort) : input.direction;
+  if (direction !== 'asc' && direction !== 'desc') return fail('qa_invalid_filter');
+  return {
+    projectIds: list(input.projectIds, id), assigneeIds: list(input.assigneeIds, id),
+    qaOwnerIds: list(input.qaOwnerIds, id), reporterIds: list(input.reporterIds, id),
+    priorities: list(input.priorities, value => Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 5 ? value as number : fail('qa_invalid_filter')),
+    severities: list(input.severities, value => QA_SEVERITIES.includes(value as QaSeverity) ? value as QaSeverity : fail('qa_invalid_filter')),
+    sort, direction,
+  };
+}
+
+export function matchesQaListFilters(issue: QaIssue, filters: QaListFilters): boolean {
+  return (!filters.projectIds || filters.projectIds.includes(issue.projectId))
+    && (!filters.assigneeIds || (!!issue.assigneeId && filters.assigneeIds.includes(issue.assigneeId)))
+    && (!filters.qaOwnerIds || (!!issue.qaOwnerId && filters.qaOwnerIds.includes(issue.qaOwnerId)))
+    && (!filters.reporterIds || filters.reporterIds.includes(issue.reporterId))
+    && (!filters.priorities || filters.priorities.includes(issue.priority))
+    && (!filters.severities || filters.severities.includes(issue.severity));
+}
+
+/**
+ * Reference order for QA lists; D1 and PostgreSQL must return the same order.
+ * Priority "desc" lists the most important (priority 1) first. Issues without a
+ * due date stay last in both directions. Ties: most recently updated, then id.
+ */
+export function compareQaIssues(a: QaIssue, b: QaIssue, sort: QaSortField, direction: QaSortDirection): number {
+  const sign = direction === 'asc' ? 1 : -1;
+  const text = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+  const tie = () => text(b.updatedAt, a.updatedAt) || text(a.id, b.id);
+  if (sort === 'updated') return sign * text(a.updatedAt, b.updatedAt) || text(a.id, b.id);
+  if (sort === 'priority') return -sign * (a.priority - b.priority) || tie();
+  if (sort === 'createdAt') return sign * text(a.createdAt, b.createdAt) || tie();
+  if (!a.dueDate || !b.dueDate) return Number(!a.dueDate) - Number(!b.dueDate) || tie();
+  return sign * text(a.dueDate, b.dueDate) || tie();
+}
 
 /** A historical PASS is source evidence, not a fabricated LIVO verification run. */
 export function isHistoricalQaPass(issue: QaIssue): boolean {
@@ -159,7 +244,8 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
   if (type === 'reopen') return participant && (isQaTerminal(issue.state) || ['verification', 'verified'].includes(issue.state));
   if (isQaTerminal(issue.state)) return false;
   switch (type) {
-    case 'triage': return lead || coordinator;
+    // Any active member may set or change the owners of an open bug (team decision, 2026-10).
+    case 'triage': return true;
     case 'request_handoff': return participant || coordinator;
     case 'accept_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && !issue.handoff.acceptedAt && issue.handoff.nextOwnerId === actor.id;
     case 'resolve_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && (admin(actor) || issue.handoff.nextOwnerId === actor.id);
@@ -173,6 +259,15 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
     case 'edit': return participant;
     default: return false;
   }
+}
+
+/**
+ * Comments are open to every active member, on any state including closed bugs,
+ * like task comments. Both servers only build an actor for an active member, so
+ * Slack thread replies from anyone on the team are kept rather than dropped.
+ */
+export function canQaComment(_issue: QaIssue, actor: QaActor): boolean {
+  return typeof actor.id === 'string' && actor.id.length > 0;
 }
 
 export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaContext): QaIssue {
@@ -317,7 +412,7 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       break;
     }
     case 'reopen':
-      keys(command, ['type', 'reason']); next.holdReason = str(command.reason, 8000, true);
+      keys(command, ['type', 'reason']); next.reopenReason = str(command.reason, 8000, true); next.holdReason = '';
       next.state = issue.assigneeId ? 'in_progress' : 'new'; next.resolution = null; next.resolutionReason = '';
       next.duplicateOfId = null; next.closedAt = null; next.closedBy = null; next.reopenedAt = ctx.now; break;
     case 'hold':
@@ -371,20 +466,30 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
     return JSON.stringify({ handoffId:h.id,reason:h.reason,nextOwnerId:h.nextOwnerId,replyBy:h.replyBy,externalDependency:h.externalDependency,
       requestedBy:h.requestedBy,requestedAt:h.requestedAt,acceptedBy:h.acceptedBy,acceptedAt:h.acceptedAt,resolvedBy:h.resolvedBy,resolvedAt:h.resolvedAt,resolutionEvidence:h.resolutionEvidence });
   }
-  if (type === 'hold' || type === 'reopen') return issue.holdReason;
+  if (type === 'hold') return issue.holdReason;
+  if (type === 'reopen') return issue.reopenReason ?? issue.holdReason;
   if (type === 'triage') return `RD: ${issue.assigneeId} · QA: ${issue.qaOwnerId}\n${issue.severity} · P${issue.priority}${issue.dueDate ? '\n' + issue.dueDate : ''}`;
   if (type === 'link_tasks') return issue.taskIds.join('\n');
   if (type === 'edit' || type === 'create' || type === 'created') return `${issue.title}\n${issue.observedEnvironment} · ${issue.observedVersion || '版本未知'}\n${issue.actual}\n${issue.steps}\n${issue.expected}`;
   return '';
 }
 
-/** Notifications are generated from committed transitions, never from UI guesses. */
-export function qaNotificationRecipients(issue: QaIssue, type: QaCommand['type'] | 'create' | 'comment', actorId: string): string[] {
-  const ids = type === 'request_handoff' ? [issue.handoff?.nextOwnerId]
-    : type === 'accept_handoff' || type === 'resolve_handoff' ? [issue.handoff?.requestedBy,issue.assigneeId,issue.qaOwnerId]
-    : type === 'set_state' ? [issue.reporterId, issue.assigneeId, issue.qaOwnerId]
+/**
+ * Who hears about a committed change, on both servers. Notifications come from
+ * committed transitions, never from UI guesses, and never go to the actor.
+ * A new bug goes to `triagers`, which only the server knows: the project's QA
+ * coordinator, or the workspace admins when the project has none.
+ */
+export function qaNotificationRecipients(issue: QaIssue, type: QaCommand['type'] | 'create' | 'comment', actorId: string, triagers: readonly string[] = []): string[] {
+  const everyone = [issue.reporterId, issue.assigneeId, issue.qaOwnerId];
+  const ids = type === 'create' ? [...triagers]
+    : type === 'request_handoff' ? [issue.handoff?.nextOwnerId]
+    : type === 'accept_handoff' || type === 'resolve_handoff' ? [issue.handoff?.requestedBy, issue.assigneeId, issue.qaOwnerId]
+    : type === 'set_state' || type === 'comment' || type === 'close' ? everyone
     : type === 'record_deployment' || type === 'submit_fix' ? [issue.qaOwnerId]
-    : type === 'record_verification' || type === 'triage' || type === 'reopen' ? [issue.assigneeId, issue.qaOwnerId]
-    : type === 'close' ? [issue.reporterId, issue.assigneeId] : [issue.assigneeId, issue.qaOwnerId];
+    // Starting work or linking tasks changes nothing anyone else has to act on.
+    : type === 'start_fix' || type === 'link_tasks' ? []
+    // triage, record_verification, reopen, hold, edit: the people working on the bug.
+    : [issue.assigneeId, issue.qaOwnerId];
   return [...new Set(ids.filter((value): value is string => !!value && value !== actorId))];
 }

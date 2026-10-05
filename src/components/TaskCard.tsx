@@ -10,11 +10,17 @@ import { useLicense } from '@/context/LicenseContext';
 import { useApprovalRules } from '@/hooks/useApprovalRules';
 import { useApprovalWorkflow } from '@/hooks/useApprovalWorkflow';
 import { useBoardApproval } from '@/components/board/useBoardApproval';
+import { useStatusChangeGate } from '@/hooks/useStatusChangeGate';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
+import { announceAssignment, announceStatusChange } from '@/lib/taskAnnouncements';
+import { formatCustomFieldValue } from '@/lib/customFieldDisplay';
+import { useTaskAnnouncements } from '@/hooks/useTaskAnnouncements';
+import { toast } from 'sonner';
 import BoardApprovalModal from '@/components/board/BoardApprovalModal';
 import type { ApprovalConfirmPayload } from '@/components/board/BoardApprovalModal';
 import { Task, Priority } from '@/types';
 import { GitBranch, MessageSquare, Paperclip, Lock, ListTree, CornerDownRight, AlertTriangle, Calendar, GitMerge, Flag, UserCircle, Circle } from 'lucide-react';
-import { getDepartment, deptColors, type Department } from '@/lib/department';
+import { taskDepartment, deptColors } from '@/lib/department';
 import { priorityConfig } from '@/components/ui/badges';
 // CardFieldVisibility lives in fieldRegistry (single source of truth)
 import type { CardFieldVisibility } from '@/lib/fieldRegistry';
@@ -96,16 +102,28 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
   const { hasFeature } = useLicense();
   const { getRuleForTransition } = useApprovalRules();
   const { requestApproval } = useApprovalWorkflow();
+  // Quick edits tell others the same way the task detail does, once saved.
+  const announcements = useTaskAnnouncements();
+  const announceDirect = useCallback((changed: Task, from: string, to: string) => announceStatusChange(changed, from, to, announcements), [announcements]);
   const {
     approvalConfirm, setApprovalConfirm,
     handleApprovalDirectChange, handleApprovalSubmit, handleMandatoryApproval,
-  } = useBoardApproval({ allTasks, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, requestApproval, t });
+  } = useBoardApproval({ allTasks, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, requestApproval, t, announce: announceDirect });
+  const statusGate = useStatusChangeGate();
   const [quickEdit, setQuickEdit] = useState<'priority' | 'assignee' | 'status' | null>(null);
+  // Long member lists can be narrowed by typing, as in the shared searchable selects.
+  const [assigneeQuery, setAssigneeQuery] = useState('');
+  useEffect(() => { if (quickEdit !== 'assignee') setAssigneeQuery(''); }, [quickEdit]);
+  const activeUsers = useMemo(() => users.filter(u => u.isActive), [users]);
+  const matchingUsers = useMemo(() => {
+    const query = assigneeQuery.trim().toLowerCase();
+    return query ? activeUsers.filter(u => `${u.name} ${u.jobTitle || ''} ${u.email || ''}`.toLowerCase().includes(query)) : activeUsers;
+  }, [activeUsers, assigneeQuery]);
   const quickBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const assignee = users.find(u => u.id === task.assigneeId);
   const reviewer = users.find(u => u.id === task.reviewerId);
   const priority = priorityConfig[task.priority];
-  const dept = (task.department as Department) || getDepartment(assignee);
+  const dept = taskDepartment(task, users);
   const status = statuses.find(s => s.id === task.statusId);
   const f = fields || {
     taskKey: true, commentCount: true, attachmentCount: true, gitlabUrl: true,
@@ -117,8 +135,11 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
     setQuickEdit(null);
     if (!featureTogglesReady || task.statusId === newStatusId) return;
     const project = allProjects.find(p => p.id === task.projectId);
+    const gate = statusGate.check(task, newStatusId);
+    const refusal = statusGate.refusal(gate, newStatusId);
+    if (refusal) { toast.error(refusal); return; }
     // Mandatory approval: task has requiresApproval flag
-    if (approvalsEnabled && task.requiresApproval) {
+    if (gate.kind === 'approval') {
       const toStatusName = statuses.find(s => s.id === newStatusId)?.name || '—';
       setApprovalConfirm({ taskId: task.id, fromStatusId: task.statusId, toStatusId: newStatusId, projectId: project?.id || '', toStatusName });
       return;
@@ -137,15 +158,19 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
       }
     }
     // No approval needed — direct update
-    const s = statuses.find(st => st.id === newStatusId);
-    const oldStatus = statuses.find(st => st.id === task.statusId);
-    const updates: Partial<Task> = { statusId: newStatusId };
-    if (s?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-    if (s?.isDone && !oldStatus?.isDone) updates.completedAt = new Date().toISOString();
-    if (!s?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
+    const updates = statusChangeUpdates(task, statuses, newStatusId);
     setAllTasks(prev => prev.map(t2 => t2.id === task.id ? { ...t2, ...updates } : t2));
-    updateTaskInDb(task.id, updates as Record<string, unknown>);
-  }, [approvalsEnabled, featureTogglesReady, task, allProjects, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, setApprovalConfirm]);
+    if ((await updateTaskInDb(task.id, updates)) === false) return;
+    announceStatusChange(task, task.statusId, newStatusId, announcements);
+  }, [approvalsEnabled, featureTogglesReady, task, allProjects, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, setApprovalConfirm, statusGate, announcements]);
+
+  const quickAssign = useCallback(async (assigneeId: string | null) => {
+    setQuickEdit(null);
+    if ((assigneeId || null) === (task.assigneeId || null)) return;
+    setAllTasks(prev => prev.map(t2 => t2.id === task.id ? { ...t2, assigneeId: assigneeId || undefined } : t2));
+    if ((await updateTaskInDb(task.id, { assigneeId } as unknown as Partial<Task>)) === false) return;
+    announceAssignment(task, assigneeId, announcements);
+  }, [task, setAllTasks, updateTaskInDb, announcements]);
 
   const subtasks = useMemo(() => {
     if (!hasFeature('subtasks') || subtaskMode !== 'nested') return [];
@@ -215,15 +240,16 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
       {/* Row 1: Title (always shown) */}
       <p className="text-sm font-semibold text-foreground leading-snug mb-2 line-clamp-2 break-words">{task.title}</p>
       {/* Row 2: Key, Date (date always shown, key toggleable) */}
-      <div className="flex items-center gap-1.5 min-w-0 overflow-hidden mb-2">
-        {f.taskKey && <span className="text-xs text-muted-foreground flex-shrink-0">{task.taskKey}</span>}
+      {/* Wraps instead of clipping: a narrow column must still show the whole date and the days left. */}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0 mb-2">
+        {f.taskKey && <span className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">{task.taskKey}</span>}
         {dueDateStr && !task.completedAt && (
-          <span className={`text-xs flex items-center gap-0.5 flex-shrink-0 ${isOverdue ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}>
+          <span className={`text-xs flex items-center gap-0.5 flex-shrink-0 whitespace-nowrap ${isOverdue ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}>
             {isOverdue ? <AlertTriangle size={12} /> : <Calendar size={12} />} {dueDateStr}
           </span>
         )}
         {relativeDue && (
-          <span className={`text-[10.5px] flex-shrink-0 ${relativeDue.color}`}>
+          <span className={`text-[10.5px] flex-shrink-0 whitespace-nowrap ${relativeDue.color}`}>
             {relativeDue.text}
           </span>
         )}
@@ -251,7 +277,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
             <span className={`text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0 !text-[13px] ${deptColors[dept]}`}>{dept}</span>
           )}
           {assignee && (
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ backgroundColor: assignee.color, color: '#fff' }} title={assignee.name}>
+            <div className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ backgroundColor: assignee.color, color: '#fff' }} title={assignee.name}>
               {assignee.avatar}
             </div>
           )}
@@ -361,18 +387,18 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
           {customFields
             .filter(cf => customCardFields[cf.id])
             .map(cf => {
-              const val = customFieldValues.find(v => v.taskId === task.id && v.fieldId === cf.id);
-              if (!val?.value) return null;
+              const text = formatCustomFieldValue(cf, customFieldValues.find(v => v.taskId === task.id && v.fieldId === cf.id), users, t);
+              if (!text) return null;
               return (
                 <span key={cf.id} className="text-[10px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
-                  {cf.name}: {val.value}
+                  {cf.fieldName}: {text}
                 </span>
               );
             })}
         </div>
       )}
-      {/* Quick-edit hover buttons */}
-      <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Quick-edit buttons: on hover or keyboard focus, and always on touch screens (no hover there). */}
+      <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
         {(['priority', 'status', 'assignee'] as const).map(type => (
           <div key={type} className="relative">
             <button
@@ -381,6 +407,8 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
               onClick={e => { e.stopPropagation(); setQuickEdit(quickEdit === type ? null : type); }}
               className="w-6 h-6 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               title={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
+              aria-label={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
+              aria-expanded={quickEdit === type}
             >
               {type === 'priority' && <Flag size={12} />}
               {type === 'status' && <Circle size={12} />}
@@ -404,13 +432,15 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
                 ))}
                 {type === 'assignee' && (
                   <>
-                    <button onClick={e => { e.stopPropagation(); setAllTasks(prev => prev.map(t2 => t2.id === task.id ? { ...t2, assigneeId: undefined } : t2)); updateTaskInDb(task.id, { assigneeId: null } as unknown as Partial<Task>); setQuickEdit(null); }}
+                    {activeUsers.length > 8 && <input autoFocus value={assigneeQuery} onChange={e => setAssigneeQuery(e.target.value)} onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}
+                      placeholder={t('common.search')} aria-label={t('common.search')} className="mx-2 my-1 w-[calc(100%-1rem)] rounded border border-border bg-card px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary" />}
+                    <button onClick={e => { e.stopPropagation(); void quickAssign(null); }}
                       className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors ${!task.assigneeId ? 'bg-accent/50 font-semibold' : ''}`}>
                       <UserCircle size={14} className="text-muted-foreground" />
                       {t('common.unassigned')}
                     </button>
-                    {users.filter(u => u.isActive).map(u => (
-                      <button key={u.id} onClick={e => { e.stopPropagation(); setAllTasks(prev => prev.map(t2 => t2.id === task.id ? { ...t2, assigneeId: u.id } : t2)); updateTaskInDb(task.id, { assigneeId: u.id } as Partial<Task>); setQuickEdit(null); }}
+                    {matchingUsers.map(u => (
+                      <button key={u.id} onClick={e => { e.stopPropagation(); void quickAssign(u.id); }}
                         className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors ${task.assigneeId === u.id ? 'bg-accent/50 font-semibold' : ''}`}>
                         <div className="w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-bold flex-shrink-0" style={{ backgroundColor: u.color, color: '#fff' }}>{u.avatar}</div>
                         {u.name}

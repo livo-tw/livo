@@ -3,7 +3,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { getDepartment } from '@/lib/department';
-import { getWebhookConfig, triggerWebhook, type WebhookConfig } from '@/lib/webhook';
 import type { Task, Status, StatusLog, User, Project } from '@/types';
 import { randomUUID } from '@/lib/generateId';
 import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/taskPlanning/client';
@@ -18,18 +17,18 @@ interface TaskCRUDDeps {
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   refreshTasks: () => Promise<void>;
   appendStatusLog: (log: StatusLog) => void;
-  webhookConfigRef: React.MutableRefObject<WebhookConfig | null>;
 }
 
 export function useTaskCRUD({
-  allTasks, statuses, setAllTasks, refreshTasks, appendStatusLog, webhookConfigRef,
+  allTasks, statuses, setAllTasks, refreshTasks, appendStatusLog,
 }: TaskCRUDDeps) {
   const allTasksRef = useRef(allTasks);
   allTasksRef.current = allTasks;
   const subtaskRunners = useRef(new Map<string, ReturnType<typeof createTaskWorkCommandRunner>>());
   const subtaskActor = useRef('');
 
-  const createTaskInDb = useCallback(async (task: Task) => {
+  // Resolves the stored task (with the key the database kept), or null when the insert failed.
+  const createTaskInDb = useCallback(async (task: Task): Promise<Task | null> => {
     const { error } = await supabase.from('tasks').insert({
       id: task.id,
       task_key: task.taskKey,
@@ -54,7 +53,7 @@ export function useTaskCRUD({
     if (error) {
       toast.error(i18n.t('task.createFailed') + error.message);
       await refreshTasks();
-      return;
+      return null;
     }
     // Keys are unique across projects; if another task already holds the generated key
     // (e.g. one moved here from elsewhere, or a concurrent create), the database stores
@@ -65,24 +64,8 @@ export function useTaskCRUD({
       task = { ...task, taskKey: storedKey };
       setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, taskKey: storedKey } : t));
     }
-    // Webhook: task_created (advertised in the integrations UI, but previously
-    // never dispatched from anywhere). getWebhookConfig() fallback picks up a
-    // config saved in this session (the ref is only hydrated at initial load).
-    const wbCfg = webhookConfigRef.current ?? getWebhookConfig();
-    if (wbCfg?.enabled) {
-      triggerWebhook(wbCfg, 'task_created', {
-        task: {
-          id: task.id,
-          taskKey: task.taskKey,
-          title: task.title,
-          status: task.statusId,
-          priority: task.priority,
-          assigneeId: task.assigneeId,
-          projectId: task.projectId,
-        },
-      }).catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
-    }
-  }, [refreshTasks, webhookConfigRef, setAllTasks]);
+    return task;
+  }, [refreshTasks, setAllTasks]);
 
   const createUpdateTaskInDb = useCallback(
     (
@@ -94,15 +77,11 @@ export function useTaskCRUD({
       // save was refused or failed; callers gate notifications on it.
       async (taskId: string, updates: Partial<Task>): Promise<boolean> => {
         const dbUpdates: Record<string, string | number | boolean | null | undefined> = {};
-        // Captured BEFORE the optimistic update / awaits so the webhook
-        // dispatch below can't misread the already-updated task state.
-        let crossedToDone = false;
         if ('statusId' in updates) {
           dbUpdates.status_id = updates.statusId;
           const oldTask = allTasksRef.current.find(t => t.id === taskId);
           const newIsDone = statuses.find(s => s.id === updates.statusId)?.isDone ?? false;
           const oldIsDone = oldTask ? (statuses.find(s => s.id === oldTask.statusId)?.isDone ?? false) : false;
-          crossedToDone = newIsDone && !oldIsDone;
           if (!('completedAt' in updates)) {
             if (newIsDone && !oldIsDone) {
               const now = new Date().toISOString();
@@ -231,32 +210,10 @@ export function useTaskCRUD({
           }
         }
 
-        // Trigger webhook (getWebhookConfig() fallback: config saved in this
-        // session, before any reload re-hydrates the ref)
-        const wbCfg = webhookConfigRef.current ?? getWebhookConfig();
-        if (wbCfg?.enabled && Object.keys(dbUpdates).length > 0) {
-          const task = allTasksRef.current.find(t => t.id === taskId);
-          const events = ['statusId' in updates ? 'status_changed' : 'task_updated'];
-          // task_completed (advertised in the integrations UI, previously never
-          // dispatched): fires when the status crosses from not-done to done.
-          if (crossedToDone) events.push('task_completed');
-          const payload = {
-            task: {
-              id: taskId,
-              title: updates.title ?? task?.title,
-              status: updates.statusId ?? task?.statusId,
-              priority: updates.priority ?? task?.priority,
-              assigneeId: updates.assigneeId ?? task?.assigneeId,
-            },
-          };
-          for (const event of events) {
-            triggerWebhook(wbCfg, event, payload)
-              .catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
-          }
-        }
+        // Webhooks are sent by the server (Integrations → Webhooks), never from a member's browser.
         return true;
       },
-    [refreshTasks, appendStatusLog, statuses, webhookConfigRef],
+    [refreshTasks, appendStatusLog, statuses],
   );
 
   const createCreateSubtask = useCallback(

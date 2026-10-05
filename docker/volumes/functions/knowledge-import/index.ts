@@ -2,6 +2,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
 import { createKnowledgeImport, ImportError, type ImportRepository } from './knowledgeImport.ts';
 const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type','Content-Type':'application/json','Cache-Control':'no-store'};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers});
+// Parse outside the handler so the request text (up to 15 MB) is not kept alive while
+// the import runs; the import releases the decoded file's base64 once it has the bytes.
+const readBody=async(req:Request):Promise<unknown>=>{const raw=await req.text();return raw.length>15*1024*1024?undefined:JSON.parse(raw);};
 Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response(null,{headers});
   if(req.method!=='POST')return json({error:'method_not_allowed'},405);
@@ -36,8 +39,8 @@ Deno.serve(async(req:Request)=>{
       commit:(job,item,mapping,source)=>db('commit',{job_id:job.id,job_version:job.version,item_id:item.id,mapping,source}),
       background(promise){EdgeRuntime.waitUntil(promise);},
     };
-    const raw=await req.text();if(raw.length>15*1024*1024)return json({error:'file_size_limit'},413);
-    const response=await createKnowledgeImport(repo,{processorUrl:Deno.env.get('KNOWLEDGE_PROCESSOR_URL'),processorToken:Deno.env.get('KNOWLEDGE_PROCESSOR_TOKEN'),encryptionSecret:Deno.env.get('KNOWLEDGE_IMPORT_SECRET')})(JSON.parse(raw));
+    const body=await readBody(req);if(body===undefined)return json({error:'file_size_limit'},413);
+    const response=await createKnowledgeImport(repo,{processorUrl:Deno.env.get('KNOWLEDGE_PROCESSOR_URL'),processorToken:Deno.env.get('KNOWLEDGE_PROCESSOR_TOKEN'),encryptionSecret:Deno.env.get('KNOWLEDGE_IMPORT_SECRET')})(body);
     return json(response);
   } catch(error){return error instanceof ImportError?json({error:error.code},error.status):json({error:'import_failed'},500);}
 });

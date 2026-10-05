@@ -7,6 +7,7 @@ export function requiresWebCreate(required: Row = {}): boolean {
 }
 export const DISABLED = 'LIVO 的 Slack 功能目前未啟用，請洽管理員';
 export const NO_ACCOUNT = '找不到對應的 LIVO 帳號：請管理員確認你的 Slack Email 與 LIVO 相同，或在 LIVO 的 Slack 設定手動對應你的帳號';
+export const SLACK_LINK_DISABLED = '你已在 LIVO 解除 Slack 連結，LIVO 不會用這個 Slack 帳號替你操作。要恢復，請到 LIVO 的「我的設定 → Slack 連結」重新允許。';
 export const UNAVAILABLE = '找不到卡片，或你沒有權限查看這張卡片';
 const words: Record<string, [string, string]> = {
   '建立 LIVO 卡片': ['创建 LIVO 卡片', 'Create LIVO card'], '留言到 LIVO 卡片': ['留言到 LIVO 卡片', 'Comment on LIVO card'],

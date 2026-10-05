@@ -12,7 +12,7 @@
 //   GET  → masked status (any authenticated member). Response:
 //            app-bound token present: { configured:true, source:'app', team, configuredAt }
 //            else:                    { configured:<!!env>, source:'env'|null, team:null }
-//   POST { token } → set/clear (admin / super_admin only):
+//   POST { token } → set/clear (super_admin only):
 //            empty token            → disconnect → { ok:true, configured:false }
 //            token not 'xoxb-…'     → { ok:false, error:'invalid_token', message } (400)
 //            Slack auth.test fails  → { ok:false, error:'auth_failed', message } (400)
@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
 
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
-    // ── POST: set/clear — admin / super_admin only ─────────────────────────
+    // ── POST: set/clear — super_admin only ─────────────────────────
     // No e-mail fallback and only active members: an unlinked login may carry an
     // admin's address, and a member deactivated within the hour still has a token.
     let member: { id?: string; role?: string } | null = null;
@@ -86,8 +86,8 @@ Deno.serve(async (req) => {
       .eq('is_active', true)
       .maybeSingle();
     member = byAuth as typeof member;
-    if (!member || !['admin', 'super_admin'].includes(member.role || '')) {
-      return json({ error: 'Permission denied: admin role required' }, 403);
+    if (!member || !member.role === 'super_admin') {
+      return json({ error: 'Permission denied: super_admin role required' }, 403);
     }
 
     const body = (await req.json().catch(() => ({}))) as { token?: unknown };

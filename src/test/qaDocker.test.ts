@@ -144,6 +144,46 @@ describe('Docker grouped QA list', () => {
   it.each([[],['new','new'],['new','untrusted'],['new,closed']].map(states=>({states})))('rejects unsafe or ambiguous grouped states $states',async ({states})=>{
     await expect(service().handle({action:'list',input:{states}})).rejects.toMatchObject({code:'qa_invalid_state'});
   });
+  it('sends the shared filters and sort to PostgREST',async()=>{
+    await service().handle({action:'list',input:{states:['new'],assigneeIds:['member-1','member-2'],priorities:[1,2],severities:['high'],sort:'dueDate',direction:'asc'}});
+    const query = calls.find(call=>call.url.pathname==='/rest/v1/qa_issues')!.url.searchParams;
+    expect(query.get('assignee_id')).toBe('in.(member-1,member-2)');
+    expect(query.get('data->>priority')).toBe('in.(1,2)');
+    expect(query.get('data->>severity')).toBe('in.(high)');
+    expect(query.get('order')).toBe('data->>dueDate.asc.nullslast,updated_at.desc,id');
+  });
+  it('lists every bug the member fixes, verifies or reported for My QA',async()=>{
+    await service().handle({action:'list',input:{mine:'involved',assigneeIds:['member-2']}});
+    const query = calls.find(call=>call.url.pathname==='/rest/v1/qa_issues')!.url.searchParams;
+    expect(query.get('or')).toBe('(assignee_id.eq.member-1,qa_owner_id.eq.member-1,reporter_id.eq.member-1)');
+    // Other filters still narrow the result.
+    expect(query.get('assignee_id')).toBe('in.(member-2)');
+  });
+  it('searches the short id, and lists open handoffs waiting on the member',async()=>{
+    await service().handle({action:'list',input:{search:'#0000abcd'}});
+    let query = calls.filter(call=>call.url.pathname==='/rest/v1/qa_issues').at(-1)!.url.searchParams;
+    expect(query.get('id')).toBe('ilike.*0000abcd*'); expect(query.has('title')).toBe(false);
+    await service().handle({action:'list',input:{search:'Login (Stage)'}});
+    query = calls.filter(call=>call.url.pathname==='/rest/v1/qa_issues').at(-1)!.url.searchParams;
+    expect(query.get('title')).toBe('ilike.*Login (Stage)*'); expect(query.has('id')).toBe(false);
+    await service().handle({action:'list',input:{mine:'handoff'}});
+    query = calls.filter(call=>call.url.pathname==='/rest/v1/qa_issues').at(-1)!.url.searchParams;
+    expect(query.get('data->handoff->>nextOwnerId')).toBe('eq.member-1');
+    expect(query.get('data->handoff->>resolvedAt')).toBe('is.null');
+  });
+  it('orders priority with the most important first',async()=>{
+    await service().handle({action:'list',input:{sort:'priority',direction:'desc'}});
+    expect(calls.find(call=>call.url.pathname==='/rest/v1/qa_issues')!.url.searchParams.get('order')).toBe('data->priority.asc,updated_at.desc,id');
+  });
+  it('answers an empty list without a query when a filter excludes the fixed project',async()=>{
+    const result = await service().handle({action:'list',input:{projectId:'project-1',projectIds:['project-2']}});
+    expect(result).toEqual({issues:[],total:0,hasMore:false});
+    expect(calls.some(call=>call.url.pathname==='/rest/v1/qa_issues')).toBe(false);
+  });
+  it('rejects an empty or unknown filter',async()=>{
+    for (const input of [{assigneeIds:[] as string[]},{priorities:[0]},{sort:'title'}])
+      await expect(service().handle({action:'list',input})).rejects.toMatchObject({code:'qa_invalid_filter'});
+  });
   it('rejects simultaneous singular and grouped filters',async()=>{
     await expect(service().handle({action:'list',input:{state:'new',states:['new','triaged']}})).rejects.toMatchObject({code:'qa_invalid_state'});
   });
@@ -213,6 +253,15 @@ describe('Docker QA session and feature boundary', () => {
       .rejects.toMatchObject({ code: 'qa_disabled', status: 403 });
     expect(calls.some(c => c.method === 'POST')).toBe(false);
   });
+  it('sends a new bug to the admins when the project has no QA coordinator, as the cloud does', async () => {
+    await service().handle({ action: 'create', id: 'issue-2', commandId: 'command-admins', input });
+    const members = calls.filter(c => c.url.pathname === '/rest/v1/members' && c.url.searchParams.has('or')).at(-1)!.url.searchParams;
+    expect(members.get('or')).toBe('(role.in.(admin,super_admin))');
+    expect(members.get('is_active')).toBe('eq.true');
+    const commit = calls.find(c => c.url.pathname.endsWith('/livo_qa_commit'))!;
+    // The reporter never notifies themselves.
+    expect(commit.body.p_event.recipients).toEqual(['member-2']);
+  });
   it('derives reporter and commit identity from the verified session, ignoring forged caller identity', async () => {
     const created = await service().handle({ action: 'create', id: 'issue-2', commandId: 'command-1', input, actorId: 'super-admin' });
     expect(created.reporterId).toBe('member-1');
@@ -221,10 +270,24 @@ describe('Docker QA session and feature boundary', () => {
     expect(commit.body.p_data.workspaceId).toBe('default');
     expect(commit.headers.get('Authorization')).toBe('Bearer server-secret');
   });
-  it('refuses reporter-only triage even if a forged role is supplied', async () => {
+  it('refuses a reporter closing a bug even if a forged role is supplied', async () => {
     await expect(service().handle({ action: 'command', id: issue.id, commandId: 'command-2', expectedVersion: 1,
-      role: 'super_admin', command: { type: 'triage', assigneeId: 'member-2', qaOwnerId: 'member-1', severity: 'high', priority: 1, dueDate: null } }))
+      role: 'super_admin', command: { type: 'close', resolution: 'not_bug', reason: 'Example reason' } }))
       .rejects.toMatchObject({ code: 'qa_forbidden' });
+    expect(calls.some(c => c.url.pathname.endsWith('/livo_qa_commit'))).toBe(false);
+  });
+});
+
+describe('Docker QA comments', () => {
+  it('accepts a comment from any active member, also on a closed bug, like the cloud server', async () => {
+    issue = { ...issue, state: 'closed', reporterId: 'member-2', assigneeId: null, qaOwnerId: null };
+    await service().handle({ action: 'comment', id: issue.id, commandId: 'command-comment', body: 'Still happens on Stage' });
+    const commit = calls.find(c => c.url.pathname.endsWith('/livo_qa_commit'));
+    expect(commit?.body).toMatchObject({ p_kind: 'comment', p_data: { body: 'Still happens on Stage', actorId: 'member-1' } });
+  });
+  it('refuses a comment from a former member', async () => {
+    active = false;
+    await expect(service().handle({ action: 'comment', id: issue.id, commandId: 'command-comment', body: 'Hi' })).rejects.toMatchObject({ code: 'qa_forbidden' });
     expect(calls.some(c => c.url.pathname.endsWith('/livo_qa_commit'))).toBe(false);
   });
 });

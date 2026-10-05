@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe,expect,it } from 'vitest';
-import { createKnowledgeImport,defaultImportPolicy,ImportError,allowedNotionAsset,notionPageId,importAllowed,unsafeProcessorHtml, type ImportJob,type ImportRepository,type ImportPolicy,type ImportPage,type ImportStoredSource } from '../../worker/src/knowledgeImport';
+import { createKnowledgeImport,defaultImportPolicy,ImportError,allowedNotionAsset,notionPageId,importAllowed,unsafeProcessorHtml,toBase64,fromBase64, type ImportJob,type ImportRepository,type ImportPolicy,type ImportPage,type ImportStoredSource } from '../../worker/src/knowledgeImport';
 import type { KnowledgeActor,KnowledgeRule } from '../../worker/src/knowledgeAccess';
 import type { ImportDestination } from '../../worker/src/knowledgeImport';
 const rule:KnowledgeRule={roles:[],positions:['PM'],member_ids:[]};
@@ -16,6 +16,22 @@ function harness() {
   return {execute,start,jobs,repo,files,background,commits:()=>commits,setActor:(a:KnowledgeActor)=>{actor=a;},setPolicy:(p:ImportPolicy)=>{policy=p;},expire:()=>{clock+=25*3600000;},advance:(ms:number)=>{clock+=ms;},setTransport:(next:typeof fetch)=>{transport=next;}};
 }
 describe('private knowledge imports',()=>{
+  it('round-trips document bytes through the chunked base64 helpers',()=>{
+    for(const size of [1,2,3,24575,24576,24577,3*24576+2]){
+      const bytes=new Uint8Array(size).map((_,i)=>(i*131+7)%256),text=toBase64(bytes);
+      expect(text).toBe(Buffer.from(bytes).toString('base64'));
+      expect(fromBase64(text)).toEqual(bytes);
+    }
+    expect(()=>fromBase64('')).toThrow('invalid_file');
+    expect(()=>fromBase64('not base64!')).toThrow('file_size_limit');
+  });
+  it('drops the uploaded base64 from the request once the bytes are decoded',async()=>{
+    // The Edge worker would otherwise hold the request text alongside the bytes.
+    const h=harness(),body={action:'start',source:'md',name:'meeting.md',data:btoa('# Document'),parent_id:'pm-page'};
+    const job=await h.execute(body) as ImportJob;await Promise.all(h.background);
+    expect(body.data).toBe('');
+    expect((await h.execute({action:'get',job_id:job.id}) as ImportJob).status).toBe('preview_ready');
+  });
   it('persists the retention identity before storing the first private object',async()=>{
     const h=harness(),write=h.repo.putFile;let writes=0;
     h.repo.putFile=async(key,data,type)=>{expect(h.jobs.has(key.split('/')[1])).toBe(true);writes++;await write(key,data,type);};

@@ -1,3 +1,4 @@
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 // Slack self-bind card (系統管理 → 整合).
 //
@@ -67,6 +68,7 @@ async function authFetch(fnName: string, init?: RequestInit): Promise<Response> 
 
 const SlackCard = () => {
   const { t } = useTranslation();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const { hasFeature, isDemoMode } = useLicense();
   const gated = !hasFeature('slack-notify');
 
@@ -181,6 +183,8 @@ const SlackCard = () => {
   };
 
   const disconnect = async () => {
+    // Disconnecting stops every Slack notice, digest and Slack action for the workspace.
+    if (!(await confirm({ title: t('integrations.slack.disconnectTitle'), description: t('integrations.slack.disconnectConfirm'), destructive: true }))) return;
     setError(null);
     setDisconnecting(true);
     try {
@@ -417,6 +421,7 @@ const SlackCard = () => {
         </div>
       </div>
       <SlackActionsSection />
+      {ConfirmDialog}
     </div>
   );
 };

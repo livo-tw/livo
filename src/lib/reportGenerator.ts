@@ -9,7 +9,7 @@ import {
   parseISO,
   addDays,
 } from 'date-fns';
-import { zhTW } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/dateLabels';
 import i18n from '@/i18n';
 
 export type AutoReportType = 'daily' | 'weekly';
@@ -47,7 +47,7 @@ export function generateReportContent(opts: GenerateReportOptions): GeneratedRep
 
   const title =
     reportType === 'daily'
-      ? format(today, 'yyyy/MM/dd (EEE)', { locale: zhTW })
+      ? format(today, 'yyyy/MM/dd (EEE)', { locale: dateFnsLocale() })
       : `${format(start, 'yyyy/MM/dd')} ~ ${format(end, 'MM/dd')}`;
 
   const doneIds = statuses.filter(s => s.isDone).map(s => s.id);

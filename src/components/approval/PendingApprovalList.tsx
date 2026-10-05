@@ -14,6 +14,8 @@ import { approvalSnapshotSteps } from '@/lib/approval/core';
 import type { ApprovalActionResult } from '@/hooks/useApprovalWorkflow';
 import type { ApprovalRequest } from '@/lib/approvalQueries';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 
 interface ActionDialogState {
   request: ApprovalRequest;
@@ -38,6 +40,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
   const { setSelectedTask } = useUIContext();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [filterProject, setFilterProject] = useState('');
   const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(null);
   const [comment, setComment] = useState('');
@@ -74,12 +77,18 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
     }
   };
 
+  // Only requests the project filter shows can be approved together, after a confirmation.
+  const visibleSelected = filtered.filter(request => selected.has(request.id)).map(request => request.id);
   const handleBulkApprove = async () => {
-    for (const id of selected) {
+    if (!visibleSelected.length || !(await confirm({ title: t('pendingApproval.bulkConfirmTitle', { count: visibleSelected.length }), description: t('pendingApproval.bulkConfirmDesc') }))) return;
+    let failed = 0;
+    for (const id of visibleSelected) {
       if (!approvalSnapshotSteps(pendingApprovals.find(request => request.id === id) ?? {steps_snapshot:null})) continue;
       const result = await performAction(id, 'approve', undefined, undefined, pendingApprovals.find(request => request.id === id));
+      if (!result.ok) failed++;
       applyApprovalResult(result);
     }
+    if (failed) toast.error(t('pendingApproval.bulkPartialFailed', { count: failed }));
     setSelected(new Set());
     fetchPendingApprovals();
   };
@@ -128,13 +137,13 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
             </SearchableSelect>
           </div>
         )}
-        {selected.size > 0 && (
+        {visibleSelected.length > 0 && (
           <button
-            onClick={handleBulkApprove}
+            onClick={() => void handleBulkApprove()}
             className="ml-auto flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition-colors"
           >
             <CheckCheck size={12} />
-            {t('pendingApproval.bulkApprove')} ({selected.size})
+            {t('pendingApproval.bulkApprove')} ({visibleSelected.length})
           </button>
         )}
       </div>
@@ -266,6 +275,7 @@ export default function PendingApprovalList({ onClose }: { onClose?: () => void 
           </div>
         </div>
       )}
+      {ConfirmDialog}
     </div>
   );
 }

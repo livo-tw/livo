@@ -12,7 +12,7 @@ import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/ta
 import { deadlineReasonRequired } from '@/lib/taskPlanning/core';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { format } from 'date-fns';
-import { getDepartment, type Department } from '@/lib/department';
+import { taskDepartment, type Department } from '@/lib/department';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -153,21 +153,25 @@ const GanttView = () => {
       if (!visibleProjectIds.includes(t.projectId)) return false;
       if (isViewingAll) return true;
       if (isViewingPastSprint) return t.sprintId === selectedSprintId;
+      // "Current": the active sprint's tasks; without an active sprint, every open task.
+      if (currentSprint) return t.sprintId === currentSprint.id;
       const s = statuses.find(s => s.id === t.statusId);
       return s && !s.isDone;
     });
     if (filterDept.length > 0) {
-      activeTasks = activeTasks.filter(t => {
-        const assignee = users.find(u => u.id === t.assigneeId);
-        return filterDept.includes(getDepartment(assignee) as Department);
-      });
+      activeTasks = activeTasks.filter(t => filterDept.includes(taskDepartment(t, users) as Department));
     }
 
     if (groupBy === 'member') {
-      return users.map(user => ({
+      const known = new Set(users.map(user => user.id));
+      return [...users.map(user => ({
         id: user.id, label: user.name, avatar: user.avatar, color: user.color,
         tasks: sortTasks(activeTasks.filter(t => t.assigneeId === user.id)).map(enrichTask),
-      })).filter(g => g.tasks.length > 0);
+      })), {
+        // Unassigned tasks (or a removed member's) still need a row.
+        id: '__unassigned', label: t('common.unassigned'), color: '#6B778C',
+        tasks: sortTasks(activeTasks.filter(t => !t.assigneeId || !known.has(t.assigneeId))).map(enrichTask),
+      }].filter(g => g.tasks.length > 0);
     }
     if (groupBy === 'line') {
       return productLines.map(line => ({
@@ -178,11 +182,12 @@ const GanttView = () => {
         })).map(enrichTask),
       })).filter(g => g.tasks.length > 0);
     }
-    return allProjects.filter(p => !p.isArchived).map(proj => ({
+    // An archived project the sidebar selected still shows its tasks.
+    return allProjects.filter(p => !p.isArchived || visibleProjectIds.includes(p.id)).map(proj => ({
       id: proj.id, label: proj.name, color: getProjectColor(proj),
       tasks: sortTasks(activeTasks.filter(t => t.projectId === proj.id)).map(enrichTask),
     })).filter(g => g.tasks.length > 0);
-  }, [allTasks, visibleProjectIds, dateToPx, today, cellW, allProjects, groupBy, filterDept, users, statuses, productLines, selectedSprintId, enrichTask, sortTasks, getProjectColor]);
+  }, [allTasks, visibleProjectIds, dateToPx, today, cellW, allProjects, groupBy, filterDept, users, statuses, productLines, selectedSprintId, currentSprint, enrichTask, sortTasks, getProjectColor, t]);
 
   // ─── Scroll Sync ───
   const handleRightScroll = () => {

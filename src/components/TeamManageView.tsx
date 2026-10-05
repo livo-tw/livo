@@ -11,10 +11,9 @@ import TaskTemplateManager from '@/components/TaskTemplateManager';
 import NotificationRuleManager from '@/components/notifications/NotificationRuleManager';
 import TemplateManager from '@/components/notifications/TemplateManager';
 import ReportSendConfig from '@/components/reports/ReportSendConfig';
-import ExternalPlatformSettings from '@/components/integrations/ExternalPlatformSettings';
 import ProductLineManageModal from '@/components/ProductLineManageModal';
 
-export type TeamManageTab = 'members' | 'task-config' | 'notifications' | 'external' | 'knowledge';
+export type TeamManageTab = 'members' | 'task-config' | 'notifications' | 'knowledge';
 
 interface Props {
   initialTab?: TeamManageTab;
@@ -35,7 +34,6 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
     { id: 'members', label: t('teamManage.tabs.members'), icon: <Users size={14} /> },
     { id: 'task-config', label: t('teamManage.tabs.taskConfig'), icon: <Settings size={14} />, show: permissions.canManageStatuses },
     { id: 'notifications', label: t('teamManage.tabs.notifications'), icon: <MessageSquare size={14} /> },
-    { id: 'external', label: t('teamManage.tabs.external'), icon: <Link2 size={14} /> },
     { id: 'knowledge', label: t('kbImport.permissionTitle'), icon: <BookOpen size={14} />, show: currentMember?.role === 'super_admin' },
   ];
 
@@ -154,17 +152,6 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
             </div>
           )}
 
-          {activeTab === 'external' && (
-            <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-6">
-              <div className="mb-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <Link2 size={16} className="text-primary" />
-                  <h3 className="text-base font-semibold text-foreground">{t('teamManage.tabs.external')}</h3>
-                </div>
-              </div>
-              <ExternalPlatformSettings />
-            </div>
-          )}
         </div>
       </div>
       <ProductLineManageModal open={showLineManage} onClose={() => setShowLineManage(false)} />

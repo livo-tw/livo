@@ -1,5 +1,5 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { X, ChevronDown, ChevronUp, Shuffle } from 'lucide-react';
@@ -9,6 +9,7 @@ import { useSprintContext } from '@/context/SprintContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useStandupSettings, type SortMode } from '@/hooks/useStandupSettings';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { applyStandupOrder, saveStandupLaunch, shuffleStandupOrder, type StandupOrder } from '@/lib/standupLaunch';
 
 export interface StandupLaunchDialogProps {
@@ -68,6 +69,19 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   const totalMins = Math.round(totalSec / 60);
 
   const handleCancel = () => { onCancel?.(); onOpenChange(false); };
+  const cancelRef = useRef(handleCancel); cancelRef.current = handleCancel;
+  const focus = useFocusTrap(open);
+  // Esc closes it like the other dialogs, unless a dropdown inside is open (it closes first).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if ((event.target as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper], [role="listbox"]')) return;
+      cancelRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
   const handleConfirm = () => { if (!groups.length) return; saveStandupLaunch(settings, groups); onConfirm?.(); onOpenChange(false); };
 
   if (!open) return null;
@@ -75,6 +89,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleCancel}>
       <div
+        ref={focus}
         role="dialog" aria-modal="true" aria-labelledby="standup-launch-title"
         className="bg-card rounded-xl shadow-xl border border-border w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col mx-3"
         onClick={e => e.stopPropagation()}

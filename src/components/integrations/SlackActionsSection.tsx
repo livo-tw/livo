@@ -1,3 +1,4 @@
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +16,7 @@ type SlackUser = { id: string; name: string; email: string };
 type Status = { connected: boolean; lastSeen: string | null; bindings: Binding[] };
 export default function SlackActionsSection() {
   const { t } = useTranslation();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const { featureToggles, featureTogglesReady } = useUIContext();
   const { currentMember } = useAuthContext();
   const { users } = useMemberContext();
@@ -53,9 +55,11 @@ export default function SlackActionsSection() {
     <p className="text-sm text-muted-foreground">{t('qa.slackUsage')}</p>
     {IS_DEMO_PRO && <p className="text-sm text-muted-foreground">{t('slackActions.demo')}</p>}
   </section>;
-  const unbind = async (id: string) => {
+  const unbind = async (binding: { id: string; display_name?: string | null; memberName?: string | null }) => {
+    // Removing a mapping stops that Slack account from acting as the member, so ask first.
+    if (!(await confirm({ title: t('slackActions.unbindTitle'), description: t('slackActions.unbindConfirm', { slack: binding.display_name || 'Slack', member: binding.memberName || '—' }), destructive: true }))) return;
     setBusy(true); setFailed(false);
-    try { await request({ action: 'unbind', id }); await refresh(); } catch { setFailed(true); }
+    try { await request({ action: 'unbind', id: binding.id }); await refresh(); } catch { setFailed(true); }
     finally { setBusy(false); }
   };
   const assignable = canBind ? users.filter(u => u.isActive) : [];
@@ -73,7 +77,8 @@ export default function SlackActionsSection() {
     } catch (error) {
       const code = (error as Error).message;
       setBindError(t(code === 'member_not_assignable' ? 'slackActions.manual.notAssignable'
-        : code === 'slack_user_belongs_to_other' ? 'slackActions.manual.otherOwner' : 'slackActions.manual.failed'));
+        : code === 'slack_user_belongs_to_other' ? 'slackActions.manual.otherOwner'
+        : code === 'slack_link_disabled' ? 'slackActions.manual.memberUnlinked' : 'slackActions.manual.failed'));
     } finally { setBusy(false); }
   };
   return <section className="mx-4 mb-4 space-y-3 rounded-lg border border-border bg-background p-4" aria-labelledby="slack-actions-title">
@@ -94,7 +99,7 @@ export default function SlackActionsSection() {
         <span>{binding.display_name} → {binding.memberName}{!binding.active && ` (${t('slackActions.inactive')})`}
           <span className="ml-2 text-xs text-muted-foreground">{t(binding.verifiedBy === 'admin' ? 'slackActions.manual.byAdmin' : 'slackActions.manual.byEmail')}</span></span>
         {binding.verifiedBy === 'admin' && !binding.verifiedByOwner && <span className="text-xs text-amber-700">{t('slackActions.manual.reconfirm')}</span>}
-        <Button size="sm" variant="outline" disabled={busy || !canBind} onClick={() => void unbind(binding.id)}>{t('slackActions.unbind')}</Button>
+        <Button size="sm" variant="outline" disabled={busy || !canBind} onClick={() => void unbind(binding)}>{t('slackActions.unbind')}</Button>
       </div>)}
     </div>}
     {!IS_DEMO_PRO && !canBind && <p className="text-xs text-muted-foreground">{t('slackActions.manual.ownerOnly')}</p>}
@@ -118,5 +123,6 @@ export default function SlackActionsSection() {
         </div>}
       {bindError && <p role="alert" className="text-sm text-destructive">{bindError}</p>}
     </div>}
+    {ConfirmDialog}
   </section>;
 }

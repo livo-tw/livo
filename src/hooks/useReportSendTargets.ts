@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import i18n from '@/i18n';
 import { supabase } from '@/integrations/supabase/client';
 import {
   targetQueries,
@@ -46,7 +47,7 @@ export function useReportSendTargets() {
       setTargets(result);
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e.message : '載入失敗');
+      setError(e instanceof Error ? e.message : i18n.t('common.loadFailed'));
       return [];
     } finally {
       setLoading(false);

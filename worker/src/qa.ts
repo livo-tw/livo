@@ -8,7 +8,7 @@ import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
-  applyQaCommand, canQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
+  applyQaCommand, canQaComment, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
   type QaCommand, type QaContext, type QaIssue, type QaComment, type QaEvent,
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
@@ -115,24 +115,18 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   if(comment) statements.push(env.DB.prepare('INSERT INTO qa_comments(workspace_id,id,issue_id,actor_id,body,created_at) VALUES(?,?,?,?,?,?)').bind(ws,comment.id,after.id,auth.member.id,comment.body,comment.createdAt));
   statements.push(env.DB.prepare('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(ws,event.id,after.id,event.actorId,type,comment?'comment':qaEventDetail(after,type,before),after.version,now));
   // Durable in-app notifications are inserted in this same transaction. Realtime is only a wake-up.
-  const recipients=new Set<string>();
-  if(type==='create') {
-    const admins=await env.DB.prepare("SELECT id FROM members WHERE workspace_id=? AND is_active=1 AND role IN ('admin','super_admin')").bind(ws).all<{id:string}>(); admins.results.forEach(r=>recipients.add(r.id));
-  } else if(type==='triage'||type==='reopen'||(type==='record_verification'&&after.state==='failed')) {if(after.assigneeId)recipients.add(after.assigneeId);}
-  else if(type==='record_deployment'||type==='submit_fix') {if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
-  else if(type==='close') recipients.add(after.reporterId);
-  else if(type==='comment') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
-  else if(type==='set_state') {recipients.add(after.reporterId);if(after.assigneeId)recipients.add(after.assigneeId);if(after.qaOwnerId)recipients.add(after.qaOwnerId);}
-  if(['request_handoff','accept_handoff','resolve_handoff','hold'].includes(type)) qaNotificationRecipients(after,type as QaCommand['type'],auth.member.id).forEach(id=>recipients.add(id));
-  recipients.delete(auth.member.id);
-  for(const recipient of recipients) statements.push(env.DB.prepare("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at) SELECT ?,?,?,?,'qa_update',NULL,?,0,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)").bind(ws,crypto.randomUUID(),recipient,auth.member.id,JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type}),now,ws,recipient));
+  // Recipients follow the shared rule (qaNotificationRecipients), as on the self-hosted server.
+  let triagers:string[]=[];
   if(type==='create'){
-    const content=JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type});
-    statements.push(env.DB.prepare(`INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at)
-      SELECT ?,?,m.id,?,'qa_update',NULL,?,0,? FROM qa_project_coordination p JOIN members m ON m.workspace_id=p.workspace_id AND m.id=p.coordinator_id AND m.is_active=1
-      WHERE p.workspace_id=? AND p.id=? AND m.id<>? AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.workspace_id=? AND n.recipient_id=m.id AND n.content=?)`)
-      .bind(ws,crypto.randomUUID(),auth.member.id,content,now,ws,after.projectId,auth.member.id,ws,content));
+    // A new bug goes to the project's active QA coordinator, otherwise to the workspace admins.
+    const rows=await env.DB.prepare(`SELECT m.id,CASE WHEN m.id=(SELECT coordinator_id FROM qa_project_coordination WHERE workspace_id=? AND id=?) THEN 1 ELSE 0 END AS coordinator
+      FROM members m WHERE m.workspace_id=? AND m.is_active=1 AND (m.role IN ('admin','super_admin') OR m.id=(SELECT coordinator_id FROM qa_project_coordination WHERE workspace_id=? AND id=?))`)
+      .bind(ws,after.projectId,ws,ws,after.projectId).all<{id:string;coordinator:number}>();
+    const coordinator=rows.results.filter(row=>row.coordinator===1);
+    triagers=(coordinator.length?coordinator:rows.results).map(row=>row.id);
   }
+  const recipients=qaNotificationRecipients(after,type as QaCommand['type']|'create'|'comment',auth.member.id,triagers);
+  for(const recipient of recipients) statements.push(env.DB.prepare("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at) SELECT ?,?,?,?,'qa_update',NULL,?,0,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)").bind(ws,crypto.randomUUID(),recipient,auth.member.id,JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type}),now,ws,recipient));
   try { await env.DB.batch(statements); }
   catch(err) {const prior=await receipt(env,ws,commandId,hash,auth.member.id);if(prior!==undefined)return prior;throw sqlError(err);}
   // Never make the client retry a committed command because the transport wake-up failed.
@@ -149,13 +143,32 @@ async function list(env:Env,ws:string,actor:string,input:QaListInput) {
       ||new Set(input.states).size!==input.states.length||input.states.some(state=>!QA_STATES.includes(state)))throw new QaError('qa_invalid_state');
     clauses.push(`q.state IN (${input.states.map(()=>'?').join(',')})`);params.push(...input.states);
   }
-  if(input.search){if(typeof input.search!=='string'||input.search.length>200)throw new QaError('qa_invalid_search');clauses.push("q.title LIKE ? ESCAPE '\\'");params.push(`%${input.search.replace(/[\\%_]/g,'\\$&')}%`);}
+  if(input.search){
+    if(typeof input.search!=='string'||input.search.length>200)throw new QaError('qa_invalid_search');
+    // "#1a2b3c4d" (the short id on cards) or a full id searches ids; anything else searches titles.
+    const idTerm=qaIdSearch(input.search), like=(value:string)=>`%${value.replace(/[\\%_]/g,'\\$&')}%`;
+    clauses.push(idTerm?"q.id LIKE ? ESCAPE '\\'":"q.title LIKE ? ESCAPE '\\'");params.push(like(idTerm??input.search));
+  }
   const mine={assigned:'assignee_id',testing:'qa_owner_id',reported:'reporter_id'};
-  if(input.mine){if(!Object.prototype.hasOwnProperty.call(mine,input.mine))throw new QaError('qa_invalid_filter');clauses.push(`q.${mine[input.mine]}=?`);params.push(actor);}
+  // "involved": any bug the actor fixes, verifies or reported (My QA's default).
+  if(input.mine==='involved'){clauses.push('(q.assignee_id=? OR q.qa_owner_id=? OR q.reporter_id=?)');params.push(actor,actor,actor);}
+  // "handoff": an open handoff waiting on the actor (My assignments).
+  else if(input.mine==='handoff'){clauses.push("json_extract(q.data,'$.handoff.nextOwnerId')=? AND json_extract(q.data,'$.handoff.resolvedAt') IS NULL");params.push(actor);}
+  else if(input.mine){if(!Object.prototype.hasOwnProperty.call(mine,input.mine))throw new QaError('qa_invalid_filter');clauses.push(`q.${mine[input.mine as keyof typeof mine]}=?`);params.push(actor);}
+  const filters=normalizeQaListFilters(input,qaId);
+  const anyOf=(column:string,values:(string|number)[]|undefined)=>{if(values){clauses.push(`${column} IN (${values.map(()=>'?').join(',')})`);params.push(...values);}};
+  anyOf('q.project_id',filters.projectIds);anyOf('q.assignee_id',filters.assigneeIds);anyOf('q.qa_owner_id',filters.qaOwnerIds);anyOf('q.reporter_id',filters.reporterIds);
+  anyOf("json_extract(q.data,'$.priority')",filters.priorities);anyOf("json_extract(q.data,'$.severity')",filters.severities);
+  // Same order as compareQaIssues in qa/domain.ts and the Docker list.
+  const dir=filters.direction==='asc'?'ASC':'DESC',tie='q.updated_at DESC,q.id';
+  const order=filters.sort==='updated'?`q.updated_at ${dir},q.id`
+    :filters.sort==='priority'?`json_extract(q.data,'$.priority') ${filters.direction==='asc'?'DESC':'ASC'},${tie}`
+    :filters.sort==='createdAt'?`json_extract(q.data,'$.createdAt') ${dir},${tie}`
+    :`(json_extract(q.data,'$.dueDate') IS NULL),json_extract(q.data,'$.dueDate') ${dir},${tie}`;
   const limit=Math.max(1,Math.min(100,Number.isSafeInteger(input.limit)?input.limit!:50));
   const offset=Math.max(0,Number.isSafeInteger(input.offset)?input.offset!:0);
   const where=clauses.join(' AND '), join=' FROM qa_issues q JOIN projects p ON p.workspace_id=q.workspace_id AND p.id=q.project_id ';
-  const [rows,count]=await Promise.all([env.DB.prepare(`SELECT q.data${join}WHERE ${where} ORDER BY q.updated_at DESC,q.id LIMIT ? OFFSET ?`).bind(...params,limit,offset).all<{data:string}>(),env.DB.prepare(`SELECT COUNT(*) AS total${join}WHERE ${where}`).bind(...params).first<{total:number}>()]);
+  const [rows,count]=await Promise.all([env.DB.prepare(`SELECT q.data${join}WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...params,limit,offset).all<{data:string}>(),env.DB.prepare(`SELECT COUNT(*) AS total${join}WHERE ${where}`).bind(...params).first<{total:number}>()]);
   const issues=rows.results.map(r=>JSON.parse(r.data) as QaIssue),total=count?.total??0;
   return {issues,total,hasMore:offset+issues.length<total};
 }
@@ -254,7 +267,7 @@ export async function handleQa(c:C):Promise<Response> {
     let body:Body;try{body=JSON.parse(new TextDecoder().decode(await qaReadBody(c,10*1024*1024)));}catch(e){if(e instanceof QaError)throw e;throw new QaError('qa_invalid_json');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new QaError('qa_invalid_request');
     const action=String(body.action??'');
-    if(!['list','get','download','get_workflow','get_field_configuration','versions'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(!['list','get','download','get_workflow','get_field_configuration','versions','get_coordination','my_coordination'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
     if(action==='versions') {
       const projectId=qaId(body.projectId);
       const project=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=?').bind(ws,projectId).first();
@@ -274,6 +287,12 @@ export async function handleQa(c:C):Promise<Response> {
       return c.json(qaVersionSuggestions(sources,ws,projectId));
     }
     if(action==='get_coordination')return c.json(await coordination(c.env,ws,qaId(body.projectId)));
+    // The projects whose QA the caller coordinates, so cards can offer triage outside the selected project.
+    if(action==='my_coordination'){
+      const rows=await c.env.DB.prepare('SELECT q.id FROM qa_project_coordination q JOIN projects p ON p.workspace_id=q.workspace_id AND p.id=q.id AND p.is_archived=0 WHERE q.workspace_id=? AND q.coordinator_id=? ORDER BY q.id LIMIT 1000')
+        .bind(ws,auth.member.id).all<{id:string}>();
+      return c.json({projectIds:rows.results.map(row=>row.id)});
+    }
     if(action==='members'){
       await coordination(c.env,ws,qaId(body.projectId));
       const offset=body.offset??0,search=typeof body.search==='string'?body.search.trim():'';
@@ -351,7 +370,7 @@ export async function handleQa(c:C):Promise<Response> {
     }
     const before=await getQaIssue(c.env,ws,id);
     if(action==='comment') {
-      if(!canQaCommand(before,{id:auth.member.id,role:auth.member.role},'edit'))throw new QaError('qa_forbidden',403);
+      if(!canQaComment(before,{id:auth.member.id,role:auth.member.role}))throw new QaError('qa_forbidden',403);
       if(typeof body.body!=='string'||!body.body.trim()||body.body.length>20000)throw new QaError('qa_invalid_comment');
       const now=new Date().toISOString(),comment:QaComment={id:crypto.randomUUID(),issueId:id,actorId:auth.member.id,body:body.body.trim(),createdAt:now};
       const after={...before,version:before.version+1,updatedAt:now};

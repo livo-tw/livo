@@ -60,6 +60,13 @@ describe('standup launch order and active participants', () => {
     expect(mocks.fetchActive).toHaveBeenCalledTimes(1); expect(getStandupLaunch()?.settings.sortMode).toBe(sortMode);
     expect(screen.queryByText('Former member')).toBeNull(); expect(mocks.speaker).toHaveBeenLastCalledWith(expectedGroups[0].members[0].id);
   });
+  it('closes with Esc like the other dialogs and keeps focus inside', async () => {
+    const onOpenChange = vi.fn(), onCancel = vi.fn();
+    render(<StandupLaunchDialog open onOpenChange={onOpenChange} onCancel={onCancel} />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledTimes(1); expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
   it('shuffles on each click only and starts with the exact last preview order', async () => {
     const random = vi.spyOn(Math, 'random').mockReturnValue(0);
     const view = render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));

@@ -371,16 +371,16 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
           {editor.isActive('table') && (
             <>
               <ToolBtn onClick={() => editor.chain().focus().addRowAfter().run()} title={t('editor.addRow')}>
-                <span className="flex items-center text-[9px] font-bold">行<Plus size={10} /></span>
+                <span className="flex items-center text-[9px] font-bold">{t('editor.rowShort')}<Plus size={10} /></span>
               </ToolBtn>
               <ToolBtn onClick={() => editor.chain().focus().deleteRow().run()} title={t('editor.deleteRow')}>
-                <span className="flex items-center text-[9px] font-bold">行<Minus size={10} /></span>
+                <span className="flex items-center text-[9px] font-bold">{t('editor.rowShort')}<Minus size={10} /></span>
               </ToolBtn>
               <ToolBtn onClick={() => editor.chain().focus().addColumnAfter().run()} title={t('editor.addColumn')}>
-                <span className="flex items-center text-[9px] font-bold">欄<Plus size={10} /></span>
+                <span className="flex items-center text-[9px] font-bold">{t('editor.columnShort')}<Plus size={10} /></span>
               </ToolBtn>
               <ToolBtn onClick={() => editor.chain().focus().deleteColumn().run()} title={t('editor.deleteColumn')}>
-                <span className="flex items-center text-[9px] font-bold">欄<Minus size={10} /></span>
+                <span className="flex items-center text-[9px] font-bold">{t('editor.columnShort')}<Minus size={10} /></span>
               </ToolBtn>
               <ToolBtn onClick={() => editor.chain().focus().deleteTable().run()} title={t('editor.deleteTable')}>
                 <Trash2 size={13} />

@@ -7,8 +7,13 @@ import type { TaskDetailState } from '@/components/task-detail/hooks/useTaskDeta
 vi.mock('react-i18next', async importOriginal => ({
   ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }),
 }));
+// Announcements have their own tests (taskFlows.test.tsx).
+vi.mock('@/hooks/useTaskAnnouncements', () => ({ useTaskAnnouncements: () => ({ actor: null as null, users: [] as never[], projects: [] as never[], statuses: [] as never[] }) }));
+vi.mock('@/lib/taskAnnouncements', () => ({ announceStatusChange: vi.fn(), announceAssignment: vi.fn() }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ approvalsEnabled: false }) }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
+// Sub-task changes use the shared status rules; none are configured here.
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => ({ select: async () => ({ data: [] as never[], error: null as null }) }) } }));
+vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ statusLogs: [] as never[], statuses: [] as never[] }) }));
 vi.mock('@/components/PortalConfirmDialog', () => ({ usePortalConfirmDialog: () => ({ confirm: vi.fn(), ConfirmDialog: null as null }) }));
 import TaskSidebarFields from '@/components/task-detail/TaskSidebarFields';
 import TaskSubtasksTab from '@/components/task-detail/TaskSubtasksTab';
@@ -83,7 +88,8 @@ describe('subtask status dropdown search', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'common.search · taskDetail.subtasks.changeStatus' }), { target: { value: 'complete' } });
     expect(within(list).getAllByRole('option')).toHaveLength(1);
     fireEvent.click(within(list).getByRole('option', { name: 'Complete' }));
-    expect(detail.updateTaskInDb).toHaveBeenCalledExactlyOnceWith(child.id, { statusId: 'state-5' });
+    // Completing a sub-task records when, as on the board and in the detail view.
+    expect(detail.updateTaskInDb).toHaveBeenCalledExactlyOnceWith(child.id, { statusId: 'state-5', completedAt: expect.any(String) });
     expect(screen.getByLabelText('Current task states')).toHaveTextContent('task-parent:state-0,task-child:state-5,task-unrelated:state-0');
     expect(dot).toHaveStyle({ backgroundColor: '#00875A' });
     expect(detail.setSelectedTask).not.toHaveBeenCalled();

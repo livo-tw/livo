@@ -1,5 +1,5 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
+import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn, Pencil } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { MEMBER_ROLE_OPTIONS, selectedMemberRole, selectionRoleLabel, getMemberRoleLabel, getMemberRoleColor, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 import { isPlaceholderEmail } from '@/lib/memberEmail';
@@ -75,8 +75,10 @@ const MemberCardsMobile = ({
                 {user.id === currentMemberId && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{t('memberList.youBadge')}</span>}
                 {(() => { const locker = isLockedBy(`member-${user.id}`); return locker ? <span className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded animate-pulse flex items-center gap-1"><Lock size={12} /> {locker.name} {t('memberList.operating')}</span> : null; })()}
               </div>
-              <div className="text-[10px] text-muted-foreground truncate">{user.jobTitle || '—'} · {isPlaceholderEmail(user.email) ? t('memberList.noLogin') : user.email}</div>
-              {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} className="mt-1 text-xs text-primary hover:underline disabled:opacity-50">{t('memberJobTitle.edit')}</button>}
+              <div className="flex items-center gap-1 min-w-0">
+                <div className="text-[10px] text-muted-foreground truncate min-w-0">{user.jobTitle || '—'} · {isPlaceholderEmail(user.email) ? t('memberList.noLogin') : user.email}</div>
+                {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} title={t('memberJobTitle.edit')} className="shrink-0 p-1 rounded text-muted-foreground hover:text-primary hover:bg-muted transition-colors disabled:opacity-50"><Pencil size={12} aria-hidden="true" /></button>}
+              </div>
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getMemberRoleColor(user) }}>
               {getMemberRoleLabel(user)}
@@ -108,6 +110,8 @@ const MemberCardsMobile = ({
                   <button
                     onClick={() => onToggleActive(user.id, isActive)}
                     disabled={actionLoading === user.id}
+                    title={t(isActive ? 'member.deactivate' : 'member.activate')}
+                    aria-label={t(isActive ? 'member.deactivate' : 'member.activate')}
                     className={`p-1.5 rounded transition-colors ${isActive ? 'hover:bg-orange-100 text-orange-600' : 'hover:bg-green-100 text-green-600'}`}
                   >
                     {isActive ? <UserMinus size={14} /> : <UserCheck size={14} />}
@@ -127,6 +131,7 @@ const MemberCardsMobile = ({
                       onClick={() => onResetPassword(user.id, user.name)}
                       disabled={actionLoading === user.id}
                       title={t('member.resetPassword')}
+                      aria-label={t('member.resetPassword')}
                       className="p-1.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
                     >
                       <KeyRound size={14} />
@@ -135,6 +140,8 @@ const MemberCardsMobile = ({
                   <button
                     onClick={() => onDelete(user.id, user.name)}
                     disabled={actionLoading === user.id}
+                    title={t('common.delete')}
+                    aria-label={t('common.delete')}
                     className="p-1.5 rounded hover:bg-red-100 text-destructive transition-colors"
                   >
                     <Trash2 size={14} />

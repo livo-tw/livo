@@ -136,6 +136,7 @@ export const useTaskDetail = () => {
     currentMemberId,
     allTasks,
     setAllTasks,
+    confirm,
   });
 
   const specs = useTaskSpecs({
@@ -159,6 +160,7 @@ export const useTaskDetail = () => {
     assignee,
     MAX_FILE_SIZE: attachments.MAX_FILE_SIZE,
     loadStorageUsage: attachments.loadStorageUsage,
+    confirm,
   });
 
   const sidebarFields = useTaskSidebarFields({

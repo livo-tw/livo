@@ -1,4 +1,5 @@
 import { useMemo, useCallback } from 'react';
+import { monthLabel } from '@/lib/dateLabels';
 import { type ViewMode, type Col, type ColDay, type ColPeriod, CELL_WIDTHS, quarterLabels, type EnrichedTask } from './types';
 
 export function useGanttTimeline(viewMode: ViewMode, tasks?: EnrichedTask[]) {
@@ -85,7 +86,7 @@ export function useGanttTimeline(viewMode: ViewMode, tasks?: EnrichedTask[]) {
       const arr: ColPeriod[] = [];
       const d = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
       while (d <= rangeEnd) {
-        arr.push({ date: new Date(d), key: `${d.getFullYear()}-${d.getMonth()}`, label: `${d.getMonth() + 1}月`, year: d.getFullYear() });
+        arr.push({ date: new Date(d), key: `${d.getFullYear()}-${d.getMonth()}`, label: monthLabel(d), year: d.getFullYear() });
         d.setMonth(d.getMonth() + 1);
       }
       return arr;

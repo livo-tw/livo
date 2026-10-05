@@ -78,7 +78,6 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     refreshFeatureToggles: ui.refreshFeatureToggles,
     setIsLoading: ui.setIsLoading,
     setSprintActive: sprint.setSprintActive,
-    webhookConfigRef: task.webhookConfigRef,
     refreshSprints: sprint.refreshSprints,
   });
 

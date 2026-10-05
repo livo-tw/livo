@@ -14,6 +14,8 @@ interface DashboardStatusChartsProps {
 const DashboardStatusCharts = ({ statusData, dwellData, isMobile }: DashboardStatusChartsProps) => {
   const { t } = useTranslation();
   const maxDwell = Math.max(...dwellData.map(d => d.avg), 1);
+  // Wide enough for the longest status name (CJK characters are about twice as wide), within limits.
+  const labelWidth = Math.min(isMobile ? 110 : 150, Math.max(50, 8 + Math.max(0, ...statusData.map(item => [...item.name].reduce((sum, char) => sum + (/[\u2E80-\uFFFF]/.test(char) ? 12 : 7), 0)))));
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-4 md:mb-6">
@@ -22,7 +24,7 @@ const DashboardStatusCharts = ({ statusData, dwellData, isMobile }: DashboardSta
         <ResponsiveContainer width="100%" height={isMobile ? 180 : 220}>
           <BarChart data={statusData} layout="vertical">
             <XAxis type="number" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-            <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} width={isMobile ? 50 : 70} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} width={labelWidth} interval={0} />
             <Tooltip
               formatter={(value: number, name: string) => [t('dashboard.cardCountFormat', { count: value }), name]}
               contentStyle={{ fontSize: 12, background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}

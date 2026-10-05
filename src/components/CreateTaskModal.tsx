@@ -10,6 +10,7 @@ import { DEMO_BANNER_HEIGHT } from '@/components/DemoModeBanner';
 
 // Section components
 import TaskFormFields from '@/components/create-task/TaskFormFields';
+import TaskFormCustomFields from '@/components/create-task/TaskFormCustomFields';
 import TaskFormSubtasks from '@/components/create-task/TaskFormSubtasks';
 import TaskFormTodoList from '@/components/create-task/TaskFormTodoList';
 import TaskFormChecklist from '@/components/create-task/TaskFormChecklist';
@@ -33,7 +34,7 @@ const CreateTaskModal = () => {
   const { t } = useTranslation();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const {
-    showCreateTask, setShowCreateTask,
+    showCreateTask,
     title, setTitle,
     background, setBackground,
     requirement, setRequirement,
@@ -49,9 +50,9 @@ const CreateTaskModal = () => {
     checkItems, newCheckText, setNewCheckText, addCheck, removeCheck,
     subtaskItems, setSubtaskItems, newSubtaskText, setNewSubtaskText,
     pendingFiles, handleFileSelect, removePendingFile, handleDrop,
-    fieldsProps, isMobile,
+    fieldsProps, customFieldsProps, isMobile,
     hasFeature,
-    handleSubmitAttempt,
+    handleSubmitAttempt, requestClose,
     ConfirmDialog,
   } = useCreateTaskForm();
   const focusTrapRef = useFocusTrap(showCreateTask);
@@ -152,8 +153,8 @@ const CreateTaskModal = () => {
         aria-modal="true"
         className={`fixed inset-0 z-50 bg-black/50 ${isMobile ? '' : 'flex items-center justify-center'}`}
         style={IS_DEMO_PRO ? { top: DEMO_BANNER_HEIGHT } : undefined}
-        onKeyDown={e => e.key === 'Escape' && setShowCreateTask(false)}
-        onClick={() => !isMobile && setShowCreateTask(false)}
+        onKeyDown={e => { if (e.key === 'Escape') void requestClose(); }}
+        onClick={() => { if (!isMobile) void requestClose(); }}
       >
         <div
           className={`bg-card shadow-xl border border-border flex flex-col ${isMobile ? 'w-full h-full' : 'rounded-lg max-h-[90vh]'}`}
@@ -204,7 +205,7 @@ const CreateTaskModal = () => {
                 </div>
               )}
             </div>
-            <button onClick={() => setShowCreateTask(false)}
+            <button onClick={() => void requestClose()} aria-label={t('common.close')}
               className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
               <X size={18} />
             </button>
@@ -217,7 +218,7 @@ const CreateTaskModal = () => {
               <div className={`${isMobile ? '' : 'flex-1'} px-4 md:px-6 py-4 md:py-5 space-y-4 min-w-0`}>
                 {/* Title (always visible) */}
                 <div>
-                  <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.titleLabel')}</label>
+                  <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.titleLabel')}<span className="text-destructive"> *</span></label>
                   <input
                     ref={titleRef}
                     type="text"
@@ -242,6 +243,7 @@ const CreateTaskModal = () => {
                   <div className="border-t border-border pt-3">
                     <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1"><FileText size={16} /> {t('task.properties')}</h3>
                     <TaskFormFields {...fieldsProps} hideDeployment />
+                    <div className="mt-4"><TaskFormCustomFields {...customFieldsProps} /></div>
                   </div>
                 )}
 
@@ -277,6 +279,7 @@ const CreateTaskModal = () => {
               {!isMobile && (
                 <div className="w-[300px] flex-shrink-0 px-5 py-5">
                   <TaskFormFields {...fieldsProps} hideDeployment />
+                  <div className="mt-4"><TaskFormCustomFields {...customFieldsProps} /></div>
                 </div>
               )}
             </div>
@@ -284,7 +287,7 @@ const CreateTaskModal = () => {
 
           {/* Footer */}
           <div className="px-4 md:px-6 py-3 border-t border-border flex justify-end gap-2 flex-shrink-0 bg-card rounded-b-lg">
-            <button onClick={() => setShowCreateTask(false)}
+            <button onClick={() => void requestClose()}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-muted">
               {t('common.cancel')}
             </button>

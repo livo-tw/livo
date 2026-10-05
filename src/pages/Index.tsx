@@ -1,9 +1,12 @@
-import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { AppProvider } from '@/context/AppContext';
 import { useAuthContext } from '@/context/AuthContext';
-import { resolveApprovalView, resolveQaView } from '@/lib/featureToggles';
+import { resolveApprovalView, resolveQaView, resolveReleaseView } from '@/lib/featureToggles';
+import ProjectScopeBar from '@/components/project/ProjectScopeBar';
+import { SCOPED_VIEWS } from '@/hooks/useProjectScope';
 import { useUIContext } from '@/context/UIContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { LicenseProvider, useLicense } from '@/context/LicenseContext';
@@ -25,9 +28,12 @@ import MySettingsView from '@/components/MySettingsView';
 import TeamManageView from '@/components/TeamManageView';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
 import { NotificationToastProvider } from '@/components/notifications/NotificationToastProvider';
+import { useTaskHistory } from '@/hooks/useTaskHistory';
 import { useIsMobile } from '@/hooks/use-mobile';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import CommandPalette from '@/components/CommandPalette';
+import { IS_DEMO_PRO } from '@/lib/demoMode';
+import { DEMO_BANNER_HEIGHT } from '@/components/DemoModeBanner';
 
 // Lazy-loaded heavy views for route-level code splitting
 const DashboardView = lazy(() => import('@/components/DashboardView'));
@@ -52,10 +58,12 @@ const ViewFallback = () => (
 );
 
 const AppContent = () => {
+  const { t } = useTranslation();
   const { permissions } = useAuthContext();
-  const { currentView: requestedView, setCurrentView, approvalsEnabled, featureToggles, featureTogglesReady, standupMode, selectedTask, setSelectedTask, taskDisplayMode, setTaskDisplayMode } = useUIContext();
+  const { currentView: requestedView, setCurrentView, approvalsEnabled, featureToggles, featureTogglesReady, standupMode, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
   const qaEnabled = featureTogglesReady && featureToggles.qa;
-  const currentView = resolveQaView(resolveApprovalView(requestedView, approvalsEnabled), qaEnabled);
+  const releasesEnabled = featureTogglesReady && featureToggles.releases;
+  const currentView = resolveReleaseView(resolveQaView(resolveApprovalView(requestedView, approvalsEnabled), qaEnabled), releasesEnabled);
   useEffect(() => {
     if (requestedView !== currentView) setCurrentView(currentView);
   }, [requestedView, currentView, setCurrentView]);
@@ -74,10 +82,10 @@ const AppContent = () => {
   }, [qaEnabled, setCurrentView, setSelectedTask]);
 
   useEffect(() => {
-    const openRelease = () => { if (new URLSearchParams(window.location.search).has('release')) { setSelectedTask(null); setCurrentView('releases'); } };
+    const openRelease = () => { if (releasesEnabled && new URLSearchParams(window.location.search).has('release')) { setSelectedTask(null); setCurrentView('releases'); } };
     openRelease(); window.addEventListener('popstate', openRelease);
     return () => window.removeEventListener('popstate', openRelease);
-  }, [setCurrentView, setSelectedTask]);
+  }, [releasesEnabled, setCurrentView, setSelectedTask]);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('knowledge')) {
@@ -85,20 +93,23 @@ const AppContent = () => {
     }
   }, [setCurrentView, setSelectedTask]);
 
+  // A shared task link (?task=KEY) opens once, after the tasks load. Later ?task
+  // changes come from the history (useTaskHistory), not from here.
+  const deepLinkTask = useRef(new URLSearchParams(window.location.search).get('task'));
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const taskKey = params.get('task');
-    if (taskKey && allTasks.length > 0 && !selectedTask) {
-      const found = allTasks.find(t => t.taskKey === taskKey || t.id === taskKey);
-      if (found) {
-        setTaskDisplayMode('page');
-        setSelectedTask(found);
-        const url = new URL(window.location.href);
-        url.searchParams.delete('task');
-        window.history.replaceState({}, '', url.toString());
-      }
-    }
-  }, [allTasks, selectedTask, setSelectedTask, setTaskDisplayMode]);
+    const taskKey = deepLinkTask.current;
+    if (!taskKey || allTasks.length === 0) return;
+    deepLinkTask.current = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('task');
+    window.history.replaceState({}, '', url.toString());
+    const found = allTasks.find(t => t.taskKey === taskKey || t.id === taskKey);
+    // Opening adds the history entry, so Back returns to the app instead of leaving it.
+    if (found) setSelectedTask(found);
+    // Say so instead of opening nothing; the link stays out of the address so a reload does not repeat it.
+    else toast.error(t('task.linkNotFound', { key: taskKey }));
+  }, [allTasks, setSelectedTask, t]);
+  useTaskHistory(selectedTask, setSelectedTask, allTasks);
   const [isResizing, setIsResizing] = useState(false);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -120,13 +131,6 @@ const AppContent = () => {
     window.addEventListener('mouseup', onMouseUp);
   }, [sidePanelWidth]);
 
-  // Mobile: always force page mode for tasks, no standup mode
-  useEffect(() => {
-    if (isMobile && selectedTask && taskDisplayMode !== 'page') {
-      setTaskDisplayMode('page');
-    }
-  }, [isMobile, selectedTask, taskDisplayMode, setTaskDisplayMode]);
-
   const showSidePanel = selectedTask && taskDisplayMode === 'side' && !isMobile;
   const showFullPage = selectedTask && taskDisplayMode === 'page';
 
@@ -145,7 +149,8 @@ const AppContent = () => {
             className="fixed inset-0 z-40 bg-black/50"
             onClick={() => setSidebarOpen(false)}
           />
-          <div className="fixed inset-y-0 left-0 z-50 w-[280px] shadow-2xl">
+          {/* Below the demo banner, which sits above everything else. */}
+          <div className="fixed bottom-0 left-0 z-50 w-[280px] shadow-2xl" style={{ top: IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0 }}>
             {sidebarContent}
           </div>
         </>
@@ -160,6 +165,7 @@ const AppContent = () => {
         ) : (
           <div className="flex-1 flex overflow-hidden">
             <div className="flex-1 overflow-hidden flex flex-col min-w-0">
+              {SCOPED_VIEWS.includes(currentView) && <ProjectScopeBar />}
               {currentView === 'board' && <BoardView />}
               {currentView === 'backlog' && <Suspense fallback={<ViewFallback />}><BacklogView /></Suspense>}
               {currentView === 'all-list' && <Suspense fallback={<ViewFallback />}><AllListView /></Suspense>}

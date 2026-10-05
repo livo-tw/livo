@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
+import { useProjectScope } from '@/hooks/useProjectScope';
 import { useTaskContext } from '@/context/TaskContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -41,8 +42,14 @@ export function formatDate(d: string | null): string {
 
 export function useDashboardData() {
   const { users } = useMemberContext();
-  const { allProjects, productLines } = useProjectContext();
-  const { allTasks, statuses, statusLogs } = useTaskContext();
+  const { allProjects: everyProject, productLines: everyLine } = useProjectContext();
+  const { allTasks: everyTask, statuses, statusLogs: everyLog } = useTaskContext();
+  // Statistics cover the sidebar project or product line, like every other task view.
+  const { projectIds: scopeIds } = useProjectScope();
+  const allTasks = useMemo(() => scopeIds ? everyTask.filter(task => scopeIds.has(task.projectId)) : everyTask, [everyTask, scopeIds]);
+  const allProjects = useMemo(() => scopeIds ? everyProject.filter(project => scopeIds.has(project.id)) : everyProject, [everyProject, scopeIds]);
+  const productLines = useMemo(() => scopeIds ? everyLine.filter(line => allProjects.some(project => project.lineId === line.id)) : everyLine, [everyLine, allProjects, scopeIds]);
+  const statusLogs = useMemo(() => { if (!scopeIds) return everyLog; const ids = new Set(allTasks.map(task => task.id)); return everyLog.filter(log => ids.has(log.taskId)); }, [everyLog, allTasks, scopeIds]);
   const { sprints, currentSprint, sprintActive } = useSprintContext();
   const isMobile = useIsMobile();
 
@@ -187,19 +194,13 @@ export function useDashboardData() {
       const inProgress = userTasks.filter(t => activeStatusIds.includes(t.statusId)).length;
       const overdue = userTasks.filter(t => t.dueDate && new Date(t.dueDate) < now && !t.completedAt && !doneStatusIds.includes(t.statusId)).length;
       const completed = userTasks.filter(t => t.completedAt);
-      const avgCreateToComplete = completed.length > 0
-        ? completed.reduce((sum, t) => {
-            const c = parseDateTime(t.createdAt); const d = parseDateTime(t.completedAt);
-            if (!Number.isFinite(c) || !Number.isFinite(d)) return sum;
-            return sum + (d - c) / msPerDay;
-          }, 0) / completed.length : null;
-      const startedAndCompleted = completed.filter(t => t.startedAt);
-      const avgStartToComplete = startedAndCompleted.length > 0
-        ? startedAndCompleted.reduce((sum, t) => {
-            const s = parseDateTime(t.startedAt); const d = parseDateTime(t.completedAt);
-            if (!Number.isFinite(s) || !Number.isFinite(d)) return sum;
-            return sum + (d - s) / msPerDay;
-          }, 0) / startedAndCompleted.length : null;
+      // Only spans that make sense count: an imported task can show a finish before its creation.
+      const averageDays = (spans: [string | undefined, string | undefined][]) => {
+        const days = spans.map(([from, to]) => (parseDateTime(to) - parseDateTime(from)) / msPerDay).filter(value => Number.isFinite(value) && value >= 0);
+        return days.length ? days.reduce((sum, value) => sum + value, 0) / days.length : null;
+      };
+      const avgCreateToComplete = averageDays(completed.map(t => [t.createdAt, t.completedAt]));
+      const avgStartToComplete = averageDays(completed.filter(t => t.startedAt).map(t => [t.startedAt, t.completedAt]));
       return {
         ...u,
         byStatus: statuses.map(s => ({ status: s, count: userTasks.filter(t => t.statusId === s.id).length })),

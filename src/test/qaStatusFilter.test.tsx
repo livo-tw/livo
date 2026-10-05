@@ -15,13 +15,14 @@ vi.mock('react-i18next', async (importOriginal) => ({
 }));
 import '@/i18n';
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: true }, featureTogglesReady: true, taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn() }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[], productLines: [] as ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
+vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[], productLines: [] as ProductLine[], selectedProjectId: null as string | null, selectedLineId: null as string | null, setSelectedProjectId: vi.fn(), setSelectedLineId: vi.fn() }) }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as never[] }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
   const client = { getWorkflow: mocks.getWorkflow };
   return { useQa: () => ({ client, actor: { id: 'example-admin', role: 'admin' } }) };
 });
-vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <output aria-label="Filtered canonical state">{filters.state || 'all'}</output> }));
+vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <output aria-label="Filtered canonical state">{filters.states?.join(',') || 'all'}</output> }));
 vi.mock('@/components/qa/QaIssueDetail', () => ({ default: (): null => null, QaFailure: (): null => null }));
 vi.mock('@/components/qa/QaCreatePanel', () => ({ default: (): null => null }));
 vi.mock('@/components/qa/QaWorkflowSettings', () => ({ default: (): null => null }));
@@ -84,7 +85,7 @@ describe('shared coloured status select', () => {
 });
 
 describe('QA status filtering', () => {
-  it('keeps all eight canonical states and custom labels despite grouped columns, with the board colours in options and selection', async () => {
+  it('offers all eight canonical states with custom labels and board colours, and filters several at once', async () => {
     const workflow: QaWorkflow = {
       ...DEFAULT_QA_WORKFLOW, order: [...QA_STATES].reverse(),
       labels: { ...DEFAULT_QA_WORKFLOW.labels, verified: 'QA accepted', failed: 'QA rejected' },
@@ -93,24 +94,21 @@ describe('QA status filtering', () => {
     mocks.getWorkflow.mockResolvedValue(workflow);
     render(<QaWorkspace />);
     await screen.findByLabelText('Filtered canonical state');
-    const trigger = screen.getByRole('combobox', { name: 'qa.allStates' });
-    const listbox = await open('qa.allStates');
-    const options = within(listbox).getAllByRole('option');
-    expect(options).toHaveLength(9);
-    expect(options.map(option => option.textContent)).toEqual(['qa.allStates', ...workflow.order.map(state => workflow.labels[state] || `qa.state.${state}`)]);
-    expect(within(listbox).queryByText('Incoming group')).toBeNull();
-    for (const state of QA_STATES) {
-      const option = within(listbox).getByRole('option', { name: workflow.labels[state] || `qa.state.${state}` });
-      expect(option.querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors[state] });
+    // The shared board filter chip (same control as the task board).
+    const chip = screen.getByRole('button', { name: 'common.all filter.status' });
+    fireEvent.click(chip);
+    // Look inside the open dropdown only: role queries over the whole workspace are slow.
+    const menu = within(chip.parentElement!);
+    const labels = workflow.order.map(state => workflow.labels[state] || `qa.state.${state}`);
+    for (const [index, state] of workflow.order.entries()) {
+      const option = menu.getByRole('button', { name: labels[index] });
+      expect(option.querySelector('span.rounded-full')).toHaveStyle({ backgroundColor: qaStateColors[state] });
     }
-    fireEvent.click(within(listbox).getByRole('option', { name: 'QA accepted' }));
-    await waitFor(() => expect(trigger).toHaveTextContent('QA accepted'));
-    expect(trigger.querySelector('[data-status-dot]')).toHaveStyle({ backgroundColor: qaStateColors.verified });
-    expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('verified');
-    const reopened = await open('qa.allStates');
-    fireEvent.click(within(reopened).getByRole('option', { name: 'qa.allStates' }));
-    await waitFor(() => expect(trigger).toHaveTextContent('qa.allStates'));
-    expect(trigger.querySelector('[data-status-dot]')).toBeNull();
-    expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('all');
+    expect(screen.queryByText('Incoming group')).toBeNull();
+    fireEvent.click(menu.getByRole('button', { name: 'QA accepted' }));
+    fireEvent.click(menu.getByRole('button', { name: 'QA rejected' }));
+    await waitFor(() => expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('verified,failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'button.clearFilters' }));
+    await waitFor(() => expect(screen.getByLabelText('Filtered canonical state')).toHaveTextContent('all'));
   });
 });

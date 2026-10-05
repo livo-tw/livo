@@ -15,9 +15,11 @@ type Deps = {
   currentMemberId: string;
   allTasks: Task[];
   setAllTasks: (tasks: Task[]) => void;
+  /** Asks before something is deleted for good. */
+  confirm?: (options: { title?: string; description: string; destructive?: boolean }) => Promise<boolean>;
 };
 
-export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTasks }: Deps) => {
+export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTasks, confirm }: Deps) => {
   const [attachments, setAttachments] = useState<Tables<'task_attachments'>[]>([]);
   const [fileUploading, setFileUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -108,8 +110,12 @@ export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTask
 
   const deleteAttachment = async (att: Tables<'task_attachments'>) => {
     if (!task) return;
-    await supabase.storage.from('task-images').remove([att.storage_path]);
-    await supabase.from('task_attachments').delete().eq('id', att.id);
+    if (confirm && !(await confirm({ title: i18n.t('taskDetail.attachments.deleteTitle'), description: i18n.t('taskDetail.attachments.deleteConfirm', { name: att.file_name }), destructive: true }))) return;
+    // The record goes first: a failed delete keeps the file usable, and a leftover file is only storage.
+    const { error } = await supabase.from('task_attachments').delete().eq('id', att.id);
+    if (error) { toast.error(i18n.t('error.deleteFailed') + error.message); return; }
+    const removed = await supabase.storage.from('task-images').remove([att.storage_path]);
+    if (removed.error) console.error('[LIVO] attachment file not removed:', removed.error.message);
     setAttachments(prev => prev.filter(a => a.id !== att.id));
     const newAttCount = Math.max(0, task.attachmentCount - 1);
     setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, attachmentCount: newAttCount } : t));

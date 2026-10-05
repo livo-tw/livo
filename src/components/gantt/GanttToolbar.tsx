@@ -54,7 +54,7 @@ const GanttToolbar = React.memo(({
   return (
     <div className="px-3 md:px-5 pt-3 md:pt-4 pb-2">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2 md:mb-3">
-        <div className="flex items-center gap-1 md:gap-2 flex-wrap">
+        <div className="flex min-w-0 flex-1 items-center gap-1 md:gap-2 flex-wrap">
           {!isMobile && (
             <div className="flex items-center gap-0.5">
               <button
@@ -101,7 +101,7 @@ const GanttToolbar = React.memo(({
             onChange={e => setSelectedSprintId(e.target.value)}
             className="px-2.5 py-1.5 text-[13px] font-medium rounded-md border border-border bg-card text-foreground cursor-pointer"
           >
-            <option value="current">{t('gantt.sprint.current')}{currentSprint ? ` (${currentSprint.name})` : ''}</option>
+            <option value="current">{currentSprint ? `${t('gantt.sprint.current')} (${currentSprint.name})` : t('gantt.sprint.openTasks')}</option>
             <option value="all">{t('gantt.sprint.all')}</option>
             {sprints
               .filter(s => !s.isActive)
@@ -112,12 +112,12 @@ const GanttToolbar = React.memo(({
             }
           </SearchableSelect>
         </div>
-        <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
+        <div className="flex shrink-0 self-start items-center gap-0.5 bg-muted rounded-md p-0.5 md:self-auto">
           {viewModeOptions.map(([mode, label]) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
-              className={`px-2.5 md:px-3 py-1.5 text-[13px] font-medium rounded transition-colors ${
+              className={`whitespace-nowrap px-2.5 md:px-3 py-1.5 text-[13px] font-medium rounded transition-colors ${
                 viewMode === mode ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
               }`}
             >

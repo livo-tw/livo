@@ -21,6 +21,7 @@ import { TABLES } from './tables';
 import { withFullTaskRows } from './taskEvents';
 import { knowledgeLockAllowed } from './knowledge';
 import { handleKnowledgePreferences } from './knowledgePreferences';
+import { handleSlackLinkRpc } from './slackLink';
 import { PLANNING_FNS, taskPlanningRpc, planningError } from './taskPlanning';
 
 // ─── Small helpers ────────────────────────────────────────────────────────
@@ -163,6 +164,16 @@ export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Res
 
   try {
     // ── Demo lock (contract T3): on the public demo instance nobody may
+    if (fn === 'livo_slack_link_status' || fn === 'livo_slack_link_set') {
+      let authed = false;
+      const failure = await requireMember(c, async () => { authed = true; });
+      if (!authed) return c.json({ data: null, error: { message: 'slack_link_forbidden' } }, failure instanceof Response && failure.status === 403 ? 403 : 401);
+      try {
+        return c.json({ data: await handleSlackLinkRpc(c.env, c.get('auth'), fn, args), error: null } satisfies RpcResponse);
+      } catch (failureToSet) {
+        return c.json({ data: null, error: { message: failureToSet instanceof Error ? failureToSet.message : 'slack_link_failed' } } satisfies RpcResponse, 403);
+      }
+    }
     if (fn === 'kb_preferences') {
       let authed = false;
       const failure = await requireMember(c, async () => { authed = true; });

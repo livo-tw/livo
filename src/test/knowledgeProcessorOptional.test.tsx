@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { User } from '@/types';
 import KnowledgeImportDialog from '@/components/KnowledgeImportDialog';
@@ -15,8 +15,9 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (_key: string, opt
 const user: User = { id: 'person', name: 'Example Person', role: 'member', jobTitle: 'PM', isActive: true, email: 'example@example.com', avatar: '', color: '', sortOrder: 0 };
 
 describe('import dialog without the optional processor', () => {
-  it('explains that the processor is not configured and does not start an upload', async () => {
+  it('explains that Word needs the processor and does not start that upload', async () => {
     render(<KnowledgeImportDialog open onOpenChange={() => {}} pages={[]} users={[]} actor={user} onImported={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Word .docx' }));
     expect((await screen.findByRole('alert')).textContent).toBe(knowledgeImportMessages.en.processorMissing);
     expect(screen.getByRole('button', { name: knowledgeImportMessages.en.start })).toBeDisabled();
   });

@@ -213,9 +213,9 @@ export interface Result {
 
 export type Caller = { kind: 'service' } | { kind: 'member'; member: MemberRow };
 
-/** Active admin / super_admin — the only members allowed to manage keys. */
+/** Active super_admin — the only members allowed to manage keys, like every service integration. */
 export function isAdminMember(member: MemberRow | null): boolean {
-  return !!member && member.is_active === true && ADMIN_ROLES.includes(member.role || '');
+  return !!member && member.is_active === true && member.role === 'super_admin';
 }
 
 const fail = (status: number, error: string, message?: string): Result => ({

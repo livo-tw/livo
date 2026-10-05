@@ -76,7 +76,11 @@ Deno.serve(async (req: Request) => {
     // deno-lint-ignore no-explicit-any
     const worker = await (globalThis as any).EdgeRuntime.userWorkers.create({
       servicePath,
-      memoryLimitMb: 150,
+      // knowledge-import holds a document of up to 10 MB several times over (the
+      // base64 request, the bytes, the processor request and the parsed result
+      // with its images). At 150 MB a PDF near the limit got the worker killed
+      // and the import vanished from the dialog.
+      memoryLimitMb: serviceName === 'knowledge-import' ? 256 : 150,
       // QA streams private evidence (up to 200 MB) without buffering it in
       // the user worker. Allow a slow download to finish before terminating it.
       // knowledge-import waits up to 95 s for the optional document processor

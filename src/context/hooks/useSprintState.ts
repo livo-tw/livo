@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
@@ -47,51 +48,53 @@ export function useSprintState() {
     return `${prefix}W${sameMonthCount + 1}`;
   }, [sprints]);
 
-  /** Update sprint_id in batches of 100 */
-  const batchUpdateSprintId = useCallback(async (taskIds: string[], sprintId: string | null) => {
+  /** Update sprint_id in batches of 100; returns how many tasks could not be moved. */
+  const batchUpdateSprintId = useCallback(async (taskIds: string[], sprintId: string | null): Promise<number> => {
     const chunkSize = 100;
+    let failed = 0;
     for (let i = 0; i < taskIds.length; i += chunkSize) {
       const chunk = taskIds.slice(i, i + chunkSize);
       const { error } = await supabase.from('tasks').update({ sprint_id: sprintId }).in('id', chunk);
-      if (error) console.error('[LIVO] batchUpdateSprintId error:', error);
+      if (error) { console.error('[LIVO] batchUpdateSprintId error:', error); failed += chunk.length; }
     }
+    if (failed) toast.error(i18n.t('sprint.moveTasksFailed', { count: failed }));
+    return failed;
   }, []);
 
   const createStartSprint = useCallback(
     (statuses: Status[], allTasks: Task[], refreshTasks: () => Promise<void>) =>
-      async (name: string, carryOverTaskIds?: string[], includeBacklog: boolean = true) => {
+      async (name: string, carryOverTaskIds?: string[], includeBacklog: boolean = true): Promise<boolean> => {
         if (sprints.some(s => s.name === name)) {
           toast.error(i18n.t('sprint.nameDuplicate'));
-          return;
+          return false;
         }
         setSprintActive(true);
         const { data, error } = await supabase.from('sprints').insert({
           name,
           is_active: true,
         }).select().single();
-        if (error) { toast.error(i18n.t('sprint.createFailed') + error.message); setSprintActive(false); return; }
+        if (error) { toast.error(i18n.t('sprint.createFailed') + error.message); setSprintActive(false); return false; }
         const newSprintId = data?.id;
         // Collect task IDs to assign to the new sprint
         let allIds: string[] = [...(carryOverTaskIds || [])];
         if (includeBacklog) {
-          // Auto-assign all tasks not in an active sprint
-          const activeSprintIds = new Set(sprints.filter(s => s.isActive).map(s => s.id));
-          const unassignedIds = allTasks.filter(t => !t.sprintId || !activeSprintIds.has(t.sprintId)).map(t => t.id);
-          allIds = [...new Set([...allIds, ...unassignedIds])];
+          // Only the open backlog: never finished tasks or tasks of earlier sprints.
+          allIds = [...new Set([...allIds, ...sprintBacklogTaskIds(allTasks, statuses)])];
         }
         if (allIds.length > 0) {
           await batchUpdateSprintId(allIds, newSprintId);
         }
         await Promise.all([refreshSprints(), refreshTasks()]);
         toast.success(i18n.t('sprint.started'));
+        return true;
       },
     [sprints, refreshSprints, batchUpdateSprintId],
   );
 
   const createCompleteSprint = useCallback(
     (statuses: Status[], allTasks: Task[], refreshTasks: () => Promise<void>, setAllTasks?: SetAllTasks) =>
-      async (pendingAction: PendingTaskAction = 'backlog') => {
-        if (!currentSprint) return;
+      async (pendingAction: PendingTaskAction = 'backlog'): Promise<{ pendingIds: string[] } | null> => {
+        if (!currentSprint) return null;
         const doneIds = statuses.filter(s => s.isDone).map(s => s.id);
         const sprintTasks = allTasks.filter(t => t.sprintId === currentSprint.id);
         const completedCount = sprintTasks.filter(t => doneIds.includes(t.statusId)).length;
@@ -104,7 +107,7 @@ export function useSprintState() {
           completed_count: completedCount,
           pending_count: pendingTasks.length,
         }).eq('id', currentSprint.id);
-        if (error) { toast.error(i18n.t('sprint.completeFailed') + error.message); return; }
+        if (error) { toast.error(i18n.t('sprint.completeFailed') + error.message); return null; }
 
         // Handle pending tasks based on user's choice
         const pendingIds = pendingTasks.map(t => t.id);
@@ -129,8 +132,8 @@ export function useSprintState() {
         await Promise.all([refreshSprints(), refreshTasks()]);
         toast.success(i18n.t('sprint.completed'));
 
-        // Return pending task IDs for 'next-sprint' so caller can pass to startSprint
-        return pendingAction === 'next-sprint' ? pendingIds : undefined;
+        // The unfinished tasks, which the caller offers to the next sprint for 'next-sprint'.
+        return { pendingIds };
       },
     [currentSprint, refreshSprints, batchUpdateSprintId],
   );

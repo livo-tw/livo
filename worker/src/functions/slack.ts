@@ -17,6 +17,7 @@ import { appBaseUrl, DEFAULT_WORKSPACE, isDemoWorkspace } from '../env';
 import { TABLES } from '../tables';
 import { rowToWire, type TableMeta } from '../meta';
 import { checkProfessional } from '../license';
+import { slackLinkDisabled, slackLinkDisabledMembers } from '../slackLink';
 import { commentMentionIds, commentPlainText, dmRecipients, mrkdwn, mrkdwnLine, notifyChannelId, notifyDetails, NOTIFY_TASK_TYPES,
   reportMessage, requestedEmails, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from '../slackNotifyCore';
 
@@ -344,7 +345,9 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
       const { results } = await env.DB.prepare(
         `SELECT id, email FROM members WHERE workspace_id = ? AND is_active = 1 AND id IN (${ids.map(() => '?').join(',')})`
       ).bind(ws, ...ids).all<{ id: string; email: string }>();
-      const targets = (results || []).filter((m) => typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
+      // Members who unlinked Slack in My settings get no direct messages.
+      const unlinked = await slackLinkDisabledMembers(env, ws, ids);
+      const targets = (results || []).filter((m) => !unlinked.has(m.id) && typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
       await Promise.allSettled(targets.map(async (m) => {
         const slackUserId = await findSlackUserId(sc, m.email.trim());
         const dm = slackUserId ? await openDm(sc, slackUserId) : null;
@@ -810,6 +813,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
 
         if (assigned.length === 0 && review.length === 0) continue;
 
+        if (await slackLinkDisabled(env, ws, userId)) continue;
         const slackUserId = await findSlackUserId(sc, member.email);
         if (!slackUserId) continue;
 
@@ -926,7 +930,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
         // Send
         if (cfg.send_target === 'channel' && typeof cfg.send_channel === 'string' && cfg.send_channel) {
           await digestSendChannel(sc, cfg.send_channel, summaryText, blocks);
-        } else {
+        } else if (!await slackLinkDisabled(env, ws, userId)) {
           const slackUserId = await findSlackUserId(sc, member.email);
           if (slackUserId) {
             await digestSendDm(sc, slackUserId, summaryText, blocks);

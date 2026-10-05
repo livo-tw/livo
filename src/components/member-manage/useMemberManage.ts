@@ -13,6 +13,7 @@ import { usePresenceLock } from '@/hooks/usePresenceLock';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import type { AccountCredential } from '@/components/AccountCredentialsDialog';
 import { callFunction, DEMO_BLOCKED } from '@/lib/callFunction';
+import { functionErrorCode } from '@/lib/functionError';
 
 const COLORS = ['#FF5630', '#FF8B00', '#36B37E', '#00B8D9', '#6554C0', '#0065FF', '#6B778C', '#172B4D'];
 
@@ -271,9 +272,10 @@ export function useMemberManage() {
   const handleToggleActive = async (memberId: string, currentActive: boolean) => {
     if (memberId === currentMemberId) { toast.error(i18n.t('member.cannotDeactivateSelf')); return; }
     const actionLabel = currentActive ? i18n.t('member.deactivate') : i18n.t('member.activate');
-    if (!(await confirm({ description: i18n.t('member.toggleConfirm', { action: actionLabel }), title: i18n.t('confirm.defaultTitle'), destructive: true }))) return;
-    setActionLoading(memberId);
     const targetUser = users.find(u => u.id === memberId);
+    // Say who and what happens: deactivating ends the login but keeps the member's tasks and records.
+    if (!(await confirm({ description: i18n.t(currentActive ? 'member.deactivateConfirm' : 'member.activateConfirm', { name: targetUser?.name || memberId }), title: actionLabel, destructive: currentActive }))) return;
+    setActionLoading(memberId);
     const { data, error } = await supabase.functions.invoke('manage-member', { body: { action: 'toggle_active', memberId, isActive: !currentActive } });
     if (error || data?.error) toast.error(i18n.t('member.toggleFailed', { action: actionLabel }) + (data?.error || error?.message));
     else {
@@ -382,7 +384,11 @@ export function useMemberManage() {
     if (!(await confirm({ description: i18n.t('member.deleteConfirm', { name: memberName }), title: i18n.t('confirm.defaultTitle'), destructive: true }))) return;
     setActionLoading(memberId);
     const { data, error } = await supabase.functions.invoke('manage-member', { body: { action: 'delete', memberId } });
-    if (error || data?.error) toast.error(i18n.t('member.deleteFailed') + (data?.error || error?.message));
+    if (error || data?.error) {
+      // A member with history can only be deactivated; say so instead of a database error.
+      if ((await functionErrorCode(error, data)) === 'member_has_history') toast.error(i18n.t('member.deleteHasHistory', { name: memberName }), { duration: 10000 });
+      else toast.error(i18n.t('member.deleteFailed') + (data?.error || error?.message));
+    }
     else {
       toast.success(i18n.t('member.deleted'));
       if (currentMemberId) {

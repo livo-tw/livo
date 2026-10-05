@@ -19,7 +19,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useUIContext } from '@/context/UIContext';
-import { canQaCommand, isHistoricalQaPass, requiredTargetsPassed } from '@/lib/qa/domain';
+import { canQaComment, canQaCommand, isHistoricalQaPass, isQaTerminal, qaIdSearch, requiredTargetsPassed } from '@/lib/qa/domain';
 import type { QaActor, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import type { QaWorkflow } from '@/lib/qa/workflow';
@@ -35,6 +35,10 @@ import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
 import { useQaFieldConfiguration } from '@/hooks/useQaFieldConfiguration';
 import { QaCustomFieldDisplay } from './QaCustomFieldInputs';
+import { qaErrorText } from './qaErrorText';
+import { qaShortId } from '@/lib/qa/shortId';
+import { qaEventText, qaEventTitle } from './qaEventText';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 
 type ActionType = QaCommand['type'];
@@ -42,8 +46,8 @@ const actionLabels: Record<ActionType, string> = { edit: 'edit', triage: 'triage
 const displayDate = (value: string) => new Date(value).toLocaleString();
 export function QaFailure({ error }: { error: unknown }) {
   const { t } = useTranslation();
-  const failure = error as { status?: number; code?: string };
-  return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{t(failure?.status === 409 ? 'qa.conflict' : 'qa.failed')}</p>{failure?.code && <p className="mt-1 font-mono text-xs">{t('qa.errorCode', { code: failure.code })}</p>}</div>;
+  const { message, code } = qaErrorText(t, error);
+  return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{message}</p>{code && <p className="mt-1 font-mono text-xs">{t('qa.errorCode', { code })}</p>}</div>
 }
 
 export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onBusyChange?: (busy: boolean) => void }) {
@@ -54,11 +58,12 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const { allProjects, productLines } = useProjectContext();
   const { allTasks } = useTaskContext();
   const { setSelectedTask } = useUIContext();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [acknowledgedIssue, setAcknowledgedIssue] = useState<QaDetail['issue'] | null>(null);
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
   const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
-  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
+  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
   const [commandBusy, setBusy] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [unknownCommand, setUnknownCommand] = useState(false);
@@ -80,22 +85,31 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
   const commandSending = useRef(false);
   const pendingComment = useRef<{ body: string; id: string }>();
-  const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import');
+  // Comments have their own tab; the cloud also logs them as events.
+  const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import' && event.type !== 'comment');
   const source = (issue as unknown as { legacySource?: { recordUrl?: string } }).legacySource;
   const sourceUrl = source?.recordUrl && /^https:\/\/[^/]+\.slack\.com\//i.test(source.recordUrl) ? source.recordUrl : null;
   const nextAction = getQaNextAction(issue, actor);
   const can = (type: ActionType) => canQaCommand(issue, actor, type);
   const member = (id: string | null) => users.find(user => user.id === id)?.name || id || '—';
+  const memberNames = new Map(users.map(user => [user.id, user.name]));
+  const eventText = { t, member: (id: string) => memberNames.get(id) ?? id, date: displayDate,
+    task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
+    stateLabel: (state: string) => workflow?.labels[state as keyof QaWorkflow['labels']] || t(`qa.state.${state}`) };
   const primaryAction = nextAction && can(nextAction.command) ? nextAction : null;
   const moreActions = (['edit', 'triage', 'start_fix', 'submit_fix', 'close', 'reopen', 'hold', 'link_tasks'] as ActionType[])
-    .filter(type => can(type) && type !== primaryAction?.command);
+    .filter(type => can(type) && type !== primaryAction?.command && !(type === 'start_fix' && issue.state === 'in_progress'));
   const nextOwner = nextAction && ['start_fix', 'submit_fix'].includes(nextAction.command) ? issue.assigneeId : issue.qaOwnerId;
   const openAction = (type: ActionType) => {
     if (busy || !can(type)) return;
     setError(null);
     if (type === 'record_deployment' || type === 'record_verification') setTab('verification');
     else if (type === 'start_fix') void send({ type: 'start_fix' });
-    else setAction(type);
+    else {
+      // The close form starts from what the current evidence allows.
+      if (type === 'close') setResolution(canResolveFixed ? 'fixed' : '');
+      setAction(type);
+    }
   };
   const send = async (command: QaCommand, expectedVersion = issue.version, retry = false): Promise<boolean> => {
     if (commandBusy || attachmentBusy || commandSending.current || (unknownCommand && !retry)) return false;
@@ -138,10 +152,43 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     if (action === 'triage') command = { type: action, assigneeId: text('assigneeId'), qaOwnerId: text('qaOwnerId'), severity: text('severity') as QaSeverity, priority: Number(text('priority')), dueDate: text('dueDate') || null };
     if (action === 'start_fix') command = { type: action };
     if (action === 'submit_fix' && environments.ready) command = { type: action, summary: text('summary'), targets };
-    if (action === 'close' && resolution) command = { type: action, resolution, reason: text('reason'), ...(isHistoricalQaPass(issue) && resolution === 'fixed' ? { acknowledgeHistoricalPass: data.get('acknowledgeHistoricalPass') === 'on' } : {}), ...(resolution === 'duplicate' ? { duplicateOfId: text('duplicateOfId') } : {}) };
+    if (action === 'close' && resolution) {
+      const close = { type: action, resolution, reason: text('reason'), ...(isHistoricalQaPass(issue) && resolution === 'fixed' ? { acknowledgeHistoricalPass: data.get('acknowledgeHistoricalPass') === 'on' } : {}) } as const;
+      if (resolution === 'duplicate') { void findDuplicate(text('duplicateOfId')).then(duplicateOfId => { if (duplicateOfId) void send({ ...close, duplicateOfId }); }); return; }
+      command = close;
+    }
     if (action === 'reopen' || action === 'hold') command = { type: action, reason: text('reason') };
     if (action === 'link_tasks' && unavailableLinks.length === 0) command = { type: action, taskIds: links };
     if (command) void send(command);
+  };
+  // The card's 「開始修復」 starts the repair in one click, the same as the button here.
+  const startedFromCard = useRef(false);
+  useEffect(() => {
+    if (initialAction !== 'start_fix' || startedFromCard.current) return;
+    startedFromCard.current = true;
+    if (can('start_fix') && issue.state !== 'in_progress') void send({ type: 'start_fix' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The original bug can be given by the short id shown on cards (#1a2b3c4d) or its full id.
+  const findDuplicate = async (value: string): Promise<string | null> => {
+    const term = qaIdSearch(value) ?? qaIdSearch(`#${value}`);
+    const unavailable = (): null => { setError({ code: 'qa_duplicate_unavailable', status: 400 }); return null; };
+    if (!term) return unavailable();
+    setBusy(true); setError(null);
+    try {
+      const found = await client.list({ projectId: issue.projectId, search: `#${term}`, limit: 2 });
+      const matches = found.issues.filter(row => row.id !== issue.id);
+      return matches.length === 1 ? matches[0].id : unavailable();
+    } catch (failure) { setError(failure); return null; }
+    finally { setBusy(false); }
+  };
+  // Clearing a hold needs no reason; the history records who cleared it.
+  const clearHold = (): void => void send({ type: 'hold', reason: '' });
+  // Done and Won't fix by status only skip the recorded verification and reason, so ask first.
+  const changeState = async (state: QaDetail['issue']['state']) => {
+    if (state === issue.state) return;
+    if (isQaTerminal(state) && !(await confirm({ title: t('qa.terminalConfirmTitle', { status: workflow?.labels[state] || t(`qa.state.${state}`) }), description: t('qa.terminalConfirmDesc') }))) return;
+    void send({ type: 'set_state', state });
   };
   const postComment = async (event: React.FormEvent) => {
     event.preventDefault(); if (commandBusy || attachmentBusy || (unknownCommand && !pendingComment.current) || !comment.trim()) return;
@@ -154,7 +201,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   return <div className="w-full min-w-0 space-y-4 p-3 md:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2"><button className={qaButton} onClick={onBack} disabled={busy}><ArrowLeft size={15} aria-hidden="true" />{t('qa.back')}</button><button className={qaButton} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} aria-hidden="true" />{t('qa.refresh')}</button></div>
     <header className="rounded-xl border border-border/80 bg-card p-4 shadow-sm md:p-5">
-      <div className="mb-3 flex flex-wrap items-center gap-2"><Bug size={15} className="text-muted-foreground" aria-hidden="true" /><ProjectBadge name={allProjects.find(p => p.id === issue.projectId)?.name} color={getProjectColor(issue.projectId)} /><span title={issue.id} className="font-mono text-xs text-muted-foreground">#{issue.id.slice(-8)}</span>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline">{t('qa.slackSource')}<ExternalLink size={12} aria-hidden="true" /></a>}</div>
+      <div className="mb-3 flex flex-wrap items-center gap-2"><Bug size={15} className="text-muted-foreground" aria-hidden="true" /><ProjectBadge name={allProjects.find(p => p.id === issue.projectId)?.name} color={getProjectColor(issue.projectId)} /><span title={issue.id} className="font-mono text-xs text-muted-foreground">{qaShortId(issue.id)}</span>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline">{t('qa.slackSource')}<ExternalLink size={12} aria-hidden="true" /></a>}</div>
       <h1 className="break-words text-xl font-bold leading-relaxed md:text-2xl">{issue.title}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-3"><QaStateBadge state={issue.state} label={workflow?.labels[issue.state]} /><QaPriorityBadge priority={issue.priority} issue={issue} /><QaSeverityBadge severity={issue.severity} /><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: issue.fixCycle })}</span></div>
     </header>
@@ -164,14 +211,14 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     {busy && <p role="status" className="text-sm">{t('qa.saving')}</p>}
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-4">
-        <div role="tablist" aria-label={t('qa.details')} className="flex gap-1 overflow-x-auto rounded-xl border border-border/80 bg-card p-1.5">{([{ id: 'details', label: 'details', Icon: FileText, count: undefined }, { id: 'verification', label: 'verificationTab', Icon: ClipboardCheck, count: issue.targets.length }, { id: 'comments', label: 'comments', Icon: MessageSquare, count: detail.comments.length }, { id: 'history', label: 'history', Icon: History, count: visibleEvents.length }] as const).map(({ id, label, Icon, count }) => <button key={id} role="tab" disabled={busy} tabIndex={tab === id ? 0 : -1} onKeyDown={event => {
+        <div role="tablist" aria-label={t('qa.details')} className="grid grid-cols-4 gap-1 rounded-xl border border-border/80 bg-card p-1.5 sm:flex">{([{ id: 'details', label: 'details', Icon: FileText, count: undefined }, { id: 'verification', label: 'verificationTab', Icon: ClipboardCheck, count: issue.targets.length }, { id: 'comments', label: 'comments', Icon: MessageSquare, count: detail.comments.length }, { id: 'history', label: 'history', Icon: History, count: visibleEvents.length }] as const).map(({ id, label, Icon, count }) => <button key={id} role="tab" disabled={busy} tabIndex={tab === id ? 0 : -1} onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
           const tabs = ['details', 'verification', 'comments', 'history'] as const;
           const index = tabs.indexOf(tab);
           const next = event.key === 'Home' ? 0 : event.key === 'End' ? 3 : (index + (event.key === 'ArrowRight' ? 1 : 3)) % 4;
           setTab(tabs[next]); document.getElementById(`qa-tab-${tabs[next]}`)?.focus();
-        }} aria-selected={tab === id} aria-controls={`qa-panel-${id}`} id={`qa-tab-${id}`} className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary ${tab === id ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent'}`} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true" />{t(`qa.${label}`)}{count !== undefined && <span className="rounded bg-muted px-1.5 text-xs">{count}</span>}</button>)}</div>
+        }} aria-selected={tab === id} aria-controls={`qa-panel-${id}`} id={`qa-tab-${id}`} className={`flex min-w-0 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inline-flex sm:flex-row sm:gap-1.5 sm:px-3 sm:py-2 sm:text-sm ${tab === id ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-accent'}`} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true" />{t(`qa.${label}`)}{count !== undefined && <span className="rounded bg-muted px-1.5 text-xs">{count}</span>}</button>)}</div>
         <div role="tabpanel" id={`qa-panel-${tab}`} aria-labelledby={`qa-tab-${tab}`} className="space-y-4">
 
         {tab === 'details' && <>
@@ -179,7 +226,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           <section className="min-w-0"><h3 className="mb-2 text-sm font-semibold text-muted-foreground">{t('qa.actual')}</h3><div className="whitespace-pre-wrap break-words text-base leading-7"><QaText text={issue.actual || t('qa.notProvided')} /></div></section>
           {issue.expected && <section className="mt-5 border-t border-border/60 pt-4"><h3 className="mb-2 text-sm font-semibold">{t('qa.expected')}</h3><div className="whitespace-pre-wrap break-words text-sm leading-relaxed"><QaText text={issue.expected} /></div></section>}
           {issue.steps && <section className="mt-5 border-t border-border/60 pt-4"><h3 className="mb-2 text-sm font-semibold">{t('qa.steps')}</h3><div className="whitespace-pre-wrap break-words text-sm leading-relaxed"><QaText text={issue.steps} /></div></section>}
-          {issue.holdReason && <p className="mt-4 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{t('qa.hold')}: {issue.holdReason}</p>}
+          {issue.holdReason && !isQaTerminal(issue.state) && <div className="mt-4 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-sm"><p className="font-medium">{t('qa.holdCurrent')}</p><p className="mt-1 whitespace-pre-wrap break-words"><QaText text={issue.holdReason} /></p>{can('hold') && <button type="button" className={`${qaButton} mt-2`} disabled={busy} onClick={clearHold}>{t('qa.clearHold')}</button>}</div>}
+          {issue.reopenReason && !isQaTerminal(issue.state) && <div className="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"><p className="font-medium">{t('qa.reopenReason')}</p><p className="mt-1 whitespace-pre-wrap break-words"><QaText text={issue.reopenReason} /></p></div>}
           {issue.resolution && <p className="mt-4 whitespace-pre-wrap rounded bg-muted p-3 text-sm">{t(`qa.resolution.${issue.resolution}`)} · {issue.resolutionReason}{issue.duplicateOfId && <> · <a className="underline" href={`?qa=${encodeURIComponent(issue.duplicateOfId)}`}>{issue.duplicateOfId}</a></>}</p>}
         </QaSection>
         <QaSection title={t('qa.attachments')}><QaLegacyAttachments issue={issue} /><QaAttachments compact issueId={issue.id} attachments={detail.attachments} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
@@ -187,7 +235,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {tab === 'verification' && <>
         <QaSection title={t('qa.targets')}>
           {issue.fixSummary && <p className="mb-3 whitespace-pre-wrap break-words text-sm">{issue.fixSummary}</p>}
-          {!issue.targets.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}
+          {!issue.targets.length && <p className="text-sm text-muted-foreground">{t('qa.noTargets')}</p>}
           <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} canDeploy={can('record_deployment')} canVerify={can('record_verification')} busy={busy} onCommand={command => send(command).then(() => {})} />
         </QaSection>
         <QaSection title={t('qa.runs')}>
@@ -199,11 +247,11 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         <QaSection title={t('qa.comments')}>
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
           <ol className="mb-4 space-y-3">{detail.comments.map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p></li>)}</ol>
-          <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><button className={qaPrimary} disabled={busy || !comment.trim()}>{t('qa.addComment')}</button></form>
+          {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><button className={qaPrimary} disabled={busy || !comment.trim()}>{t('qa.addComment')}</button></form>}
         </QaSection>
         </>}
         {tab === 'history' && <>
-        <QaSection title={t('qa.history')}><>{!visibleEvents.length && <p className="text-sm text-muted-foreground">{t('qa.noHistory')}</p>}<ol className="space-y-3">{[...visibleEvents].reverse().map(event => <li key={event.id} className="text-sm"><p className="font-medium">{t(`qa.${actionLabels[event.type as ActionType] || 'report'}`)} · {member(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{event.detail && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"><QaText text={event.type === 'set_state' ? (() => { try { const value = JSON.parse(event.detail); return t('qa.stateHistory', { from: workflow?.labels[value.from as keyof QaWorkflow['labels']] || t(`qa.state.${value.from}`), to: workflow?.labels[value.to as keyof QaWorkflow['labels']] || t(`qa.state.${value.to}`) }); } catch { return event.detail; } })() : event.detail} /></p>}</li>)}</ol></></QaSection>
+        <QaSection title={t('qa.history')}><>{!visibleEvents.length && <p className="text-sm text-muted-foreground">{t('qa.noHistory')}</p>}<ol className="space-y-3">{[...visibleEvents].reverse().map(event => { const text = qaEventText(event, eventText); return <li key={event.id} className="text-sm"><p className="font-medium">{qaEventTitle(event, t)} · {member(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{text && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"><QaText text={text} /></p>}</li>; })}</ol></></QaSection>
         </>}
       </div>
       </div>
@@ -217,7 +265,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         <QaSection title={t('qa.properties')}>
           <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
             options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
-            onValueChange={state => { if (state !== issue.state) void send({ type: 'set_state', state }); }} /></div>
+            onValueChange={state => void changeState(state)} /></div>
           <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
@@ -239,12 +287,13 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
               <QaSelect label={t('qa.severity')} name="severity" required defaultValue={issue.severity === 'untriaged' ? '' : issue.severity}><option value="">{t('qa.choose')}</option>{['low', 'medium', 'high'].map(s => <option value={s} key={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>
               <section className="rounded-lg border border-border p-3"><h3 className="text-sm font-medium">{t('qa.additionalDetails')}</h3><div className="mt-3 space-y-3"><QaSelect label={t('qa.priority')} name="priority" required defaultValue={issue.priority}>{qaPriorities.map((value, index) => <option key={value} value={index + 1}>{t(`priority.${value}`)}</option>)}</QaSelect><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} /></div></section>
             </>}
-            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline required maxLength={10000} />
+            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline required maxLength={8000} />
               <QaTargetEditor targets={targets} onChange={setTargets} versions={versions} disabled={busy} />
             </>}
-            {action === 'close' && <><QaSelect label={t('qa.resolutionField')} required value={resolution} onChange={event => setResolution(event.target.value as QaResolution | '')}><option value="">{t('qa.choose')}</option>{['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].map(value => <option key={value} value={value} disabled={value === 'fixed' && !canResolveFixed}>{t(`qa.resolution.${value}`)}</option>)}</QaSelect>{resolution === 'duplicate' && <QaField label={t('qa.duplicateId')} name="duplicateOfId" required />}</>}
+            {action === 'close' && <><QaSelect label={t('qa.resolutionField')} required value={resolution} onChange={event => setResolution(event.target.value as QaResolution | '')}><option value="">{t('qa.choose')}</option>{['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].map(value => <option key={value} value={value} disabled={value === 'fixed' && !canResolveFixed}>{t(`qa.resolution.${value}`)}</option>)}</QaSelect>{!canResolveFixed && <p className="text-xs text-muted-foreground">{t('qa.fixedNeedsVerification')}</p>}{resolution === 'duplicate' && <QaField label={t('qa.duplicateId')} name="duplicateOfId" required placeholder="#1a2b3c4d" maxLength={130} />}</>}
             {action === 'close' && resolution === 'fixed' && isHistoricalQaPass(issue) && <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><input type="checkbox" name="acknowledgeHistoricalPass" required className="mt-1" /><span>{t('qa.acknowledgeHistoricalPass')}</span></label>}
-            {(action === 'close' || action === 'reopen' || action === 'hold') && <QaField label={t('qa.reason')} name="reason" multiline required maxLength={10000} />}
+            {(action === 'close' || action === 'reopen' || action === 'hold') && <QaField label={action === 'close' && resolution === 'fixed' && !isHistoricalQaPass(issue) ? t('qa.reasonOptional') : t('qa.reason')} name="reason" multiline required={!(action === 'close' && resolution === 'fixed' && !isHistoricalQaPass(issue))} maxLength={8000} />}
+            {action === 'hold' && issue.holdReason && <p className="text-xs text-muted-foreground">{t('qa.holdReplaceHint')}</p>}
             {action === 'link_tasks' && <><p className="text-sm text-muted-foreground">{t('qa.taskLinksHint')}</p><QaField label={t('qa.taskSearch')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)} />
               {unavailableLinks.length > 0 && <div className="space-y-2 rounded-lg border border-amber-500/30 p-3"><p className="text-sm text-muted-foreground">{t('qa.linkedTaskUnavailable')}</p>{unavailableLinks.map(id => { const task = allTasks.find(row => row.id === id); return <label key={id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked onChange={() => setLinks(previous => previous.filter(link => link !== id))} /><span>{task ? `${task.taskKey} · ${task.title}` : id}</span></label>; })}</div>}
               <div className="max-h-60 space-y-2 overflow-y-auto">{projectTasks.filter(task => `${task.taskKey} ${task.title}`.toLowerCase().includes(taskSearch.toLowerCase())).slice(0, 100).map(task => <label key={task.id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={links.includes(task.id)} onChange={event => setLinks(previous => event.target.checked ? [...previous, task.id] : previous.filter(id => id !== task.id))} /><span>{task.taskKey} · {task.title}</span></label>)}</div></>}
@@ -253,5 +302,6 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           </fieldset></form>}
       </DialogContent>
     </Dialog>
+    {ConfirmDialog}
   </div>;
 }

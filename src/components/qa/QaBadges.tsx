@@ -11,13 +11,22 @@ export const qaStateColors: Record<string, string> = {
   verification: '#B86E00', verified: '#15803D', failed: '#DE350B',
   closed: '#00875A', dismissed: '#6B778C',
 };
+/**
+ * A new bug keeps the default priority (3, medium) until someone sets it. It is
+ * shown as that value marked "default", so it matches the priority filter and
+ * sort, which use the stored value.
+ */
+function qaPriorityIsDefault(issue?: QaIssue): boolean {
+  return (issue?.state === 'new' && !issue.assigneeId && !issue.qaOwnerId)
+    || (issue as unknown as { legacySource?: { priorityMeaning?: string } })?.legacySource?.priorityMeaning === 'LIVO default 3; source has severity only';
+}
 export function QaPriorityBadge({ priority, issue }: { priority: number; issue?: QaIssue }) {
   const { t } = useTranslation();
-  if ((issue?.state === 'new' && !issue.assigneeId && !issue.qaOwnerId) || (issue as unknown as { legacySource?: { priorityMeaning?: string } })?.legacySource?.priorityMeaning === 'LIVO default 3; source has severity only') return <span className="text-xs text-muted-foreground">{t('qa.priorityUnassigned')}</span>;
   const name = qaPriorities[priority - 1] || 'medium';
   const config = priorityConfig[name];
-  return <span className="inline-flex items-center gap-1 rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs" title={t('qa.priority')}>
-    {config.icon}<span>{t(`priority.${name}`)}</span>
+  const isDefault = qaPriorityIsDefault(issue);
+  return <span className={`inline-flex items-center gap-1 rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs ${isDefault ? 'text-muted-foreground' : ''}`} title={isDefault ? t('qa.priorityDefaultHint') : t('qa.priority')}>
+    {config.icon}<span>{isDefault ? t('qa.priorityDefault', { name: t(`priority.${name}`) }) : t(`priority.${name}`)}</span>
   </span>;
 }
 export function QaSeverityBadge({ severity }: { severity: QaSeverity }) {

@@ -5,9 +5,10 @@ import { createKnowledgeImport, defaultImportPolicy, ImportError, parseWithProce
 
 const token = 'processor-token-'.repeat(3);
 const md = new TextEncoder().encode('# Example');
+// Word needs the processor; Markdown without one is converted by LIVO itself (knowledgeImportMarkdown.test.ts).
 const processor = (fetcher: typeof fetch): ImportConfig => ({ processorUrl: 'http://knowledge-processor:8091', processorToken: token, fetcher });
 const failure = async (config: ImportConfig) => {
-  try { await parseWithProcessor(config, 'md', md); } catch (error) { if (error instanceof ImportError) return error; throw error; }
+  try { await parseWithProcessor(config, 'docx', md); } catch (error) { if (error instanceof ImportError) return error; throw error; }
   throw new Error('expected an ImportError');
 };
 
@@ -27,10 +28,14 @@ describe('optional knowledge processor', () => {
     const server = readFileSync(new URL('../../docker/knowledge-processor/server.py', import.meta.url), 'utf8');
     const main = readFileSync(new URL('../../docker/volumes/functions/main/index.ts', import.meta.url), 'utf8');
     const budget = Number(server.match(/^BUDGET = (\d+)$/m)?.[1]) * 1000;
-    const functionLimit = Number(main.match(/serviceName === 'knowledge-import' \? ([\d_]+)/)?.[1].replace(/_/g, ''));
+    const functionLimit = Number(main.match(/workerTimeoutMs:[^\n]*?serviceName === 'knowledge-import' \? ([\d_]+)/)?.[1].replace(/_/g, ''));
     expect(budget).toBeGreaterThan(0);
     expect(PROCESSOR_TIMEOUT_MS).toBeGreaterThan(budget);
     expect(functionLimit).toBeGreaterThan(PROCESSOR_TIMEOUT_MS);
+    // A document near the 10 MB cap is held several times over; 150 MB got the worker killed.
+    const [, importMemory, defaultMemory] = main.match(/memoryLimitMb: serviceName === 'knowledge-import' \? (\d+) : (\d+)/) ?? [];
+    expect(Number(importMemory)).toBeGreaterThanOrEqual(256);
+    expect(Number(importMemory)).toBeGreaterThan(Number(defaultMemory));
   });
 
   it('tells the importer the processor is not configured when its URL is empty', async () => {

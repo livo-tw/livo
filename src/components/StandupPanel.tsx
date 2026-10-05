@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useUIContext } from '@/context/UIContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useSprintContext } from '@/context/SprintContext';
@@ -12,7 +13,7 @@ import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useStandupTimer } from '@/hooks/useStandupTimer';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { SprintCompleteModal, SprintStartModal } from '@/components/board/SprintModals';
-import type { PendingTaskAction } from '@/context/SprintContext';
+import { useSprintFlow } from '@/hooks/useSprintFlow';
 import { StandupGroupHeader } from './standup/StandupGroupHeader';
 import { StandupItemCard } from './standup/StandupItemCard';
 import { useTranslation } from 'react-i18next';
@@ -30,15 +31,12 @@ const StandupPanel = () => {
   const { t } = useTranslation();
   const { setStandupUserId, setStandupMode } = useUIContext();
   const { users } = useMemberContext();
-  const { sprintActive, currentSprint, completeSprint, startSprint, getDefaultSprintName } = useSprintContext();
+  const { sprintActive, currentSprint, getDefaultSprintName } = useSprintContext();
   const { allTasks, statuses } = useTaskContext();
   const { currentMemberId } = useAuthContext();
   const { allProjects } = useProjectContext();
 
   const [showSprintPrompt, setShowSprintPrompt] = useState(false);
-  const [showCompleteModal, setShowCompleteModal] = useState(false);
-  const [showStartModal, setShowStartModal]     = useState(false);
-  const [carryOverTaskIds, setCarryOverTaskIds] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ key: string | null; index: number }>({ key: null, index: 0 });
   const [launch] = useState(getStandupLaunch);
   const [standupFinished, setStandupFinished]   = useState(false);
@@ -95,6 +93,8 @@ const StandupPanel = () => {
   }, [currentKey, currentItem?.member.id, standupFinished, setStandupUserId, reset]);
 
   const leaveStandup = useCallback(() => { clearStandupLaunch(); setStandupUserId(null); setStandupMode(false); }, [setStandupUserId, setStandupMode]);
+  // The stand-up ends with completing the sprint and offering to start the next one.
+  const sprintFlow = useSprintFlow({ startAfterComplete: 'always', onStarted: leaveStandup, onStartClosed: leaveStandup });
 
   const handleExitStandup = useCallback(() => {
     leaveStandup();
@@ -120,31 +120,8 @@ const StandupPanel = () => {
 
   const handleOpenCompleteModal = () => {
     setShowSprintPrompt(false);
-    setShowCompleteModal(true);
+    sprintFlow.openComplete();
   };
-
-  const handleCompleteSprint = async (action: PendingTaskAction) => {
-    setShowCompleteModal(false);
-    const sprintName = currentSprint?.name || '';
-    const pendingIds = await completeSprint(action);
-    if (currentMemberId) {
-      await logActivity(currentMemberId, 'complete_sprint', `${t('activityLog.completeSprint')}「${sprintName}」`, undefined, undefined, 'sprint');
-    }
-    setCarryOverTaskIds(pendingIds || []);
-    setShowStartModal(true);
-  };
-
-  const handleConfirmStart = async (name: string, includeBacklog: boolean) => {
-    setShowStartModal(false);
-    await startSprint(name, carryOverTaskIds.length > 0 ? carryOverTaskIds : undefined, includeBacklog);
-    setCarryOverTaskIds([]);
-    if (currentMemberId) {
-      await logActivity(currentMemberId, 'start_sprint', `${t('activityLog.startSprint')}「${name}」`, undefined, undefined, 'sprint');
-    }
-    leaveStandup();
-  };
-
-  const handleCancelStart = () => { setShowStartModal(false); setCarryOverTaskIds([]); leaveStandup(); };
 
   // Escape key handler for sprint prompt
   useEffect(() => {
@@ -348,23 +325,24 @@ const StandupPanel = () => {
         )}
 
       {/* ── Sprint complete modal with pending task options ──── */}
-      {showCompleteModal && (
+      {sprintFlow.showCompleteModal && (
         <SprintCompleteModal
           currentSprint={currentSprint}
           completedCount={completedCount}
           pendingTasks={pendingTasks}
-          onClose={() => { setShowCompleteModal(false); leaveStandup(); }}
-          onComplete={handleCompleteSprint}
+          onClose={() => { sprintFlow.closeComplete(); leaveStandup(); }}
+          onComplete={action => void sprintFlow.complete(action)}
         />
       )}
 
       {/* ── New Sprint start modal ──────────────────────────────────── */}
-      {showStartModal && (
+      {sprintFlow.showStartModal && (
         <SprintStartModal
           defaultName={getDefaultSprintName()}
-          onClose={handleCancelStart}
-          onConfirm={handleConfirmStart}
-          carryOverCount={carryOverTaskIds.length}
+          onClose={sprintFlow.cancelStart}
+          onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
+          carryOverCount={sprintFlow.carryOverTaskIds.length}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
         />
       )}
     </>

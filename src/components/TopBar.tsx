@@ -6,10 +6,11 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLicense } from '@/context/LicenseContext';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, Lock, FileText, ClipboardCheck, Inbox, Bug, Plus } from 'lucide-react';
+import { LayoutDashboard, BarChart3, CalendarDays, LogOut, Table2, X, Search, Menu, User, Settings, FileText, ClipboardCheck, Inbox, Bug, Plus, BookOpen } from 'lucide-react';
 import NotificationPanel from '@/components/NotificationPanel';
 import { MyAssignmentsDropdown } from '@/components/MyAssignments';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
+import { useActionableApprovalCount } from '@/hooks/useActionableApprovalCount';
 import { supabase } from '@/integrations/supabase/client';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
@@ -23,9 +24,10 @@ const navItemDefs = [
   { id: 'backlog' as const, labelKey: 'nav.backlog', icon: Inbox },
   { id: 'all-list' as const, labelKey: 'nav.list', icon: Table2 },
   { id: 'my-tasks' as const, labelKey: 'nav.myTasks', icon: User },
-  { id: 'work-report' as const, labelKey: 'nav.workReport', icon: FileText },
-  { id: 'knowledge-base' as const, labelKey: 'kb.title', icon: FileText },
+  { id: 'knowledge-base' as const, labelKey: 'kb.title', icon: BookOpen },
   { id: 'qa' as const, labelKey: 'qa.title', icon: Bug },
+  // Work report always stays the last (rightmost) tab.
+  { id: 'work-report' as const, labelKey: 'nav.workReport', icon: FileText },
 ];
 
 interface TopBarProps {
@@ -45,7 +47,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
     const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.set('qaCreate', '1');
     window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-create'));
   };
-  const { allProjects, setSelectedProjectId, setSelectedLineId } = useProjectContext();
+  const { setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { allTasks, statuses, taskSpecs } = useTaskContext();
   const { hasFeature } = useLicense();
   const isMobile = useIsMobile();
@@ -58,7 +60,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const searchRef = useRef<HTMLDivElement>(null);
   const approvalPanelRef = useRef<HTMLDivElement>(null);
 
-  const pendingApprovalCount = allTasks.filter(t => t.approvalStatus === 'pending_approval').length;
+  // The badge counts what this member can act on, like the list it opens; it is
+  // re-read when any task's approval state changes and when the list closes.
+  const workspacePendingCount = allTasks.filter(t => t.approvalStatus === 'pending_approval').length;
+  const pendingApprovalCount = useActionableApprovalCount(approvalsEnabled && featureTogglesReady, `${workspacePendingCount}:${showPendingApprovals}`) ?? 0;
 
   // Role hierarchy: super_admin > admin > member
   const roleLevel = (role: string) => role === 'super_admin' ? 3 : role === 'admin' ? 2 : 1;
@@ -135,7 +140,6 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
         <div className="px-4 py-3 text-sm text-muted-foreground text-center">{t('search.noResults')}</div>
       ) : (
         searchResults.map(task => {
-          const project = allProjects.find(p => p.id === task.projectId);
           const status = statuses.find(s => s.id === task.statusId);
           return (
             <button
@@ -205,7 +209,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
               onClick={createItem}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm hover:shadow-md flex-shrink-0"
             >
-              {t(qaView ? 'qa.report' : 'button.createAction')}
+              {qaView ? `+ ${t('qa.report')}` : t('button.createAction')}
             </button>
           </div>
         )}
@@ -286,16 +290,16 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
 
           {/* User avatar with dropdown */}
           <div className="relative" ref={menuRef}>
-            <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
+            <div className="flex shrink-0 items-center gap-1.5 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
               <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
+                className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
                 style={{ backgroundColor: currentMember?.color || '#0065FF' }}
               >
                 {currentMember?.avatar || '?'}
               </div>
               {!isMobile && currentMember && (
                 <span
-                  className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-white"
+                  className="shrink-0 whitespace-nowrap text-[10px] leading-4 px-1.5 py-0.5 rounded-full font-medium text-white"
                   style={{ backgroundColor: getRoleColor(currentMember.role as MemberRole) }}
                 >
                   {getRoleLabel(currentMember.role as MemberRole)}
@@ -387,9 +391,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
         <div className="hidden md:block flex-shrink-0 invisible">
           <img className="h-16 w-auto" src="" alt="" />
         </div>
-        {/* Tabs: justify-start + scroll on mobile, justify-center on desktop */}
-        <div className="flex-1 flex items-center justify-start md:justify-center md:mx-6 overflow-x-auto scrollbar-hide">
-          <div className="flex items-center gap-1 min-w-min">
+        {/* Tabs scroll when they do not fit. Centred with auto margins, not justify-center,
+            so a row wider than the space starts at its first tab instead of clipping it. */}
+        <div className="flex-1 flex items-center justify-start md:mx-6 overflow-x-auto scrollbar-hide">
+          <div className="flex items-center gap-1 min-w-min md:mx-auto">
             {navItemDefs
               .filter(item => !(item.id === 'work-report' && !hasFeature('work-report')))
               .filter(item => item.id !== 'qa' || qaEnabled)

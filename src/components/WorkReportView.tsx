@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { parseISO } from 'date-fns';
 import { useWorkReport } from './work-report/useWorkReport';
 import { shiftAnchor } from './work-report/types';
 import WorkReportStats from './work-report/WorkReportStats';
@@ -8,12 +7,10 @@ import WorkReportEditor from './work-report/WorkReportEditor';
 import WorkReportHistory from './work-report/WorkReportHistory';
 import ReportSendPanel from './reports/ReportSendPanel';
 import { useAuthContext } from '@/context/AuthContext';
-import { useProjectContext } from '@/context/ProjectContext';
 
 const WorkReportView = () => {
   const { t } = useTranslation();
   const { currentMemberId } = useAuthContext();
-  const { selectedProjectId } = useProjectContext();
   const {
     reportType, setReportType,
     anchor, setAnchor,
@@ -21,7 +18,6 @@ const WorkReportView = () => {
     savedReport, setSavedReport,
     loading, saving, saveStatus,
     history, showHistory, setShowHistory,
-    lastLoadedContentRef,
     completedCount, inProgressCount, overdueCount,
     handleGenerate, handleSave, handleCopy,
   } = useWorkReport();
@@ -75,12 +71,13 @@ const WorkReportView = () => {
           />
         )}
 
+        {/* A work report covers all of a member's projects, so it goes to the workspace-wide
+            targets, never to a project channel picked by the (hidden) sidebar selection. */}
         {showSendPanel && (
           <ReportSendPanel
             reportType={reportType}
             content={content}
             currentUserId={currentMemberId}
-            projectId={selectedProjectId}
             onClose={() => setShowSendPanel(false)}
           />
         )}

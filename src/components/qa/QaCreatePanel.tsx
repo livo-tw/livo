@@ -6,6 +6,7 @@ import type { QaCreateInput } from '@/lib/qa/domain';
 import type { ProductLine, Project } from '@/types';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import QaReportForm from './QaReportForm';
+import { qaErrorText, qaHasErrorText } from './qaErrorText';
 import QaDraftAttachments, { uploadQaDraftFiles, useQaDraftFiles } from './QaDraftAttachments';
 
 export default function QaCreatePanel({ client, projects, productLines, projectId, issueId, commandId, onCreated, onCancel, onBusyChange, fixedFooter = false }: {
@@ -59,7 +60,7 @@ export default function QaCreatePanel({ client, projects, productLines, projectI
   };
   return <div className={fixedFooter ? 'flex h-full min-h-0 min-w-0 flex-col gap-4' : 'min-w-0 space-y-4'}>
     {createdId && <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" /><p>{t('qa.createdAttachmentsPending')}</p></div>}
-    {failed && <div role="alert" className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{t(createdId ? 'qa.attachmentRetryHint' : locked ? 'qa.createRetryHint' : 'qa.failed')}</p>{errorCode && <p className="break-all font-mono text-xs">{t('qa.errorCode', { code: errorCode })}</p>}</div>}
+    {failed && <div role="alert" className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{createdId ? t('qa.attachmentRetryHint') : locked ? t('qa.createRetryHint') : qaErrorText(t, { code: errorCode }).message}</p>{errorCode && !qaHasErrorText(t, errorCode) && <p className="break-all font-mono text-xs">{t('qa.errorCode', { code: errorCode })}</p>}</div>}
     <QaReportForm client={client} projects={projects} productLines={productLines} projectId={projectId} busy={busy} readOnly={locked} fixedFooter={fixedFooter}
       submitLabel={t(createdId ? 'qa.retryUpload' : locked ? 'qa.retryCreate' : 'qa.createBug')}
       cancelLabel={createdId ? t('qa.openWithoutPendingFiles') : undefined} cancelDisabled={locked && !createdId}

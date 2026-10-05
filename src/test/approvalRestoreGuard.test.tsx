@@ -55,15 +55,14 @@ describe('approval backup restore boundary', () => {
     expect(mocks.mutation).not.toHaveBeenCalled();
     expect(mocks.from.mock.calls.map(args => args[0])).toEqual(['backup_history']);
   });
-  it('disables real-backend browser restore and rejects a synthetic file event before reading or writing anything',async()=>{
-    mocks.mockBackend=false;const read=vi.fn(async()=>JSON.stringify({tasks:[]}));
-    const {container,getByRole,getByText}=render(<AdminBackupSection currentMemberId="admin-1" hasFeature={()=>true} backupSettings={null} setBackupSettings={vi.fn()} saveBackupSettings={vi.fn()} />);
-    expect(getByRole('button',{name:'adminBackup.restoreButton'})).toBeDisabled();
-    expect(getByText('approvalCommand.serverRestore')).toBeVisible();
-    fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[{text:read}]}});
-    await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith('approvalCommand.serverRestore'));
-    expect(mocks.confirm).not.toHaveBeenCalled();expect(read).not.toHaveBeenCalled();expect(mocks.mutation).not.toHaveBeenCalled();
-    expect(mocks.from.mock.calls.map(args=>args[0])).toEqual(['backup_history']);
+  it('offers no browser restore on a real backend, only the explanation that restoring is done on the server',async()=>{
+    mocks.mockBackend=false;
+    const {container,queryByRole,getByText}=render(<AdminBackupSection currentMemberId="admin-1" hasFeature={()=>true} backupSettings={null} setBackupSettings={vi.fn()} saveBackupSettings={vi.fn()} />);
+    expect(getByText('adminBackup.restoreServerOnly')).toBeVisible();
+    expect(queryByRole('button',{name:'adminBackup.restoreButton'})).toBeNull();
+    expect(container.querySelector('input[type="file"][accept=".json"]')).toBeNull();
+    await waitFor(()=>expect(mocks.from.mock.calls.map(args=>args[0])).toEqual(['backup_history']));
+    expect(mocks.confirm).not.toHaveBeenCalled();expect(mocks.mutation).not.toHaveBeenCalled();
   });
   it.each(['history','historyError','pointer','pointerError'])('blocks an old ordinary backup before child deletion when live state is %s', async mode => {
     mocks.mode=mode;

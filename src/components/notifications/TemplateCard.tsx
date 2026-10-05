@@ -18,66 +18,17 @@ import {
   getNotifLabel, getNotifGroupLabel,
   notifToDisplay, notifToStorage,
 } from '@/lib/templateVariables';
-
-export const EVENT_LABELS: Record<EventType, string> = {
-  task_created:       '任務建立',
-  status_changed:     '狀態變更',
-  assignee_changed:   '負責人變更',
-  due_reminder:       '到期提醒',
-  overdue:            '任務逾期',
-  approval_requested: '請求簽核',
-  approval_completed: '簽核完成',
-  comment_added:      '新增留言',
-  custom:             '自訂',
-};
-
-export const TONE_LABELS: Record<Tone, string> = {
-  neutral:     '中性',
-  celebration: '慶祝',
-  urgent:      '緊急',
-  warning:     '警示',
-  friendly:    '親和',
-};
+import {
+  EVENT_TYPES, TONES,
+  eventLabel, toneLabel,
+  getDefaultContent, buildPreviewContext,
+} from './notificationLabels';
 
 /** Variable keys used in notification templates */
 export const VARIABLE_KEYS = NOTIF_VAR_KEYS;
 
 /** Wrapped form: {{key}} */
 export const VARIABLES = NOTIF_VAR_KEYS.map(k => `{{${k}}}`);
-
-export const PREVIEW_CTX = {
-  task_name:           '實作登入功能',
-  task_url:            'https://livo-tw.com/demo/?task=123',
-  assignee:            '陳小明',
-  reporter:            '林小華',
-  project_name:        'LIVO v2',
-  status:              '進行中',
-  prev_status:         '待處理',
-  priority:            'high',
-  due_date:            '2026-04-10',
-  due_remaining:       '8',
-  overdue_days:        '2',
-  description_summary: '實作 Google OAuth 和 Email 登入流程',
-  approver:            '王經理',
-  subtask_progress:    '3/5',
-  assigner_name:       '林小華',
-  changer_name:        '陳小明',
-  requester_name:      '陳小明',
-  approver_name:       '王經理',
-};
-
-/** Default template content per event type (storage format) */
-const DEFAULT_CONTENT: Record<EventType, string> = {
-  task_created:       '📋 {{assigner_name}} 建立了新任務「{{task_name}}」｜指派：{{assignee}}｜優先級：{{priority}}｜截止日：{{due_date}}',
-  status_changed:     '🔄 任務「{{task_name}}」的狀態已從「{{prev_status}}」變更為「{{status}}」。變更人：{{changer_name}}',
-  assignee_changed:   '👋 {{assignee}} 你好，{{assigner_name}} 已將任務「{{task_name}}」指派給你。優先級：{{priority}}，截止日：{{due_date}}。請盡快處理。',
-  due_reminder:       '⚠️ 提醒：「{{task_name}}」即將到期（剩餘 {{due_remaining}} 天）｜負責人：{{assignee}}',
-  overdue:            '🚨 「{{task_name}}」已逾期 {{overdue_days}} 天！｜負責人：{{assignee}}',
-  approval_requested: '⏳ {{requester_name}} 提交了任務「{{task_name}}」的簽核請求，請前往簽核頁面審核。',
-  approval_completed: '✅ 「{{task_name}}」簽核已完成｜簽核人：{{approver_name}}',
-  comment_added:      '💬 「{{task_name}}」有新評論｜來自 {{reporter}}',
-  custom:             '📢 {{task_name}}',
-};
 
 /** Insert text at cursor position in a textarea */
 function insertAtCursor(textarea: HTMLTextAreaElement | null, text: string, setValue: (fn: (prev: string) => string) => void) {
@@ -166,9 +117,10 @@ function useVariableAutocomplete(
 // ── Autocomplete Dropdown ─────────────────────────────────────
 
 function AutocompleteDropdown({ ac, id }: { ac: ReturnType<typeof useVariableAutocomplete>; id?: string }) {
+  const { t } = useTranslation();
   if (!ac.show || ac.filtered.length === 0) return null;
   return (
-    <div id={id} role="listbox" aria-label="Template variables" className="absolute z-50 left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg max-h-40 overflow-y-auto">
+    <div id={id} role="listbox" aria-label={t('notificationRules.templates.variablesAria')} className="absolute z-50 left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg max-h-40 overflow-y-auto">
       {ac.filtered.map((k, i) => (
         <button
           key={k}
@@ -289,37 +241,37 @@ export function TemplateCard({ template, onUpdate, onDelete }: TemplateCardProps
   const ac = useVariableAutocomplete(textareaRef, draft, setDraft);
 
   // For preview, convert display→storage first, then resolve
-  const previewContent = draft ? resolveTemplate(notifToStorage(draft), PREVIEW_CTX) : '';
+  const previewContent = draft ? resolveTemplate(notifToStorage(draft), buildPreviewContext(t)) : '';
 
   return (
     <div className="px-4 py-3 space-y-1.5 hover:bg-muted/20 transition-colors">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span className="text-xs bg-muted text-muted-foreground rounded px-1.5 py-0.5 shrink-0">
-            {EVENT_LABELS[template.event_type] ?? template.event_type}
+            {eventLabel(t, template.event_type)}
           </span>
           <span className="text-sm font-medium truncate">{template.name}</span>
           <span className="text-[10px] text-muted-foreground shrink-0">
-            {TONE_LABELS[template.tone as Tone] ?? template.tone}
+            {toneLabel(t, template.tone)}
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {editing ? (
             <>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-green-600" onClick={save} aria-label="儲存">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-green-600" onClick={save} aria-label={t('common.save')}>
                 <Check size={12} />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={cancel} aria-label="取消">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={cancel} aria-label={t('common.cancel')}>
                 <X size={12} />
               </Button>
             </>
           ) : (
             <>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={startEdit} aria-label="編輯範本">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={startEdit} aria-label={t('notificationRules.templates.edit')}>
                 <Edit2 size={12} />
               </Button>
               {!template.is_default && (
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => onDelete(template.id)} aria-label="刪除範本">
+                <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => onDelete(template.id)} aria-label={t('notificationRules.templates.delete')}>
                   <Trash2 size={12} />
                 </Button>
               )}
@@ -347,7 +299,7 @@ export function TemplateCard({ template, onUpdate, onDelete }: TemplateCardProps
           <GroupedVariableButtons onInsert={handleInsert} compact />
           {previewContent && (
             <div className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
-              <span className="font-medium mr-1">{t('notificationTemplate.preview')}：</span>
+              <span className="font-medium mr-1">{t('notificationRules.templates.previewLabel')}</span>
               {previewContent}
             </div>
           )}
@@ -363,9 +315,6 @@ export function TemplateCard({ template, onUpdate, onDelete }: TemplateCardProps
 
 // ── AddTemplateForm ──────────────────────────────────────────────
 
-const EVENT_TYPES = Object.keys(EVENT_LABELS) as EventType[];
-const TONES = Object.keys(TONE_LABELS) as Tone[];
-
 interface AddTemplateFormProps {
   onAdd: (data: Omit<NotificationTemplate, 'id' | 'created_at' | 'updated_at' | 'created_by'>) => void;
   onCancel: () => void;
@@ -378,15 +327,15 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
   const [eventType, setEventType] = useState<EventType>('status_changed');
   const [tone, setTone] = useState<Tone>('neutral');
   // Content in DISPLAY format
-  const [content, setContent] = useState(notifToDisplay(DEFAULT_CONTENT['status_changed']));
+  const [content, setContent] = useState(() => notifToDisplay(getDefaultContent(t, 'status_changed')));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleEventChange = (newType: EventType) => {
-    const prevDefault = notifToDisplay(DEFAULT_CONTENT[eventType]);
+    const prevDefault = notifToDisplay(getDefaultContent(t, eventType));
     setEventType(newType);
     // Pre-fill default content if user hasn't customized
     if (!content || content === prevDefault) {
-      setContent(notifToDisplay(DEFAULT_CONTENT[newType]));
+      setContent(notifToDisplay(getDefaultContent(t, newType)));
     }
   };
 
@@ -405,11 +354,11 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
   useEffect(() => {
     if (!isEventEnabled(eventType, approvalsEnabled)) {
       setEventType('status_changed');
-      setContent(notifToDisplay(DEFAULT_CONTENT.status_changed));
+      setContent(notifToDisplay(getDefaultContent(t, 'status_changed')));
     }
-  }, [eventType, approvalsEnabled]);
+  }, [eventType, approvalsEnabled, t]);
 
-  const previewContent = content ? resolveTemplate(notifToStorage(content), PREVIEW_CTX) : '';
+  const previewContent = content ? resolveTemplate(notifToStorage(content), buildPreviewContext(t)) : '';
 
   return (
     <div className="border border-primary/30 rounded-lg p-4 space-y-3 bg-primary/5">
@@ -423,13 +372,13 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
         <Select value={eventType} onValueChange={v => handleEventChange(v as EventType)}>
           <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {EVENT_TYPES.filter(event => isEventEnabled(event, approvalsEnabled)).map(e => <SelectItem key={e} value={e} className="text-xs">{EVENT_LABELS[e]}</SelectItem>)}
+            {EVENT_TYPES.filter(event => isEventEnabled(event, approvalsEnabled)).map(e => <SelectItem key={e} value={e} className="text-xs">{eventLabel(t, e)}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={tone} onValueChange={v => setTone(v as Tone)}>
           <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {TONES.map(t => <SelectItem key={t} value={t} className="text-xs">{TONE_LABELS[t]}</SelectItem>)}
+            {TONES.map(v => <SelectItem key={v} value={v} className="text-xs">{toneLabel(t, v)}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -457,7 +406,7 @@ export function AddTemplateForm({ onAdd, onCancel }: AddTemplateFormProps) {
       {/* Preview */}
       {previewContent && (
         <div className="text-xs text-muted-foreground bg-muted/40 rounded px-3 py-2">
-          <span className="font-medium mr-1">{t('notificationTemplate.preview')}：</span>
+          <span className="font-medium mr-1">{t('notificationRules.templates.previewLabel')}</span>
           {previewContent}
         </div>
       )}

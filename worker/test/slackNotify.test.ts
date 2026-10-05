@@ -120,6 +120,19 @@ describe('cloud slack-notify', () => {
     expect(f.calls.some(call => call.method === 'users.list')).toBe(false);
     expect(f.text(dms[0])).toContain('Stored &amp;lt;!channel&amp;gt; title');
   });
+  it('sends no task DM or digest to a member who unlinked Slack in My settings', async () => {
+    const f = fixture();
+    const hour = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
+    f.db.exec(`INSERT INTO slack_link_preferences(workspace_id,member_id,linking_disabled,updated_at) VALUES('one','reviewer',1,'2026-10-04T00:00:00Z'),('one','assignee',0,'2026-10-04T00:00:00Z')`);
+    await f.send({ type: 'assignee_changed', taskId: 'task', dmTargets: [{ email: 'assignee@example.com', reason: 'x' }, { email: 'reviewer@example.com', reason: 'x' }] });
+    expect(f.posts().filter(post => String(post.channel).startsWith('D')).map(post => post.channel)).toEqual(['DUASSIGNEE']);
+    f.calls.length = 0;
+    f.db.exec("UPDATE slack_link_preferences SET linking_disabled=1 WHERE member_id='assignee'");
+    f.db.prepare("INSERT INTO user_notification_preferences(workspace_id,user_id,enabled,frequency,hour) VALUES('one','assignee',1,'daily',?)").run(hour);
+    await runSlackDigest(f.env, { waitUntil: () => {} } as never);
+    expect(f.posts()).toEqual([]);
+    expect(f.calls.some(call => call.method === 'users.lookupByEmail')).toBe(false);
+  });
   it('returns a generic error instead of internal details', async () => {
     const f = fixture();
     f.db.exec('DROP TABLE backup_settings');

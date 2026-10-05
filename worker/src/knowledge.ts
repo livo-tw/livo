@@ -49,6 +49,21 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
   const editableParams=[...edit.params,...lockParams];
   let statement:D1PreparedStatement;
   if (req.table==='kb_pages') {
+    if (req.op==='update') {
+      // Judge only what changes, as the Docker trigger does (IS DISTINCT FROM): an editor
+      // resends the parent, project and order it left alone. The version check in the
+      // UPDATE below rejects a row that changed after this read.
+      const current=await env.DB.prepare('SELECT project_id,parent_id,sort_order,admin_only,is_archived,access_policy FROM kb_pages WHERE workspace_id=? AND id=?')
+        .bind(ws,id).first<Record<string,unknown>>();
+      const storedPolicy=(text:unknown)=>{try{return JSON.stringify(parseKnowledgePolicy(typeof text==='string'?JSON.parse(text):text));}catch{return null;}};
+      if (current) for (const key of ['project_id','parent_id','sort_order','admin_only','is_archived','access_policy']) {
+        if (values[key]===undefined) continue;
+        const same=key==='access_policy' ? JSON.stringify(parseKnowledgePolicy(values[key]))===storedPolicy(current[key])
+          : key==='admin_only'||key==='is_archived' ? Boolean(values[key])===Boolean(current[key])
+          : (values[key]??null)===(current[key]??null);
+        if (same) delete values[key];
+      }
+    }
     if (Object.keys(values).some(k=>!new Set([...pageColumns,'created_by','updated_by',...(clientId?['id']:[])]).has(k))) return fail('kb_forbidden');
     if (!admin && (values.admin_only!==undefined || values.is_archived!==undefined || (values.access_policy!==undefined && parseKnowledgePolicy(values.access_policy)?.mode!=='inherit'))) return fail('kb_forbidden');
     if (values.title!==undefined && (typeof values.title!=='string' || !values.title.trim() || values.title.length>200)) return fail('kb_invalid_title');

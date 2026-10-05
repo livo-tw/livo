@@ -7,7 +7,6 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useAuthContext } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLog';
-import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import { priorityConfig } from '@/components/ui/badges';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -21,7 +20,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { Priority, Task } from '@/types';
-import { useUndoStack } from '@/hooks/useUndoStack';
+import { useStatusChangeGate } from '@/hooks/useStatusChangeGate';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
+import { announceAssignment } from '@/lib/taskAnnouncements';
+import { useTaskAnnouncements } from '@/hooks/useTaskAnnouncements';
 
 interface BulkActionBarProps {
   selectedIds: Set<string>;
@@ -33,7 +35,8 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
   const { allTasks, statuses, updateTaskInDb, setAllTasks } = useTaskContext();
   const { users } = useMemberContext();
   const { currentMemberId, permissions } = useAuthContext();
-  const undoStack = useUndoStack();
+  const statusGate = useStatusChangeGate();
+  const announcements = useTaskAnnouncements();
   const [isLoading, setIsLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [statusVal, setStatusVal] = useState('');
@@ -61,10 +64,18 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
     if (!statusId) return;
     setStatusVal('');
     await runBulk(async () => {
-      await Promise.all(selectedTasks.map(t => updateTaskInDb(t.id, { statusId })));
+      // Each task follows the same rules as a single change; ones that need approval,
+      // have one pending, or miss a required status are left for the user to open.
+      const changes = selectedTasks.map(task => ({ task, gate: statusGate.check(task, statusId) }));
+      const direct = changes.filter(change => change.gate.kind === 'direct').map(change => change.task);
+      const skipped = changes.filter(change => change.gate.kind !== 'direct' && change.gate.kind !== 'same').length;
+      const results = await Promise.all(direct.map(task => updateTaskInDb(task.id, statusChangeUpdates(task, statuses, statusId))));
+      const failed = results.filter(result => result === false).length;
+      if (skipped) toast.warning(t('bulkAction.statusSkipped', { count: skipped }), { duration: 10000 });
+      if (failed) toast.error(t('bulkAction.statusPartialFailed', { count: failed }));
       const statusName = statuses.find(s => s.id === statusId)?.name || statusId;
-      if (currentMemberId) {
-        await logActivity(currentMemberId, 'bulk_update_status', t('activity.bulkUpdateStatus', { statusName, count }));
+      if (currentMemberId && direct.length > failed) {
+        await logActivity(currentMemberId, 'bulk_update_status', t('activity.bulkUpdateStatus', { statusName, count: direct.length - failed }));
       }
     });
   };
@@ -74,10 +85,14 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
     setAssigneeVal('');
     const assigneeId = val === '__clear__' ? undefined : val;
     await runBulk(async () => {
-      await Promise.all(selectedTasks.map(t => updateTaskInDb(t.id, { assigneeId })));
+      const results = await Promise.all(selectedTasks.map(task => updateTaskInDb(task.id, { assigneeId })));
+      const failed = results.filter(result => result === false).length;
+      if (failed) toast.error(t('bulkAction.partialFailed', { count: failed }));
+      // The new assignee hears about each saved task in their inbox; Slack is skipped so one action does not flood the channel.
+      selectedTasks.forEach((task, index) => { if (results[index] !== false) announceAssignment(task, assigneeId, announcements, { slack: false }); });
       const userName = assigneeId ? (users.find(u => u.id === assigneeId)?.name ?? t('common.unknown')) : t('common.unassigned');
-      if (currentMemberId) {
-        await logActivity(currentMemberId, 'bulk_assign', t('activity.bulkAssign', { userName, count }));
+      if (currentMemberId && count > failed) {
+        await logActivity(currentMemberId, 'bulk_assign', t('activity.bulkAssign', { userName, count: count - failed }));
       }
     });
   };
@@ -86,58 +101,28 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
     if (!priority) return;
     setPriorityVal('');
     await runBulk(async () => {
-      await Promise.all(selectedTasks.map(t => updateTaskInDb(t.id, { priority: priority as Priority })));
-      const priorityLabel = priorityConfig[priority as Priority]?.label ?? priority;
-      if (currentMemberId) {
-        await logActivity(currentMemberId, 'bulk_update_priority', t('activity.bulkUpdatePriority', { priorityLabel, count }));
+      const results = await Promise.all(selectedTasks.map(task => updateTaskInDb(task.id, { priority: priority as Priority })));
+      const failed = results.filter(result => result === false).length;
+      if (failed) toast.error(t('bulkAction.partialFailed', { count: failed }));
+      const priorityLabel = t(`priority.${priority}`);
+      if (currentMemberId && count > failed) {
+        await logActivity(currentMemberId, 'bulk_update_priority', t('activity.bulkUpdatePriority', { priorityLabel, count: count - failed }));
       }
     });
   };
 
+  // Deleting is permanent: comments, attachments and specs go with the task, so no
+  // undo is offered (a re-created row would come back without them).
   const handleBulkDeleteConfirm = async () => {
     setDeleteDialogOpen(false);
     const tasksToDelete = [...selectedTasks];
     await runBulk(async () => {
-      for (const task of tasksToDelete) {
-        if (currentMemberId) {
-          await logActivity(currentMemberId, 'delete_task', task.title, task.id, task.taskKey);
-        }
-      }
       const ids = tasksToDelete.map(t => t.id);
       const { error } = await supabase.from('tasks').delete().in('id', ids);
       if (error) throw error;
-      setAllTasks(prev => prev.filter(t => !ids.includes(t.id)));
-      undoStack.push({
-        type: 'bulk_delete',
-        description: t('undo.bulkDeleted', { count: ids.length }),
-        undo: async () => {
-          const rows = tasksToDelete.map(task => {
-            const row: Record<string, unknown> = {
-              id: task.id, task_key: task.taskKey,
-              project_id: task.projectId, title: task.title,
-              status_id: task.statusId, priority: task.priority,
-              creator_id: task.creatorId, sort_order: task.sortOrder,
-              created_at: task.createdAt,
-            };
-            if (task.assigneeId) row.assignee_id = task.assigneeId;
-            if (task.reviewerId) row.reviewer_id = task.reviewerId;
-            if (task.dueDate) row.due_date = task.dueDate;
-            row.due_date_kind = task.dueDate ? task.dueDateKind ?? null : null;
-            if (task.startedAt) row.started_at = task.startedAt;
-            if (task.completedAt) row.completed_at = task.completedAt;
-            if (task.sprintId) row.sprint_id = task.sprintId;
-            if (task.department) row.department = task.department;
-            return row;
-          });
-          const restored = await supabase.from('tasks').insert(rows).select('id,due_date,due_date_kind,due_date_version,started_at');
-          if (restored.error || !restored.data || restored.data.length !== tasksToDelete.length) throw new Error(t('taskPlanning.errors.planning_unavailable'));
-          const restoredRows = restored.data;
-          setAllTasks(prev => [...prev, ...tasksToDelete.map(task => {
-            const saved = restoredRows.find(row => row.id === task.id);
-            return saved ? { ...task, ...deadlineTaskFields(saved) } : task;
-          })]);
-        },
-      });
+      setAllTasks(prev => prev.filter(t => !ids.includes(t.id)).map(t => t.parentTaskId && ids.includes(t.parentTaskId) ? { ...t, parentTaskId: undefined } : t));
+      if (currentMemberId) for (const task of tasksToDelete) await logActivity(currentMemberId, 'delete_task', task.title, task.id, task.taskKey);
+      toast.success(t('bulkAction.deletedCount', { count: ids.length }));
     });
   };
 
@@ -184,8 +169,8 @@ export const BulkActionBar = memo(({ selectedIds, onClearSelection }: BulkAction
             className={selectCls}
           >
             <option value="" disabled>{t('bulkAction.changePriority')}</option>
-            {(Object.entries(priorityConfig) as [Priority, typeof priorityConfig[Priority]][]).map(([k, v]) => (
-              <option key={k} value={k}>{v.label}</option>
+            {(Object.keys(priorityConfig) as Priority[]).map(k => (
+              <option key={k} value={k}>{t(`priority.${k}`)}</option>
             ))}
           </SearchableSelect>
 

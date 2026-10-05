@@ -1,8 +1,9 @@
 import type { Task, Status } from '@/types';
 import type { QaIssue, QaListInput, QaListResult, QaState } from '@/lib/qa/domain';
+import { qaShortId } from '@/lib/qa/shortId';
 import { isQaTerminal } from '@/lib/qa/domain';
 
-export type AssignmentRole = 'assignee' | 'reviewer' | 'fix' | 'verify';
+export type AssignmentRole = 'assignee' | 'reviewer' | 'fix' | 'verify' | 'handoff';
 export type MyAssignment = {
   key: string; id: string; kind: 'task' | 'bug'; title: string; reference: string;
   projectId: string; roles: AssignmentRole[]; dueDate?: string | null; priority: number;
@@ -36,7 +37,9 @@ export function buildMyAssignments(tasks: Task[], statuses: Status[], issues: Qa
     const roles: AssignmentRole[] = [];
     if (issue.assigneeId === memberId) roles.push('fix');
     if (issue.qaOwnerId === memberId) roles.push('verify');
-    if (roles.length) items.push({ key: `bug:${issue.id}`, id: issue.id, kind: 'bug', title: issue.title, reference: issue.id.slice(0, 8), projectId: issue.projectId, roles, dueDate: issue.dueDate, priority: issue.priority - 1, updated: issue.updatedAt, issue });
+    // A handoff waiting on me is my work too, until it is resolved.
+    if (issue.handoff && !issue.handoff.resolvedAt && issue.handoff.nextOwnerId === memberId) roles.push('handoff');
+    if (roles.length) items.push({ key: `bug:${issue.id}`, id: issue.id, kind: 'bug', title: issue.title, reference: qaShortId(issue.id), projectId: issue.projectId, roles, dueDate: issue.dueDate, priority: issue.priority - 1, updated: issue.updatedAt, issue });
   }
   const today = assignmentDay(now.toISOString());
   const urgency = (item: MyAssignment) => { const day = assignmentDay(item.dueDate); return day < today ? 0 : day === today ? 1 : Number.isFinite(day) ? 2 : 3; };
@@ -46,7 +49,7 @@ export function buildMyAssignments(tasks: Task[], statuses: Status[], issues: Qa
 type List = (input: QaListInput, signal?: AbortSignal) => Promise<QaListResult>;
 /** A preview page's length is never used as the total. Incomplete reads fail closed. */
 export async function loadMyQaAssignments(list: List, signal?: AbortSignal): Promise<QaIssue[]> {
-  const acquire = async (mine: 'assigned' | 'testing') => {
+  const acquire = async (mine: 'assigned' | 'testing' | 'handoff') => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const issues = new Map<string, QaIssue>();
       let offset = 0, total: number | undefined, changed = false;
@@ -65,6 +68,6 @@ export async function loadMyQaAssignments(list: List, signal?: AbortSignal): Pro
     }
     throw new Error('incomplete_assignments');
   };
-  const [assigned, testing] = await Promise.all([acquire('assigned'), acquire('testing')]);
-  return [...new Map([...assigned, ...testing].map(issue => [issue.id, issue])).values()];
+  const [assigned, testing, handoff] = await Promise.all([acquire('assigned'), acquire('testing'), acquire('handoff')]);
+  return [...new Map([...assigned, ...testing, ...handoff].map(issue => [issue.id, issue])).values()];
 }

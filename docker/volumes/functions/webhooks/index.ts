@@ -8,7 +8,7 @@
 // request body). Self-contained (no ../_shared import) to match the other
 // docker/volumes/functions — same structure as slack-config.
 //
-// Contract (admin / super_admin only; service-role key exempt):
+// Contract (super_admin only; service-role key exempt):
 //   GET  → { webhooks: [{ id, url, events, enabled, created_at,
 //                         last_status, last_sent_at }] }         (never the secret)
 //   POST { action:'create', url, events? }
@@ -71,8 +71,8 @@ Deno.serve(async (req) => {
         .eq('is_active', true)
         .maybeSingle();
       member = byAuth as typeof member;
-      if (!member || !['admin', 'super_admin'].includes(member.role || '')) {
-        return json({ error: 'Permission denied: admin role required' }, 403);
+      if (!member || !member.role === 'super_admin') {
+        return json({ error: 'Permission denied: super_admin role required' }, 403);
       }
       memberId = member.id ?? null;
     }

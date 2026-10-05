@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useUIContext } from '@/context/UIContext';
-import { sendSlackNotify } from '@/lib/slackNotify';
+import { announceStatusChange } from '@/lib/taskAnnouncements';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
-import { createNotification } from '../utils';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
 import type { Task, Status, StatusLog, User, Project } from '@/types';
 
 export interface UseTaskStatusChangeParams {
@@ -15,7 +15,8 @@ export interface UseTaskStatusChangeParams {
   currentMemberId: string | undefined;
   currentMember: User | null | undefined;
   assignee: User | undefined;
-  updateTask: (updates: Partial<Task>) => void;
+  /** Resolves false when the save was refused or failed. */
+  updateTask: (updates: Partial<Task>) => Promise<boolean> | void;
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   setSelectedTask: React.Dispatch<React.SetStateAction<Task | null>>;
   canTransitionTo: (taskId: string, newStatusId: string, statusLogs: StatusLog[]) => { allowed: boolean; missingStatusIds: string[] };
@@ -28,7 +29,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
   const { approvalsEnabled, featureTogglesReady } = useUIContext();
   const {
     task, project, statuses, statusLogs, users,
-    currentMemberId, currentMember, assignee,
+    currentMember,
     updateTask, setAllTasks, setSelectedTask,
     canTransitionTo, triggerNotification, getRuleForTransition, requestApproval,
   } = params;
@@ -45,10 +46,22 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
     if (!approvalsEnabled) { setAdvisoryState(null); setApprovalConfirmState(null); }
   }, [approvalsEnabled]);
 
+  // Others hear about the change only once it is saved (see lib/taskAnnouncements).
+  const changeAndAnnounce = async (current: Task, newStatusId: string) => {
+    const saved = await updateTask(statusChangeUpdates(current, statuses, newStatusId));
+    if (saved === false) return;
+    announceStatusChange(current, current.statusId, newStatusId, { actor: currentMember, users, projects: project ? [project] : [], statuses, showRules: triggerNotification });
+  };
+
   const handleStatusChange = async (newStatusId: string) => {
     if (!featureTogglesReady) { toast.error(i18n.t('featureToggles.loadFailed')); return; }
     try {
       if (!task) return;
+      // The server keeps the status while an approval is in progress.
+      if (approvalsEnabled && (task.approvalStatus === 'pending_approval' || task.currentApprovalId)) {
+        toast.error(i18n.t('error.approvalPending'));
+        return;
+      }
       const result = canTransitionTo(task.id, newStatusId, statusLogs);
       if (!result.allowed) {
         const missingNames = result.missingStatusIds
@@ -79,29 +92,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
         }
       }
 
-      const s = statuses.find(st => st.id === newStatusId);
-      const oldStatus = statuses.find(st => st.id === task.statusId);
-      const updates: Partial<Task> = { statusId: newStatusId };
-      if (s?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-      if (s?.isDone && !oldStatus?.isDone) {
-        updates.completedAt = new Date().toISOString();
-      }
-      if (!s?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
-      updateTask(updates);
-      const statusMsg = i18n.t('taskDetail.statusChanged', { statusName: s?.name || '—' });
-      if (task.assigneeId) createNotification(task.assigneeId, currentMemberId, 'status_changed', task.id, statusMsg);
-      if (task.reviewerId) createNotification(task.reviewerId, currentMemberId, 'status_changed', task.id, statusMsg);
-      sendSlackNotify({
-        type: 'status_changed', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
-        projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
-        fromStatus: oldStatus?.name || '—', toStatus: s?.name || '—',
-        assigneeName: assignee?.name, priority: task.priority,
-      }).catch(err => console.error('[LIVO] sendSlackNotify error:', err));
-      try {
-        triggerNotification(task, oldStatus?.name || '—', s?.name || '—');
-      } catch (err) {
-        console.error('[LIVO] triggerNotification error:', err);
-      }
+      await changeAndAnnounce(task, newStatusId);
     } catch (err) {
       console.error('[LIVO] handleStatusChange error:', err);
       toast.error(i18n.t('error.updateFailed') + String(err));
@@ -112,13 +103,7 @@ export function useTaskStatusChange(params: UseTaskStatusChangeParams) {
     if (!advisoryState || !task) return;
     const { toStatusId } = advisoryState;
     setAdvisoryState(null);
-    const s = statuses.find(st => st.id === toStatusId);
-    const oldStatus = statuses.find(st => st.id === task.statusId);
-    const updates: Partial<Task> = { statusId: toStatusId };
-    if (s?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-    if (s?.isDone && !oldStatus?.isDone) updates.completedAt = new Date().toISOString();
-    if (!s?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
-    updateTask(updates);
+    await changeAndAnnounce(task, toStatusId);
   };
 
   const handleAdvisorySubmitApproval = async () => {

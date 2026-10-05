@@ -174,7 +174,7 @@ async function main() {
     if(args[i]==='--report'&&!args[++i])throw new Error('--report needs a file path');
   }
   if(args.includes('--plan')&&args.includes('--run'))throw new Error('Choose --plan or --run');
-  const reportPath=args.includes('--report')?args[args.indexOf('--report')+1]:undefined;
+  const reportPath=args.includes('--report')?(args.includes('--report')?args[args.indexOf('--report')+1]:undefined):undefined;
   const plan=buildPlan();
   const report=args.includes('--run')?await runPostgres(plan,reportPath):{...plan.summary,status:'not-run'};
   console.log(JSON.stringify(report));

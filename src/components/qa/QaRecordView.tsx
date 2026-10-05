@@ -11,19 +11,22 @@ import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { DEMO_BANNER_HEIGHT } from '@/components/DemoModeBanner';
 import { RecordViewModeButtons } from '@/components/ui/record-view-mode-buttons';
 
-export default function QaRecordView({ title, creating = false, busy, onClose, children }: {
-  title: string; creating?: boolean; busy: boolean; onClose: () => void; children: ReactNode;
+export default function QaRecordView({ title, creating = false, busy, suspended = false, onClose, children }: {
+  title: string; creating?: boolean; busy: boolean;
+  /** A task opened on top (a linked task, Ctrl+K, a notification): hidden, kept as is, shown again when the task closes. */
+  suspended?: boolean;
+  onClose: () => void; children: ReactNode;
 }) {
   const { t } = useTranslation();
   const { taskDisplayMode = 'modal', setTaskDisplayMode } = useUIContext();
   const isMobile = useIsMobile();
   const mode = creating || isMobile ? 'modal' : taskDisplayMode;
-  const focus = useFocusTrap(mode === 'modal');
+  const focus = useFocusTrap(mode === 'modal' && !suspended);
   const titleId = useId();
   const top = IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0;
   const close = () => { if (!busy && !hasQaNavigationGuard()) onClose(); else toast.info(t('qa.finishPending')); };
-  return <div ref={focus} role="dialog" aria-modal={mode === 'modal' || undefined} aria-labelledby={titleId}
-    className={mode === 'page' ? 'flex min-h-0 w-full flex-1 flex-col bg-card' : mode === 'side' ? 'fixed bottom-0 right-0 z-50 flex w-[min(960px,100vw)] flex-col border-l border-border bg-card shadow-xl' : 'fixed inset-0 z-50 flex items-start justify-center bg-black/50 md:pt-6'}
+  return <div ref={focus} role="dialog" aria-modal={mode === 'modal' || undefined} aria-labelledby={titleId} hidden={suspended}
+    className={suspended ? 'hidden' : mode === 'page' ? 'flex min-h-0 w-full flex-1 flex-col bg-card' : mode === 'side' ? 'fixed bottom-0 right-0 z-50 flex w-[min(960px,100vw)] flex-col border-l border-border bg-card shadow-xl' : 'fixed inset-0 z-50 flex items-start justify-center bg-black/50 md:pt-6'}
     style={mode === 'page' ? undefined : { top }}
     onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && (event.target as HTMLElement).closest('[role="dialog"]') === event.currentTarget && !(event.target as HTMLElement).closest('[data-radix-popper-content-wrapper], [role="listbox"]')) { event.preventDefault(); close(); } }}
     onClick={event => { if (!isMobile && mode === 'modal' && event.target === event.currentTarget) close(); }}>

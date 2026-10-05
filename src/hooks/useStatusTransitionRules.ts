@@ -1,47 +1,44 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { generateId } from '@/lib/generateId';
+import { missingRequiredStatuses, type StatusTransitionRule } from '@/lib/taskStatusChange';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import type { StatusLog } from '@/types';
 
-export interface StatusTransitionRule {
-  id: string;
-  targetStatusId: string;
-  requiredStatusId: string;
-  createdAt: string;
-}
+export type { StatusTransitionRule } from '@/lib/taskStatusChange';
 
 export interface TransitionCheckResult {
   allowed: boolean;
   missingStatusIds: string[];
 }
 
+// One copy for the whole app: every card's quick status menu checks the same
+// rules, so they are loaded once, shared, and reloaded after an edit.
+let store: { rules: StatusTransitionRule[]; loading: boolean } = { rules: [], loading: true };
+const listeners = new Set<() => void>();
+let request = 0;
+async function loadRules() {
+  const current = ++request;
+  const { data, error } = await supabase.from('status_transition_rules').select('*');
+  if (current !== request) return;
+  if (error) console.error('[LIVO] Failed to load transition rules:', error.message);
+  store = { rules: error || !data ? store.rules : data.map(r => ({
+    id: r.id, targetStatusId: r.target_status_id, requiredStatusId: r.required_status_id, createdAt: r.created_at,
+  })), loading: false };
+  listeners.forEach(listener => listener());
+}
+function subscribe(listener: () => void) {
+  // The first screen to need the rules after none did (a new sign-in included) loads them again.
+  if (!listeners.size) void loadRules();
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+const snapshot = () => store;
+
 export const useStatusTransitionRules = () => {
-  const [rules, setRules] = useState<StatusTransitionRule[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchRules = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('status_transition_rules')
-      .select('*');
-    if (error) {
-      console.error('[LIVO] Failed to load transition rules:', error.message);
-    } else if (data) {
-      setRules(data.map(r => ({
-        id: r.id,
-        targetStatusId: r.target_status_id,
-        requiredStatusId: r.required_status_id,
-        createdAt: r.created_at,
-      })));
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchRules();
-  }, [fetchRules]);
-
+  const { rules, loading } = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const fetchRules = useCallback(() => loadRules(), []);
   const getRulesForStatus = useCallback((statusId: string): StatusTransitionRule[] => {
     return rules.filter(r => r.targetStatusId === statusId);
   }, [rules]);
@@ -71,32 +68,10 @@ export const useStatusTransitionRules = () => {
     return true;
   }, [fetchRules]);
 
-  /**
-   * Checks whether a task can transition to the target status based on its history.
-   * Uses synchronous cached rules — no DB call needed.
-   */
-  const canTransitionTo = useCallback((
-    taskId: string,
-    targetStatusId: string,
-    statusLogs: StatusLog[]
-  ): TransitionCheckResult => {
-    const targetRules = rules.filter(r => r.targetStatusId === targetStatusId);
-    if (targetRules.length === 0) return { allowed: true, missingStatusIds: [] };
-
-    const taskHistory = new Set(
-      statusLogs
-        .filter(l => l.taskId === taskId)
-        .map(l => l.toStatusId)
-    );
-
-    const missingStatusIds = targetRules
-      .filter(r => !taskHistory.has(r.requiredStatusId))
-      .map(r => r.requiredStatusId);
-
-    return {
-      allowed: missingStatusIds.length === 0,
-      missingStatusIds,
-    };
+  /** Whether a task's history allows the target status (cached rules, no database call). */
+  const canTransitionTo = useCallback((taskId: string, targetStatusId: string, statusLogs: StatusLog[]): TransitionCheckResult => {
+    const missingStatusIds = missingRequiredStatuses(rules, taskId, targetStatusId, statusLogs);
+    return { allowed: missingStatusIds.length === 0, missingStatusIds };
   }, [rules]);
 
   return {

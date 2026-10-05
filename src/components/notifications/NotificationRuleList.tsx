@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Plus, Trash2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -17,22 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { NotificationRule, NotificationTemplate, EventType } from '@/lib/notificationQueries';
-
-// ── Constants ─────────────────────────────────────────────────
-
-const EVENT_LABELS: Record<EventType, string> = {
-  task_created:       '任務建立',
-  status_changed:     '狀態變更',
-  assignee_changed:   '負責人變更',
-  due_reminder:       '到期提醒',
-  overdue:            '任務逾期',
-  approval_requested: '請求簽核',
-  approval_completed: '簽核完成',
-  comment_added:      '新增留言',
-  custom:             '自訂',
-};
-
-const EVENT_TYPES = Object.keys(EVENT_LABELS) as EventType[];
+import { RULE_EVENT_TYPES, eventLabel, ruleEventFires } from './notificationLabels';
 
 // ── Add-rule dialog ───────────────────────────────────────────
 
@@ -44,6 +30,7 @@ interface AddRuleDialogProps {
 }
 
 function AddRuleDialog({ open, templates, onClose, onCreate }: AddRuleDialogProps) {
+  const { t } = useTranslation();
   const [eventType, setEventType] = useState<EventType>('status_changed');
   const [templateId, setTemplateId] = useState('');
   const [autoSend, setAutoSend] = useState(true);
@@ -71,30 +58,30 @@ function AddRuleDialog({ open, templates, onClose, onCreate }: AddRuleDialogProp
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>新增通知規則</DialogTitle>
+          <DialogTitle>{t('notificationRules.dialog.addTitle')}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">觸發事件</label>
+            <label className="text-xs font-medium text-muted-foreground">{t('notificationRules.dialog.triggerEvent')}</label>
             <Select value={eventType} onValueChange={v => { setEventType(v as EventType); setTemplateId(''); }}>
               <SelectTrigger className="h-8 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {EVENT_TYPES.map(e => (
-                  <SelectItem key={e} value={e}>{EVENT_LABELS[e]}</SelectItem>
+                {RULE_EVENT_TYPES.map(e => (
+                  <SelectItem key={e} value={e}>{eventLabel(t, e)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">使用範本</label>
+            <label className="text-xs font-medium text-muted-foreground">{t('notificationRules.dialog.useTemplate')}</label>
             <Select value={templateId} onValueChange={setTemplateId}>
               <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder="選擇範本（可選）" />
+                <SelectValue placeholder={t('notificationRules.dialog.selectTemplateOptional')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">無（使用任務標題）</SelectItem>
+                <SelectItem value="">{t('notificationRules.dialog.templateNone')}</SelectItem>
                 {filteredTemplates.map(t => (
                   <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                 ))}
@@ -102,13 +89,13 @@ function AddRuleDialog({ open, templates, onClose, onCreate }: AddRuleDialogProp
             </Select>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm">自動發送</span>
+            <span className="text-sm">{t('notificationRules.autoSend')}</span>
             <Switch checked={autoSend} onCheckedChange={setAutoSend} />
           </div>
           {autoSend && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                自動發送延遲（秒）
+                {t('notificationRules.dialog.autoSendDelay')}
               </label>
               <input
                 type="number"
@@ -122,8 +109,8 @@ function AddRuleDialog({ open, templates, onClose, onCreate }: AddRuleDialogProp
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-          <Button size="sm" onClick={handleCreate}>建立</Button>
+          <Button variant="outline" size="sm" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button size="sm" onClick={handleCreate}>{t('common.create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -140,6 +127,7 @@ interface RuleRowProps {
 }
 
 function RuleRow({ rule, templates, onToggle, onDelete }: RuleRowProps) {
+  const { t } = useTranslation();
   const tpl = templates.find(t => t.id === rule.template_id);
   const channels = (rule.target_channels ?? []) as Array<{ type: string; target: string }>;
 
@@ -153,16 +141,21 @@ function RuleRow({ rule, templates, onToggle, onDelete }: RuleRowProps) {
       <div className="flex-1 min-w-0 space-y-0.5">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">
-            {EVENT_LABELS[rule.event_type] ?? rule.event_type}
+            {eventLabel(t, rule.event_type)}
           </span>
+          {!ruleEventFires(rule.event_type) && (
+            <span className="text-[10px] text-muted-foreground" title={t('notificationRules.neverFiresHint')}>
+              {t('notificationRules.neverFires')}
+            </span>
+          )}
           {rule.auto_send && (
             <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
-              自動 {rule.auto_send_delay_seconds}s
+              {t('notificationRules.autoDelay', { seconds: rule.auto_send_delay_seconds })}
             </span>
           )}
         </div>
         <div className="text-xs text-muted-foreground truncate">
-          {tpl ? tpl.name : '無範本'}
+          {tpl ? tpl.name : t('notificationRules.noTemplate')}
           {channels.length > 0 && (
             <span className="ml-2 opacity-60">
               → {channels.map(c => `${c.type}:${c.target}`).join(', ')}
@@ -175,7 +168,7 @@ function RuleRow({ rule, templates, onToggle, onDelete }: RuleRowProps) {
         size="icon"
         className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
         onClick={() => onDelete(rule.id)}
-        aria-label="刪除規則"
+        aria-label={t('notificationRules.deleteRule')}
       >
         <Trash2 size={13} />
       </Button>
@@ -197,29 +190,30 @@ interface NotificationRuleListProps {
 const NotificationRuleList = ({
   rules, templates, loading, onToggle, onDelete, onCreate,
 }: NotificationRuleListProps) => {
+  const { t } = useTranslation();
   const [showAdd, setShowAdd] = useState(false);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold">通知規則</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">定義哪些事件觸發通知，以及使用哪個範本</p>
+          <h3 className="text-sm font-semibold">{t('teamSettings.notificationRules')}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">{t('notificationRules.listDescription')}</p>
         </div>
         <Button size="sm" className="h-7 text-xs gap-1" onClick={() => setShowAdd(true)}>
           <Plus size={12} />
-          新增規則
+          {t('notificationRules.addRule')}
         </Button>
       </div>
 
       <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
         {loading ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            <Settings size={14} className="animate-spin mr-2" />載入中…
+            <Settings size={14} className="animate-spin mr-2" />{t('common.loading')}
           </div>
         ) : rules.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            尚無通知規則，點擊「新增規則」建立第一條
+            {t('notificationRules.empty')}
           </div>
         ) : (
           rules.map(rule => (

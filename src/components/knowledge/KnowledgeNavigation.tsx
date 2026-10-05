@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { ChevronDown, ChevronRight, FileText, FolderOpen, GripVertical, Pin, Star, MoreHorizontal, ArrowUp, ArrowDown, Check, ListTree } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { IconAction } from '@/components/ui/icon-action';
 import { buildKnowledgeTree, searchKnowledge, knowledgeSnippet, type KnowledgeNode } from '@/lib/knowledge';
 import { navigationScope, orderedNavigation } from '../../../worker/src/knowledgePreferenceModel';
 import type { KnowledgePage } from '@/types/knowledge';
@@ -33,10 +34,10 @@ export function KnowledgePageActions({ page, navigation, busy, compact = false }
       <DropdownMenuItem disabled={disabled} aria-label={pinLabel} onSelect={pin}><Pin size={15} className={item?.pinned ? 'text-primary' : ''} />{t(key(item?.pinned ? 'unpinAction' : 'pinAction'))}</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
-  return <div className="flex shrink-0 items-center gap-1">
-    <button type="button" disabled={disabled} aria-pressed={!!item?.favorite} aria-label={favoriteLabel} className="min-h-9 min-w-9 rounded-md p-2 hover:bg-muted focus-visible:ring-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11" onClick={favorite}><Star size={15} className={item?.favorite ? 'fill-amber-400 text-amber-600' : 'text-muted-foreground'} /></button>
-    <button type="button" disabled={disabled} aria-pressed={!!item?.pinned} aria-label={pinLabel} className="min-h-9 min-w-9 rounded-md p-2 hover:bg-muted focus-visible:ring-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11" onClick={pin}><Pin size={15} className={item?.pinned ? 'fill-primary/20 text-primary' : 'text-muted-foreground'} /></button>
-  </div>;
+  return <>
+    <IconAction disabled={disabled} pressed={!!item?.favorite} ariaLabel={favoriteLabel} label={t(key(item?.favorite ? 'unfavoriteAction' : 'favoriteAction'))} onClick={favorite}><Star size={16} className={item?.favorite ? 'fill-amber-400 text-amber-600' : ''} /></IconAction>
+    <IconAction disabled={disabled} pressed={!!item?.pinned} ariaLabel={pinLabel} label={t(key(item?.pinned ? 'unpinAction' : 'pinAction'))} onClick={pin}><Pin size={16} className={item?.pinned ? 'fill-primary/20' : ''} /></IconAction>
+  </>;
 }
 
 type RowProps = { node: KnowledgeNode; depth: number; selectedId: string | null; collapsed: boolean; reorder: boolean; disabled: boolean; onSelect: (id: string) => void; onToggle: () => void; onMove: (direction: -1 | 1) => void; onReset: () => void; first: boolean; last: boolean; navigation: Navigation; scopeLabel?: string; snippet?: string; children?: React.ReactNode };
@@ -114,7 +115,11 @@ export default function KnowledgeNavigation({ pages, groups, query, filtered, se
   const collapsed = (node: KnowledgeNode) => temporary[node.id] ?? (filtered || revealed.has(node.id) ? false : preferences.items[node.id]?.collapsed ?? true);
   const toggle = (node: KnowledgeNode) => {
     if (filtered || query.trim()) setTemporary(old => ({ ...old, [node.id]: !collapsed(node) }));
-    else void navigation.mutate({ p_action: 'collapse', p_page_id: node.id, p_value: !collapsed(node) }).then(ok => { if (ok) setRevealed(old => { const next = new Set(old); next.delete(node.id); return next; }); });
+    else void navigation.mutate({ p_action: 'collapse', p_page_id: node.id, p_value: !collapsed(node) }).then(ok => {
+      if (!ok) return;
+      setRevealed(old => { const next = new Set(old); next.delete(node.id); return next; });
+      setTemporary(old => { if (!(node.id in old)) return old; const next = { ...old }; delete next[node.id]; return next; });
+    });
   };
   async function move(page: KnowledgePage, before: string | null, kind: 'tree' | 'pins') {
     const ok = await navigation.mutate({ p_action: 'reorder', p_page_id: page.id, p_before_id: before, p_order_kind: kind });
@@ -146,17 +151,23 @@ export default function KnowledgeNavigation({ pages, groups, query, filtered, se
   };
   async function toggleAll(value: boolean) {
     const parents = scoped.filter(page => pages.some(child => child.parent_id === page.id));
-    if (filtered || query.trim()) { setTemporary(Object.fromEntries(parents.map(page => [page.id, value]))); return; }
-    for (const page of parents) {
-      if (!await navigation.mutate({ p_action: 'collapse', p_page_id: page.id, p_value: value })) break;
-      setRevealed(old => { const next = new Set(old); next.delete(page.id); return next; });
+    // The tree changes at once; saving follows in the background.
+    setTemporary(Object.fromEntries(parents.map(page => [page.id, value])));
+    if (filtered || query.trim()) return;
+    if (!value) setRevealed(new Set());
+    // Each save needs the version the previous one returned, so they run one after another,
+    // and only for pages whose saved state differs.
+    let saved = true;
+    for (const page of parents.filter(candidate => (preferences.items[candidate.id]?.collapsed ?? true) !== value)) {
+      if (!await navigation.mutate({ p_action: 'collapse', p_page_id: page.id, p_value: value })) { saved = false; break; }
     }
+    if (saved) setTemporary({});
   }
   const visibleGroups = groups.filter(group => scoped.some(page => (page.project_id || 'shared') === group.id));
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="shrink-0 border-b px-3 pb-3">
       <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted/70 p-1" role="group" aria-label={t(key('views'), { defaultValue: 'Personal navigation' })}>
-        {([{ id: 'tree', icon: ListTree, count: scoped.length }, { id: 'favorites', icon: Star, count: favorites.length }, { id: 'pins', icon: Pin, count: pinPages.length }] as const).map(option => <button type="button" key={option.id} aria-pressed={view === option.id} className={`flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs font-medium transition-colors ${view === option.id ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => { setView(option.id); setEditingOrder(false); }}><option.icon size={14} aria-hidden="true" /><span>{t(key(option.id), { defaultValue: { tree: 'All pages', favorites: 'My favorites', pins: 'My pins' }[option.id] })}</span><span className="tabular-nums text-[11px] opacity-70" aria-hidden="true">{option.count}</span></button>)}
+        {([{ id: 'tree', icon: ListTree, count: scoped.length }, { id: 'favorites', icon: Star, count: favorites.length }, { id: 'pins', icon: Pin, count: pinPages.length }] as const).map(option => <button type="button" key={option.id} aria-pressed={view === option.id} aria-label={t(key(option.id), { defaultValue: { tree: 'All pages', favorites: 'My favorites', pins: 'My pins' }[option.id] })} className={`flex min-h-10 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-1 text-xs font-medium transition-colors ${view === option.id ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => { setView(option.id); setEditingOrder(false); }}><option.icon size={14} className="shrink-0" aria-hidden="true" /><span className="truncate">{t(`kb.navigation.tabs.${option.id}`)}</span><span className="shrink-0 tabular-nums text-[11px] opacity-70" aria-hidden="true">{option.count}</span></button>)}
       </div>
     </div>
     <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">

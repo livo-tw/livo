@@ -1,6 +1,6 @@
 import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
 import { groupProjectsByLine } from '@/lib/projectGroups';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, Pencil, ChevronRight, ClipboardCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
@@ -13,6 +13,7 @@ import { useAuthContext } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLog';
 import type { ApprovalRuleStep } from '@/lib/approvalQueries';
 import ApprovalRuleDialog, { type StepDraft } from './ApprovalRuleDialog';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 
 export default function ApprovalRuleConfig() {
   const { t } = useTranslation();
@@ -29,6 +30,7 @@ export default function ApprovalRuleConfig() {
   const { rules, stepsMap, loading, fetchRulesForProjects, createRule, updateRuleWithSteps, deleteRule } = useApprovalRules();
 
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [addRuleProjectIds, setAddRuleProjectIds] = useState<string[]>([]);
   const [fromStatus, setFromStatus] = useState('');
@@ -44,12 +46,13 @@ export default function ApprovalRuleConfig() {
 
   const activeProjects = useMemo(() => allProjects.filter(p => !p.isArchived), [allProjects]);
 
-  // Initialize with all projects selected
+  // Start with every project selected, once: clearing the selection later must stay cleared.
+  const initialized = useRef(false);
   useEffect(() => {
-    if (activeProjects.length > 0 && selectedProjectIds.length === 0) {
-      setSelectedProjectIds(activeProjects.map(p => p.id));
-    }
-  }, [activeProjects, selectedProjectIds.length]);
+    if (initialized.current || activeProjects.length === 0) return;
+    initialized.current = true;
+    setSelectedProjectIds(activeProjects.map(p => p.id));
+  }, [activeProjects]);
 
   // Fetch rules for all selected projects
   useEffect(() => {
@@ -134,31 +137,34 @@ export default function ApprovalRuleConfig() {
         timeout_action: s.timeout_action,
       }));
 
+      // The rule being edited moves to the first chosen project; every other chosen
+      // project gets its own copy, so no selected project is silently ignored.
+      const [first, ...others] = addRuleProjectIds;
+      const failed: string[] = [];
       if (editingRuleId) {
-        // Edit mode: single project
-        await updateRuleWithSteps(editingRuleId, {
-          project_id: addRuleProjectIds[0],
-          from_status: fromStatus,
-          to_status: toStatus,
-        }, stepsToSave);
+        const updated = await updateRuleWithSteps(editingRuleId, { project_id: first, from_status: fromStatus, to_status: toStatus }, stepsToSave);
+        if (!updated) failed.push(first);
+        else if (currentMemberId) logActivity(currentMemberId, 'approval_rule_updated', t('activityLog.approvalRuleUpdated', { from: getStatusName(fromStatus), to: getStatusName(toStatus) }), undefined, undefined, 'system');
+      }
+      const created: string[] = [];
+      for (const pid of editingRuleId ? others : addRuleProjectIds) {
+        if (await createRule(pid, fromStatus, toStatus, stepsToSave)) created.push(pid); else failed.push(pid);
+      }
+      if (created.length) {
+        setSelectedProjectIds(prev => [...prev, ...created.filter(pid => !prev.includes(pid))]);
         if (currentMemberId) {
-          logActivity(currentMemberId, 'approval_rule_updated', t('activityLog.approvalRuleUpdated', { from: getStatusName(fromStatus), to: getStatusName(toStatus) }), undefined, undefined, 'system');
-        }
-      } else {
-        // Create mode: one rule per selected project
-        for (const pid of addRuleProjectIds) {
-          await createRule(pid, fromStatus, toStatus, stepsToSave);
-          if (!selectedProjectIds.includes(pid)) {
-            setSelectedProjectIds(prev => [...prev, pid]);
-          }
-        }
-        if (currentMemberId) {
-          const projectNames = addRuleProjectIds.map(id => projectNameMap.get(id) ?? id).join(', ');
+          const projectNames = created.map(id => projectNameMap.get(id) ?? id).join(', ');
           logActivity(currentMemberId, 'approval_rule_created', t('activityLog.approvalRuleCreated', { projects: projectNames, from: getStatusName(fromStatus), to: getStatusName(toStatus) }), undefined, undefined, 'system');
         }
       }
+      // Keep the dialog open with only the projects that still need saving.
+      if (failed.length) {
+        if (editingRuleId && !failed.includes(first)) setEditingRuleId(null);
+        setAddRuleProjectIds(failed);
+        return;
+      }
       resetDialog();
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error(t('error.operationFailed'));
       console.error(err);
     } finally {
@@ -281,12 +287,10 @@ export default function ApprovalRuleConfig() {
                       <Pencil size={14} />
                     </button>
                     <button
-                      onClick={() => {
-                        if (window.confirm(t('approval.ruleConfig.deleteConfirm'))) {
-                          deleteRule(rule.id);
-                          if (currentMemberId) {
-                            logActivity(currentMemberId, 'approval_rule_deleted', t('activityLog.approvalRuleDeleted', { from: getStatusName(rule.from_status), to: getStatusName(rule.to_status) }), undefined, undefined, 'system');
-                          }
+                      onClick={async () => {
+                        if (!(await confirm({ description: t('approval.ruleConfig.deleteConfirm'), title: t('approval.ruleConfig.deleteRule'), destructive: true }))) return;
+                        if (await deleteRule(rule.id) && currentMemberId) {
+                          logActivity(currentMemberId, 'approval_rule_deleted', t('activityLog.approvalRuleDeleted', { from: getStatusName(rule.from_status), to: getStatusName(rule.to_status) }), undefined, undefined, 'system');
                         }
                       }}
                       className="text-muted-foreground hover:text-destructive p-1.5 rounded-md hover:bg-accent transition-colors"
@@ -322,6 +326,7 @@ export default function ApprovalRuleConfig() {
         onClose={resetDialog}
         addDialogRef={addDialogRef}
       />
+      {ConfirmDialog}
     </div>
   );
 }

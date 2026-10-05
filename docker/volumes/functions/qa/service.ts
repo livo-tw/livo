@@ -1,5 +1,5 @@
 import { parseDeploymentEnvironments } from './environments.ts';
-import { applyQaCommand, createQaIssue, qaEventDetail, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
+import { applyQaCommand, canQaComment, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
   type QaAttachment, type QaCommand, type QaContext, type QaCreateInput, type QaIssue,
   type QaListInput, type QaListResult } from './domain.ts';
 import { validateQaBackup } from './restore.ts';
@@ -126,7 +126,8 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
       db.rows('projects', { select: 'id', id: `eq.${id(projectId)}`, is_archived: 'eq.false', limit: 1 }),
       linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${id(projectId)}` }) : [],
-      command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, limit: 1 }) : [],
+      // A duplicate must be another bug of the same project, as in the cloud.
+      command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, project_id: `eq.${id(projectId)}`, limit: 1 }) : [],
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
       !issue || command?.type === 'edit' ? db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }) : [],
     ]);
@@ -137,6 +138,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
+  // A new bug goes to the project's active QA coordinator, otherwise to the admins.
+  async function triagers(projectId: string): Promise<string[]> {
+    const { coordinatorId } = await coordination(projectId);
+    const rows = await db.rows('members', { select: 'id,role', is_active: 'eq.true',
+      or: `(role.in.(admin,super_admin)${coordinatorId ? `,id.eq.${id(coordinatorId)}` : ''})` });
+    const coordinator = rows.filter(row => row.id === coordinatorId);
+    return (coordinator.length ? coordinator : rows).map(row => String(row.id));
+  }
   async function replay(actor: Row, request: Row, hash: string) {
     const receipt = (await db.qaRows('qa_commands', { select: '*', id: `eq.${commandId(request.commandId)}`, limit: 1 }))[0];
     if (!receipt) return undefined;
@@ -145,7 +154,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
   }
   async function commit(actor: Row, request: Row, hash: string, data: unknown, kind: string, type: string, sourceIssue?: QaIssue, before?: QaIssue) {
     const issue = sourceIssue || data as QaIssue;
-    const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id);
+    const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id, type === 'created' ? await triagers(issue.projectId) : []);
     const result = await db.rpc('livo_qa_commit', { p_auth_id: actor.authId, p_issue_id: request.id,
       p_command_id: commandId(request.commandId), p_payload_hash: hash, p_expected_version: request.expectedVersion ?? null,
       p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
@@ -167,6 +176,13 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return qaVersionSuggestions(rows as Array<{workspaceId:string;projectId:string}>, WORKSPACE, projectId);
       }
       case 'get_coordination': return coordination(id(request.projectId));
+      // The projects whose QA the caller coordinates, so cards can offer triage outside the selected project.
+      case 'my_coordination': {
+        const rows = await db.qaRows('qa_project_coordination', { select: 'id', coordinator_id: `eq.${actor.id}`, order: 'id', limit: 1000 });
+        const ids = rows.map(row => String(row.id));
+        const open = ids.length ? await db.rows('projects', { select: 'id', id: `in.(${ids.map(id).join(',')})`, is_archived: 'eq.false' }) : [];
+        return { projectIds: open.map(row => String(row.id)).sort() };
+      }
       case 'members': {
         await coordination(id(request.projectId));
         const offset=request.offset??0,search=typeof request.search==='string'?request.search.trim():'';
@@ -203,7 +219,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const input: QaListInput = request.input == null ? {} : object(request.input);
         const offset = input.offset ?? 0, limit = input.limit ?? 50;
         if (!Number.isInteger(offset) || offset < 0 || offset > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 100) fail('qa_invalid_page');
-        const query: Row = { select: 'data', workspace_id: `eq.${WORKSPACE}`, order: 'updated_at.desc,id', offset, limit };
+        const filters = normalizeQaListFilters(input, id);
+        // Same order as compareQaIssues in domain.ts and the cloud list.
+        const tie = 'updated_at.desc,id';
+        const order = filters.sort === 'updated' ? `updated_at.${filters.direction},id`
+          : filters.sort === 'priority' ? `data->priority.${filters.direction === 'asc' ? 'desc' : 'asc'},${tie}`
+          : filters.sort === 'createdAt' ? `data->>createdAt.${filters.direction},${tie}`
+          : `data->>dueDate.${filters.direction}.nullslast,${tie}`;
+        const query: Row = { select: 'data', workspace_id: `eq.${WORKSPACE}`, order, offset, limit };
         if (input.projectId) query.project_id = `eq.${id(input.projectId)}`;
         if (input.state) { if (!QA_STATES.includes(input.state)) fail('qa_invalid_state'); query.state = `eq.${input.state}`; }
         if (input.states !== undefined) {
@@ -211,11 +234,31 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
             || new Set(input.states).size !== input.states.length || input.states.some(state => !QA_STATES.includes(state))) fail('qa_invalid_state');
           query.state = `in.(${input.states.join(',')})`;
         }
-        if (input.mine) {
+        // "involved": any bug the actor fixes, verifies or reported (My QA's default).
+        if (input.mine === 'involved') query.or = `(assignee_id.eq.${actor.id},qa_owner_id.eq.${actor.id},reporter_id.eq.${actor.id})`;
+        // "handoff": an open handoff waiting on the actor (My assignments).
+        else if (input.mine === 'handoff') { query['data->handoff->>nextOwnerId'] = `eq.${actor.id}`; query['data->handoff->>resolvedAt'] = 'is.null'; }
+        else if (input.mine) {
           const column = ({ assigned: 'assignee_id', testing: 'qa_owner_id', reported: 'reporter_id' } as Row)[input.mine];
           if (!column) fail('qa_invalid_filter'); query[column] = `eq.${actor.id}`;
         }
-        if (input.search) query.title = `ilike.*${text(input.search, 100).replace(/[\\%_*]/g, '\\$&')}*`;
+        if (input.search) {
+          // "#1a2b3c4d" (the short id on cards) or a full id searches ids; anything else searches titles.
+          const idTerm = qaIdSearch(text(input.search, 100));
+          if (idTerm) query.id = `ilike.*${idTerm.replace(/[\\%_*]/g, '\\$&')}*`;
+          else query.title = `ilike.*${text(input.search, 100).replace(/[\\%_*]/g, '\\$&')}*`;
+        }
+        // A column already fixed by projectId or "mine" keeps its value only if the list allows it.
+        let none = false;
+        const anyOf = (column: string, values: (string | number)[] | undefined) => {
+          if (!values) return;
+          const fixed = query[column];
+          if (typeof fixed === 'string' && fixed.startsWith('eq.')) { if (!values.map(String).includes(fixed.slice(3))) none = true; }
+          else query[column] = `in.(${values.join(',')})`;
+        };
+        anyOf('project_id', filters.projectIds); anyOf('assignee_id', filters.assigneeIds); anyOf('qa_owner_id', filters.qaOwnerIds);
+        anyOf('reporter_id', filters.reporterIds); anyOf('data->>priority', filters.priorities); anyOf('data->>severity', filters.severities);
+        if (none) return { issues: [], total: 0, hasMore: false } satisfies QaListResult;
         const response = await db.raw('/rest/v1/qa_issues', 'GET', undefined, query, { Prefer: 'count=exact' });
         const rows = await response.json(), total = Number(response.headers.get('Content-Range')?.split('/')[1] ?? rows.length);
         return { issues: rows.map((r: Row) => r.data), total, hasMore: offset + rows.length < total } satisfies QaListResult;
@@ -241,6 +284,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         }
         const issue = await getIssue(request.id);
         if (request.action === 'comment') {
+          if (!canQaComment(issue, { id: actor.id, role: actor.role })) fail('qa_forbidden', 403);
           const comment = { id: crypto.randomUUID(), issueId: issue.id, actorId: actor.id, body: text(request.body, 20000), createdAt: now() };
           return commit(actor, request, hash, comment, 'comment', 'comment', issue);
         }

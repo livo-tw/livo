@@ -11,7 +11,6 @@ export function useTaskState(currentMemberId = '') {
     setAllTasks: queries.setAllTasks,
     refreshTasks: queries.refreshTasks,
     appendStatusLog: queries.appendStatusLog,
-    webhookConfigRef: queries.webhookConfigRef,
   });
 
   const relations = useTaskRelations({

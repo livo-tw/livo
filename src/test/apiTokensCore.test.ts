@@ -149,11 +149,11 @@ describe('create / list / revoke', () => {
     expect((await createToken(store, as('m-admin'), { name: 'x'.repeat(100) })).status).toBe(200);
   });
 
-  it('only active admins / super_admins may manage keys (ordinary members may not)', () => {
+  it('only an active super_admin may manage keys, like every service integration', () => {
     expect(isAdminMember(store.members.get('m-member')!)).toBe(false);
-    expect(isAdminMember(store.members.get('m-admin')!)).toBe(true);
+    expect(isAdminMember(store.members.get('m-admin')!)).toBe(false);
     expect(isAdminMember(store.members.get('m-super')!)).toBe(true);
-    expect(isAdminMember({ ...store.members.get('m-admin')!, is_active: false })).toBe(false);
+    expect(isAdminMember({ ...store.members.get('m-super')!, is_active: false })).toBe(false);
     expect(isAdminMember(null)).toBe(false);
   });
 

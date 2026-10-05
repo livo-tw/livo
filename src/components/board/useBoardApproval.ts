@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useUIContext } from '@/context/UIContext';
 import { toast } from 'sonner';
 import type { Task } from '@/types';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
 import type { ApprovalConfirmPayload } from '@/components/board/BoardApprovalModal';
 
 interface UseBoardApprovalDeps {
@@ -12,6 +13,8 @@ interface UseBoardApprovalDeps {
   getRuleForTransition: (projectId: string, fromStatusId: string, toStatusId: string) => Promise<{ rule: { id: string } } | null>;
   requestApproval: (taskId: string, ruleId: string, fromStatusId: string, toStatusId: string, task: Task, enableRequirement?: boolean) => Promise<import('@/lib/approvalQueries').ApprovalRequest | null>;
   t: (key: string, options?: Record<string, unknown>) => string;
+  /** Tells others about a saved direct change (lib/taskAnnouncements). */
+  announce?: (task: Task, fromStatusId: string, toStatusId: string) => void;
 }
 
 export function useBoardApproval({
@@ -22,6 +25,7 @@ export function useBoardApproval({
   getRuleForTransition,
   requestApproval,
   t,
+  announce,
 }: UseBoardApprovalDeps) {
   const { approvalsEnabled, featureTogglesReady } = useUIContext();
   useEffect(() => { if (!approvalsEnabled) setApprovalConfirm(null); }, [approvalsEnabled]);
@@ -39,24 +43,19 @@ export function useBoardApproval({
 
   const handleApprovalDirectChange = useCallback(async (payload: ApprovalConfirmPayload) => {
     try {
-      const { taskId, fromStatusId, toStatusId } = payload;
+      const { taskId, toStatusId } = payload;
       setApprovalConfirm(null);
       const task = allTasks.find(t2 => t2.id === taskId);
       if (!task) return;
-      const status = statuses.find(s => s.id === toStatusId);
-      const oldStatus = statuses.find(s => s.id === fromStatusId);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updates: Record<string, any> = { statusId: toStatusId };
-      if (status?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-      if (status?.isDone && !oldStatus?.isDone) updates.completedAt = new Date().toISOString();
-      if (!status?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
+      const updates = statusChangeUpdates(task, statuses, toStatusId);
       setAllTasks(prev => prev.map(t2 => t2.id !== taskId ? t2 : { ...t2, ...updates }));
-      await updateTaskInDb(taskId, updates);
+      if ((await updateTaskInDb(taskId, updates)) === false) return;
+      announce?.(task, task.statusId, toStatusId);
     } catch (err) {
       console.error('[LIVO] advisory direct change error:', err);
       toast.error(t('error.updateFailed') + String(err));
     }
-  }, [allTasks, statuses, setAllTasks, updateTaskInDb, t]);
+  }, [allTasks, statuses, setAllTasks, updateTaskInDb, t, announce]);
 
   const handleApprovalSubmit = useCallback(async (payload: ApprovalConfirmPayload) => {
     if (!approvalsEnabled || !featureTogglesReady) return;

@@ -77,17 +77,24 @@ export function qaMessageIntent(message: string, issue: QaIssue, actor: QaActor)
   if (/^(?:部署完成|已部署|deployed)[。.!！]?$/i.test(value)) return 'deploy';
   if (/^(?:重新開啟|重開|reopen)[。.!！]?$/i.test(value)) return 'reopen';
 }
+const QA_SEVERITY_NAMES: Record<string, string> = { untriaged: '待判定', low: '低', medium: '中', high: '高' };
 export function qaSlackCard(issue: QaIssue, url: string, workflow: QaWorkflow = DEFAULT_QA_WORKFLOW): SlackBlock[] {
   const button = (intent: string, label: string): SlackBlock => ({ type: 'button', action_id: `livo_qa_${intent}`, text: text(label), value: issue.id });
   const summary = issue.targets.map(target => {
     const latest = issue.runs.filter(run => run.fixCycle === issue.fixCycle && run.targetId === target.id).sort((a, b) => b.sequence - a.sequence)[0];
     return `${target.environment} · ${target.build} · ${!target.deployedAt ? '待部署' : latest?.result?.toUpperCase() || '待驗證'}`;
   }).join('\n');
+  // The card is shared by the whole channel, so it offers only the steps this stage allows;
+  // each button still checks the person's own permission when pressed.
+  const steps: SlackBlock[] = isQaTerminal(issue.state) ? [button('reopen', '重新開啟')]
+    : issue.state === 'new' ? [{ type: 'button', text: text('到 LIVO 設定負責人'), url }]
+    : issue.state === 'verification' ? [...(issue.targets.some(target => !target.deployedAt) ? [button('deploy', '部署完成')] : []), button('pass', '驗證通過'), button('fail', '驗證失敗')]
+    : issue.state === 'verified' ? [button('close', '結案')]
+    : [button('fix', '回報修復')];
   return [
     { type: 'header', text: text(`Bug · ${issue.title}`.slice(0, 150)) },
-    { type: 'section', text: text(`${getQaStateLabel(workflow,issue.state)} · ${issue.severity} · 修復輪次 ${issue.fixCycle}\nID: ${issue.id}${summary ? '\n' + summary : ''}`.slice(0, 3000)) },
-    { type: 'actions', elements: isQaTerminal(issue.state) ? [button('reopen', '重新開啟'), { type: 'button', text: text('查看 LIVO'), url }]
-      : [button('fix', '回報修復'), button('deploy', '部署完成'), button('pass', '驗證通過'), button('fail', '驗證失敗'), button('close', '結案')] },
+    { type: 'section', text: text(`${getQaStateLabel(workflow,issue.state)} · 嚴重度：${QA_SEVERITY_NAMES[issue.severity] || issue.severity} · 修復輪次 ${issue.fixCycle}\nID: ${issue.id}${summary ? '\n' + summary : ''}`.slice(0, 3000)) },
+    { type: 'actions', elements: steps },
     { type: 'actions', elements: [{ type: 'button', text: text('查看 LIVO'), url }, button('comment', '新增留言'), button('new', '新增 Bug')] },
   ];
 }
@@ -152,7 +159,8 @@ export function qaSlackError(error: unknown): string {
   const messages: Record<string, string> = { qa_disabled: 'QA 功能目前關閉，請洽管理員。', qa_forbidden: '你沒有此操作權限，請確認 Bug 的主責與 QA 人員。',
     qa_conflict: 'Bug 已有更新。請重新開啟表單，確認最新版本與環境後再送出。', qa_build_mismatch: '修復版本已改變，請重新開啟表單。',
     qa_verification_required: '尚有必要環境未通過驗證，不能結案。', qa_not_deployed: '此環境尚未回報部署完成。', qa_triage_required: '請先在 LIVO 分流，指定修復者與驗證 QA。',
-    qa_invalid_environment: '部署環境清單已更新，請重新開啟表單並選擇可用環境。', qa_member_unavailable: '指定成員無法使用，請重新分派。', qa_required: '請填寫必要欄位。' };
+    qa_invalid_environment: '部署環境清單已更新，請重新開啟表單並選擇可用環境。', qa_member_unavailable: '指定成員無法使用，請重新分派。', qa_required: '請填寫必要欄位。',
+    slack_link_disabled: '你已在 LIVO 解除 Slack 連結，LIVO 不會用這個 Slack 帳號替你操作。要恢復，請到 LIVO 的「我的設定 → Slack 連結」重新允許。' };
   if (messages[code]) return messages[code];
   return /[\u3400-\u9fff]/.test(code) && code.length < 300 ? code : '操作未完成，請重新開啟表單再試；可在 LIVO 查看目前狀態。';
 }
@@ -163,7 +171,7 @@ export function qaSlackError(error: unknown): string {
 export function isPermanentQaEventError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return (error as Error & { code?: unknown }).code === 'no_account'
-    || ['qa_forbidden', 'qa_member_inactive', 'qa_issue_not_found', 'qa_not_found'].includes(error.message);
+    || ['qa_forbidden', 'qa_member_inactive', 'qa_issue_not_found', 'qa_not_found', 'slack_link_disabled'].includes(error.message);
 }
 async function processQaSlackEvent(p: QaSlackPayload, id: string, d: QaSlackActions): Promise<void> {
   try { await recordQaSlackEvent(p, id, d); }

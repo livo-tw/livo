@@ -206,6 +206,18 @@ describe('QA detail uses shared controls with a focused next action', () => {
     expect(screen.queryByRole('dialog', { name: 'qa.startFix' })).toBeNull();
     await waitFor(() => expect(props.onRefresh).toHaveBeenCalledOnce());
   });
+  it('starts the repair from the card button in one click too, and only once', async () => {
+    const assigned = { ...issue, state: 'triaged' as const, assigneeId: 'admin', qaOwnerId: 'qa' };
+    const command = vi.fn().mockResolvedValue({ ...assigned, state: 'in_progress', version: assigned.version + 1 });
+    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload: vi.fn(), versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const view = render(<QaIssueDetail detail={{ ...detail, issue: assigned }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="start_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
+    await waitFor(() => expect(command).toHaveBeenCalledWith(assigned, { type: 'start_fix' }, expect.any(String)));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    view.rerender(<QaIssueDetail detail={{ ...detail, issue: assigned }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="start_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    expect(command).toHaveBeenCalledTimes(1);
+  });
   it('shows one verification submission and asks for a note only when the result needs one', async () => {
     const candidate = { ...issue, state: 'verification' as const, assigneeId: 'dev', qaOwnerId: 'qa', targets: [{ id: 'example-target', environment: 'Stage', component: '', build: 'example-1', required: true, deployedAt: issue.updatedAt, deployedBy: 'dev', deploymentEvidence: 'Example evidence' }] };
     const { command } = renderDetail({ issue: candidate });
@@ -259,7 +271,8 @@ describe('QA detail uses shared controls with a focused next action', () => {
     renderDetail({ issue: { ...issue, state: 'in_progress', assigneeId: 'dev', qaOwnerId: 'qa' } }, { id: 'visitor', role: 'member' });
     expect(screen.getByText('qa.waitingForAction: Alex: qa.submitFix')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'qa.submitFix' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'qa.moreActions' })).toBeNull();
+    // Anyone may change the owners, so More actions is there for every member.
+    expect(screen.getByRole('button', { name: 'qa.moreActions' })).toBeTruthy();
   });
 
   it('offers only this project tasks and requires explicit removal of stale existing links', async () => {

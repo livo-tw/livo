@@ -110,9 +110,11 @@ interface SprintStartModalProps {
   onConfirm: (name: string, includeBacklog: boolean) => void;
   closeable?: boolean;
   carryOverCount?: number;
+  /** Open backlog tasks the sprint takes in when the box is ticked. */
+  backlogCount?: number;
 }
 
-export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = true, carryOverCount = 0 }: SprintStartModalProps) => {
+export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = true, carryOverCount = 0, backlogCount }: SprintStartModalProps) => {
   const { t } = useTranslation();
   const [name, setName] = useState(defaultName);
   const [includeBacklog, setIncludeBacklog] = useState(true);
@@ -163,7 +165,7 @@ export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = 
               onChange={e => setIncludeBacklog(e.target.checked)}
               className="accent-primary"
             />
-            <span className="text-sm text-foreground">{t('sprint.start.includeBacklog')}</span>
+            <span className="text-sm text-foreground">{backlogCount === undefined ? t('sprint.start.includeBacklog') : t('sprint.start.includeBacklogCount', { count: backlogCount })}</span>
           </label>
           {carryOverCount > 0 && (
             <p className="text-xs text-muted-foreground">{t('sprint.start.carryOverHint', { count: carryOverCount })}</p>

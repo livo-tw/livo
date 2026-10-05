@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Send, ChevronDown, ChevronUp } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
@@ -19,6 +20,7 @@ interface Props {
 }
 
 const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDismiss, sendNotification }: Props) => {
+  const { t } = useTranslation();
   const delaySeconds = rule.auto_send_delay_seconds || 3;
   const [timeLeft, setTimeLeft] = useState(delaySeconds);
   const [paused, setPaused] = useState(false);
@@ -104,22 +106,22 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <p className="text-xs text-muted-foreground">
-              卡片狀態變更通知
+              {t('notificationRules.toast.title')}
             </p>
             <p className="text-sm font-medium text-foreground truncate mt-0.5">
-              「{task.title}」已移至{' '}
+              {t('notificationRules.toast.movedTo', { title: task.title })}{' '}
               <span className="text-primary">{toStatus}</span>
             </p>
             {fromStatus && (
               <p className="text-xs text-muted-foreground mt-0.5">
-                從「{fromStatus}」→「{toStatus}」
+                {t('notificationRules.toast.fromTo', { from: fromStatus, to: toStatus })}
               </p>
             )}
           </div>
           <Button
             variant="ghost"
             size="icon"
-            aria-label="關閉通知"
+            aria-label={t('notificationRules.toast.dismiss')}
             className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={handleSkip}
           >
@@ -130,7 +132,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
         {/* Message preview (collapsed) */}
         {!expanded && (
           <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 line-clamp-2">
-            {message || '（無預填訊息）'}
+            {message || t('notificationRules.toast.noMessage')}
           </div>
         )}
 
@@ -143,10 +145,10 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
                 onValueChange={setSelectedTemplateId}
               >
                 <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="選擇範本…" />
+                  <SelectValue placeholder={t('notificationRules.toast.selectTemplate')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">無範本（使用任務標題）</SelectItem>
+                  <SelectItem value="">{t('notificationRules.toast.noTemplate')}</SelectItem>
                   {relevantTemplates.map(t => (
                     <SelectItem key={t.id} value={t.id}>
                       {t.name}
@@ -159,7 +161,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
               value={message}
               onChange={e => setMessage(e.target.value)}
               className="text-sm resize-none min-h-[72px]"
-              placeholder="輸入通知訊息…"
+              placeholder={t('notificationRules.toast.messagePlaceholder')}
             />
           </div>
         )}
@@ -167,7 +169,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
         {/* Auto-send countdown hint */}
         {rule.auto_send && !paused && (
           <p className="text-xs text-muted-foreground">
-            {timeLeft > 0 ? `${timeLeft} 秒後自動發送` : '正在發送…'}
+            {timeLeft > 0 ? t('notificationRules.toast.autoSendIn', { seconds: timeLeft }) : t('notificationRules.toast.sending')}
           </p>
         )}
 
@@ -179,7 +181,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
             className="h-7 text-xs text-muted-foreground"
             onClick={handleSkip}
           >
-            跳過
+            {t('button.skip')}
           </Button>
           {!expanded && (
             <Button
@@ -189,7 +191,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
               onClick={handleExpand}
             >
               <ChevronDown size={12} />
-              編輯
+              {t('common.edit')}
             </Button>
           )}
           {expanded && (
@@ -200,7 +202,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
               onClick={() => { setPaused(false); setExpanded(false); }}
             >
               <ChevronUp size={12} />
-              收起
+              {t('notificationRules.toast.collapse')}
             </Button>
           )}
           <Button
@@ -210,7 +212,7 @@ const NotificationToast = ({ task, fromStatus, toStatus, rule, templates, onDism
             disabled={sending}
           >
             <Send size={12} />
-            {sending ? '發送中…' : '發送'}
+            {sending ? t('notificationRules.toast.sending') : t('notificationRules.toast.send')}
           </Button>
         </div>
       </div>

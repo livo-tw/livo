@@ -4,8 +4,8 @@ export interface QaWorkflowGroup { id: QaState; label: string; states: QaState[]
 /** Display groups preserve the canonical state IDs and separate outcomes. */
 export interface QaWorkflow { version: 2; order: QaState[]; labels: Record<QaState, string>; groups: QaWorkflowGroup[]; }
 export const DEFAULT_QA_STATE_LABELS: Record<QaState, string> = {
-  new: '新回報', triaged: '已分流', in_progress: '修復中', verification: '待部署／驗證',
-  verified: '驗證通過待結案', failed: '驗證未通過', closed: '完成', dismissed: '不處理',
+  new: '新回報', triaged: '已指派', in_progress: '修復中', verification: '待驗證',
+  verified: '驗證通過待結案', failed: '驗證未通過', closed: '已結案', dismissed: '不處理',
 };
 export const DEFAULT_QA_WORKFLOW: QaWorkflow = { version: 2, order: [...QA_STATES],
   labels: { new:'',triaged:'',in_progress:'',verification:'',verified:'',failed:'',closed:'',dismissed:'' }, groups: [] };

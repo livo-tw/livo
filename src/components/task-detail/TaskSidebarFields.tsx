@@ -9,7 +9,7 @@ import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import UserSelect from '@/components/UserSelect';
 import CustomFieldManager from '@/components/CustomFieldManager';
 import ApprovalProgress from '@/components/approval/ApprovalProgress';
-import { getDepartment, DEPARTMENTS, type Department } from '@/lib/department';
+import { getDepartment, DEPARTMENTS } from '@/lib/department';
 import { supabase } from '@/integrations/supabase/client';
 import { X, ChevronDown, ChevronRight, GripVertical, Settings2 } from 'lucide-react';
 import { useUIContext } from '@/context/UIContext';
@@ -86,6 +86,8 @@ const TaskSidebarFields = ({ detail }: Props) => {
   const fieldOrder = sidebarFieldOrder.length > 0 ? sidebarFieldOrder : SIDEBAR_DEFAULT_ORDER;
   // Anyone who can edit the task may require approval; only administrators may remove the requirement.
   const requirementLocked = !!task.requiresApproval && !canSetApprovalRequirement(false, { role: currentMember?.role ?? '', active: currentMember?.isActive });
+  const approvalInProgress = task.approvalStatus === 'pending_approval' || !!task.currentApprovalId;
+  const approvalLockReason = approvalInProgress ? t('taskDetail.sidebar.approvalInProgressLocked') : requirementLocked ? t('approvalCommand.requirementAdminOnly') : undefined;
 
   // ── Custom field input renderer ─────────────────────────────────────────
 
@@ -186,8 +188,8 @@ const TaskSidebarFields = ({ detail }: Props) => {
           role="switch"
           aria-checked={!!task.requiresApproval}
           aria-label={t('taskDetail.sidebar.requiresApproval', '需要簽核')}
-          title={requirementLocked ? t('approvalCommand.requirementAdminOnly') : undefined}
-          disabled={approvalSaving || task.approvalStatus === 'pending_approval' || !!task.currentApprovalId || requirementLocked}
+          title={approvalLockReason}
+          disabled={approvalSaving || approvalInProgress || requirementLocked}
           onClick={async () => {
             if (approvalSaving || requirementLocked) return;
             setApprovalSaving(true);
@@ -204,6 +206,8 @@ const TaskSidebarFields = ({ detail }: Props) => {
           <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${task.requiresApproval ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
         </button>
       </div>}
+      {/* A disabled switch says why (a tooltip does not show on a disabled control in every browser). */}
+      {approvalsEnabled && approvalLockReason && <p className="mt-1 text-[11px] text-muted-foreground">{approvalLockReason}</p>}
       {approvalsEnabled && task.approvalStatus === 'pending_approval' && task.currentApprovalId && (
         <div className="mt-2 bg-purple-50 dark:bg-purple-900/10 rounded-lg p-2.5">
           <ApprovalProgress
@@ -249,13 +253,14 @@ const TaskSidebarFields = ({ detail }: Props) => {
     </div>
   );
 
-  const derivedDept = (task.department as Department) || getDepartment(assignee);
+  // Empty follows the assignee's department; the option says which one that is, so choosing it does not look like it jumped back.
+  const assigneeDept = getDepartment(assignee);
   fieldJsx['department'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.department', '負責部門')}</label>
-      <SearchableSelect value={derivedDept || ''} onChange={e => updateTask({ department: e.target.value || undefined })}
+      <SearchableSelect value={task.department && (DEPARTMENTS as string[]).includes(task.department) ? task.department : ''} onChange={e => updateTask({ department: e.target.value || undefined })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
-        <option value="">{t('common.unassigned', '未指定')}</option>
+        <option value="">{assigneeDept ? t('taskDetail.sidebar.departmentFromAssignee', { dept: assigneeDept }) : t('common.unassigned', '未指定')}</option>
         {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
       </SearchableSelect>
     </div>
@@ -373,6 +378,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <DatePickerField
         value={task.startedAt}
         onChange={v => updateTask({ startedAt: v })}
+        maxDate={task.dueDate?.slice(0, 10)}
         mode="start"
       />
     </div>
@@ -395,7 +401,7 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <div className="mt-1 text-sm">
         {task.completedAt
           ? <span style={{ color: '#36B37E' }} className="font-medium">{task.completedAt}</span>
-          : <span className="text-muted-foreground/60 text-xs">{t('taskDetail.sidebar.completedAutoNote', '（改為完成時自動記錄）')}</span>}
+          : <span className="text-muted-foreground/60 text-xs">{t('taskDetail.sidebar.completedAutoNote')}</span>}
       </div>
     </div>
   );

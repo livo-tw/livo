@@ -6,6 +6,15 @@ import { canManageFeatureToggles, resolveFeatureToggles, type FeatureKey, type F
 import { loadFeatureToggles, persistFeatureToggle } from '@/lib/featureToggleQueries';
 import { clearQaNavigationGuards, hasQaNavigationGuard, notifyQaNavigationBlocked } from '@/lib/qa/navigationGuard';
 import { hasReleaseNavigationGuard, notifyReleaseNavigationBlocked } from '@/components/releases/navigation';
+import { confirmDiscardDrafts } from '@/lib/unsavedDrafts';
+import { clearOtherViewParams } from '@/lib/viewUrl';
+import { useIsMobile } from '@/hooks/use-mobile';
+
+const TASK_DISPLAY_MODE_KEY = 'livo.taskDisplayMode';
+/** The member's choice of modal, side panel or full page, remembered in this browser. */
+function storedTaskDisplayMode(): TaskDisplayMode {
+  try { const value = localStorage.getItem(TASK_DISPLAY_MODE_KEY); return value === 'side' || value === 'page' ? value : 'modal'; } catch { return 'modal'; }
+}
 
 export function useUIState(role?: string) {
   const [featureToggles, setFeatureToggles] = useState<FeatureToggles>(() =>
@@ -44,18 +53,26 @@ export function useUIState(role?: string) {
     if (next === previous) return;
     if (hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+    // Unsaved text (a knowledge page draft) is lost when its view closes.
+    if (!confirmDiscardDrafts('view')) return;
     // Capability revocation has priority over preserving pending UI work.
     if (!navigationState.current.qaEnabled) clearQaNavigationGuards();
+    clearOtherViewParams(next);
     navigationState.current.currentView = next; setCurrentViewState(next);
   }, []);
   const [selectedTask, setSelectedTaskState] = useState<Task | null>(null);
-  const [taskDisplayMode, setTaskDisplayModeState] = useState<TaskDisplayMode>('modal');
+  const [preferredDisplayMode, setTaskDisplayModeState] = useState<TaskDisplayMode>(storedTaskDisplayMode);
+  // Phones always show a task as a full page; the desktop choice is kept, not overwritten.
+  const isMobile = useIsMobile();
+  const taskDisplayMode: TaskDisplayMode = isMobile ? 'page' : preferredDisplayMode;
   const taskNavigation = useRef({ selectedTask, taskDisplayMode });
   taskNavigation.current = { selectedTask, taskDisplayMode };
   const setSelectedTask = useCallback<Dispatch<SetStateAction<Task | null>>>(value => {
     const next = typeof value === 'function' ? value(taskNavigation.current.selectedTask) : value;
     if (next && taskNavigation.current.taskDisplayMode === 'page' && hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (next && taskNavigation.current.taskDisplayMode === 'page' && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+    // Closing the task or opening another discards an unsaved rich-text edit in it.
+    if (next?.id !== taskNavigation.current.selectedTask?.id && !confirmDiscardDrafts('task')) return;
     taskNavigation.current.selectedTask = next; setSelectedTaskState(next);
   }, []);
   const setTaskDisplayMode = useCallback<Dispatch<SetStateAction<TaskDisplayMode>>>(value => {
@@ -63,6 +80,7 @@ export function useUIState(role?: string) {
     if (next === 'page' && taskNavigation.current.selectedTask && hasReleaseNavigationGuard()) { notifyReleaseNavigationBlocked(); return; }
     if (next === 'page' && taskNavigation.current.selectedTask && navigationState.current.qaEnabled && hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
     taskNavigation.current.taskDisplayMode = next; setTaskDisplayModeState(next);
+    try { localStorage.setItem(TASK_DISPLAY_MODE_KEY, next); } catch { /* private window: the choice lasts until reload */ }
   }, []);
   const [standupMode, setStandupMode] = useState(false);
   const [standupUserId, setStandupUserId] = useState<string | null>(null);

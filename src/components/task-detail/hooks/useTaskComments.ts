@@ -3,7 +3,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { generateId } from '@/lib/generateId';
 import { logActivity } from '@/lib/activityLog';
 import { sendSlackNotify } from '@/lib/slackNotify';
-import { getWebhookConfig, triggerWebhook } from '@/lib/webhook';
 import { createNotification } from '../utils';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
@@ -22,11 +21,13 @@ type Deps = {
   assignee: User | null;
   MAX_FILE_SIZE: number;
   loadStorageUsage: () => void;
+  /** Asks before something is deleted for good. */
+  confirm?: (options: { title?: string; description: string; destructive?: boolean }) => Promise<boolean>;
 };
 
 export const useTaskComments = ({
   task, currentMemberId, currentMember, users, allTasks, setAllTasks,
-  globalComments, project, status, assignee, MAX_FILE_SIZE, loadStorageUsage,
+  globalComments, project, status, assignee, MAX_FILE_SIZE, loadStorageUsage, confirm,
 }: Deps) => {
   const [taskComments, setTaskComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
@@ -119,15 +120,6 @@ export const useTaskComments = ({
       dmTargets: dmTargets.length > 0 ? dmTargets : undefined,
     });
     logActivity(currentMemberId, 'add_comment', plainText.slice(0, 100), task.id, task.taskKey);
-    // Webhook: comment_added (advertised in the integrations UI, previously
-    // never dispatched from anywhere)
-    const wbCfg = getWebhookConfig();
-    if (wbCfg?.enabled) {
-      triggerWebhook(wbCfg, 'comment_added', {
-        task: { id: task.id, taskKey: task.taskKey, title: task.title },
-        comment: { id: comment.id, authorId: currentMemberId, preview: commentPreview },
-      }).catch((_err: unknown) => { console.error('[LIVO] webhook trigger failed:', _err); });
-    }
     setNewComment('');
     setCommentFile(null);
     setCommentFileUploading(false);
@@ -136,14 +128,17 @@ export const useTaskComments = ({
 
   const deleteComment = async (commentId: string) => {
     if (!task) return;
+    if (confirm && !(await confirm({ title: i18n.t('taskDetail.comments.deleteTitle'), description: i18n.t('taskDetail.comments.deleteConfirm'), destructive: true }))) return;
     const deletedComment = taskComments.find(c => c.id === commentId);
+    // Remove it here only once the server has deleted it.
+    const { error } = await supabase.from('comments').delete().eq('id', commentId);
+    if (error) { toast.error(i18n.t('error.deleteFailed') + error.message); return; }
     setTaskComments(prev => prev.filter(c => c.id !== commentId));
     const newCount = Math.max(0, task.commentCount - 1);
     const newAttCount = deletedComment?.attachmentUrl
       ? Math.max(0, task.attachmentCount - 1)
       : task.attachmentCount;
     setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, commentCount: newCount, attachmentCount: newAttCount } : t));
-    await supabase.from('comments').delete().eq('id', commentId);
     await supabase.from('tasks').update({ comment_count: newCount }).eq('id', task.id);
     logActivity(currentMemberId, 'delete_comment', '', task.id, task.taskKey);
     toast.success(i18n.t('taskDetail.comments.deleted'));

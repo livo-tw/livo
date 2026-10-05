@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bell } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,13 +33,15 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
     label: t(e.labelKey),
     desc: t(e.descKey),
   }));
-  const [taskNotifyChannel, setTaskNotifyChannel] = useState(backupSettings?.task_notify_channel || '');
-  const [taskNotifyTypes, setTaskNotifyTypes] = useState<string[]>(
-    backupSettings?.task_notify_types || ['task_created', 'status_changed', 'assignee_changed', 'comment_added']
-  );
-  const [dmNotifyEnabled, setDmNotifyEnabled] = useState(backupSettings?.dm_notify_enabled ?? true);
-  const [dmNotifyStartHour, setDmNotifyStartHour] = useState(backupSettings?.dm_notify_start_hour ?? 9);
-  const [dmNotifyEndHour, setDmNotifyEndHour] = useState(backupSettings?.dm_notify_end_hour ?? 18);
+  // Shown from the saved row, never from defaults: the settings load after this
+  // section mounts, and a default written back would clear the real value.
+  const storedChannel = backupSettings?.task_notify_channel || '';
+  const [taskNotifyChannel, setTaskNotifyChannel] = useState(storedChannel);
+  useEffect(() => setTaskNotifyChannel(storedChannel), [storedChannel]);
+  const taskNotifyTypes = backupSettings?.task_notify_types || [];
+  const dmNotifyEnabled = backupSettings?.dm_notify_enabled ?? true;
+  const dmNotifyStartHour = backupSettings?.dm_notify_start_hour ?? 9;
+  const dmNotifyEndHour = backupSettings?.dm_notify_end_hour ?? 18;
 
   return (
     <div className="space-y-4">
@@ -68,7 +70,10 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
                   placeholder={t('adminNotify.channelPlaceholder')}
                   value={taskNotifyChannel}
                   onChange={(e) => setTaskNotifyChannel(e.target.value)}
-                  onBlur={() => saveBackupSettings({ task_notify_channel: taskNotifyChannel })}
+                  onBlur={() => {
+                    const channel = taskNotifyChannel.trim();
+                    if (channel !== storedChannel) void saveBackupSettings({ task_notify_channel: channel });
+                  }}
                 />
               </div>
               <div className="space-y-3">
@@ -82,8 +87,7 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
                           const newTypes = checked
                             ? [...taskNotifyTypes, item.key]
                             : taskNotifyTypes.filter(t => t !== item.key);
-                          setTaskNotifyTypes(newTypes);
-                          saveBackupSettings({ task_notify_types: newTypes });
+                          void saveBackupSettings({ task_notify_types: newTypes });
                         }}
                       />
                       <div className="-mt-0.5">
@@ -118,8 +122,7 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
                 <Switch
                   checked={dmNotifyEnabled}
                   onCheckedChange={(checked) => {
-                    setDmNotifyEnabled(checked);
-                    saveBackupSettings({ dm_notify_enabled: checked });
+                    void saveBackupSettings({ dm_notify_enabled: checked });
                   }}
                 />
               </div>
@@ -134,8 +137,7 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
                       value={String(dmNotifyStartHour)}
                       onValueChange={(v) => {
                         const val = parseInt(v);
-                        setDmNotifyStartHour(val);
-                        saveBackupSettings({ dm_notify_start_hour: val });
+                        void saveBackupSettings({ dm_notify_start_hour: val });
                       }}
                     >
                       <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
@@ -150,8 +152,7 @@ const AdminNotifySection = ({ hasFeature, backupSettings, saveBackupSettings }: 
                       value={String(dmNotifyEndHour)}
                       onValueChange={(v) => {
                         const val = parseInt(v);
-                        setDmNotifyEndHour(val);
-                        saveBackupSettings({ dm_notify_end_hour: val });
+                        void saveBackupSettings({ dm_notify_end_hour: val });
                       }}
                     >
                       <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>

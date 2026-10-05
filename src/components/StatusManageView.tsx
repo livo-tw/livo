@@ -20,7 +20,7 @@ import StatusTransitionRuleEditor from '@/components/StatusTransitionRuleEditor'
 
 const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
   const { t } = useTranslation();
-  const { statuses, refreshStatuses } = useTaskContext();
+  const { statuses, refreshStatuses, allTasks } = useTaskContext();
   const { permissions, currentMemberId } = useAuthContext();
   const { hasFeature } = useLicense();
   const { allProjects } = useProjectContext();
@@ -91,9 +91,13 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
   };
 
   const handleDelete = async (id: string, name: string) => {
+    // Tasks keep their status; move them first instead of leaving them without one.
+    const inUse = allTasks.filter(task => task.statusId === id).length;
+    if (inUse) { toast.error(t('statusManage.deleteHasTasks', { name, count: inUse }), { duration: 10000 }); return; }
     if (!(await confirm({ description: t('statusManage.deleteConfirm', { name }), title: t('project.deleteTitle'), destructive: true }))) return;
     const { error } = await supabase.from('statuses').delete().eq('id', id);
-    if (error) toast.error(t('error.deleteFailed') + error.message);
+    // A status that tasks passed through stays in their history and cannot be deleted.
+    if (error) toast.error(/foreign key|23503/i.test(`${error.message} ${(error as { code?: string }).code ?? ''}`) ? t('statusManage.deleteInHistory', { name }) : t('error.deleteFailed') + error.message, { duration: 10000 });
     else {
       toast.success(t('statusManage.deleted'));
       if (currentMemberId) await logActivity(currentMemberId, 'delete_status', t('statusManage.activityDeleted', { name }), undefined, undefined, 'status');

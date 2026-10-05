@@ -28,6 +28,16 @@ function literalKeys(files: string[]): Map<string, string> {
   return found;
 }
 
+describe('every literal translation key used anywhere in the app exists', () => {
+  const files = sources(ROOT);
+  const used = literalKeys(files);
+  it.each(Object.keys(LOCALES))('%s has every key', language => {
+    expect(used.size).toBeGreaterThan(2000);
+    const missing = [...used].filter(([key]) => !translated(LOCALES[language], key)).map(([key, file]) => `${key} (${file})`);
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('every literal translation key used by the knowledge and QA screens exists', () => {
   const files = [...sources(path.join(ROOT, 'components/knowledge')), ...sources(path.join(ROOT, 'components/knowledge-work')),
     ...sources(path.join(ROOT, 'components/qa')), path.join(ROOT, 'components/KnowledgeBaseView.tsx')];

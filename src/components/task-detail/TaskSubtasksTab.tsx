@@ -6,12 +6,19 @@ import { useTranslation } from 'react-i18next';
 import { usePortalConfirmDialog } from '@/components/PortalConfirmDialog';
 import type { TaskDetailState } from './hooks/useTaskDetail';
 import TaskSidebarFields from './TaskSidebarFields';
+import { useStatusChangeGate } from '@/hooks/useStatusChangeGate';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
+import { announceStatusChange } from '@/lib/taskAnnouncements';
+import { useTaskAnnouncements } from '@/hooks/useTaskAnnouncements';
+import type { Task } from '@/types';
 
 type Props = { detail: TaskDetailState };
 
 const TaskSubtasksTab = ({ detail }: Props) => {
   const { t } = useTranslation();
   const { confirm, ConfirmDialog } = usePortalConfirmDialog();
+  const statusGate = useStatusChangeGate();
+  const announcements = useTaskAnnouncements();
   const {
     task, allTasks, setAllTasks, statuses, users,
     newSubtaskTitle, setNewSubtaskTitle,
@@ -21,6 +28,20 @@ const TaskSubtasksTab = ({ detail }: Props) => {
   } = detail;
 
   if (!task) return null;
+
+  // Same rules as the board and the detail view; a sub-task that needs approval is opened to submit it there.
+  const changeSubtaskStatus = async (sub: Task, statusId: string) => {
+    setSubtaskStatusPickerId(null);
+    const gate = statusGate.check(sub, statusId);
+    if (gate.kind === 'same') return;
+    const refusal = statusGate.refusal(gate, statusId);
+    if (refusal) { toast.error(refusal); return; }
+    if (gate.kind === 'approval') { toast.info(t('taskDetail.subtasks.approvalInDetail')); setSelectedTask(sub); return; }
+    const updates = statusChangeUpdates(sub, statuses, statusId);
+    setAllTasks(prev => prev.map(item => item.id === sub.id ? { ...item, ...updates } : item));
+    if ((await updateTaskInDb(sub.id, updates)) === false) return;
+    announceStatusChange(sub, sub.statusId, statusId, announcements);
+  };
 
   const subtasks = allTasks.filter(t => t.parentTaskId === task.id);
   const doneCount = subtasks.filter(t => statuses.find(s => s.id === t.statusId)?.isDone).length;
@@ -59,12 +80,7 @@ const TaskSubtasksTab = ({ detail }: Props) => {
               <div className="relative flex-shrink-0" data-subtask-status-picker onClick={e => e.stopPropagation()}>
                 {statuses.length > 5 ? <ColoredStatusSelect variant="dot" label={t('taskDetail.subtasks.changeStatus')}
                   value={sub.statusId} options={statuses.map(item => ({ value: item.id, label: item.name, color: item.color }))}
-                  onValueChange={statusId => {
-                    const updatedSub = { ...sub, statusId };
-                    setAllTasks(prev => prev.map(item => item.id === sub.id ? updatedSub : item));
-                    updateTaskInDb(sub.id, { statusId });
-                    setSubtaskStatusPickerId(null);
-                  }} /> : <>
+                  onValueChange={statusId => changeSubtaskStatus(sub, statusId)} /> : <>
                 <button
                   type="button"
                   onClick={() => setSubtaskStatusPickerId(isStatusPickerOpen ? null : sub.id)}
@@ -78,12 +94,7 @@ const TaskSubtasksTab = ({ detail }: Props) => {
                       <button
                         key={s.id}
                         type="button"
-                        onClick={() => {
-                          const updatedSub = { ...sub, statusId: s.id };
-                          setAllTasks(prev => prev.map(t => t.id === sub.id ? updatedSub : t));
-                          updateTaskInDb(sub.id, { statusId: s.id });
-                          setSubtaskStatusPickerId(null);
-                        }}
+                        onClick={() => changeSubtaskStatus(sub, s.id)}
                         className={`w-full text-left px-2.5 py-1.5 text-xs font-medium flex items-center gap-2 hover:bg-accent transition-colors ${s.id === sub.statusId ? 'bg-accent' : ''}`}
                       >
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
@@ -117,8 +128,9 @@ const TaskSubtasksTab = ({ detail }: Props) => {
                   onClick={async (e) => {
                     e.stopPropagation();
                     if (!(await confirm({ description: t('taskDetail.subtasks.deleteConfirm', { title: sub.title }), title: t('taskDetail.subtasks.deleteTitle'), destructive: true }))) return;
+                    const { error } = await supabase.from('tasks').delete().eq('id', sub.id);
+                    if (error) { toast.error(t('error.deleteFailed') + error.message); return; }
                     setAllTasks(prev => prev.filter(t => t.id !== sub.id));
-                    await supabase.from('tasks').delete().eq('id', sub.id);
                     toast.success(t('task.deleted'));
                   }}
                   className="opacity-0 group-hover:opacity-100 flex-shrink-0 text-muted-foreground hover:text-destructive transition-all"

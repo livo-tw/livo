@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Upload, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
@@ -184,14 +184,14 @@ const AdminImportExportSection = ({ currentMemberId, hasFeature, refreshAll }: A
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Upload size={20} className="text-primary" />
+              <Download size={20} className="text-primary" />
               {t('adminImportExport.exportTitle')}
             </CardTitle>
             <CardDescription>{t('adminImportExport.exportDesc')}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={handleExport} disabled={exporting} variant="outline" className="gap-2">
-              <Upload size={16} />
+              <Download size={16} />
               {exporting ? t('adminImportExport.exporting') : t('adminImportExport.exportButton')}
             </Button>
           </CardContent>

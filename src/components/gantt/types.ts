@@ -6,7 +6,6 @@ export type ViewMode = 'day' | 'week' | 'month' | 'quarter';
 export const ROW_H = 38;
 export const HEADER_H = 48;
 export const CELL_WIDTHS: Record<ViewMode, number> = { day: 24, week: 36, month: 48, quarter: 60 };
-export const weekDayLabels = ['日', '一', '二', '三', '四', '五', '六'];
 export const quarterLabels = ['Q1', 'Q2', 'Q3', 'Q4'];
 
 export type ColDay = { date: Date; key: string; label?: undefined; year?: undefined };

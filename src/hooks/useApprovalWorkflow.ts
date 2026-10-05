@@ -9,7 +9,8 @@ import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
 import { withdrawApproval } from '@/lib/withdrawApproval';
 import { createApprovalCommandRunner } from '@/lib/approvalCommands';
-import { approvalSnapshotSteps, canActOnApproval, ApprovalCommandError } from '@/lib/approval/core';
+import { approvalSnapshotSteps, ApprovalCommandError } from '@/lib/approval/core';
+import { actionableApprovals } from '@/lib/approval/pending';
 import type { ApprovalTaskState } from '@/lib/approval/core';
 import type { Task } from '@/types';
 import i18n from '@/i18n';
@@ -74,9 +75,7 @@ export const useApprovalWorkflow = () => {
       const {data,error} = await requestQueries.fetchPending(supabase);if (error) throw error;
       const pending = (data as ApprovalRequest[]) ?? [];
       pending.forEach(req => observed.current.set(req.id,req));
-      const admin = ['admin','super_admin'].includes(currentMember?.role ?? '');
-      setPendingApprovals(pending.filter(req => canActOnApproval(req,{id:currentMemberId,role:currentMember?.role ?? '',active:currentMember?.isActive})
-        || (!approvalSnapshotSteps(req) && (req.requested_by === currentMemberId || admin))));
+      setPendingApprovals(actionableApprovals(pending,{id:currentMemberId,role:currentMember?.role,isActive:currentMember?.isActive}));
     } catch {toast.error(i18n.t('approvalCommand.unavailable'));} finally {setLoading(false);}
   },[approvalsEnabled,featureTogglesReady,currentMemberId,currentMember]);
   useApprovalRealtime(currentMemberId,fetchPendingApprovals,approvalsEnabled && featureTogglesReady);

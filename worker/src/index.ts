@@ -155,20 +155,21 @@ app.post('/api/functions/slack-interact/:workspaceId', handleQaSlackHttp);
 app.post('/api/functions/manage-member', requireMember, demoGuard, handleManageMember);
 app.post('/api/functions/slack-notify', requireMember, handleSlackNotify);
 app.post('/api/functions/slack-channels', requireMember, handleSlackChannels);
-// Customer self-bind: read masked status (any member) / set token (admin; demo-blocked)
+// Service integrations (Slack, email, webhooks, API keys) are managed by super_admins only,
+// like the Integrations page. Read masked Slack status (any member) / set token (super_admin; demo-blocked)
 app.get('/api/functions/slack-config', requireMember, handleSlackConfigStatus);
-app.post('/api/functions/slack-config', requireMember, demoGuard, requireAdmin, handleSlackConfigSet);
+app.post('/api/functions/slack-config', requireMember, demoGuard, requireSuperAdmin, handleSlackConfigSet);
 // Email notify self-bind (slack-config twin): read masked status (any member)
-// / set key (admin; demo-blocked). GET stays open so the demo UI renders.
+// / set key (super_admin; demo-blocked). GET stays open so the demo UI renders.
 app.get('/api/functions/email-config', requireMember, handleEmailConfigStatus);
-app.post('/api/functions/email-config', requireMember, demoGuard, requireAdmin, handleEmailConfigSet);
+app.post('/api/functions/email-config', requireMember, demoGuard, requireSuperAdmin, handleEmailConfigSet);
 // Outbound webhooks admin CRUD. GET (secret-free list) stays demo-readable;
-// all writes are admin + demo-blocked.
-app.get('/api/functions/webhooks', requireMember, requireAdmin, handleWebhooksGet);
-app.post('/api/functions/webhooks', requireMember, demoGuard, requireAdmin, handleWebhooksPost);
+// all writes are super_admin + demo-blocked.
+app.get('/api/functions/webhooks', requireMember, requireSuperAdmin, handleWebhooksGet);
+app.post('/api/functions/webhooks', requireMember, demoGuard, requireSuperAdmin, handleWebhooksPost);
 // API tokens (PAT): plain token returned once on create; writes demo-blocked.
-app.get('/api/functions/api-tokens', requireMember, requireAdmin, handleApiTokensGet);
-app.post('/api/functions/api-tokens', requireMember, demoGuard, requireAdmin, handleApiTokensPost);
+app.get('/api/functions/api-tokens', requireMember, requireSuperAdmin, handleApiTokensGet);
+app.post('/api/functions/api-tokens', requireMember, demoGuard, requireSuperAdmin, handleApiTokensPost);
 app.post('/api/functions/import-jira', requireMember, demoGuard, requireAdmin, handleImportJira);
 // Manual backup trigger is super-admin-only UI (SystemAdminView).
 app.post('/api/functions/scheduled-backup', requireMember, demoGuard, requireSuperAdmin, handleBackup);

@@ -440,6 +440,8 @@ export const TABLES: TableRegistry = {
     autoNowCols: ['bound_at'],
     write: { insert: 'own', update: 'own', delete: 'own', ownerCol: 'member_id' },
   },
+  // Server-only: changed through the livo_slack_link_set RPC for the caller alone.
+  slack_link_preferences: { pk: 'member_id', clientAccess: 'none' },
   external_action_logs: {
     pk: 'id',
     clientAccess: 'full',

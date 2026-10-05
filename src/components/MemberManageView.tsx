@@ -75,19 +75,16 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
           {canAddMember && (
             <button
               onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs md:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-md text-xs md:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              <Plus size={14} /> {t('member.addMember')}
+              <Plus size={14} aria-hidden="true" /> {t('member.addMember')}
             </button>
           )}
         </div>
 
         {isSuperAdmin && (
           <div className="mb-4 p-3 md:p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground space-y-1">
-            <p><strong className="text-foreground">{t('role.superAdmin')}</strong>：{t('role.superAdminDesc')}</p>
-            <p><strong className="text-foreground">{t('role.admin')}</strong>：{t('role.adminDesc')}</p>
-            <p><strong className="text-foreground">{t('role.qaAdmin')}</strong>：{t('role.qaAdminDesc')}</p>
-            <p><strong className="text-foreground">{t('role.member')}</strong>：{t('role.memberDesc')}</p>
+            {(['superAdmin', 'admin', 'qaAdmin', 'member'] as const).map(role => <p key={role}><strong className="text-foreground">{t(`role.${role}`)}</strong>{t('common.labelSeparator')}{t(`role.${role}Desc`)}</p>)}
           </div>
         )}
 

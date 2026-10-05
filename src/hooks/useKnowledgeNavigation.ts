@@ -32,7 +32,8 @@ export function useKnowledgeNavigation(identity: string, pages: NavigationPage[]
       const cached = storageRead(key);
       if (USING_MOCK_BACKEND || offline()) {
         pending.current = cached.pending || []; publish(owner, cached.preferences);
-        if (latest.current.identity === owner) setStatus('local');
+        // The demo keeps preferences on this device by design; only a real offline client waits to sync.
+        if (latest.current.identity === owner) setStatus(USING_MOCK_BACKEND ? 'synced' : 'local');
         return;
       }
       locked.current = owner; setSaving(true);
@@ -78,7 +79,8 @@ export function useKnowledgeNavigation(identity: string, pages: NavigationPage[]
         const value = applyNavigation(raw.current, latest.current.pages, command);
         if (!USING_MOCK_BACKEND) pending.current.push(command);
         publish(owner, value);
-        setStatus(storageWrite(key, { preferences: value, pending: pending.current }) ? 'local' : 'memory');
+        const stored = storageWrite(key, { preferences: value, pending: pending.current });
+        setStatus(USING_MOCK_BACKEND ? 'synced' : stored ? 'local' : 'memory');
         return true;
       }
       let result = await rpc.rpc('kb_preferences', { ...command, p_version: raw.current.version });

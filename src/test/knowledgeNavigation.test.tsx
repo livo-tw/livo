@@ -30,6 +30,17 @@ describe('knowledge navigation interactions',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Expand: Example folder'}));await screen.findByRole('button',{name:'Guide A'});expect(change).not.toHaveBeenCalled();
     view.rerender(<Harness/>);await waitFor(()=>expect(screen.queryByRole('button',{name:'Guide A'})).not.toBeInTheDocument());
   });
+  it('expands and collapses everything at once and saves only pages whose state changes',async()=>{
+    render(<Harness/>);
+    const menu=(name:string)=>{fireEvent.click(screen.getByRole('button',{name:'Directory actions'}));fireEvent.click(screen.getByRole('menuitem',{name}));};
+    menu('Expand all');expect(screen.getByRole('button',{name:'Guide A'})).toBeInTheDocument();
+    await waitFor(()=>expect(change).toHaveBeenCalledWith({p_action:'collapse',p_page_id:'parent',p_value:false}));
+    menu('Expand all');await waitFor(()=>expect(screen.getByRole('button',{name:'Guide A'})).toBeInTheDocument());expect(change).toHaveBeenCalledTimes(1);
+    menu('Collapse all');expect(screen.queryByRole('button',{name:'Guide A'})).not.toBeInTheDocument();
+    await waitFor(()=>expect(change).toHaveBeenLastCalledWith({p_action:'collapse',p_page_id:'parent',p_value:true}));
+    // A single toggle afterwards still works (the instant state does not stick).
+    fireEvent.click(screen.getByRole('button',{name:'Expand: Example folder'}));await screen.findByRole('button',{name:'Guide A'});
+  });
   it('offers keyboard/mobile move actions that only reorder siblings',async()=>{
     render(<Harness/>);fireEvent.click(screen.getByRole('button',{name:'Expand: Example folder'}));
     fireEvent.click(screen.getByRole('button',{name:'Directory actions'}));

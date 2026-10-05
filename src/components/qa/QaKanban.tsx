@@ -6,7 +6,8 @@ import { Inbox } from 'lucide-react';
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDraggable, useDroppable, closestCenter, pointerWithin, KeyboardCode, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
 import QaIssueCard from './QaIssueCard';
 import { qaStateColors } from './QaBadges';
-import type { QaActor, QaCommand, QaIssue, QaListInput, QaListResult, QaState } from '@/lib/qa/domain';
+import { isQaTerminal, type QaActor, type QaCommand, type QaIssue, type QaListInput, type QaListResult, type QaState } from '@/lib/qa/domain';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { qaId, type QaClient } from '@/lib/qa/client';
 import { getQaDropIntent, type QaActionDefaults } from '@/lib/qa/boardInteraction';
 import { getQaStateLabel, getQaWorkflowColumns, type QaWorkflow } from '@/lib/qa/workflow';
@@ -33,15 +34,18 @@ const columnCollision: CollisionDetection = args => args.pointerCoordinates ? po
 
 interface QaBoardMove { issue: QaIssue; fromState: QaState; state: QaState; acknowledgedRevision?: number }
 
-export default function QaKanban({ client, actor, workflow, filters, onOpen, onPendingChange }: {
+export default function QaKanban({ client, actor, workflow, filters, reloadToken = 0, onOpen, onPendingChange }: {
   client: QaClient;
   actor: QaActor;
   workflow: QaWorkflow;
   filters: QaListInput;
+  /** Changes when a bug was created or changed elsewhere (the detail view); the columns reload in place. */
+  reloadToken?: number;
   onOpen: (id: string, action?: QaCommand['type'], defaults?: QaActionDefaults) => void;
   onPendingChange?: (pending: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [active, setActive] = useState<QaIssue | null>(null), [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
   const [failure, setFailure] = useState<{ error: unknown; issue: QaIssue; uncertain: boolean } | null>(null);
@@ -54,7 +58,11 @@ export default function QaKanban({ client, actor, workflow, filters, onOpen, onP
   const pendingOperation = busy || refreshing || !!failure?.uncertain;
   useEffect(() => { onPendingChange?.(pendingOperation); return () => onPendingChange?.(false); }, [pendingOperation, onPendingChange]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const columns = getQaWorkflowColumns(workflow, state => t(`qa.state.${state}`)).filter(column => !filters.state || column.states.includes(filters.state));
+  // A status filter keeps only the columns, and the states within a column, it selects.
+  const selectedStates = filters.states || (filters.state ? [filters.state] : null);
+  const columns = getQaWorkflowColumns(workflow, state => t(`qa.state.${state}`))
+    .map(column => selectedStates ? { ...column, shown: column.states.filter(state => selectedStates.includes(state)) } : { ...column, shown: column.states })
+    .filter(column => column.shown.length > 0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: columnCoordinates, keyboardCodes: { start: [KeyboardCode.Space], end: [KeyboardCode.Space], cancel: [KeyboardCode.Esc] } }));
@@ -74,6 +82,16 @@ export default function QaKanban({ client, actor, workflow, filters, onOpen, onP
     refreshRequest.current = { revision: nextRevision, remaining: new Set(columns.map(column => column.id)) };
     setRefreshing(true); setRevision(nextRevision);
   };
+  const reloadSeen = useRef(reloadToken);
+  useEffect(() => {
+    if (reloadSeen.current === reloadToken) return;
+    reloadSeen.current = reloadToken;
+    // A drop still in flight, or one whose outcome is unknown, keeps its own retry; it reloads when it settles.
+    if (request.current || sending.current) return;
+    refreshBoard();
+    // refreshBoard reads the current columns; only a new token should trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken]);
   const openSafely = (id: string, action?: QaCommand['type'], defaults?: QaActionDefaults) => {
     if (sending.current || request.current || refreshing) { toast.info(t('qa.finishPending'), { position: 'top-center' }); return; }
     onOpen(id, action, defaults);
@@ -120,7 +138,16 @@ export default function QaKanban({ client, actor, workflow, filters, onOpen, onP
       toast.error(t('qa.dropFailed'), { description: t(intent.reason === 'permission' ? 'qa.dropPermission' : 'qa.dropUnavailable'), position: 'top-center', duration: 10000,
         action: { label: t('qa.openBug'), onClick: () => openSafely(issue.id) } });
     } else if (intent.kind === 'command') {
-      request.current = { issue, command: intent.command, id: qaId(), label: column.label }; void send();
+      const command = intent.command, label = column.label;
+      // Done and Won't fix by drag only change the status: no verification or reason is recorded.
+      if (isQaTerminal(command.state)) {
+        void confirm({ title: t('qa.terminalConfirmTitle', { status: label }), description: t('qa.terminalConfirmDesc') }).then(ok => {
+          if (!ok || request.current || sending.current || !mounted.current) return;
+          request.current = { issue, command, id: qaId(), label }; void send();
+        });
+        return;
+      }
+      request.current = { issue, command, id: qaId(), label }; void send();
     }
   };
   return <div className="space-y-3">
@@ -135,11 +162,12 @@ export default function QaKanban({ client, actor, workflow, filters, onOpen, onP
       } }}>
     <div className="flex min-h-[480px] items-stretch gap-3 overflow-x-auto pb-4 snap-x snap-proximity" aria-label={t('qa.board')}>
       {columns.map(column => <QaColumn key={column.id} client={client} actor={actor} active={active} revision={revision} disabled={!!request.current || busy || refreshing} move={move} onLoaded={columnLoaded}
-        state={column.id} states={filters.state ? [filters.state] : column.states} workflow={workflow} grouped={column.states.length > 1}
+        state={column.id} states={column.shown} workflow={workflow} grouped={column.states.length > 1}
         label={column.label} filters={filters} onOpen={openSafely} />)}
     </div>
     <DragOverlay dropAnimation={null}>{active && <div aria-hidden="true" className="w-[280px] rounded-lg border border-border bg-card p-3 text-sm font-semibold shadow-xl">{active.title}</div>}</DragOverlay>
     </DndContext>
+    {ConfirmDialog}
   </div>;
 }
 

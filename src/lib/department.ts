@@ -36,6 +36,20 @@ export function getDepartment(user: { name: string; jobTitle: string } | undefin
   return null;
 }
 
+type DepartmentMember = { id: string; name: string; jobTitle: string };
+
+/**
+ * The department a task belongs to: the one set on the task, otherwise its
+ * assignee's. Cards, list columns, sorting and the department filter all use
+ * this, so a task shows and filters under the same department everywhere.
+ */
+export function taskDepartment(task: { department?: string | null; assigneeId?: string | null }, members: ReadonlyMap<string, DepartmentMember> | readonly DepartmentMember[]): Department | null {
+  if (task.department && (DEPARTMENTS as string[]).includes(task.department)) return task.department as Department;
+  if (!task.assigneeId) return null;
+  const assignee = members instanceof Map ? members.get(task.assigneeId) : (members as readonly DepartmentMember[]).find(member => member.id === task.assigneeId);
+  return getDepartment(assignee);
+}
+
 // Fine-grained ordering within each department
 const NAME_ORDER: Record<string, number> = {
   '王建宏': 0,

@@ -23,7 +23,7 @@ type DbRow = Record<string, unknown>;
 /** Supported filter value types for mock query builders. */
 type FilterValue = string | number | boolean | null | undefined | unknown[];
 
-type ThenableResult = { data: unknown; error: { message: string } | null };
+type ThenableResult = { data: unknown; error: { message: string } | null; count?: number | null };
 
 // ─── In-memory stores ────────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ const db: Record<string, DbRow[]> = {};
 const AUTH_CREDENTIALS: Record<string, { password: string; authId: string }> = {};
 
 let currentSession: AuthSession | null = null;
+const demoSlackLink = { disabled: false, mode: 'email' as const, linked: null as null };
 const authListeners: Array<(event: string, session: AuthSession | null) => void> = [];
 
 // ─── 20 Team Members ────────────────────────────────────────────────────
@@ -105,6 +106,11 @@ function initializeData() {
 
   // ── Populate all demo data via seedData ──
   seedAllDemoData(db);
+  // Seeded tasks get the responsibility columns the real tasks table defaults.
+  for (const task of db['tasks']) {
+    task.assignee_revision ??= 0; task.reviewer_revision ??= 0;
+    task.assignee_acknowledged_at ??= null; task.reviewer_acknowledged_at ??= null;
+  }
   db['system_settings'] = [{ key: 'feature_toggles', value: { approvals: true }, updated_at: new Date().toISOString() }];
   seedKnowledgeMock(db);
 
@@ -234,6 +240,9 @@ function withWorkTaskUpdate(before:DbRow,patch:DbRow,actor:string) {
 abstract class MockQuery {
   private _single = false;
   private _maybe = false;
+  /** select('*', { count: 'exact', head }): the number of matching rows, before any limit. */
+  protected countRequest: { head: boolean } | null = null;
+  protected matchedCount = 0;
 
   /** Runs against the in-memory tables; returns the rows read or written. */
   protected abstract run(): DbRow[];
@@ -249,6 +258,7 @@ abstract class MockQuery {
   }
 
   private respond(rows: DbRow[]): ThenableResult {
+    if (this.countRequest) return { data: this.countRequest.head ? null : rows, error: null, count: this.matchedCount };
     if (this._single) {
       return rows.length ? { data: rows[0], error: null } : { data: null, error: { message: 'No rows found' } };
     }
@@ -323,10 +333,11 @@ class SelectBuilder extends FilterBuilder {
   private _limit: number | null = null;
   private _offset=0;
 
-  constructor(t: string, cols?: string) {
+  constructor(t: string, cols?: string, opts?: { count?: string; head?: boolean }) {
     super();
     this.t = t;
     this.cols = cols && cols !== '*' ? cols.split(',').map(s => s.trim()) : null;
+    if (opts?.count) this.countRequest = { head: !!opts.head };
   }
 
   order(col: string, opts?: { ascending?: boolean }) {
@@ -349,6 +360,7 @@ class SelectBuilder extends FilterBuilder {
         return 0;
       });
     }
+    this.matchedCount = rows.length;
     if (this._offset || this._limit!==null) rows = rows.slice(this._offset,this._limit===null?undefined:this._offset+this._limit);
     if (this.cols) {
       rows = rows.map((r: DbRow) => {
@@ -450,7 +462,7 @@ class TableRef {
   private t: string;
   constructor(t: string) { this.t = t; }
 
-  select(cols?: string) { return new SelectBuilder(this.t, cols); }
+  select(cols?: string, opts?: { count?: string; head?: boolean }) { return new SelectBuilder(this.t, cols, opts); }
   insert(data: DbRow | DbRow[]) { return new InsertBuilder(this.t, data); }
   update(vals: DbRow)   { return new UpdateBuilder(this.t, vals); }
   delete()              { return new DeleteBuilder(this.t); }
@@ -617,6 +629,12 @@ class MockFunctions {
     if (body.action === 'delete') {
       const idx = members.findIndex(m => m.id === body.memberId);
       if (idx < 0) return { data: { error: '找不到成員' }, error: null };
+      // Same as the servers: a member with tasks, comments or records can only be deactivated.
+      const id = body.memberId;
+      const hasHistory = tbl('tasks').some(t => t.creator_id === id || t.assignee_id === id || t.reviewer_id === id)
+        || tbl('comments').some(c => c.user_id === id) || tbl('status_logs').some(l => l.changed_by === id)
+        || tbl('notifications').some(n => n.recipient_id === id || n.sender_id === id);
+      if (hasHistory) return { data: { error: 'member_has_history' }, error: null };
       members.splice(idx, 1);
       return { data: { success: true }, error: null };
     }
@@ -721,6 +739,12 @@ export class MockSupabaseClient {
         };
       case 'reset_license':
         return { data: { success: false, message: '展示模式' }, error: null };
+      // Demo: the Slack link setting lives for this tab only, like every other demo change.
+      case 'livo_slack_link_status':
+        return { data: { ...demoSlackLink }, error: null };
+      case 'livo_slack_link_set':
+        demoSlackLink.disabled = _params?.p_enabled === false;
+        return { data: { ...demoSlackLink }, error: null };
       case 'acquire_field_lock':
         return { data: { acquired: true } as unknown, error: null };
       case 'release_field_lock':

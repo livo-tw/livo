@@ -3050,7 +3050,8 @@ export function seedAllDemoData(db: Record<string, Record<string, unknown>[]>) {
         ? `https://gitlab.com/livo/${PROJECTS[def.projectId as keyof typeof PROJECTS]?.key}/merge_requests/${Math.floor(Math.random() * 100) + 1}`
         : null,
       sort_order: sortOrder++,
-      created_at: isoTime(-14, 8 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 60)),
+      // Created before it was started or finished, so cycle times are never negative.
+      created_at: isoTime(Math.min(-14, (def.startedOffset ?? 0) - 1, (def.completedOffset ?? 0) - 1), 8 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 60)),
       comment_count: 0,
       sprint_id: def._sprintId || CURRENT_SPRINT_ID,
       department: def.department,

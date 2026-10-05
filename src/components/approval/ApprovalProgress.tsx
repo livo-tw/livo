@@ -6,6 +6,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { useAuthContext } from '@/context/AuthContext';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { toast } from 'sonner';
+import { monthDayLabel } from '@/lib/dateLabels';
 
 interface Props {
   approvalRequestId: string;
@@ -148,7 +149,7 @@ export default function ApprovalProgress({ approvalRequestId, onAction }: Props)
               </div>
               {step.actedAt && (
                 <div className="text-[9px] text-muted-foreground">
-                  {getUserName(step.actionBy)} · {new Date(step.actedAt).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })}
+                  {getUserName(step.actionBy)} · {monthDayLabel(new Date(step.actedAt))}
                 </div>
               )}
               {step.comment && (

@@ -53,6 +53,9 @@ export async function handleSlackActionsConfig(req: Request, env: Environment): 
         typeof body.slackUserId !== 'string' || !SLACK_USER_ID.test(body.slackUserId)) return json({ error: 'invalid_request' }, 400);
       const target = (await admin.rows('members', { select: 'id,name,role,is_active,auth_id', id: `eq.${body.memberId}`, limit: '1' }))[0];
       if (!canAssignSlackMember(member, target)) return json({ error: 'member_not_assignable' }, 403);
+      // The member turned Slack linking off themselves; only they can turn it back on.
+      if ((await admin.rows('slack_link_preferences', { select: 'member_id', member_id: `eq.${target.id}`, linking_disabled: 'eq.true', limit: '1' })).length)
+        return json({ error: 'slack_link_disabled' }, 409);
       const team = (await slack('auth.test', {})).team_id;
       const info = (await slack('users.info', { user: body.slackUserId })).user;
       if (!team || !info || info.deleted || info.is_bot || (info.team_id && info.team_id !== team))

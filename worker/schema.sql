@@ -229,6 +229,16 @@ CREATE TABLE IF NOT EXISTS projects (
   is_archived INTEGER NOT NULL DEFAULT 0
 );
 
+-- A product line cannot be deleted while it still has projects (archived ones
+-- included): the line_id foreign key cascades, so deleting the line would delete
+-- those projects and every task in them. The app checks first; this refuses too,
+-- also when the caller cannot see every project.
+CREATE TRIGGER IF NOT EXISTS product_lines_keep_projects BEFORE DELETE ON product_lines
+WHEN EXISTS (SELECT 1 FROM projects WHERE workspace_id = OLD.workspace_id AND line_id = OLD.id)
+BEGIN
+  SELECT RAISE(ABORT, 'product_line_has_projects');
+END;
+
 CREATE TABLE IF NOT EXISTS statuses (
   workspace_id TEXT NOT NULL DEFAULT 'default',
   id         TEXT PRIMARY KEY,
@@ -837,6 +847,17 @@ CREATE TABLE IF NOT EXISTS external_account_bindings (
 );
 CREATE INDEX IF NOT EXISTS idx_external_bindings_member ON external_account_bindings (member_id);
 CREATE INDEX IF NOT EXISTS idx_external_bindings_platform ON external_account_bindings (platform, platform_user_id);
+
+-- A member who turned Slack linking off in My settings: LIVO neither acts for their
+-- Slack account nor sends it direct messages until they allow it again. Written only
+-- by the livo_slack_link_set RPC for the caller (supabase/migrations/20261022_slack_link_preferences.sql).
+CREATE TABLE IF NOT EXISTS slack_link_preferences (
+  workspace_id     TEXT NOT NULL DEFAULT 'default',
+  member_id        TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  linking_disabled INTEGER NOT NULL DEFAULT 0 CHECK (linking_disabled IN (0,1)),
+  updated_at       TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, member_id)
+);
 
 CREATE TABLE IF NOT EXISTS external_action_logs (
   workspace_id TEXT NOT NULL DEFAULT 'default',
@@ -2067,6 +2088,7 @@ CREATE TRIGGER qa_command_coordination_guard BEFORE INSERT ON qa_commands WHEN N
   WHEN NEW.operation='accept_handoff' THEN json_extract(q.data,'$.handoff.nextOwnerId')=NEW.actor_id AND json_extract(q.data,'$.handoff.acceptedAt') IS NULL AND json_extract(q.data,'$.handoff.resolvedAt') IS NULL
   WHEN NEW.operation='resolve_handoff' THEN (NEW.actor_role IN ('admin','super_admin') OR json_extract(q.data,'$.handoff.nextOwnerId')=NEW.actor_id) AND json_extract(q.data,'$.handoff.resolvedAt') IS NULL
   WHEN NEW.actor_role IN ('admin','super_admin') THEN 1
+  WHEN NEW.operation='comment' THEN 1
   WHEN NEW.operation IN ('triage','hold','request_handoff') AND EXISTS(SELECT 1 FROM qa_project_coordination c WHERE c.workspace_id=q.workspace_id AND c.id=q.project_id AND c.coordinator_id=NEW.actor_id) THEN 1
   WHEN NEW.operation IN ('triage','record_verification','close') THEN q.qa_owner_id=NEW.actor_id
   WHEN NEW.operation IN ('start_fix','submit_fix') THEN q.assignee_id=NEW.actor_id

@@ -1,10 +1,8 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn } from 'lucide-react';
+import { GripVertical, UserMinus, UserCheck, Trash2, Lock, KeyRound, LogIn, Pencil } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { MEMBER_ROLE_OPTIONS, selectedMemberRole, selectionRoleLabel, getMemberRoleLabel, getMemberRoleColor, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 import { isPlaceholderEmail } from '@/lib/memberEmail';
-
-interface StatusNode { id: string; name: string; }
 
 interface MemberStat {
   user: {
@@ -106,7 +104,7 @@ const MemberTableDesktop = ({
               <td className="px-4 py-3 text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <span className="max-w-48 break-words">{user.jobTitle || '—'}</span>
-                  {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} className="shrink-0 text-xs text-primary hover:underline disabled:opacity-50">{t('memberJobTitle.edit')}</button>}
+                  {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} title={t('memberJobTitle.edit')} className="shrink-0 p-1 rounded text-muted-foreground hover:text-primary hover:bg-muted transition-colors disabled:opacity-50"><Pencil size={13} aria-hidden="true" /></button>}
                 </div>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
@@ -144,6 +142,8 @@ const MemberTableDesktop = ({
                           <button
                             onClick={() => onToggleActive(user.id, isActive)}
                             disabled={actionLoading === user.id}
+                            title={t(isActive ? 'member.deactivate' : 'member.activate')}
+                            aria-label={t(isActive ? 'member.deactivate' : 'member.activate')}
                             className={`p-1.5 rounded transition-colors ${isActive ? 'hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-600' : 'hover:bg-green-100 dark:hover:bg-green-900/30 text-green-600'}`}
                           >
                             {isActive ? <UserMinus size={14} /> : <UserCheck size={14} />}
@@ -163,6 +163,7 @@ const MemberTableDesktop = ({
                               onClick={() => onResetPassword(user.id, user.name)}
                               disabled={actionLoading === user.id}
                               title={t('member.resetPassword')}
+                              aria-label={t('member.resetPassword')}
                               className="p-1.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 transition-colors"
                             >
                               <KeyRound size={14} />
@@ -171,6 +172,8 @@ const MemberTableDesktop = ({
                           <button
                             onClick={() => onDelete(user.id, user.name)}
                             disabled={actionLoading === user.id}
+                            title={t('common.delete')}
+                            aria-label={t('common.delete')}
                             className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-destructive transition-colors"
                           >
                             <Trash2 size={14} />

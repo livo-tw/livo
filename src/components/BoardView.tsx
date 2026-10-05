@@ -1,24 +1,30 @@
 import { useProjectColor } from '@/hooks/useProjectColor';
-import { useState, useRef, useMemo, useCallback, type ReactNode } from 'react';
+import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
+import { useState, useRef, useMemo, useCallback, useEffect, type ReactNode } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useUIContext } from '@/context/UIContext';
-import { sendSlackNotify } from '@/lib/slackNotify';
+import { announceStatusChange } from '@/lib/taskAnnouncements';
 import { logActivity } from '@/lib/activityLog';
 import TaskCard from '@/components/TaskCard';
 import StandupLaunchDialog from '@/components/StandupLaunchDialog';
 import UpgradePrompt from '@/components/UpgradePrompt';
 import BoardFilters from '@/components/board/BoardFilters';
+import { useBoardFilters } from '@/hooks/useBoardFilters';
+import { useProjectScope, useScopedProjectFilter } from '@/hooks/useProjectScope';
+import { readBoardSort, sortBoardTasks, writeBoardSort, type BoardSort } from '@/lib/boardSort';
 import { SprintCompleteModal, SprintStartModal } from '@/components/board/SprintModals';
 import BoardSprintHeader from '@/components/board/BoardSprintHeader';
 import BoardApprovalModal from '@/components/board/BoardApprovalModal';
-import { type CardFieldVisibility, DEFAULT_CARD_FIELDS } from '@/lib/fieldRegistry';
+import { type CardFieldVisibility } from '@/lib/fieldRegistry';
+import { readBoardDisplay, writeBoardDisplay } from '@/lib/boardDisplay';
 import { useLicense } from '@/context/LicenseContext';
-import type { PendingTaskAction } from '@/context/SprintContext';
+import { useSprintFlow } from '@/hooks/useSprintFlow';
 import { BookOpen, ChevronDown, ChevronRight, ClipboardList, Search, Plus } from 'lucide-react';
-import { getDepartment, type Department } from '@/lib/department';
+import { taskDepartment, type Department } from '@/lib/department';
 import { useUndoStack } from '@/hooks/useUndoStack';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { useStatusTransitionRules } from '@/hooks/useStatusTransitionRules';
+import { useStatusChangeGate } from '@/hooks/useStatusChangeGate';
+import { statusChangeUpdates } from '@/lib/taskStatusChange';
 import { useNotificationToast } from '@/components/notifications/NotificationToastProvider';
 import { useApprovalRules } from '@/hooks/useApprovalRules';
 import { useApprovalWorkflow } from '@/hooks/useApprovalWorkflow';
@@ -77,34 +83,38 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
 const BoardView = () => {
   const getProjectColor = useProjectColor();
   const { t } = useTranslation();
-  const { approvalsEnabled, featureTogglesReady, allTasks, setAllTasks, selectedProjectId, selectedLineId, standupMode, setStandupMode, standupUserId, allProjects, statuses, productLines, updateTaskInDb, sprintActive, currentSprint, users, currentMemberId, currentMember, completeSprint, renameSprint, startSprint, getDefaultSprintName, setSelectedProjectId, setSelectedLineId, setCurrentView, statusLogs, setSelectedTask, customFields, setShowCreateTask } = useAppContext();
+  const { approvalsEnabled, featureTogglesReady, allTasks, setAllTasks, selectedProjectId, selectedLineId, standupMode, setStandupMode, standupUserId, allProjects, statuses, productLines, updateTaskInDb, sprintActive, currentSprint, users, currentMemberId, currentMember, renameSprint, getDefaultSprintName, setSelectedProjectId, setSelectedLineId, setCurrentView, setSelectedTask, customFields, setShowCreateTask } = useAppContext();
   const isMobile = useIsMobile();
   const { hasFeature } = useLicense();
-  const { canTransitionTo } = useStatusTransitionRules();
+  const statusGate = useStatusChangeGate();
   const { triggerNotification } = useNotificationToast();
+  const announcements = useMemo(() => ({ actor: currentMember, users, projects: allProjects, statuses, showRules: triggerNotification }), [currentMember, users, allProjects, statuses, triggerNotification]);
+  const announceDirect = useCallback((task: Task, from: string, to: string) => announceStatusChange(task, from, to, announcements), [announcements]);
   const { getRuleForTransition } = useApprovalRules();
   const { requestApproval } = useApprovalWorkflow();
   const undoStack = useUndoStack();
-  const { approvalConfirm, setApprovalConfirm, handleApprovalDirectChange, handleApprovalSubmit, handleMandatoryApproval } = useBoardApproval({ allTasks, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, requestApproval, t });
+  const { approvalConfirm, setApprovalConfirm, handleApprovalDirectChange, handleApprovalSubmit, handleMandatoryApproval } = useBoardApproval({ allTasks, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, requestApproval, t, announce: announceDirect });
   const userMap = useMemo(() => new Map(users.map(u => [u.id, u])), [users]);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
-  const [filterDept, setFilterDept] = useState<Department[]>([]);
-  const [filterAssignees, setFilterAssignees] = useState<string[]>([]);
-  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
-  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
-  const [filterReviewers, setFilterReviewers] = useState<string[]>([]);
-  const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  const boardFilters = useBoardFilters();
+  const scope = useProjectScope();
+  useScopedProjectFilter(boardFilters.setFilterProjects);
+  const { filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, hasFilters, clearFilters } = boardFilters;
+  const [sort, setSortState] = useState<BoardSort>(() => readBoardSort('tasks'));
+  const setSort = useCallback((next: BoardSort) => { setSortState(next); writeBoardSort('tasks', next); }, []);
   const [editingSprintName, setEditingSprintName] = useState(false);
   const [editSprintValue, setEditSprintValue] = useState('');
   const [showStandupLaunch, setShowStandupLaunch] = useState(false);
   const [showStandupUpgrade, setShowStandupUpgrade] = useState(false);
-  const [showCompleteModal, setShowCompleteModal] = useState(false);
-  const [showStartModal, setShowStartModal] = useState(false);
-  const [carryOverTaskIds, setCarryOverTaskIds] = useState<string[]>([]);
+  // Completing and starting a sprint, shared with the backlog and the stand-up.
+  const sprintFlow = useSprintFlow();
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [cardFields, setCardFields] = useState<CardFieldVisibility>({ ...DEFAULT_CARD_FIELDS });
-  const [subtaskDisplayMode, setSubtaskDisplayMode] = useState<'independent' | 'nested'>('independent');
-  const [customCardFields, setCustomCardFields] = useState<Record<string, boolean>>({});
+  // Card fields and the subtask layout are remembered in this browser, like the sort.
+  const [initialDisplay] = useState(readBoardDisplay);
+  const [cardFields, setCardFields] = useState<CardFieldVisibility>(initialDisplay.cardFields);
+  const [subtaskDisplayMode, setSubtaskDisplayMode] = useState<'independent' | 'nested'>(initialDisplay.subtaskMode);
+  const [customCardFields, setCustomCardFields] = useState<Record<string, boolean>>(initialDisplay.customCardFields);
+  useEffect(() => { writeBoardDisplay({ cardFields, subtaskMode: subtaskDisplayMode, customCardFields }); }, [cardFields, subtaskDisplayMode, customCardFields]);
   const sprintInputRef = useRef<HTMLInputElement>(null);
 
   const toggleCardField = useCallback((field: keyof CardFieldVisibility) => {
@@ -140,10 +150,7 @@ const BoardView = () => {
     }
     if (filterDept.length > 0) {
       const deptSet = new Set(filterDept);
-      tasks = tasks.filter(t => {
-        const assignee = userMap.get(t.assigneeId || '');
-        return deptSet.has(getDepartment(assignee) as Department);
-      });
+      tasks = tasks.filter(t => deptSet.has(taskDepartment(t, userMap) as Department));
     }
     if (filterAssignees.length > 0) { const s = new Set(filterAssignees); tasks = tasks.filter(t => t.assigneeId && s.has(t.assigneeId)); }
     if (filterStatuses.length > 0) { const s = new Set(filterStatuses); tasks = tasks.filter(t => s.has(t.statusId)); }
@@ -158,6 +165,14 @@ const BoardView = () => {
     ? unscopedTasks.filter(t => t.sprintId === scopeSprintId || !t.sprintId)
     : unscopedTasks,
   [unscopedTasks, scopeSprintId]);
+  const sortedTasks = useMemo(() => sortBoardTasks(filteredTasks, sort), [filteredTasks, sort]);
+  // In nested mode a subtask is shown inside its parent's card; it keeps a card of its own only when its parent is not on the board.
+  const nestSubtasks = subtaskDisplayMode === 'nested' && hasFeature('subtasks');
+  const boardTasks = useMemo(() => {
+    if (!nestSubtasks) return sortedTasks;
+    const shown = new Set(sortedTasks.map(task => task.id));
+    return sortedTasks.filter(task => !task.parentTaskId || !shown.has(task.parentTaskId));
+  }, [sortedTasks, nestSubtasks]);
 
   /** Tasks the filters match that sit in another sprint, per project. */
   const otherSprintCounts = useMemo(() => {
@@ -185,18 +200,13 @@ const BoardView = () => {
       const task = allTasks.find(t => t.id === taskId);
       if (!task || task.statusId === newStatusId) return;
 
-      const result = canTransitionTo(taskId, newStatusId, statusLogs);
-      if (!result.allowed) {
-        const missingNames = result.missingStatusIds
-          .map(id => statuses.find(s => s.id === id)?.name || id);
-        const targetName = statuses.find(s => s.id === newStatusId)?.name || '—';
-        toast.error(t('board.transitionNotAllowed', { missingNames: missingNames.join('、'), targetName }));
-        return;
-      }
+      const gate = statusGate.check(task, newStatusId);
+      const refusal = statusGate.refusal(gate, newStatusId);
+      if (refusal) { toast.error(refusal); return; }
 
       // When requiresApproval is true, ALL status changes go through approval
       const project = allProjects.find(p => p.id === task.projectId);
-      if (approvalsEnabled && task.requiresApproval) {
+      if (gate.kind === 'approval') {
         const toStatusName = statuses.find(s => s.id === newStatusId)?.name || '—';
         const confirmPayload = { taskId, fromStatusId: task.statusId, toStatusId: newStatusId, projectId: project?.id || '', toStatusName };
         setApprovalConfirm(confirmPayload);
@@ -220,17 +230,11 @@ const BoardView = () => {
 
       const status = statuses.find(s => s.id === newStatusId);
       const oldStatus = statuses.find(s => s.id === task.statusId);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updates: Record<string, any> = { statusId: newStatusId };
-      if (status?.autoStart && !task.startedAt) updates.startedAt = new Date().toISOString().split('T')[0];
-      // Always set completedAt when transitioning to done (full ISO for report matching)
-      if (status?.isDone && !oldStatus?.isDone) {
-        updates.completedAt = new Date().toISOString();
-      }
-      if (!status?.isDone && oldStatus?.isDone) updates.completedAt = undefined;
+      const updates = statusChangeUpdates(task, statuses, newStatusId);
       const oldStatusId = task.statusId;
       setAllTasks(prev => prev.map(t2 => t2.id !== taskId ? t2 : { ...t2, ...updates }));
-      await updateTaskInDb(taskId, updates);
+      // A refused or failed save is reported and reloaded by updateTaskInDb; nothing to undo or announce.
+      if ((await updateTaskInDb(taskId, updates)) === false) return;
 
       undoStack.push({
         type: 'status_change',
@@ -238,36 +242,18 @@ const BoardView = () => {
         undo: async () => {
           const revert: Record<string, unknown> = { statusId: oldStatusId };
           if (updates.startedAt && !task.startedAt) revert.startedAt = undefined;
-          if (updates.completedAt !== undefined) revert.completedAt = task.completedAt ?? undefined;
+          if ('completedAt' in updates) revert.completedAt = task.completedAt ?? undefined;
           setAllTasks(prev => prev.map(t2 => t2.id !== taskId ? t2 : { ...t2, statusId: oldStatusId }));
           await updateTaskInDb(taskId, revert as Record<string, string | undefined>);
         },
       });
 
-      const assignee = users.find(u => u.id === task.assigneeId);
-      sendSlackNotify({
-        type: 'status_changed',
-        taskKey: task.taskKey,
-        taskTitle: task.title,
-        taskId: task.id,
-        projectName: project?.name,
-        actorName: currentMember?.name || t('common.unknown'),
-        fromStatus: oldStatus?.name || '—',
-        toStatus: status?.name || '—',
-        assigneeName: assignee?.name,
-        priority: task.priority,
-      }).catch(err => console.error('[LIVO] sendSlackNotify error:', err));
-
-      try {
-        triggerNotification(task, oldStatus?.name || '—', status?.name || '—');
-      } catch (err) {
-        console.error('[LIVO] triggerNotification error:', err);
-      }
+      announceStatusChange(task, oldStatusId, newStatusId, announcements);
     } catch (err) {
       console.error('[LIVO] handleDrop error:', err);
       toast.error(t('error.updateFailed') + String(err));
     }
-  }, [approvalsEnabled, featureTogglesReady, getRuleForTransition, setApprovalConfirm, t, allTasks, statuses, statusLogs, setAllTasks, updateTaskInDb, allProjects, users, currentMember, canTransitionTo, triggerNotification]);
+  }, [approvalsEnabled, featureTogglesReady, getRuleForTransition, setApprovalConfirm, t, allTasks, statuses, setAllTasks, updateTaskInDb, allProjects, statusGate, announcements]);
 
   /* ── dnd-kit sensors & handlers ── */
   const sensors = useSensors(
@@ -276,7 +262,7 @@ const BoardView = () => {
     useSensor(KeyboardSensor, {
       keyboardCodes: {
         start: [KeyboardCode.Space],
-        cancel: [KeyboardCode.Escape],
+        cancel: [KeyboardCode.Esc],
         end: [KeyboardCode.Space],
       },
     }),
@@ -288,13 +274,14 @@ const BoardView = () => {
     const { active, over } = event;
     if (!over) return;
     const taskId = active.id as string;
-    const statusId = (over.id as string).split('::')[1];
+    const [projectId, statusId] = (over.id as string).split('::');
+    // Columns belong to a project row; a card changes project in its details, not by drag.
+    const task = allTasks.find(row => row.id === taskId);
+    if (task && projectId && task.projectId !== projectId) { toast.info(t('board.dropOtherProject')); return; }
     if (statusId) handleDrop(taskId, statusId).catch(err => console.error('[LIVO] handleDrop unhandled:', err));
-  }, [handleDrop]);
+  }, [allTasks, handleDrop, t]);
   const handleDragCancel = useCallback(() => { setActiveId(null); }, []);
 
-  const hasFilters = filterDept.length > 0 || filterAssignees.length > 0 || filterStatuses.length > 0 || filterPriorities.length > 0 || filterReviewers.length > 0 || filterProjects.length > 0;
-  const clearFilters = useCallback(() => { setFilterDept([]); setFilterAssignees([]); setFilterStatuses([]); setFilterPriorities([]); setFilterReviewers([]); setFilterProjects([]); }, []);
 
   const visibleProjectIds = useMemo(() => visibleProjects.map(p => p.id), [visibleProjects]);
 
@@ -316,38 +303,14 @@ const BoardView = () => {
     setEditingSprintName(false);
   };
 
-  const handleSprintAction = () => {
-    setShowCompleteModal(true);
-  };
+  const handleSprintAction = sprintFlow.openComplete;
 
   const doneIds = useMemo(() => statuses.filter(s => s.isDone).map(s => s.id), [statuses]);
   const sprintTasks = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id) : [], [allTasks, currentSprint]);
   const completedCount = useMemo(() => sprintTasks.filter(t => doneIds.includes(t.statusId)).length, [sprintTasks, doneIds]);
   const pendingTasks = useMemo(() => sprintTasks.filter(t => !doneIds.includes(t.statusId)), [sprintTasks, doneIds]);
 
-  const handleCompleteSprint = async (action: PendingTaskAction) => {
-    setShowCompleteModal(false);
-    const sprintName = currentSprint?.name || '';
-    const pendingIds = await completeSprint(action);
-    if (currentMemberId) {
-      await logActivity(currentMemberId, 'complete_sprint', `${t('activityLog.completeSprint')}「${sprintName}」`, undefined, undefined, 'sprint');
-    }
-    setCarryOverTaskIds(pendingIds || []);
-  };
-
-  const handleConfirmStart = async (name: string, includeBacklog: boolean) => {
-    setShowStartModal(false);
-    await startSprint(name, carryOverTaskIds.length > 0 ? carryOverTaskIds : undefined, includeBacklog);
-    setCarryOverTaskIds([]);
-    if (currentMemberId) {
-      await logActivity(currentMemberId, 'start_sprint', `${t('activityLog.startSprint')}「${name}」`, undefined, undefined, 'sprint');
-    }
-  };
-
-  const handleStartNewSprint = () => {
-    setCarryOverTaskIds([]);
-    setShowStartModal(true);
-  };
+  const handleStartNewSprint = sprintFlow.openStart;
 
   const handleStandup = () => {
     if (standupMode) {
@@ -404,15 +367,9 @@ const BoardView = () => {
       <BoardFilters
         users={users}
         statuses={statuses}
-        allProjects={allProjects}
+        allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects}
         selectedProjectId={selectedProjectId}
-        filterDept={filterDept} setFilterDept={setFilterDept}
-        filterAssignees={filterAssignees} setFilterAssignees={setFilterAssignees}
-        filterStatuses={filterStatuses} setFilterStatuses={setFilterStatuses}
-        filterPriorities={filterPriorities} setFilterPriorities={setFilterPriorities}
-        filterReviewers={filterReviewers} setFilterReviewers={setFilterReviewers}
-        filterProjects={filterProjects} setFilterProjects={setFilterProjects}
-        hasFilters={hasFilters} clearFilters={clearFilters}
+        filters={boardFilters} sort={sort} onSortChange={setSort}
         cardFields={cardFields} toggleCardField={toggleCardField}
         subtaskDisplayMode={subtaskDisplayMode} setSubtaskDisplayMode={setSubtaskDisplayMode}
         hasSubtasksFeature={hasFeature('subtasks')}
@@ -463,7 +420,7 @@ const BoardView = () => {
       <div className="px-3 md:px-5 pb-4 space-y-4 md:space-y-5">
         {visibleProjects.map(project => {
           const line = productLines.find(l => l.id === project.lineId);
-          const projectTasks = filteredTasks.filter(t => t.projectId === project.id);
+          const projectTasks = boardTasks.filter(t => t.projectId === project.id);
           const isCollapsed = collapsedProjects.includes(project.id);
           // Pre-group tasks by statusId to avoid O(n²) filtering
           const tasksByStatus = new Map<string, Task[]>();
@@ -483,24 +440,27 @@ const BoardView = () => {
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                 </span>
                 {line && (
-                  <span className="text-sm md:text-[15px] px-2 py-0.5 rounded-md font-bold text-white" style={{ backgroundColor: line.color }}>
+                  // On a phone the project name needs the room; the line is shown by the colour bar.
+                  <span className="hidden sm:inline text-sm md:text-[15px] px-2 py-0.5 rounded-md font-bold text-white" style={{ backgroundColor: line.color }}>
                     {line.icon} {line.name}
                   </span>
                 )}
-                <span className="text-sm md:text-[15px] font-bold text-foreground truncate">{project.name}</span>
+                <span className="min-w-0 text-sm md:text-[15px] font-bold text-foreground truncate">{project.name}</span>
                 <button
                   type="button"
                   className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border/70 bg-muted/40 px-2 text-xs font-medium leading-none text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-label={t('kb.title')} title={t('kb.title')}
                   onClick={event => {
                     event.stopPropagation(); setSelectedProjectId(project.id); setSelectedLineId(null); setCurrentView('knowledge-base');
                   }}
                 >
                   <BookOpen size={14} strokeWidth={1.75} aria-hidden="true" />
-                  <span>{t('kb.title')}</span>
+                  <span className="hidden sm:inline">{t('kb.title')}</span>
                 </button>
                 {(otherSprintCounts.get(project.id) || 0) > 0 && (
                   <span className="ml-auto flex-shrink-0 text-[12px] text-muted-foreground/70" title={t('board.tasksInOtherSprints', { count: otherSprintCounts.get(project.id) })}>
-                    {t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}
+                    <span className="sm:hidden">+{otherSprintCounts.get(project.id)}</span>
+                    <span className="hidden sm:inline">{t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}</span>
                   </span>
                 )}
                 <span className={`text-[13px] text-muted-foreground font-medium flex-shrink-0 ${(otherSprintCounts.get(project.id) || 0) > 0 ? '' : 'ml-auto'}`}>({projectTasks.length})</span>
@@ -557,23 +517,24 @@ const BoardView = () => {
       )}
 
       {/* Complete Sprint modal with pending task options */}
-      {showCompleteModal && (
+      {sprintFlow.showCompleteModal && (
         <SprintCompleteModal
           currentSprint={currentSprint}
           completedCount={completedCount}
           pendingTasks={pendingTasks}
-          onClose={() => setShowCompleteModal(false)}
-          onComplete={handleCompleteSprint}
+          onClose={sprintFlow.closeComplete}
+          onComplete={action => void sprintFlow.complete(action)}
         />
       )}
 
       {/* Start Sprint modal */}
-      {showStartModal && (
+      {sprintFlow.showStartModal && (
         <SprintStartModal
           defaultName={getDefaultSprintName()}
-          onClose={() => { setShowStartModal(false); setCarryOverTaskIds([]); }}
-          onConfirm={handleConfirmStart}
-          carryOverCount={carryOverTaskIds.length}
+          onClose={sprintFlow.cancelStart}
+          onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
+          carryOverCount={sprintFlow.carryOverTaskIds.length}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
         />
       )}
 

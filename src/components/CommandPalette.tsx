@@ -14,8 +14,10 @@ import {
 } from '@/components/ui/command';
 import { useTaskContext } from '@/context/TaskContext';
 import { useProjectContext } from '@/context/ProjectContext';
+import { scopeChangeBlocked, viewAfterScopeChange } from '@/hooks/useProjectScope';
 import { useMemberContext } from '@/context/MemberContext';
 import { useUIContext } from '@/context/UIContext';
+import { useAuthContext } from '@/context/AuthContext';
 import type { Task, Project, User as UserType } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -35,8 +37,6 @@ interface MemberResult {
   kind: 'member';
   user: UserType;
 }
-
-type SearchResult = TaskResult | ProjectResult | MemberResult;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ export default function CommandPalette() {
   const { allTasks, taskSpecs } = useTaskContext();
   const { allProjects, productLines, setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { users } = useMemberContext();
-  const { setSelectedTask, setTaskDisplayMode, setCurrentView, showCreateTask, setShowCreateTask } = useUIContext();
+  const { currentView, setSelectedTask, setCurrentView, showCreateTask, setShowCreateTask } = useUIContext();
 
   // ── Keyboard shortcut ──────────────────────────────────────────────────────
 
@@ -172,25 +172,36 @@ export default function CommandPalette() {
 
   const handleSelectTask = useCallback((task: Task) => {
     setOpen(false);
-    setTaskDisplayMode('side');
+    // Opens the way the member chose (modal, side panel or page).
     setSelectedTask(task);
-  }, [setSelectedTask, setTaskDisplayMode]);
+  }, [setSelectedTask]);
 
   const handleSelectProject = useCallback((project: Project) => {
     setOpen(false);
+    if (scopeChangeBlocked()) return;
     setSelectedProjectId(project.id);
-    setSelectedLineId(project.lineId);
-    setCurrentView('board');
-  }, [setSelectedProjectId, setSelectedLineId, setCurrentView]);
+    setSelectedLineId(null);
+    // Same rule as the sidebar: a scoped view stays, anything else opens the board.
+    setCurrentView(viewAfterScopeChange(currentView, 'scope'));
+  }, [currentView, setSelectedProjectId, setSelectedLineId, setCurrentView]);
 
-  const handleSelectMember = useCallback((user: UserType) => {
+  const { permissions } = useAuthContext();
+  // Member management is for admins; everyone else finds people on the team page.
+  const handleSelectMember = useCallback((_user: UserType) => {
     setOpen(false);
-    setCurrentView('team-manage');
-  }, [setCurrentView]);
+    setCurrentView(permissions.canViewMemberList ? 'team-manage' : 'team-intro');
+  }, [permissions.canViewMemberList, setCurrentView]);
 
   // ── Derived display state ──────────────────────────────────────────────────
 
   const isSearching = debouncedQuery.trim().length > 0;
+  // The list is filtered here, not by cmdk, so cmdk keeps highlighting an item that
+  // is gone and Enter does nothing. Highlight the first item whenever the list changes.
+  const firstItem = isSearching
+    ? results.tasks[0] ? `task-${results.tasks[0].task.id}` : results.projects[0] ? `project-${results.projects[0].project.id}` : results.members[0] ? `member-${results.members[0].user.id}` : ''
+    : 'action-create-task';
+  const [activeItem, setActiveItem] = useState(firstItem);
+  useEffect(() => { setActiveItem(firstItem); }, [firstItem, open]);
   const hasResults =
     results.tasks.length > 0 ||
     results.projects.length > 0 ||
@@ -198,8 +209,9 @@ export default function CommandPalette() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Results are matched above on title, key, spec, name and email; the list must not filter them again by item id.
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={setOpen} title={t('common.search')} shouldFilter={false} value={activeItem} onValueChange={setActiveItem}>
       <CommandInput
         placeholder={t('search.commandPlaceholder')}
         value={query}

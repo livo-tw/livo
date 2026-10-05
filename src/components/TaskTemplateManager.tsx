@@ -11,7 +11,7 @@ import { Pencil, Trash2, Plus, X, FileInput, ClipboardList, Eye } from 'lucide-r
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import RequiredFieldsSettings from '@/components/RequiredFieldsSettings';
 import UpgradePrompt from '@/components/UpgradePrompt';
-import TaskTemplateForm, { priorities } from '@/components/TaskTemplateForm';
+import TaskTemplateForm from '@/components/TaskTemplateForm';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 
@@ -211,7 +211,7 @@ const TaskTemplateManager = () => {
                         )}
                         {tmpl.defaultPriority && (
                           <span className="text-[10px] text-muted-foreground">
-                            {priorities.find(p => p.value === tmpl.defaultPriority)?.label}
+                            {tmpl.defaultPriority && t(`priority.${tmpl.defaultPriority}`)}
                           </span>
                         )}
                       </div>
@@ -313,7 +313,7 @@ const TaskTemplateManager = () => {
               {previewTemplate.defaultPriority && (
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground mb-1">{t('taskTemplate.priorityLabel')}</p>
-                  <p className="text-sm text-foreground">{priorities.find(p => p.value === previewTemplate.defaultPriority)?.label}</p>
+                  <p className="text-sm text-foreground">{previewTemplate.defaultPriority && t(`priority.${previewTemplate.defaultPriority}`)}</p>
                 </div>
               )}
               {previewTemplate.defaultTagIds.length > 0 && (

@@ -1,5 +1,7 @@
 {
   "qaHandoff": {
+    "coordinatorSaved": "Coordinator updated",
+    "coordinatorButtonHint": "Choose a member who looks after this project's bugs: they are told about new bugs, and can arrange handoffs and record blockers. Everyone can set owners. Their system role does not change.",
     "title": "QA handoff",
     "roleHint": "Accepting or resolving a handoff does not pass QA or change task assignments.",
     "nextOwner": "Next owner",
@@ -15,9 +17,9 @@
     "empty": "There is no current handoff.",
     "replace": "Replace handoff",
     "request": "Request handoff",
-    "accept": "Accept handoff",
+    "accept": "I'll take it",
     "resolve": "Resolve handoff",
-    "replaceHint": "This replaces the current handoff and requests fresh acceptance. Its history is retained.",
+    "replaceHint": "This replaces the current handoff and waits for the next owner to accept it. Its history is retained.",
     "replyTime": "Reply by ({{timezone}})",
     "confirmRequest": "Confirm handoff",
     "confirmResolve": "Confirm resolution",
@@ -25,7 +27,7 @@
     "draftConflict": "The issue changed. Review the current handoff before continuing.",
     "unavailableMember": "Member unavailable",
     "coordinatorTitle": "Project QA coordinator",
-    "coordinatorHint": "Coordinates triage, holds and handoffs. This does not grant PASS or close permission. Leave empty to remove the coordinator.",
+    "coordinatorHint": "Is told about new bugs and helps record blockers and arrange handoffs. Everyone can set owners. This does not grant permission to pass verification or close bugs. Leave empty to remove the coordinator.",
     "noCoordinator": "No coordinator",
     "loadFailed": "Could not load coordination settings. Refresh to retry.",
     "coordinatorConflict": "Coordination settings changed. Reopen and review them.",
@@ -34,11 +36,11 @@
   },
   "knowledgeWork": {
     "teamBackupHint": "Team JSON backups exclude the full knowledge base and private files. Full backup and restore require the server database and file storage.",
-    "workspaceTitle": "Work information and drafts",
+    "workspaceTitle": "Search and drafts",
     "searchHint": "Search tasks, QA, knowledge content and attachment names you can access.",
     "query": "Keywords",
     "search": "Search",
-    "effectiveOnly": "Search effective knowledge versions only",
+    "effectiveOnly": "Only pages with an official version",
     "partialResults": "Some sources are unavailable. These results may be incomplete.",
     "open": "Open",
     "addReference": "Add reference",
@@ -65,35 +67,35 @@
     "openDraft": "Open draft",
     "privateListHint": "Only your own private drafts are listed here.",
     "noDrafts": "No private drafts yet.",
-    "documentStatus": "Document purpose and effective version",
-    "documentKind": "Document purpose",
+    "documentStatus": "Official version",
+    "documentKind": "Document type",
     "specification": "Specification",
     "decision": "Decision",
-    "general": "General knowledge",
+    "general": "General (not published as an official version)",
     "owner": "Owner",
     "noOwner": "No owner assigned",
     "productVersion": "Applicable product version",
     "environment": "Applicable environment",
     "summary": "Applicability summary",
-    "metadataHint": "Assign a purpose and owner before publishing an effective version. These settings do not grant additional access.",
-    "editMetadata": "Edit purpose and owner",
+    "metadataHint": "To publish an official version, set the document type to Specification or Decision and choose an owner; after saving you continue to the publication review. These settings do not change anyone's access.",
+    "editMetadata": "Set document type and owner",
     "privateDraft": "Private draft",
-    "workingCopy": "Working content",
+    "workingCopy": "Draft (no official version published)",
     "workingCopyHint": "This view shows working content. Consult the effective version for adopted specifications or decisions.",
-    "effective": "Effective",
+    "effective": "Official",
     "superseded": "Superseded",
-    "publishedRevision": "Effective revision {{version}}",
-    "unpublishedChanges": "Working content includes unpublished changes.",
+    "publishedRevision": "Current official version (revision {{version}})",
+    "unpublishedChanges": "This page has changes not yet published to the official version.",
     "revision": "Revision {{version}}",
-    "publish": "Publish effective version",
-    "replace": "Replace an earlier specification or decision",
-    "publicationReview": "Review the content and revision to publish",
+    "publish": "Publish as official",
+    "replace": "Replace an earlier official version",
+    "publicationReview": "Review the content to publish as official",
     "reviewBody": "Review this content",
     "replacing": "Replacing “{{title}}” revision {{version}}",
-    "confirmPublication": "I have reviewed this revision and confirm publishing it as an effective specification or decision.",
+    "confirmPublication": "I have reviewed this revision and confirm publishing it as official. Later edits do not change the official version until it is published again.",
     "confirmPublishButton": "Confirm publication",
-    "viewPredecessor": "View predecessor",
-    "viewSuccessor": "View successor",
+    "viewPredecessor": "View the earlier official version",
+    "viewSuccessor": "View the later official version",
     "shareDraft": "Share private draft",
     "shareReview": "Review sharing destination and content",
     "destination": "Sharing destination",
@@ -111,10 +113,10 @@
     "kinds": {
       "knowledge": "Knowledge page",
       "task": "Task",
-      "qa": "QA issue",
+      "qa": "Bug",
       "knowledge_file": "Knowledge attachment name",
       "task_file": "Task attachment name",
-      "qa_file": "QA attachment name"
+      "qa_file": "Bug attachment name"
     },
     "errors": {
       "knowledge_invalid_input": "Check the entered values.",
@@ -126,13 +128,16 @@
       "knowledge_scope_conflict": "The destination cannot access some references. Adjust the sources or destination.",
       "knowledge_cycle": "This action would create a cycle. Choose a different revision or page.",
       "knowledge_command_reused": "The action identifier conflicts with another request. Reload and retry.",
-      "knowledge_incomplete_source": "Sources are incomplete. Resolve them and prepare a new preview.",
+      "knowledge_incomplete_source": "The content is too long or a source could not be read in full (limit about 100,000 characters). Use fewer sources or shorter notes and preview again.",
       "knowledge_transport_error": "Connection failed temporarily. Retry.",
       "saved_refresh_failed": "Saved, but the view could not refresh. Reload to view it; no new save is needed.",
       "source_limit": "Select up to 50 sources.",
       "invalid_predecessor": "Choose a different effective specification or decision.",
       "knowledge_requires_server_restore": "This backup does not include all knowledge and private data. Restore from server database and file backups."
-    }
+    },
+    "includeFileNames": "Include attachment names",
+    "defaultWeeklyTitle": "Weekly draft {{from}} – {{to}}",
+    "defaultMeetingTitle": "Meeting notes draft {{date}}"
   },
   "taskWork": {
     "restoreWorkData": "The backup or current data contains acceptance, item versions, or collaboration history. Use a full database restore to preserve these records.",
@@ -252,7 +257,8 @@
       "byAdmin": "Set by admin",
       "byEmail": "Matched by email",
       "ownerOnly": "Only the highest administrator can change account mappings.",
-      "reconfirm": "The highest administrator must map this account again below before it can use Slack features."
+      "reconfirm": "The highest administrator must map this account again below before it can use Slack features.",
+      "memberUnlinked": "This member unlinked Slack in My settings; only they can allow it again."
     },
     "title": "Create cards and comments from Slack",
     "demo": "Demo mode does not connect to Slack. Configure a Docker installation to use this feature.",
@@ -272,9 +278,13 @@
       "commands": "Enable Interactivity. Add /livo and the livo_create_task and livo_comment_task message shortcuts. Add commands to the bot scopes and reinstall the app.",
       "env": "Set SLACK_APP_TOKEN and APP_BASE_URL in docker/.env, rerun the installer, then recreate the Compose services. The installer generates the internal secret.",
       "accounts": "On first use, the Slack email is matched to an active LIVO account that can log in. Map members whose emails differ below. After unbinding, the next use checks the email again."
-    }
+    },
+    "unbindTitle": "Remove this Slack mapping?",
+    "unbindConfirm": "\"{{slack}}\" can no longer use LIVO from Slack as \"{{member}}\" and gets no direct messages."
   },
   "featureToggles": {
+    "releasesLabel": "Release workspace",
+    "releasesDescription": "Manage release manifests, deployment records and linked QA verification. Turning it off hides the entry; existing release records are kept.",
     "slackActionsLabel": "Slack actions (cards and comments)",
     "slackActionsDescription": "Allow bound members to create cards and comments from Slack. Docker only; off by default.",
     "externalDescription": "After binding an account, status updates from external platforms sync to LIVO.",
@@ -348,7 +358,11 @@
     "verifyingIdentity": "Verifying identity...",
     "notSet": "Not set",
     "upload": "Upload",
-    "manage": "Manage"
+    "manage": "Manage",
+    "listSeparator": ", ",
+    "labelSeparator": ": ",
+    "unknownError": "Unknown error",
+    "loadFailed": "Could not load. Please retry."
   },
   "button": {
     "cancel": "Cancel",
@@ -498,6 +512,8 @@
     "personalSettings": "Personal Settings"
   },
   "sidebar": {
+    "projectTasks": "Tasks",
+    "projectQa": "QA",
     "ariaLabel": "Main Navigation",
     "navigation": "Navigation",
     "teamIntro": "Team Intro",
@@ -513,7 +529,7 @@
     "manageProductLines": "Manage Product Lines",
     "manageStatuses": "Manage Statuses",
     "taskTemplate": "Task Settings",
-    "teamManagement": "Team Management",
+    "teamManagement": "Team",
     "memberManagement": "Member Management",
     "teamSettings": "Team Settings",
     "teamManage": "Team Management",
@@ -589,7 +605,8 @@
     "noTasksInSprint": "No tasks here in the current sprint",
     "tasksInOtherSprints": "{{count}} task(s) here belong to other sprints, such as finished ones. The board shows only the current sprint and unscheduled tasks; the sidebar counts every task.",
     "otherSprintsShort": "+{{count}} in other sprints",
-    "viewAllInList": "View all tasks in the List view"
+    "viewAllInList": "View all tasks in the List view",
+    "dropOtherProject": "Cards move only within their own project row. To change the project, edit it in the task details."
   },
   "list": {
     "title": "Task List",
@@ -633,7 +650,8 @@
       "title": "Start New Sprint",
       "nameLabel": "Sprint Name",
       "includeBacklog": "Auto-include all backlog tasks",
-      "carryOverHint": "{{count}} tasks will be carried over from the previous sprint"
+      "carryOverHint": "{{count}} tasks will be carried over from the previous sprint",
+      "includeBacklogCount": "Also add the {{count}} open backlog tasks"
     },
     "prompt": {
       "title": "Sprint Complete!",
@@ -646,7 +664,8 @@
     "completeFailed": "Failed to complete sprint: ",
     "completed": "Sprint completed!",
     "renameFailed": "Failed to rename sprint: ",
-    "renamed": "Sprint name updated"
+    "renamed": "Sprint name updated",
+    "moveTasksFailed": "{{count}} tasks could not be moved. Refresh and try again."
   },
   "backlog": {
     "title": "Backlog",
@@ -835,7 +854,7 @@
     "created": "Task created",
     "createFailed": "Failed to create task: ",
     "deleted": "Task deleted",
-    "deleteConfirm": "Are you sure you want to delete \"{{title}}\"? This action cannot be undone.",
+    "deleteConfirm": "Delete \"{{title}}\"? Its comments, attachments and specs are deleted too, and its subtasks become standalone tasks. This cannot be undone.",
     "deleteTitle": "Delete Task",
     "linkCopied": "Card link copied",
     "templateSaved": "Saved as template",
@@ -867,7 +886,8 @@
       "subtasks": "Subtasks"
     },
     "properties": "Task Properties",
-    "noNestedSubtasks": "Nested subtasks are not allowed"
+    "noNestedSubtasks": "Nested subtasks are not allowed",
+    "linkNotFound": "Card {{key}} from the link was not found. It may have been deleted, or you may not have access to it."
   },
   "taskCreate": {
     "title": "Create Task",
@@ -932,7 +952,10 @@
       "todos": "To Do List",
       "gitlabUrl": "GitLab MR Link",
       "deployments": "Deployment Environment"
-    }
+    },
+    "discardTitle": "Discard this task?",
+    "discardDesc": "What you entered has not been created yet and will be lost.",
+    "joinSprint": "Add to the current sprint ({{name}})"
   },
   "template": {
     "nameRequired": "Please enter a template name",
@@ -960,7 +983,8 @@
       "dragDropMessage": "Drag and drop files here, or <span class=\"text-primary font-medium\">click to upload</span>",
       "fileSizeNote": "Max {{size}} MB per file",
       "saveFailed": "Save failed: ",
-      "saved": "Saved"
+      "saved": "Saved",
+      "discardDraft": "Your changes to this field are not saved and will be lost. Leave anyway?"
     },
     "comments": {
       "empty": "No comments yet",
@@ -976,7 +1000,9 @@
       "deleted": "Comment deleted",
       "updated": "Comment updated",
       "fileSizeExceeded": "File size exceeds the {{size}} MB limit",
-      "attachmentUploadFailed": "Attachment upload failed: "
+      "attachmentUploadFailed": "Attachment upload failed: ",
+      "deleteTitle": "Delete comment",
+      "deleteConfirm": "Delete this comment? A file attached to it is deleted too. This cannot be undone."
     },
     "metrics": {
       "createdStatus": "Created",
@@ -1051,7 +1077,9 @@
       "fileSizeExceeded": "The following files exceed the {{size}} MB limit: {{files}}",
       "uploadFailed": "The following files failed to upload: {{files}}",
       "uploadSuccess": "{{count}} files uploaded successfully",
-      "deleted": "Attachment deleted"
+      "deleted": "Attachment deleted",
+      "deleteTitle": "Delete attachment",
+      "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone."
     },
     "sidebar": {
       "customFields": "Custom Fields",
@@ -1102,7 +1130,23 @@
       "deleteTagConfirm": "Are you sure you want to delete the tag \"{{name}}\"? This tag will also be removed from all cards.",
       "deleteTagRelationsFailed": "Failed to delete tag relations: ",
       "deleteTagFailed": "Failed to delete tag: ",
-      "tagDeleted": "Tag \"{{name}}\" deleted"
+      "tagDeleted": "Tag \"{{name}}\" deleted",
+      "departmentFromAssignee": "From assignee ({{dept}})",
+      "approvalInProgressLocked": "An approval is in progress. Change this after it is completed or withdrawn.",
+      "backToSelect": "Back",
+      "cancel": "Cancel",
+      "completedAutoNote": "(recorded automatically when completed)",
+      "create": "Create",
+      "customLayout": "Arrange the custom fields",
+      "editingTags": "is editing tags",
+      "layout": "Layout",
+      "manage": "Manage",
+      "manageFields": "Manage custom fields",
+      "manageTags": "Manage tags",
+      "newTagName": "New tag name",
+      "pasteMrLink": "Paste a merge request link",
+      "saving": "Saving...",
+      "selectTag": "Select tags"
     },
     "dependency": {
       "sectionTitle": "Task Dependencies",
@@ -1146,7 +1190,8 @@
       "changeStatus": "Click to change status",
       "deleteConfirm": "Are you sure you want to delete subtask \"{{title}}\"?",
       "deleteTitle": "Delete Subtask",
-      "newPlaceholder": "Enter subtask title, press Enter to add..."
+      "newPlaceholder": "Enter subtask title, press Enter to add...",
+      "approvalInDetail": "This subtask requires approval. It is open now; submit the change from its details."
     },
     "statusTransitionBlocked": "This task has not passed through \"{{missingNames}}\" and cannot be moved to \"{{targetName}}\"",
     "approvalNeeded": "Approval Required",
@@ -1154,7 +1199,8 @@
     "statusChanged": "Status updated to \"{{statusName}}\"",
     "assignedAsAssignee": "You have been assigned as the assignee",
     "assignedAsReviewer": "You have been assigned as the reviewer",
-    "notificationCreateFailed": "Failed to create notification:"
+    "notificationCreateFailed": "Failed to create notification:",
+    "titleRequired": "A task needs a title, so the previous one was kept."
   },
   "customField": {
     "types": {
@@ -1254,11 +1300,13 @@
     "updated": "Updated",
     "deleted": "Deleted",
     "added": "Added",
-    "deleteConfirm": "Are you sure you want to delete the status \"{{name}}\"? Tasks using this status will become invalid.",
+    "deleteConfirm": "Delete the status \"{{name}}\"? No task uses it now.",
     "activityUpdated": "Renamed status \"{{oldName}}\" → \"{{newName}}\"",
     "activityDeleted": "Deleted status \"{{name}}\"",
     "activityCreated": "Created status \"{{name}}\"",
-    "editingStatus": "{{name}} is editing"
+    "editingStatus": "{{name}} is editing",
+    "deleteHasTasks": "{{count}} tasks are in \"{{name}}\". Move them to another status before deleting it.",
+    "deleteInHistory": "Tasks have passed through \"{{name}}\", so it stays in their history and cannot be deleted. You can rename or reorder it."
   },
   "transitionRule": {
     "title": "Transition Rules",
@@ -1347,10 +1395,9 @@
     "roleLabel": "Role",
     "roleUpdated": "Role updated",
     "memberAdded": "Member added",
-    "toggleConfirm": "Are you sure you want to {{action}} this member?",
     "memberToggled": "Member {{action}}",
     "toggleActivity": "{{action}} member \"{{name}}\" ({{transition}})",
-    "deleteConfirm": "Are you sure you want to permanently delete \"{{name}}\"? This action cannot be undone.",
+    "deleteConfirm": "Permanently delete \"{{name}}\"? Only a member without tasks, comments or records can be deleted; otherwise deactivate them. This cannot be undone.",
     "memberDeleted": "Member deleted",
     "deleteActivity": "Deleted member \"{{name}}\"",
     "operatingStatus": "{{name}} is operating",
@@ -1410,7 +1457,10 @@
     "createLoginAlreadyHasLogin": "This member already has an email — use \"Reset Password\" instead",
     "createLoginInactive": "This member is deactivated. Activate them before creating a login",
     "createLoginRequiresSuperAdmin": "Only a super admin can create a login for an admin",
-    "createLoginDemoBlocked": "Logins cannot be created in demo mode"
+    "createLoginDemoBlocked": "Logins cannot be created in demo mode",
+    "deleteHasHistory": "\"{{name}}\" has tasks, comments or records and cannot be deleted. Deactivate the member instead: the login is removed and the records are kept.",
+    "deactivateConfirm": "Deactivate \"{{name}}\"? They can no longer sign in; their tasks, comments and records are kept, and you can activate them again later.",
+    "activateConfirm": "Activate \"{{name}}\"? They can sign in again."
   },
   "bulkAction": {
     "selectedCount": "{{count}} tasks selected",
@@ -1420,8 +1470,11 @@
     "changePriority": "Change Priority",
     "deselectAll": "Deselect All",
     "deleteConfirmTitle": "Confirm Delete",
-    "deleteConfirmMessage": "Are you sure you want to delete {{count}} tasks? This action cannot be undone.",
-    "deletedCount": "{{count}} tasks deleted"
+    "deleteConfirmMessage": "Delete {{count}} tasks? Their comments, attachments and specs are deleted too. This cannot be undone.",
+    "deletedCount": "{{count}} tasks deleted",
+    "statusSkipped": "{{count}} not changed: an approval is pending or required, or a status the rules require has not been reached. Open them to change one by one.",
+    "statusPartialFailed": "{{count}} could not be saved; the others were updated.",
+    "partialFailed": "{{count}} tasks were not updated."
   },
   "notification": {
     "types": {
@@ -1527,7 +1580,31 @@
     "availableColumns": "Available",
     "langZhTW": "繁體中文",
     "langZhCN": "简体中文",
-    "langEn": "English"
+    "langEn": "English",
+    "slackLink": {
+      "title": "Slack link",
+      "tooltip": "The Slack account that represents you in LIVO: used when you work with LIVO from Slack and for Slack direct messages.",
+      "loadFailed": "The Slack link could not be loaded.",
+      "retry": "Try again",
+      "linked": "Linked to the Slack account \"{{name}}\"",
+      "byEmail": "matched by email",
+      "byAdmin": "mapped by an administrator",
+      "notLinkedYet": "Not linked yet. The first time you use LIVO from Slack, the Slack account with your LIVO email is linked automatically.",
+      "emailMode": "LIVO matches you to the Slack account with your email, to recognise you in Slack and to send you direct messages.",
+      "disabled": "Unlinked: LIVO does not act for you from Slack and sends you no direct messages (task notifications, digests, automatic reports, approvals). Channel messages are not affected.",
+      "unlink": "Unlink",
+      "relink": "Allow linking again",
+      "relinkHint": "After you allow it again, your email is checked the next time you use LIVO from Slack.",
+      "confirmTitle": "Unlink Slack?",
+      "confirmDesc": "LIVO will stop acting for your Slack account (creating cards, commenting, approving or replying to bugs from Slack) and stop sending you task notifications, digests, automatic reports and approvals by direct message. You can allow it again here at any time.",
+      "unlinked": "Slack unlinked",
+      "relinked": "Slack linking allowed again",
+      "saveFailed": "The Slack link could not be changed. Please try again.",
+      "recentActions": "Recent actions from Slack",
+      "noActions": "No actions from Slack yet.",
+      "actionsLoadFailed": "Could not load the actions taken from Slack."
+    },
+    "selfHostScheduledPending": "The self-hosted server does not send the Slack daily digest or automatic reports yet. Your settings are saved and will apply once it does."
   },
   "teamManage": {
     "title": "Team Management",
@@ -1536,8 +1613,7 @@
       "members": "Members",
       "taskConfig": "Task Config",
       "approval": "Approvals",
-      "notifications": "Notifications",
-      "external": "External"
+      "notifications": "Notifications"
     },
     "statusManage": "Status Management",
     "productLineDesc": "Manage product line categories and organization"
@@ -1566,7 +1642,7 @@
     "externalPlatform": "External Platform Binding",
     "reportSend": "Report Delivery Settings",
     "reportSendDesc": "Manage multi-channel delivery targets for reports",
-    "channelIntegrationNote": "Message templates define notification content. Delivery channels (e.g. Slack) are configured in \"External Integrations\". Connected channels are automatically used for notifications and reports."
+    "channelIntegrationNote": "The rules and templates here decide what notices say. Slack is connected under System admin → Integrations; rules and reports send once it is connected."
   },
   "slackNotify": {
     "loading": "Loading...",
@@ -1719,7 +1795,9 @@
       "guideStep2": "OAuth & Permissions → add these 7 Bot Token Scopes:",
       "guideStep3": "\"Install to Workspace\" → copy the Bot User OAuth Token (starts with xoxb-) and paste it above.",
       "guideStep4": "In the channel that should receive notifications, type /invite @your-bot to add the bot.",
-      "guideOpenApps": "Open Slack Apps dashboard"
+      "guideOpenApps": "Open Slack Apps dashboard",
+      "disconnectTitle": "Disconnect Slack?",
+      "disconnectConfirm": "Task notices, daily digests, automatic reports and using LIVO from Slack stop. Members' Slack mappings are kept, and you can connect again later."
     },
     "emailNotify": {
       "title": "Email Notifications (Resend)",
@@ -1831,7 +1909,10 @@
       "title": "Webhook",
       "desc": "Push task events via HTTP POST to a custom endpoint",
       "secretLabel": "Secret (optional, for signature verification)",
-      "eventsLabel": "Trigger Events"
+      "eventsLabel": "Trigger Events",
+      "legacyTitle": "The old webhook no longer sends",
+      "legacyDesc": "The old webhook ({{url}}) was sent from each member's browser and its signing secret was stored where every member can read it, so it is no longer used. Recreate it with the same URL under Webhooks above (sent and signed by the server), then clear this old setting.",
+      "legacyClear": "Clear old setting"
     },
     "gitlab": {
       "title": "GitLab",
@@ -1849,9 +1930,6 @@
       "syncStartDates": "Sync start dates"
     },
     "external": {
-      "slack": "Slack",
-      "teams": "Microsoft Teams",
-      "line": "LINE",
       "actions": {
         "approve": "Approve",
         "reject": "Reject Approval",
@@ -1867,26 +1945,7 @@
         "failed": "Failed",
         "denied": "Denied",
         "expired": "Expired"
-      },
-      "lastActive": "Last Active",
-      "notBound": "Not Bound",
-      "unbind": "Unbind",
-      "bindAccount": "Bind Account",
-      "connectedTab": "Connected Platforms",
-      "logsTab": "Activity Logs",
-      "noLogs": "No activity logs yet",
-      "howToBind": "How to bind your account?",
-      "slackInstruction": "Slack: once an admin turns on \"Slack actions (cards and comments)\" under Feature switches, your account is bound automatically by your Slack email the first time you use /livo. Nothing else to do.",
-      "teamsInstruction": "Teams: Send",
-      "toBot": "to LIVO Bot",
-      "lineInstruction": "LINE: Enter in the LIVO official account",
-      "bindSyncDesc": "Once bound, you can approve, update statuses, and perform other actions directly from the external platform. Changes are automatically synced to LIVO.",
-      "unbindComingSoon": "Unbind feature coming soon. Please contact the administrator to unbind.",
-      "comingSoonBanner": "Coming Soon",
-      "comingSoonDesc": "Two-way communication (operating LIVO from external platforms) is under development and not yet available. Stay tuned!",
-      "slackBindInstruction": "Once an admin turns on \"Slack actions (cards and comments)\", your account is bound automatically by your Slack email the first time you use /livo in Slack.",
-      "teamsBindInstruction": "Send \"@LIVO bind\" to LIVO Bot in Microsoft Teams and the system will automatically complete the account binding.",
-      "lineBindInstruction": "Send \"/bind\" in the LINE official account chat and the system will automatically complete the account binding."
+      }
     }
   },
   "apiTokenAccess": {
@@ -1949,7 +2008,12 @@
     "confirmRestore": "Are you sure you want to restore from the JSON backup? This will overwrite all existing data! We recommend backing up your current data first.",
     "missingTables": "Backup file is missing required tables:",
     "restoreSuccess": "Restore complete! Total ",
-    "restoreError": "Restore failed:"
+    "restoreError": "Restore failed:",
+    "restoreServerOnly": "JSON backups are for keeping and reading; they cannot be restored here. Tasks, approvals, the knowledge base and attachments depend on each other, so a partial restore would leave them inconsistent. To restore a whole workspace, the server administrator restores the database backup together with the file backup.",
+    "qaRestoreLogin": "Sign in again to restore QA records.",
+    "qaRestoreFailed": "QA records could not be restored.",
+    "qaRestoreConflicts": "The QA backup has {{conflicts}} conflicting records and {{missing}} missing attachments. Resolve them before restoring.",
+    "qaRestoredNote": "QA records restored. The JSON backup only lists attachments; keep or restore the stored files separately."
   },
   "adminImportExport": {
     "sectionTitle": "Data Import / Export",
@@ -2174,17 +2238,13 @@
   "adminUsage": {
     "sectionTitle": "Storage & Cleanup",
     "capacityTitle": "Storage Usage",
-    "dbLabel": "Database (limit 500 MB)",
-    "storageLabel": "File Storage (limit 1 GB)",
+    "storageLabel": "File storage",
     "refreshButton": "Refresh",
     "cleanupTitle": "Log Cleanup",
-    "cleanupDesc": "Clean up activity logs, status change records, and read notifications to free up database space",
+    "cleanupDesc": "Clean up activity logs and read notifications to free database space. Status change records feed the dashboard and are kept.",
     "activityLogs": "Activity Logs: ",
-    "statusLogs": "Status Logs: ",
     "readNotifications": "Read Notifications: ",
     "retention": {
-      "1day": "Keep 1 day",
-      "7days": "Keep 7 days",
       "30days": "Keep 30 days",
       "60days": "Keep 60 days",
       "90days": "Keep 90 days",
@@ -2194,7 +2254,13 @@
     "cleaning": "Cleaning...",
     "cleanupButtonPrefix": "Clean logs older than ",
     "cleanupButtonSuffix": " days",
-    "cleanupWarning": "Cleaned logs cannot be recovered, but task data will not be affected."
+    "cleanupWarning": "Cleaned logs cannot be recovered. Tasks, status change records and the dashboard are not affected.",
+    "cleanupConfirm": "Delete activity logs and read notifications older than {{days}} days? This cannot be undone.",
+    "cleanupLogDetail": "Cleaned logs older than {{days}} days (activity logs, read notifications)",
+    "storageLimit": "limit {{size}}",
+    "recordsLabel": "Records",
+    "storageNoLimit": "Self-hosted installs have no storage limit. This adds up attachments and backups only; the server disk is the real figure.",
+    "recordsValue": "about {{value}} records"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2314,8 +2380,9 @@
       "line": "Product Line"
     },
     "sprint": {
-      "current": "Current Sprint",
-      "all": "All Sprints"
+      "current": "Current sprint",
+      "all": "All tasks",
+      "openTasks": "Open tasks"
     },
     "viewMode": {
       "day": "Day",
@@ -2503,7 +2570,9 @@
     "deleteColumn": "Delete Column",
     "deleteTable": "Delete Table",
     "undo": "Undo",
-    "redo": "Redo"
+    "redo": "Redo",
+    "rowShort": "Row",
+    "columnShort": "Col"
   },
   "confirm": {
     "defaultTitle": "Confirm"
@@ -2612,7 +2681,41 @@
     "notificationTemplateCreated": "Created notification template \"{{name}}\"",
     "notificationTemplateUpdated": "Updated notification template \"{{name}}\"",
     "notificationTemplateDeleted": "Deleted notification template",
-    "createLogin": "Enable login"
+    "createLogin": "Enable login",
+    "extra": {
+      "add_tag": "Added a tag",
+      "remove_tag": "Removed a tag",
+      "delete_tag": "Deleted a tag",
+      "approval_rule_created": "Created an approval rule",
+      "approval_rule_updated": "Changed an approval rule",
+      "approval_rule_deleted": "Deleted an approval rule",
+      "bulk_assign": "Bulk assign",
+      "bulk_update_priority": "Bulk priority change",
+      "bulk_update_status": "Bulk status change",
+      "change_job_title": "Changed a job title",
+      "delete_product_line": "Deleted a product line",
+      "edit_comment": "Edited a comment",
+      "end_standup": "Ended the stand-up",
+      "export_csv": "Exported CSV",
+      "mention": "Mentioned a member",
+      "notification_rule_created": "Created a notification rule",
+      "notification_rule_deleted": "Deleted a notification rule",
+      "notification_rule_toggled": "Turned a notification rule on or off",
+      "notification_template_created": "Created a notification template",
+      "notification_template_updated": "Changed a notification template",
+      "notification_template_deleted": "Deleted a notification template",
+      "unlink_parent": "Removed the parent task",
+      "create": "Created a task",
+      "approval_requested": "Requested approval",
+      "approval_step_approved": "Approved a step",
+      "approval_approved": "Approval completed",
+      "approval_rejected": "Rejected an approval",
+      "approval_returned": "Returned for changes",
+      "approval_withdrawn": "Withdrew an approval",
+      "approval_cancelled": "Cancelled an approval",
+      "approval_requirement_changed": "Changed the approval requirement"
+    },
+    "otherAction": "Other action"
   },
   "views": {
     "approvalsTitle": "Pending Approvals"
@@ -2632,7 +2735,10 @@
     "noteDesc": "Note",
     "notePlaceholder": "Note (optional)...",
     "approvalSuffix": "Approval",
-    "noItems": "No pending approval items"
+    "noItems": "No pending approval items",
+    "bulkConfirmTitle": "Approve {{count}} requests?",
+    "bulkConfirmDesc": "Each one is approved in your name and moves its task on according to the rules.",
+    "bulkPartialFailed": "{{count}} requests were not approved; check them one by one."
   },
   "memberList": {
     "title": "Member List",
@@ -2728,7 +2834,6 @@
     "title": "Send Report to External Channels",
     "selectTargets": "Select target channels to send to:",
     "noTargets": "No targets selected",
-    "comingSoon": "Coming Soon",
     "addTarget": "Add Send Target",
     "addTargetTitle": "Add Send Target",
     "statusSent": "Sent",
@@ -2738,7 +2843,6 @@
     "partialResult": "{{sent}} succeeded, {{failed}} failed",
     "retryFailed": "Retry Failed",
     "sendToChannels": "Send to {{count}} channels",
-    "nonSlackWarning": "Some channels are coming soon. Please remove non-Slack targets before sending.",
     "formatText": "Plain Text",
     "formatFull": "Full Format",
     "platform": "Platform",
@@ -2751,7 +2855,9 @@
       "emailRecipients": "Please enter recipient emails",
       "lineToken": "Please enter a LINE Notify Token",
       "webhookUrl": "Please enter a Webhook URL"
-    }
+    },
+    "unsupported": "Not supported, skipped",
+    "unsupportedHint": "Only Slack can deliver reports now. Remove this target or use a Slack channel."
   },
   "theme": {
     "dark": "Dark",
@@ -2861,6 +2967,7 @@
     "backToLogin": "Go to the sign-in page"
   },
   "kb": {
+    "moreActions": "More actions",
     "title": "Knowledge base",
     "subtitle": "Keep team practices and project references together",
     "shared": "Shared",
@@ -2880,7 +2987,7 @@
     "pageTitle": "Page title",
     "parent": "Parent page (three levels maximum)",
     "noParent": "None, place at the top level",
-    "order": "Sort order (ascending)",
+    "order": "Team order (smaller first)",
     "adminOnly": "Only admins can edit",
     "edit": "Edit",
     "save": "Save",
@@ -2973,7 +3080,7 @@
       "selfHint": "Only you can view, edit and comment.",
       "workspaceHint": "Active members of this workspace can view and comment; only you can edit.",
       "parentLimit": "Parent restrictions still apply. This choice cannot grant access denied by a parent page.",
-      "privateDraftHint": "This owner-only draft remains private. Publish or share it through Document status before opening access to others.",
+      "privateDraftHint": "This private draft is only visible to you. To let others see it, use Share private draft and choose where, or publish it as the official version.",
       "actionTabs": "Permission to configure"
     },
     "comments": {
@@ -3019,8 +3126,8 @@
       "emptyFavorites": "No favorites in this scope.",
       "showAll": "Show all",
       "importFile": "Import document",
-      "importVersion": "Import source revision",
-      "historicalListHint": "Text check marks belong to the historical record. Use Tracking to create or link current work.",
+      "importVersion": "Upload a new source file (for comparison; the page stays as is)",
+      "historicalListHint": "Text check marks belong to the historical record. Create or link current work under Actions and linked work.",
       "filters": "Filters",
       "activeFilters": "{{count}} active filters",
       "clearSearch": "Clear search",
@@ -3039,7 +3146,15 @@
       "favoriteAction": "Add to favorites",
       "unfavoriteAction": "Remove from favorites",
       "pinAction": "Pin for me",
-      "unpinAction": "Remove my pin"
+      "unpinAction": "Remove my pin",
+      "tabs": {
+        "tree": "All",
+        "favorites": "Favorites",
+        "pins": "Pins"
+      },
+      "collapseSidebar": "Collapse sidebar",
+      "expandSidebar": "Expand sidebar",
+      "resizeSidebar": "Drag to resize the sidebar (double-click to reset)"
     },
     "sharing": {
       "copyLink": "Copy link",
@@ -3054,16 +3169,21 @@
       "accessHint": "Links keep LIVO access checks. Account access alone does not grant permission to a restricted page.",
       "copyNotice": "PDF and copied content are independent copies of the saved page body; download attachments separately. Changing LIVO permissions cannot revoke these copies.",
       "updated": "Updated: {{date}}"
-    }
+    },
+    "newChildPage": "New subpage",
+    "parentForNew": "Parent page",
+    "placementSettings": "Location, team order and edit lock",
+    "adminOnlyOption": "Only admins can edit this page (others still read it by its permissions)"
   },
   "qa": {
+    "sortDefault": "Recently updated",
     "completeInPanel": "Complete this step in the version panel.",
     "verificationNote": "Add a test note (optional)",
     "linkedTaskUnavailable": "These existing links are no longer available for this project. Uncheck them before saving.",
     "moreActions": "More actions",
     "yourNextStep": "Your next step",
     "waitingForAction": "Waiting for {{name}}: {{action}}",
-    "triageTeam": "QA or an administrator",
+    "triageTeam": "an administrator or the QA coordinator",
     "addAttachment": "Add attachment",
     "hideAttachmentUpload": "Hide upload area",
     "targetMoreOptions": "More options",
@@ -3100,7 +3220,7 @@
     "title": "QA Bugs",
     "myTitle": "My QA",
     "featureLabel": "QA bug workflow",
-    "featureDescription": "Report, triage, fix and verify bugs. Turning this off hides QA and stops QA access; existing records are kept.",
+    "featureDescription": "Report, assign, fix and verify bugs. Turning this off hides QA and stops QA access; existing records are kept.",
     "report": "Report a bug",
     "reportTitle": "New bug report",
     "edit": "Edit report",
@@ -3126,7 +3246,7 @@
     "refresh": "Refresh",
     "loading": "Loading…",
     "saving": "Saving…",
-    "search": "Search title or ID",
+    "search": "Search titles or #number",
     "searchButton": "Search",
     "allStates": "All states",
     "empty": "No bugs match this view.",
@@ -3136,11 +3256,10 @@
     "assigned": "Assigned to me",
     "testing": "QA owned by me",
     "reported": "Reported by me",
-    "everyone": "Everyone",
     "projectEntry": "Project QA",
     "state": {
       "new": "New",
-      "triaged": "Triaged",
+      "triaged": "Assigned",
       "in_progress": "Fix in progress",
       "verification": "Verification",
       "closed": "Closed",
@@ -3186,7 +3305,7 @@
     "close": "Close bug",
     "resolutionField": "Resolution",
     "reason": "Reason",
-    "duplicateId": "Original bug ID",
+    "duplicateId": "Original bug number",
     "reopen": "Reopen",
     "hold": "Record a blocker",
     "taskLinks": "Link development tasks",
@@ -3237,10 +3356,9 @@
     "versionChoose": "Choose an existing version",
     "fixVersionHint": "Type a build, version or commit ID for this fix, or choose a recorded version from this project.",
     "unassigned": "Unassigned",
-    "priorityUnassigned": "Priority not set",
     "createIntro": "Describe the problem and add evidence to help the team reproduce it.",
     "workspaceIntro": "Track issues through repair and verification.",
-    "searchPlaceholder": "Search title or Bug ID",
+    "searchPlaceholder": "Search titles, or #number",
     "filtersApplied": "Filters applied",
     "clearFilters": "Clear filters",
     "slackSource": "View Slack source",
@@ -3276,7 +3394,37 @@
     },
     "error": {
       "qa_invalid_environment": "Deployment environments changed. Select an available environment.",
-      "qa_historical_pass_unavailable": "The original PASS evidence is unavailable. Complete verification first."
+      "qa_historical_pass_unavailable": "The original PASS evidence is unavailable. Complete verification first.",
+      "qa_forbidden": "You do not have permission for this. Check that you are the bug's reporter, fixer or verifying QA.",
+      "qa_unauthorized": "Your session has expired. Please sign in again.",
+      "qa_disabled": "QA is turned off. Ask an administrator.",
+      "qa_project_unavailable": "This project is archived or unavailable.",
+      "qa_member_unavailable": "The chosen member is deactivated or no longer exists. Please assign someone else.",
+      "qa_member_inactive": "Your account is deactivated. Ask an administrator.",
+      "qa_required": "Please fill in the required fields.",
+      "qa_custom_field_required": "Please fill in the required custom fields.",
+      "qa_custom_field_unavailable": "The custom fields changed. Please open the form again.",
+      "qa_invalid_custom_field_value": "A custom field value is not valid. Please check it and try again.",
+      "qa_build_mismatch": "The fix version changed. Refresh and report again.",
+      "qa_verification_required": "Some required environments have not passed verification, so the bug cannot be closed.",
+      "qa_not_deployed": "This environment has not been reported as deployed yet.",
+      "qa_triage_required": "Choose the fix owner and the QA owner first.",
+      "qa_targets_required": "Choose at least one environment to verify.",
+      "qa_required_target": "Choose at least one environment to verify.",
+      "qa_duplicate_unavailable": "The original bug you chose does not exist or is unavailable.",
+      "qa_task_unavailable": "A linked task does not exist, or you cannot view it.",
+      "qa_too_many_tasks": "Too many linked tasks.",
+      "qa_file_too_large": "The file is larger than the limit.",
+      "qa_invalid_file_type": "This file type is not supported.",
+      "qa_storage_unavailable": "File storage is unavailable right now. Please try again later.",
+      "qa_upload_expired": "The upload timed out. Please upload again.",
+      "qa_invalid_comment": "A comment cannot be empty or longer than the limit.",
+      "qa_issue_not_found": "This bug was not found. It may have been deleted.",
+      "qa_not_found": "This bug was not found. It may have been deleted.",
+      "qa_handoff_conflict": "This bug already has a handoff in progress.",
+      "qa_command_id_reused": "This action was already sent. Refresh to check the result.",
+      "qa_request_too_large": "The content is too long. Please shorten it and try again.",
+      "qa_invalid_date": "The date is not valid."
     },
     "verificationTab": "Repair and verification",
     "changeState": "Change status",
@@ -3311,7 +3459,62 @@
     "dropSaved": "Moved to “{{status}}”",
     "dropFailed": "Bug status could not be updated",
     "dropPermission": "Only the reporter, repair owner, QA owner, or an administrator can change this bug’s status.",
-    "dropUncertain": "The server result is not confirmed, so the card is back in its original position. Retry or refresh to check the latest status."
+    "dropUncertain": "The server result is not confirmed, so the card is back in its original position. Retry or refresh to check the latest status.",
+    "involved": "Everything I'm part of",
+    "noTargets": "No fix submitted yet. The fix owner chooses the environments to deploy and verify when submitting a fix.",
+    "holdCurrent": "Current blocker",
+    "clearHold": "Clear blocker",
+    "reopenReason": "Reopen reason",
+    "holdReplaceHint": "This replaces the current blocker note. When the blocker is gone, use Clear blocker.",
+    "fixedNeedsVerification": "Close as Verified fix once every required environment is deployed and passes verification.",
+    "reasonOptional": "Note (optional)",
+    "terminalConfirmTitle": "Move this bug to \"{{status}}\"?",
+    "terminalConfirmDesc": "This only changes the status; no verification or closing reason is recorded. To close the bug properly, use Close.",
+    "duplicateOf": "Duplicate of {{id}}",
+    "historyHandoffTo": "Handed to {{name}}",
+    "historyHandoffAccepted": "{{name}} accepted",
+    "historyEvent": {
+      "create": "Reported the bug",
+      "edit": "Edited the report",
+      "triage": "Set owners",
+      "start_fix": "Started the fix",
+      "submit_fix": "Submitted a fix",
+      "record_deployment": "Confirmed deployment",
+      "record_verification": "Recorded verification",
+      "set_state": "Changed status",
+      "close": "Closed",
+      "reopen": "Reopened",
+      "hold": "Recorded a blocker",
+      "holdCleared": "Cleared the blocker",
+      "link_tasks": "Linked tasks",
+      "request_handoff": "Requested a handoff",
+      "accept_handoff": "Accepted the handoff",
+      "resolve_handoff": "Resolved the handoff",
+      "update": "Updated the bug"
+    },
+    "notify": {
+      "create": "reported a new bug",
+      "created": "reported a new bug",
+      "comment": "commented on a bug",
+      "set_state": "changed a bug's status",
+      "triage": "set a bug's owners",
+      "submit_fix": "submitted a fix for QA",
+      "record_deployment": "confirmed a deployment",
+      "record_verification": "recorded a verification result",
+      "close": "closed a bug",
+      "reopen": "reopened a bug",
+      "hold": "updated a bug's blocker",
+      "edit": "edited a bug report",
+      "request_handoff": "asked you to take over a bug",
+      "accept_handoff": "accepted a handoff",
+      "resolve_handoff": "resolved a handoff",
+      "update": "updated a bug"
+    },
+    "priorityDefault": "{{name}} (default)",
+    "priorityDefaultHint": "Nobody has set a priority yet; the default is used.",
+    "overdue": "Overdue since {{date}}",
+    "blocked": "Blocked",
+    "handoffOpen": "Handoff open"
   },
   "deploymentEnvironments": {
     "title": "Deployment environments",
@@ -3346,6 +3549,7 @@
     "processor_not_configured": "The private document processor has not been configured.",
     "processor_busy": "The private processor is busy. Retry this item shortly.",
     "processing_timeout": "Processing reached its time limit. Split the document or retry.",
+    "import_interrupted": "The server stopped while handling this document. Try again later; if it keeps happening, split the document or reduce its images.",
     "processor_unavailable": "The private document processor is not reachable. Ask the system operator to check that it is running, then retry this item.",
     "page_limit": "The PDF exceeds the 40-page processing limit. Split it into smaller files.",
     "encrypted_pdf": "Password-protected PDFs cannot be parsed. Provide an authorized unlocked copy.",
@@ -3411,7 +3615,7 @@
     "readOnly": "View only; cannot import here",
     "mode": "When the source already exists",
     "create": "Create a page",
-    "update": "Add a source version to an existing page",
+    "update": "Add a source file version to an existing page (the page stays as is)",
     "copy": "Save an intentional copy",
     "target": "Existing page",
     "preserve": "The edited page body stays unchanged. The new source is an immutable version available for comparison; apply any changes in the editor after review.",
@@ -3436,7 +3640,7 @@
     "notionUsers": "Members allowed to use this connection",
     "disconnect": "Disconnect Notion",
     "connected": "Connection configured; leave token blank to keep it.",
-    "processorMissing": "The private document processor is not configured. Ask the system operator to enable it; no file was sent to an external OCR provider.",
+    "processorMissing": "Word and PDF need the private document processor; ask the system operator to enable it. Markdown and Notion import without it. No file is sent to an external OCR provider.",
     "sourceVersions": "Imported source versions and originals",
     "download": "Download original",
     "unknownError": "Import failed. Your existing pages were not overwritten. Refresh the preview or retry failed items.",
@@ -3466,7 +3670,43 @@
     "storage_key_conflict": "The source content changed. Start a new import.",
     "import_payload_missing": "The staged converted content could not be read. Retry the import.",
     "import_metadata_too_large": "This import contains too much metadata. Import fewer documents at a time.",
-    "parsed_document_too_large": "The converted document exceeds 900,000 UTF-8 bytes. Split it into smaller documents."
+    "parsed_document_too_large": "The converted document exceeds 900,000 UTF-8 bytes. Split it into smaller documents.",
+    "asset_size_limit": "Attachments are too large or too many for one import. Import in smaller batches or reduce the attachments.",
+    "cleanup_failed": "The import finished, but temporary files were not cleaned up yet; they will be cleaned up automatically.",
+    "commit_failed": "This item was not saved; the others are not affected. Retry or skip this item.",
+    "commit_in_progress": "This import is being saved. Wait until it finishes.",
+    "demo_import_disabled": "Importing documents is not available in the demo.",
+    "depth_limit": "Pages go at most three levels deep and that parent is already on the third level. Choose a higher parent.",
+    "duplicate_mapping": "The same item has two destinations. Check and import again.",
+    "file_not_found": "This source file was not found; it may have been removed.",
+    "invalid_destination": "The destination is incomplete or not valid. Choose the scope, parent page and access again.",
+    "invalid_file": "The file cannot be read or is over the size limit.",
+    "invalid_mapping": "There is nothing to import, or the items do not belong to this import. Choose again.",
+    "invalid_notion_pages": "The Notion page list is not valid (at most 100 pages at a time).",
+    "invalid_notion_token": "The Notion integration token is not valid.",
+    "invalid_policy": "The import access settings are not valid. Choose who may use it again.",
+    "invalid_processor_configuration": "The document conversion service is not set up correctly. Ask an administrator to check the server settings.",
+    "invalid_processor_result": "The conversion service returned content that cannot be used (it may exceed 40 pages or 24 attachments).",
+    "invalid_storage_key": "The file location is not valid; access was refused.",
+    "item_not_ready": "An item is not converted yet or failed. Wait for it or skip it.",
+    "job_changed": "This import was just changed elsewhere. Refresh and try again.",
+    "job_not_found": "This import was not found; it may have expired or been cancelled.",
+    "job_not_ready": "Conversion is not finished yet. Try again shortly.",
+    "job_not_retryable": "This import is in progress or already finished and cannot be retried.",
+    "notion_asset_limit": "The Notion page has more than 24 attachments; only the first 24 were imported. Download the rest from Notion.",
+    "notion_attachment_unavailable": "A Notion attachment could not be downloaded and was skipped.",
+    "notion_attachment_unsupported": "A Notion attachment type is not supported and was skipped.",
+    "notion_rate_limited": "Notion is limiting requests right now. Try again later.",
+    "notion_selection_limit": "Choose the Notion pages to import (at most 10 at a time).",
+    "processing_failed": "Conversion failed. Check that the file opens normally and try again.",
+    "processing_superseded": "This file is being converted again; the earlier result will not be used.",
+    "scope_mismatch": "The parent page belongs to another project, and a page sits in its parent's scope. Choose another scope or parent.",
+    "source_missing": "The file content to import was not found. Upload it again.",
+    "source_size_limit": "The file is over the import limit (10 MB).",
+    "staging_failed": "The file could not be staged. Try again.",
+    "unknown_action": "This action is not supported. Refresh the page.",
+    "unsafe_processor_result": "The converted content contained something unsafe and was refused.",
+    "depthFull": "already three levels deep"
   },
   "kbWorkflow": {
     "heading": "Actions and linked work",
@@ -3500,13 +3740,13 @@
     "project": "Project",
     "choose": "Choose",
     "status": "Initial status",
-    "assignee": "Owner",
+    "assignee": "Assignee",
     "unassigned": "Unassigned",
     "deadline": "Due date",
     "description": "Shareable work description",
     "confirmCreate": "Create and link",
-    "sources": "Source versions",
-    "sourceHint": "Source versions are preserved independently. Checklist and work progress do not rewrite the original.",
+    "sources": "Source at creation",
+    "sourceHint": "When a task or bug is created from this page, the page text at that moment is saved as its source. Later edits do not change these records.",
     "capture": "Save current body version",
     "relation": {
       "reference": "Reference",
@@ -3523,8 +3763,13 @@
       "kb_workflow_invalid": "Check required fields, the date, and selected project.",
       "kb_workflow_task_key_conflict": "The task key was taken. Please retry.",
       "qa_invalid_environment": "This environment is inactive. Select an available environment.",
-      "qa_disabled": "Bug tracking is disabled."
-    }
+      "qa_disabled": "Bug tracking is disabled.",
+      "kb_workflow_too_large": "This request is too large. Shorten the description or split it into smaller tasks."
+    },
+    "pickPlaceholder": "Click to browse, or type a title or key",
+    "searching": "Searching…",
+    "noTargets": "No matching items",
+    "orCreate": "Not found?"
   },
   "releaseWorkspace": {
     "selfDecisionHint": "Exceptions you requested are not listed here; another administrator must decide them.",
@@ -3700,7 +3945,152 @@
       "assignee": "I own",
       "reviewer": "I review",
       "fix": "I fix",
-      "verify": "I verify"
+      "verify": "I verify",
+      "handoff": "Handed to me"
+    }
+  },
+  "boardSort": {
+    "button": "Sort",
+    "current": "Sort: {{field}}",
+    "title": "Sort by",
+    "order": "Order",
+    "fields": {
+      "default": "Default",
+      "priority": "Priority",
+      "dueDate": "Due date",
+      "createdAt": "Created"
+    },
+    "directions": {
+      "priority": {
+        "desc": "High → low",
+        "asc": "Low → high"
+      },
+      "dueDate": {
+        "asc": "Soonest first",
+        "desc": "Latest first"
+      },
+      "createdAt": {
+        "desc": "Newest first",
+        "asc": "Oldest first"
+      }
+    }
+  },
+  "projectScope": {
+    "project": "Showing: {{name}}",
+    "line": "Showing product line: {{name}}",
+    "clear": "Show all projects"
+  },
+  "notificationRules": {
+    "events": {
+      "taskCreated": "Task created",
+      "statusChanged": "Status changed",
+      "assigneeChanged": "Assignee changed",
+      "dueReminder": "Due date reminder",
+      "overdue": "Task overdue",
+      "approvalRequested": "Approval requested",
+      "approvalCompleted": "Approval completed",
+      "commentAdded": "Comment added",
+      "custom": "Custom"
+    },
+    "tones": {
+      "neutral": "Neutral",
+      "celebration": "Celebration",
+      "urgent": "Urgent",
+      "warning": "Warning",
+      "friendly": "Friendly"
+    },
+    "defaultContent": {
+      "taskCreated": "📋 {{assigner_name}} created a new task \"{{task_name}}\" | Assignee: {{assignee}} | Priority: {{priority}} | Due: {{due_date}}",
+      "statusChanged": "🔄 Task \"{{task_name}}\" moved from \"{{prev_status}}\" to \"{{status}}\". Changed by: {{changer_name}}",
+      "assigneeChanged": "👋 Hi {{assignee}}, {{assigner_name}} assigned you the task \"{{task_name}}\". Priority: {{priority}}, due: {{due_date}}. Please take a look soon.",
+      "dueReminder": "⚠️ Reminder: \"{{task_name}}\" is due soon ({{due_remaining}} days left) | Assignee: {{assignee}}",
+      "overdue": "🚨 \"{{task_name}}\" is {{overdue_days}} days overdue! | Assignee: {{assignee}}",
+      "approvalRequested": "⏳ {{requester_name}} requested approval for \"{{task_name}}\". Please review it on the approvals page.",
+      "approvalCompleted": "✅ Approval for \"{{task_name}}\" is complete | Approver: {{approver_name}}",
+      "commentAdded": "💬 New comment on \"{{task_name}}\" | From {{reporter}}",
+      "custom": "📢 {{task_name}}"
+    },
+    "sample": {
+      "taskName": "Implement sign-in",
+      "assignee": "Alex Chen",
+      "reporter": "Jamie Lin",
+      "approver": "Morgan Wang",
+      "status": "In progress",
+      "prevStatus": "To do",
+      "descriptionSummary": "Implement Google OAuth and email sign-in"
+    },
+    "addRule": "Add rule",
+    "any": "Any",
+    "anyStatus": "Any status",
+    "autoDelay": "Auto {{seconds}}s",
+    "autoSend": "Send automatically",
+    "default": "Default",
+    "deleteRule": "Delete rule",
+    "deleteRuleConfirm": "Delete this notification rule? This cannot be undone.",
+    "empty": "No notification rules yet. Click \"Add rule\" to create the first one.",
+    "eventType": "Event type",
+    "listDescription": "Choose which events trigger notifications and which template they use",
+    "manual": "Manual",
+    "neverFires": "Currently never fires",
+    "neverFiresHint": "Only status change events trigger notifications for now",
+    "noTemplate": "No template",
+    "priorityPolicyTitle": "Message priority policy",
+    "priorityPolicyDescription": "Project rules take precedence over global rules. When several rules match the same event, the highest-priority one (the first matching project rule) is used.",
+    "dialog": {
+      "addTitle": "New notification rule",
+      "triggerEvent": "Trigger event",
+      "fromStatus": "From status (blank = any)",
+      "toStatus": "To status (blank = any)",
+      "template": "Message template",
+      "templateDefault": "Default (use task title)",
+      "useTemplate": "Template",
+      "selectTemplateOptional": "Select a template (optional)",
+      "templateNone": "None (use task title)",
+      "channelType": "Channel type",
+      "channelTarget": "Target channel",
+      "delay": "Delay",
+      "autoSendDelay": "Auto-send delay (seconds)"
+    },
+    "table": {
+      "statusCondition": "Status condition",
+      "template": "Template",
+      "channel": "Channels",
+      "auto": "Auto",
+      "enabled": "Enabled"
+    },
+    "templates": {
+      "description": "Manage the notification text for each event, with variable substitution",
+      "add": "Add template",
+      "addTitle": "New message template",
+      "editTitle": "Edit message template",
+      "edit": "Edit template",
+      "delete": "Delete template",
+      "deleteConfirm": "Delete this template? Rules that use it will fall back to the default message.",
+      "create": "Create template",
+      "empty": "No message templates yet. Click \"Add template\" to create the first one.",
+      "emptyShort": "No templates yet",
+      "name": "Template name",
+      "namePlaceholder": "e.g. Task completed",
+      "tone": "Tone",
+      "content": "Template content",
+      "contentPlaceholder": "e.g. {{task}} was moved to {{status}} by {{assignee}}",
+      "previewLabel": "Preview:",
+      "previewSample": "Preview (sample data)",
+      "variablesAria": "Template variables"
+    },
+    "toast": {
+      "title": "Card status change",
+      "movedTo": "\"{{title}}\" moved to",
+      "fromTo": "From \"{{from}}\" → \"{{to}}\"",
+      "dismiss": "Dismiss notification",
+      "noMessage": "(No pre-filled message)",
+      "selectTemplate": "Select a template…",
+      "noTemplate": "No template (use task title)",
+      "messagePlaceholder": "Enter a notification message…",
+      "autoSendIn": "Sending automatically in {{seconds}}s",
+      "sending": "Sending…",
+      "collapse": "Collapse",
+      "send": "Send"
     }
   }
 }

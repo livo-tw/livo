@@ -1,5 +1,5 @@
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, addDays, subWeeks, addWeeks, subMonths, addMonths } from 'date-fns';
-import { zhTW } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/dateLabels';
 import i18n from '@/i18n';
 
 export type ReportType = 'daily' | 'weekly' | 'monthly';
@@ -47,7 +47,7 @@ export function shiftAnchor(type: ReportType, anchor: Date, dir: -1 | 1): Date {
 }
 
 export function periodTitle(type: ReportType, start: Date, end: Date): string {
-  if (type === 'daily') return format(start, 'yyyy/MM/dd (EEE)', { locale: zhTW });
+  if (type === 'daily') return format(start, 'yyyy/MM/dd (EEE)', { locale: dateFnsLocale() });
   if (type === 'weekly') return `${format(start, 'yyyy/MM/dd')} ~ ${format(end, 'MM/dd')}`;
-  return format(start, 'yyyy/MM', { locale: zhTW });
+  return format(start, 'yyyy/MM', { locale: dateFnsLocale() });
 }

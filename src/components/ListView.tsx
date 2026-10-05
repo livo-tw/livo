@@ -12,7 +12,7 @@ import DepartmentFilter from '@/components/DepartmentFilter';
 import MultiSelectDropdown from '@/components/MultiSelectDropdown';
 import ColumnConfigDropdown from '@/components/ColumnConfigDropdown';
 import { priorityConfig } from '@/components/ui/badges';
-import { getDepartment, sortUsersByDept, type Department } from '@/lib/department';
+import { taskDepartment, sortUsersByDept, type Department } from '@/lib/department';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FIXED_KEYS } from '@/lib/columnDefs';
 import { useListColumns } from '@/hooks/useListColumns';
@@ -63,7 +63,7 @@ const ListView = () => {
       tasks = tasks.filter(t => lineProjectIds.includes(t.projectId));
     }
     if (sprintActive && currentSprint) tasks = tasks.filter(t => t.sprintId === currentSprint.id || !t.sprintId);
-    if (filterDept.length > 0) tasks = tasks.filter(t => { const a = userMap.get(t.assigneeId || ''); return filterDept.includes(getDepartment(a) as Department); });
+    if (filterDept.length > 0) tasks = tasks.filter(t => filterDept.includes(taskDepartment(t, userMap) as Department));
     if (filterAssignees.length > 0) tasks = tasks.filter(t => t.assigneeId && filterAssignees.includes(t.assigneeId));
     if (filterStatuses.length > 0) tasks = tasks.filter(t => filterStatuses.includes(t.statusId));
     if (filterPriorities.length > 0) tasks = tasks.filter(t => filterPriorities.includes(t.priority));
@@ -166,7 +166,7 @@ const ListView = () => {
           <DepartmentFilter value={filterDept} onChange={setFilterDept} />
           <MultiSelectDropdown label={t('filter.assignee')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
-          <MultiSelectDropdown label={t('filter.priority')} options={Object.entries(priorityConfig).map(([id, p]) => ({ id, label: p.label, icon: p.icon as React.ReactElement }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
+          <MultiSelectDropdown label={t('filter.priority')} options={Object.entries(priorityConfig).map(([id, p]) => ({ id, label: t(`priority.${id}`), icon: p.icon as React.ReactElement }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
           <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
           {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
           <MultiSelectDropdown label={t('filter.tags')} options={tags.map(tg => ({ id: tg.id, label: tg.name, color: tg.color }))} selected={filterTags} onToggle={toggleArr(setFilterTags)} />

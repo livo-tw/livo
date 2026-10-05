@@ -301,6 +301,9 @@ Deno.serve(async (req) => {
         .eq("id", memberId);
 
       if (error) {
+        // Tasks, comments and records keep pointing at the member: deactivating keeps
+        // that history and removes the login, deleting cannot.
+        if (error.code === "23503") return json({ error: "member_has_history", message: "This member has tasks, comments or records. Deactivate the member instead." }, 409);
         return json({ error: error.message }, 400);
       }
 

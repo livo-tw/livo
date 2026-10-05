@@ -86,7 +86,7 @@ const AdminBackupSection = ({
       });
       const data = await resp.json();
       if (!resp.ok) {
-        toast.error(t('adminBackup.errorPrefix') + (data.error || '未知錯誤'));
+        toast.error(t('adminBackup.errorPrefix') + (data.error || t('common.unknownError')));
       } else {
         toast.success(t('adminBackup.successPrefix') + data.totalRecords + t('adminBackup.recordsSuffix'));
         if (currentMemberId) {
@@ -114,8 +114,11 @@ const AdminBackupSection = ({
 
   const handleDeleteBackup = async (record: BackupRecord) => {
     if (!(await confirm({ description: t('adminBackup.confirmDelete', { name: record.filename }), title: t('adminBackup.confirmTitle'), destructive: true }))) return;
-    await supabase.storage.from('backups').remove([record.storage_path]);
-    await supabase.from('backup_history').delete().eq('id', record.id);
+    // The history row goes first: if that fails the backup stays listed and downloadable.
+    const { error } = await supabase.from('backup_history').delete().eq('id', record.id);
+    if (error) { toast.error(t('error.deleteFailed') + error.message); return; }
+    const removed = await supabase.storage.from('backups').remove([record.storage_path]);
+    if (removed.error) console.error('[LIVO] backup file not removed:', removed.error.message);
     toast.success(t('adminBackup.deletedSuccess'));
     loadBackupHistory();
   };
@@ -200,14 +203,14 @@ const AdminBackupSection = ({
       const hasQa = Object.entries(backup).some(([table, rows]) => table.startsWith('qa_') && (!Array.isArray(rows) || rows.length > 0));
       const restoreQa = async (validateOnly: boolean) => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error('請重新登入後還原 QA 資料');
+        if (!session?.access_token) throw new Error(t('adminBackup.qaRestoreLogin'));
         const response = await fetch(fnUrl('qa'), { method: 'POST', headers: {
           'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`,
         }, body: JSON.stringify({ action: 'restore', tables: backup, validateOnly }) });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error?.message || result.error?.code || 'QA 還原失敗');
+        if (!response.ok) throw new Error(result.error?.message || result.error?.code || t('adminBackup.qaRestoreFailed'));
         if (result.conflicts?.length || result.missingAssets?.length) throw new Error(
-          `QA 備份有 ${result.conflicts?.length || 0} 筆衝突、${result.missingAssets?.length || 0} 個附件缺失，請先排除再還原。`);
+          t('adminBackup.qaRestoreConflicts', { conflicts: result.conflicts?.length || 0, missing: result.missingAssets?.length || 0 }));
         return result;
       };
       // Validate QA references/version conflicts before the existing restore
@@ -252,7 +255,7 @@ const AdminBackupSection = ({
       if (hasQa) {
         const qaResult = await restoreQa(false);
         totalInserted += qaResult.inserted || 0;
-        toast.info('QA 記錄已還原；JSON 僅含附件資訊，媒體檔案需保留或另行還原儲存空間。');
+        toast.info(t('adminBackup.qaRestoredNote'));
       }
 
       toast.success(t('adminBackup.restoreSuccess') + totalInserted + t('adminBackup.recordsSuffix'));
@@ -398,20 +401,20 @@ const AdminBackupSection = ({
                 <RotateCcw size={20} className="text-primary" />
                 {t('adminBackup.restoreTitle')}
               </CardTitle>
-              <CardDescription>{t('adminBackup.restoreDesc')}</CardDescription>
+              {/* Only the demo restores from JSON; a real workspace needs the server's database and file backups. */}
+              <CardDescription>{t(USING_MOCK_BACKEND ? 'adminBackup.restoreDesc' : 'adminBackup.restoreServerOnly')}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
+            {USING_MOCK_BACKEND && <CardContent className="space-y-3">
               <input ref={jsonRestoreRef} type="file" accept=".json" onChange={handleRestoreSelect} className="hidden" />
-              <Button onClick={handleRestoreClick} disabled={restoring || !USING_MOCK_BACKEND} variant="outline" className="gap-2">
+              <Button onClick={handleRestoreClick} disabled={restoring} variant="outline" className="gap-2">
                 <RotateCcw size={16} className={restoring ? 'animate-spin' : ''} />
                 {restoring ? t('adminBackup.restoring') : t('adminBackup.restoreButton')}
               </Button>
-              {!USING_MOCK_BACKEND && <p className="text-sm text-muted-foreground">{t('approvalCommand.serverRestore')}</p>}
               <p className="text-xs text-destructive flex items-center gap-1.5">
                 <AlertTriangle size={12} className="flex-shrink-0" />
                 {t('adminBackup.restoreWarning')}
               </p>
-            </CardContent>
+            </CardContent>}
           </Card>
         </div>
       </div>

@@ -121,6 +121,9 @@ describe('member title entry points',()=>{
    fireEvent.click(screen.getByRole('button',{name:'編輯 Alex 的職位'}));
    fireEvent.click(screen.getByRole('button',{name:'編輯 Morgan 的職位'}));
    expect(props.onEditJobTitle.mock.calls).toEqual([['self'],['other']]);
+   // An icon with a tooltip, not the words, so a narrow title column is not crowded.
+   expect(screen.queryByText('編輯職位')).toBeNull();
+   expect(screen.getByRole('button',{name:'編輯 Alex 的職位'})).toHaveAttribute('title','編輯職位');
  });
  it.each([MemberTableDesktop,MemberCardsMobile])('hides editing from other roles',async Component=>{
    const i18n=await translation();render(<I18nextProvider i18n={i18n}><Component {...tableProps(false)}/></I18nextProvider>);

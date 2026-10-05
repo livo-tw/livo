@@ -10,6 +10,18 @@ describe('Shared company QA display workflow',()=>{
     expect(JSON.stringify(qaSlackCard(issue,'https://example.com',workflow))).toContain('QA 複驗');
     expect(canQaCommand(issue,{id:'rd',role:'member'},'record_verification')).toBe(false);
   });
+  it('offers on the Slack card only the steps the stage allows, with readable severity',()=>{
+    const base={id:'one',title:'Bug',severity:'untriaged',fixCycle:1,targets:[],runs:[],qaOwnerId:null,assigneeId:null} as unknown as QaIssue;
+    const actions=(issue:QaIssue)=>(qaSlackCard(issue,'https://example.com')[2] as {elements:{action_id?:string;url?:string}[]}).elements.map(e=>e.action_id||`url:${e.url}`);
+    expect(actions({...base,state:'new'} as QaIssue)).toEqual(['url:https://example.com']);
+    expect(JSON.stringify(qaSlackCard({...base,state:'new'} as QaIssue,'https://example.com'))).toContain('嚴重度：待判定');
+    expect(actions({...base,state:'in_progress'} as QaIssue)).toEqual(['livo_qa_fix']);
+    const deployed={id:'t',environment:'Stage',build:'1',required:true,deployedAt:'2026-10-01'};
+    expect(actions({...base,state:'verification',targets:[{...deployed,deployedAt:null}]} as unknown as QaIssue)).toEqual(['livo_qa_deploy','livo_qa_pass','livo_qa_fail']);
+    expect(actions({...base,state:'verification',targets:[deployed]} as unknown as QaIssue)).toEqual(['livo_qa_pass','livo_qa_fail']);
+    expect(actions({...base,state:'verified'} as QaIssue)).toEqual(['livo_qa_close']);
+    expect(actions({...base,state:'closed'} as QaIssue)).toEqual(['livo_qa_reopen']);
+  });
   it('upgrades saved v1 names/order without merging verification with closure',()=>{
     const old={version:1,order:['closed','verification','in_progress','triaged','new'],labels:{new:'New reports',triaged:'Assigned',in_progress:'Working',verification:'Testing',closed:'Done'}};
     const upgraded=parseQaWorkflow(old);
@@ -21,7 +33,7 @@ describe('Shared company QA display workflow',()=>{
     const workflow=validateQaWorkflow(custom),columns=getQaWorkflowColumns(workflow);
     expect(columns).toHaveLength(6);expect(columns.map(c=>c.label)).toEqual(['Assigned','Working','Passed','Failed','Done','Dismissed']);
     expect(columns[0].states).toEqual(['new','triaged']);expect(columns[1].states).toEqual(['in_progress','verification']);
-    expect(getQaStateLabel(workflow,'new')).toBe('新回報');expect(getQaStateLabel(workflow,'verification')).toBe('待部署／驗證');
+    expect(getQaStateLabel(workflow,'new')).toBe('新回報');expect(getQaStateLabel(workflow,'verification')).toBe('待驗證');
     for(const states of [['verified','closed'],['failed','in_progress'],['closed','dismissed']])
       expect(()=>validateQaWorkflow({...workflow,groups:[{id:states[0],label:'Hidden distinction',states}]})).toThrow('qa_invalid_workflow');
   });

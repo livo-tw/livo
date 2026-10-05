@@ -5,10 +5,13 @@ import { useUIContext } from '@/context/UIContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
+import { useProjectScope, useScopedProjectFilter } from '@/hooks/useProjectScope';
 import { useSprintContext } from '@/context/SprintContext';
 import { ChevronDown, ChevronUp, LayoutDashboard, List } from 'lucide-react';
 import TaskCard from '@/components/TaskCard';
 import MultiSelectDropdown from '@/components/MultiSelectDropdown';
+import { usePersistentSort } from '@/hooks/usePersistentSort';
+import { priorityConfig } from '@/components/ui/badges';
 import ColumnConfigDropdown from '@/components/ColumnConfigDropdown';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FIXED_KEYS } from '@/lib/columnDefs';
@@ -29,6 +32,7 @@ const MyTasksView = () => {
   const { allTasks, statuses } = useTaskContext();
   const { users } = useMemberContext();
   const { allProjects } = useProjectContext();
+  const scope = useProjectScope();
   const { sprints } = useSprintContext();
   const isMobile = useIsMobile();
 
@@ -37,17 +41,22 @@ const MyTasksView = () => {
   });
 
   const [displayMode, setDisplayMode] = useState<DisplayMode>('list');
-  const [sortKey, setSortKey] = useState<string>('status');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const { sortKey, setSortKey, sortDir, setSortDir } = usePersistentSort('mine', 'status', 'asc');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
   const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
+  useScopedProjectFilter(setFilterProjects);
+  const toggleFilterPriority = useCallback((id: string) => setFilterPriorities(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
+  const priorityOptions = useMemo(() => Object.entries(priorityConfig).map(([id, p]) => ({ id, label: t(`priority.${id}`, { defaultValue: p.label }), icon: p.icon as React.ReactElement })), [t]);
+  const hasFilters = filterStatuses.length > 0 || filterProjects.length > 0 || filterPriorities.length > 0;
 
   const toggleFilterStatus = useCallback((id: string) => setFilterStatuses(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
   const toggleFilterProject = useCallback((id: string) => setFilterProjects(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
 
   const myTasks = useMemo(() => {
-    let tasks = allTasks;
+    // The sidebar project or product line scopes my tasks like every other task view.
+    let tasks = allTasks.filter(t => scope.inScope(t.projectId));
     switch (roleFilter) {
       case 'assignee': tasks = tasks.filter(t => t.assigneeId === currentMemberId); break;
       case 'reviewer': tasks = tasks.filter(t => t.reviewerId === currentMemberId); break;
@@ -55,13 +64,14 @@ const MyTasksView = () => {
     }
     if (filterStatuses.length > 0) tasks = tasks.filter(t => filterStatuses.includes(t.statusId));
     if (filterProjects.length > 0) tasks = tasks.filter(t => filterProjects.includes(t.projectId));
+    if (filterPriorities.length > 0) tasks = tasks.filter(t => filterPriorities.includes(t.priority));
     return tasks;
-  }, [allTasks, currentMemberId, roleFilter, filterStatuses, filterProjects]);
+  }, [allTasks, scope.inScope, currentMemberId, roleFilter, filterStatuses, filterProjects, filterPriorities]);
 
   const toggleSort = useCallback((key: string) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
-  }, [sortKey]);
+  }, [sortKey, setSortKey, setSortDir]);
 
   const sortValue = (task: Task, key: string): string | number | undefined => {
     switch (key) {
@@ -152,9 +162,11 @@ const MyTasksView = () => {
         </div>
         <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleFilterStatus} />
-          <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleFilterProject} />
-          {(filterStatuses.length > 0 || filterProjects.length > 0) && (
-            <button onClick={() => { setFilterStatuses([]); setFilterProjects([]); }} className="text-[13px] text-muted-foreground hover:text-foreground">{t('button.clear')}</button>
+          <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={priorityOptions} selected={filterPriorities} onToggle={toggleFilterPriority} />
+          {scope.kind !== 'project' && <ProjectMultiSelect label={t('filter.project')} projects={scope.projectIds ? allProjects.filter(p => scope.projectIds!.has(p.id)) : allProjects} selected={filterProjects} onToggle={toggleFilterProject} />}
+          {/* Same clear control as the board's filter row. */}
+          {hasFilters && (
+            <button onClick={() => { setFilterStatuses([]); setFilterProjects([]); setFilterPriorities([]); }} className="text-[13px] text-primary hover:text-primary/80 font-medium">{t('button.clearFilters')}</button>
           )}
         </div>
       </div>

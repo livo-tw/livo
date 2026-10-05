@@ -456,7 +456,14 @@ async function deleteMember(c: Context<AppContext>, body: ManageMemberBody): Pro
       env.DB.prepare('DELETE FROM auth_users WHERE id = ?1').bind(authUser.id)
     );
   }
-  await env.DB.batch(stmts);
+  try {
+    await env.DB.batch(stmts);
+  } catch (err) {
+    // Tasks, comments and records keep pointing at the member: deactivating keeps
+    // that history and removes the login, deleting cannot.
+    if (/FOREIGN KEY/i.test(String(err))) return c.json({ error: 'member_has_history', message: 'This member has tasks, comments or records. Deactivate the member instead.' }, 409);
+    throw err;
+  }
 
   const meta = membersMeta();
   const event: ChangeEvent = {

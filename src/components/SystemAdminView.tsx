@@ -36,32 +36,30 @@ const SystemAdminView = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('admin');
   const [backupSettings, setBackupSettings] = useState<BackupSettings | null>(null);
 
-  useEffect(() => {
-    loadBackupSettings();
-  }, []);
-
-  const loadBackupSettings = async () => {
+  const loadBackupSettings = useCallback(async () => {
     const { data } = await supabase.from('backup_settings').select('*').limit(1).maybeSingle();
     if (data) setBackupSettings(data);
-  };
+  }, []);
+
+  // Reload whenever the admin tab opens: the Slack card on the integrations tab
+  // edits the same row, so a copy kept from earlier would show an old channel.
+  useEffect(() => {
+    if (activeTab === 'admin') void loadBackupSettings();
+  }, [activeTab, loadBackupSettings]);
 
   const saveBackupSettings = useCallback(async (updates: Partial<BackupSettings>) => {
     if (!backupSettings) return;
-    const newSettings = { ...backupSettings, ...updates };
-    setBackupSettings(newSettings);
-    await supabase.from('backup_settings').update({
-      enabled: newSettings.enabled,
-      interval_days: newSettings.interval_days,
-      backup_hour: newSettings.backup_hour,
-      notify_channel: newSettings.notify_channel,
-      task_notify_channel: newSettings.task_notify_channel,
-      task_notify_types: newSettings.task_notify_types,
-      dm_notify_enabled: newSettings.dm_notify_enabled,
-      dm_notify_start_hour: newSettings.dm_notify_start_hour,
-      dm_notify_end_hour: newSettings.dm_notify_end_hour,
-    }).eq('id', backupSettings.id);
+    setBackupSettings(previous => previous ? { ...previous, ...updates } : previous);
+    // Only the fields this control changed: writing the whole row back would
+    // overwrite what another screen saved in the meantime.
+    const { error } = await supabase.from('backup_settings').update(updates).eq('id', backupSettings.id);
+    if (error) {
+      toast.error(t('integrations.saveFailed') + error.message);
+      await loadBackupSettings();
+      return;
+    }
     toast.success(t('integrations.saveSuccess'));
-  }, [backupSettings]);
+  }, [backupSettings, loadBackupSettings, t]);
 
   const refreshAll = useCallback(() => Promise.all([
     refreshTasks(), refreshSprints(), refreshComments(),

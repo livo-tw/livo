@@ -2,6 +2,7 @@ import { useUIContext } from '@/context/UIContext';
 import { isEventEnabled } from '@/lib/featureToggles';
 import { useState, useEffect, useRef } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -17,55 +18,19 @@ import {
   getNotifLabel, getNotifGroupLabel,
   notifToDisplay, notifToStorage,
 } from '@/lib/templateVariables';
+import {
+  EVENT_TYPES, TONES,
+  eventLabel, toneLabel,
+  getDefaultContent, buildPreviewContext,
+} from './notificationLabels';
 
-const EVENT_LABELS: Record<EventType, string> = {
-  task_created: '任務建立',
-  status_changed: '狀態變更',
-  assignee_changed: '指派變更',
-  due_reminder: '截止提醒',
-  overdue: '已逾期',
-  approval_requested: '請求審核',
-  approval_completed: '審核完成',
-  comment_added: '新增留言',
-  custom: '自訂',
-};
-
-const TONE_LABELS: Record<Tone, string> = {
-  neutral: '中性',
-  celebration: '慶祝 🎉',
-  urgent: '緊急 🚨',
-  warning: '警告 ⚠️',
-  friendly: '友善 😊',
-};
-
-const EVENT_TYPES = Object.entries(EVENT_LABELS) as [EventType, string][];
-const TONE_TYPES = Object.entries(TONE_LABELS) as [Tone, string][];
-
-/** Default content per event (storage format) */
-const DEFAULT_CONTENT: Record<EventType, string> = {
-  task_created:       '📋 {{assigner_name}} 建立了新任務「{{task_name}}」｜指派：{{assignee}}｜優先級：{{priority}}｜截止日：{{due_date}}',
-  status_changed:     '🔄 任務「{{task_name}}」的狀態已從「{{prev_status}}」變更為「{{status}}」。變更人：{{changer_name}}',
-  assignee_changed:   '👋 {{assignee}} 你好，{{assigner_name}} 已將任務「{{task_name}}」指派給你。優先級：{{priority}}，截止日：{{due_date}}。請盡快處理。',
-  due_reminder:       '⚠️ 提醒：「{{task_name}}」即將到期（剩餘 {{due_remaining}} 天）｜負責人：{{assignee}}',
-  overdue:            '🚨 「{{task_name}}」已逾期 {{overdue_days}} 天！｜負責人：{{assignee}}',
-  approval_requested: '⏳ {{requester_name}} 提交了任務「{{task_name}}」的簽核請求，請前往簽核頁面審核。',
-  approval_completed: '✅ 「{{task_name}}」簽核已完成｜簽核人：{{approver_name}}',
-  comment_added:      '💬 「{{task_name}}」有新評論｜來自 {{reporter}}',
-  custom:             '📢 {{task_name}}',
-};
-
-const MOCK_CTX = {
-  task_name: '實作登入功能',
-  assignee: '陳小明',
-  reporter: '王大明',
-  project_name: 'LIVO',
-  status: '進行中',
-  prev_status: '待處理',
-  priority: '高',
-  due_date: '2026-04-10',
-  due_remaining: '8天',
-  overdue_days: '0',
-  task_url: 'https://livo-tw.com/demo/task/123',
+/** Emoji shown after the tone label */
+const TONE_EMOJI: Record<Tone, string> = {
+  neutral: '',
+  celebration: ' 🎉',
+  urgent: ' 🚨',
+  warning: ' ⚠️',
+  friendly: ' 😊',
 };
 
 interface FormState {
@@ -77,17 +42,18 @@ interface FormState {
 }
 
 const TemplateManager = () => {
+  const { t } = useTranslation();
   const { approvalsEnabled } = useUIContext();
   const { templates, loading, fetchTemplates, createTemplate, updateTemplate, deleteTemplate } = useNotificationTemplates();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>({
+  const [form, setForm] = useState<FormState>(() => ({
     name: '',
     event_type: 'status_changed',
     tone: 'neutral',
-    template_content: notifToDisplay(DEFAULT_CONTENT['status_changed']),
+    template_content: notifToDisplay(getDefaultContent(t, 'status_changed')),
     is_default: false,
-  });
+  }));
   const [saving, setSaving] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -102,7 +68,7 @@ const TemplateManager = () => {
       name: '',
       event_type: 'status_changed',
       tone: 'neutral',
-      template_content: notifToDisplay(DEFAULT_CONTENT['status_changed']),
+      template_content: notifToDisplay(getDefaultContent(t, 'status_changed')),
       is_default: false,
     });
     setDialogOpen(true);
@@ -121,11 +87,12 @@ const TemplateManager = () => {
   };
 
   const handleEventChange = (newType: EventType) => {
-    const prevDefault = notifToDisplay(DEFAULT_CONTENT[form.event_type]);
+    const prevDefault = notifToDisplay(getDefaultContent(t, form.event_type));
+    const nextDefault = notifToDisplay(getDefaultContent(t, newType));
     setForm(f => {
       const newForm = { ...f, event_type: newType };
       if (!f.template_content || f.template_content === prevDefault) {
-        newForm.template_content = notifToDisplay(DEFAULT_CONTENT[newType]);
+        newForm.template_content = nextDefault;
       }
       return newForm;
     });
@@ -175,22 +142,22 @@ const TemplateManager = () => {
     });
   };
 
-  const preview = resolveTemplate(notifToStorage(form.template_content), MOCK_CTX);
+  const preview = resolveTemplate(notifToStorage(form.template_content), buildPreviewContext(t));
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-end">
         <Button size="sm" className="gap-1.5" onClick={openCreate}>
           <Plus size={14} />
-          新增範本
+          {t('notificationRules.templates.add')}
         </Button>
       </div>
 
       {loading ? (
-        <div className="text-sm text-muted-foreground py-8 text-center">載入中…</div>
+        <div className="text-sm text-muted-foreground py-8 text-center">{t('common.loading')}</div>
       ) : templates.length === 0 ? (
         <div className="text-sm text-muted-foreground py-10 text-center border border-dashed border-border rounded-lg bg-muted/10">
-          尚無訊息範本，點擊「新增範本」建立第一個範本。
+          {t('notificationRules.templates.empty')}
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -204,15 +171,15 @@ const TemplateManager = () => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-sm truncate">{tmpl.name}</span>
                     {tmpl.is_default && (
-                      <Badge variant="secondary" className="text-xs">預設</Badge>
+                      <Badge variant="secondary" className="text-xs">{t('notificationRules.default')}</Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <Badge variant="outline" className="text-xs font-normal">
-                      {EVENT_LABELS[tmpl.event_type] ?? tmpl.event_type}
+                      {eventLabel(t, tmpl.event_type)}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
-                      {TONE_LABELS[tmpl.tone] ?? tmpl.tone}
+                      {toneLabel(t, tmpl.tone)}{TONE_EMOJI[tmpl.tone] ?? ''}
                     </span>
                   </div>
                 </div>
@@ -247,14 +214,14 @@ const TemplateManager = () => {
       <Dialog open={dialogOpen && isEventEnabled(form.event_type, approvalsEnabled)} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingId ? '編輯訊息範本' : '新增訊息範本'}</DialogTitle>
+            <DialogTitle>{editingId ? t('notificationRules.templates.editTitle') : t('notificationRules.templates.addTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">範本名稱</Label>
+              <Label className="text-xs">{t('notificationRules.templates.name')}</Label>
               <Input
                 className="h-8 text-sm"
-                placeholder="例：任務完成通知"
+                placeholder={t('notificationRules.templates.namePlaceholder')}
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               />
@@ -262,29 +229,29 @@ const TemplateManager = () => {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">事件類型</Label>
+                <Label className="text-xs">{t('notificationRules.eventType')}</Label>
                 <Select
                   value={form.event_type}
                   onValueChange={v => handleEventChange(v as EventType)}
                 >
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {EVENT_TYPES.filter(([event]) => isEventEnabled(event, approvalsEnabled)).map(([v, l]) => (
-                      <SelectItem key={v} value={v}>{l}</SelectItem>
+                    {EVENT_TYPES.filter(event => isEventEnabled(event, approvalsEnabled)).map(v => (
+                      <SelectItem key={v} value={v}>{eventLabel(t, v)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">語氣</Label>
+                <Label className="text-xs">{t('notificationRules.templates.tone')}</Label>
                 <Select
                   value={form.tone}
                   onValueChange={v => setForm(f => ({ ...f, tone: v as Tone }))}
                 >
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {TONE_TYPES.map(([v, l]) => (
-                      <SelectItem key={v} value={v}>{l}</SelectItem>
+                    {TONES.map(v => (
+                      <SelectItem key={v} value={v}>{toneLabel(t, v)}{TONE_EMOJI[v]}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -292,11 +259,15 @@ const TemplateManager = () => {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">範本內容</Label>
+              <Label className="text-xs">{t('notificationRules.templates.content')}</Label>
               <Textarea
                 ref={textareaRef}
                 className="text-sm resize-none min-h-[80px]"
-                placeholder="例：任務【任務名稱】已由【經辦人】移至【狀態】"
+                placeholder={t('notificationRules.templates.contentPlaceholder', {
+                  task: `【${getNotifLabel('task_name')}】`,
+                  assignee: `【${getNotifLabel('assignee')}】`,
+                  status: `【${getNotifLabel('status')}】`,
+                })}
                 value={form.template_content}
                 onChange={e => setForm(f => ({ ...f, template_content: e.target.value }))}
               />
@@ -329,7 +300,7 @@ const TemplateManager = () => {
               <>
                 <Separator />
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">預覽（模擬資料）</Label>
+                  <Label className="text-xs text-muted-foreground">{t('notificationRules.templates.previewSample')}</Label>
                   <div className="text-sm bg-muted/40 border border-border rounded-lg px-3 py-2 text-muted-foreground">
                     {preview}
                   </div>
@@ -338,13 +309,13 @@ const TemplateManager = () => {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>{t('common.cancel')}</Button>
             <Button
               size="sm"
               onClick={() => void handleSave()}
               disabled={saving || !form.name.trim() || !form.template_content.trim()}
             >
-              {saving ? '儲存中…' : editingId ? '儲存' : '建立範本'}
+              {saving ? t('common.saving') : editingId ? t('common.save') : t('notificationRules.templates.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -354,19 +325,19 @@ const TemplateManager = () => {
       <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>刪除範本</DialogTitle>
+            <DialogTitle>{t('notificationRules.templates.delete')}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
-            確定要刪除此範本嗎？已綁定此範本的規則將改為預設訊息。
+            {t('notificationRules.templates.deleteConfirm')}
           </p>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)}>取消</Button>
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)}>{t('common.cancel')}</Button>
             <Button
               variant="destructive"
               size="sm"
               onClick={() => deleteConfirmId && void handleDelete(deleteConfirmId)}
             >
-              刪除
+              {t('common.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

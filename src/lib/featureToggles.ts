@@ -19,6 +19,12 @@ export const FEATURE_TOGGLES = [{
   label: 'qa.featureLabel',
   description: 'qa.featureDescription',
   resolveDefault: (_history: FeatureHistory) => false,
+}, {
+  // Off until a team turns it on; release records are kept either way.
+  key: 'releases',
+  label: 'featureToggles.releasesLabel',
+  description: 'featureToggles.releasesDescription',
+  resolveDefault: (_history: FeatureHistory) => false,
 }] as const;
 
 export type FeatureKey = typeof FEATURE_TOGGLES[number]['key'];
@@ -49,4 +55,8 @@ export function resolveApprovalView<T extends string>(view: T, approvalsEnabled:
 
 export function resolveQaView<T extends string>(view: T, enabled: boolean): T | 'board' {
   return (view === 'qa' || view === 'my-qa') && !enabled ? 'board' : view;
+}
+
+export function resolveReleaseView<T extends string>(view: T, enabled: boolean): T | 'board' {
+  return view === 'releases' && !enabled ? 'board' : view;
 }

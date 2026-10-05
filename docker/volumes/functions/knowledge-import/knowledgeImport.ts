@@ -41,8 +41,12 @@ const defaultRule = (): KnowledgeRule => ({ roles: ['super_admin'], positions: [
 export const defaultImportPolicy = (): ImportPolicy => ({version: 0, subjects: defaultRule(), notion_subjects: defaultRule(), notion_pages: []});
 export const importAllowed = (policy: ImportPolicy, actor: KnowledgeActor | null) => !!actor && actor.is_active !== false && actor.is_active !== 0 && knowledgeRuleMatches(policy.subjects,actor);
 const asRecord = (x: unknown): Record<string,unknown> => x && typeof x==='object' && !Array.isArray(x) ? x as Record<string,unknown> : {};
-export const toBase64 = (bytes: Uint8Array): string => { let raw=''; for(let n=0;n<bytes.length;n+=8192) raw+=String.fromCharCode(...bytes.subarray(n,n+8192)); return btoa(raw); };
-export function fromBase64(value: unknown): Uint8Array { if(typeof value!=='string'||value.length>Math.ceil(IMPORT_LIMIT*4/3)+8||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw new ImportError('file_size_limit'); try {const b=Uint8Array.from(atob(value),c=>c.charCodeAt(0));if(!b.length||b.length>IMPORT_LIMIT)throw 0;return b;}catch{throw new ImportError('invalid_file');} }
+// Both directions stay close to the document size: the Docker Edge worker has a 256 MB
+// heap and Cloudflare 128 MB. Uint8Array.from(string) first builds a list with one entry
+// per byte (about 8 bytes each), which alone exceeded the limit for documents near 10 MB.
+// Chunks are a multiple of 3 bytes, so the base64 pieces join without inner padding.
+export const toBase64 = (bytes: Uint8Array): string => { const parts:string[]=[]; for(let n=0;n<bytes.length;n+=24576) parts.push(btoa(String.fromCharCode(...bytes.subarray(n,n+24576)))); return parts.join(''); };
+export function fromBase64(value: unknown): Uint8Array { if(typeof value!=='string'||value.length>Math.ceil(IMPORT_LIMIT*4/3)+8||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw new ImportError('file_size_limit'); try {const binary=atob(value);if(!binary.length||binary.length>IMPORT_LIMIT)throw 0;const b=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)b[i]=binary.charCodeAt(i);return b;}catch{throw new ImportError('invalid_file');} }
 export const sha256 = async (bytes: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes as BufferSource))).map(x=>x.toString(16).padStart(2,'0')).join('');
 const mime = (source: ImportSource) => ({notion:'text/markdown',md:'text/markdown',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',pdf:'application/pdf'}[source]);
 function validRule(value: unknown): KnowledgeRule { const candidate={mode:'custom',view:value,edit:value,comment:value};const p=parseKnowledgePolicy(candidate);if(!p||p.mode!=='custom')throw new ImportError('invalid_policy');return p.view; }
@@ -109,6 +113,8 @@ function checkParsed(value: unknown): ImportParsed {
 // 150 s (functions/main). Aborting the request also stops the processor's parse.
 export const PROCESSOR_TIMEOUT_MS = 95_000;
 export async function parseWithProcessor(config: ImportConfig, source: 'md'|'docx'|'pdf', bytes: Uint8Array, previous?:ImportItem): Promise<ImportParsed> {
+  // Markdown (and Notion, which arrives as Markdown) is plain text: without a processor it is converted here.
+  if(source==='md'&&!config.processorUrl)return parseMarkdownLocally(bytes);
   if(!config.processorUrl||!config.processorToken||config.processorToken.length<32)throw new ImportError('processor_not_configured',503);
   let url:URL;try{url=new URL(config.processorUrl);}catch{throw new ImportError('invalid_processor_configuration',503);}
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new ImportError('invalid_processor_configuration',503);
@@ -120,6 +126,122 @@ export async function parseWithProcessor(config: ImportConfig, source: 'md'|'doc
   try{body=asRecord(JSON.parse(new TextDecoder().decode(await boundedResponse(result,IMPORT_LIMIT,'parsed_document_too_large'))));}
   catch(error){return unavailable(error);}
   if(!result.ok)throw new ImportError(typeof body.error==='string'?body.error:'processing_failed',result.status);return checkParsed(body.result);
+}
+
+// ---------- Markdown without the private processor ----------
+// The same passive result as the processor's markdown-it rendering (docker/knowledge-processor/parser.py):
+// raw HTML is shown as text, images are never fetched, links keep only http(s) and #anchors, and only
+// the tags the processor's sanitizer allows are produced.
+const MARKDOWN_TEXT_LIMIT = 800_000;
+const escapeImportHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+function safeImportUrl(value: string): string | null {
+  const url = value.trim();
+  if ([...url].some(char => char.charCodeAt(0) < 32)) return null;
+  if (/^#[A-Za-z0-9_-]+$/.test(url)) return url;
+  try { const parsed = new URL(url); if ((parsed.protocol === 'https:' || parsed.protocol === 'http:') && parsed.hostname && !parsed.username && !parsed.password) return url; } catch { /* not a URL */ }
+  return null;
+}
+const emphasis = (escaped: string) => escaped
+  .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>').replace(/__(?=\S)([\s\S]*?\S)__/g, '<strong>$1</strong>')
+  .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<s>$1</s>')
+  .replace(/\*(?=[^\s*])([\s\S]*?[^\s*])\*/g, '<em>$1</em>').replace(/(^|[^\w])_(?=[^\s_])([\s\S]*?[^\s_])_(?=$|[^\w])/g, '$1<em>$2</em>');
+function markdownInline(text: string): string {
+  const kept: string[] = [];
+  // Finished HTML is parked behind private-use markers so the escaping below leaves it alone.
+  const keep = (html: string) => `\uE000${kept.push(html) - 1}\uE001`;
+  let value = text.replace(/[\uE000\uE001]/g, '');
+  value = value.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (_m, _ticks: string, code: string) => keep(`<code>${escapeImportHtml(code.trim())}</code>`));
+  value = value.replace(/!\[([^\]]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/g, (_m, alt: string) => keep(escapeImportHtml(`[image: ${alt}]`)));
+  value = value.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_m, label: string, href: string) => {
+    const url = safeImportUrl(href), inner = emphasis(escapeImportHtml(label));
+    return keep(url ? `<a href="${escapeImportHtml(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>` : inner);
+  });
+  value = value.replace(/<(https?:\/\/[^\s<>]+)>/g, (_m, href: string) => { const url = safeImportUrl(href); return keep(url ? `<a href="${escapeImportHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeImportHtml(href)}</a>` : escapeImportHtml(href)); });
+  return emphasis(escapeImportHtml(value)).replace(/\uE000(\d+)\uE001/g, (_m, index: string) => kept[Number(index)] ?? '');
+}
+const listItem = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const tableSeparator = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const tableCells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+function markdownBlocks(lines: string[], depth = 0): string {
+  const out: string[] = [];
+  let paragraph: string[] = [];
+  const flush = () => { if (paragraph.length) out.push(`<p>${markdownInline(paragraph.join('\n'))}</p>`); paragraph = []; };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      flush();
+      const code: string[] = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) code.push(lines[i]);
+      out.push(`<pre><code>${escapeImportHtml(code.join('\n'))}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) { flush(); continue; }
+    if (paragraph.length && /^\s*=+\s*$/.test(line)) { out.push(`<h1>${markdownInline(paragraph.join('\n'))}</h1>`); paragraph = []; continue; }
+    if (paragraph.length && /^\s*-+\s*$/.test(line)) { out.push(`<h2>${markdownInline(paragraph.join('\n'))}</h2>`); paragraph = []; continue; }
+    const heading = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    if (heading) { flush(); out.push(`<h${heading[1].length}>${markdownInline(heading[2])}</h${heading[1].length}>`); continue; }
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push('<hr>'); continue; }
+    if (/^\s{0,3}>/.test(line) && depth < 5) {
+      flush();
+      const quoted: string[] = [];
+      for (; i < lines.length && /^\s{0,3}>/.test(lines[i]); i++) quoted.push(lines[i].replace(/^\s{0,3}>\s?/, ''));
+      i--;
+      out.push(`<blockquote>${markdownBlocks(quoted, depth + 1)}</blockquote>`);
+      continue;
+    }
+    if (line.includes('|') && i + 1 < lines.length && tableSeparator.test(lines[i + 1])) {
+      flush();
+      const head = tableCells(line), rows: string[][] = [];
+      for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) rows.push(tableCells(lines[i]));
+      i--;
+      out.push(`<table><thead><tr>${head.map(cell => `<th>${markdownInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${head.map((_c, index) => `<td>${markdownInline(row[index] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      continue;
+    }
+    if (listItem.test(line)) {
+      flush();
+      const items: Array<{ indent: number; ordered: boolean; text: string }> = [];
+      for (; i < lines.length; i++) {
+        const match = listItem.exec(lines[i]);
+        if (match) items.push({ indent: match[1].replace(/\t/g, '    ').length, ordered: /\d/.test(match[2]), text: match[3] });
+        else if (lines[i].trim() && /^\s+/.test(lines[i]) && items.length) items[items.length - 1].text += '\n' + lines[i].trim();
+        else break;
+      }
+      i--;
+      out.push(markdownList(items));
+      continue;
+    }
+    paragraph.push(line.trim());
+  }
+  flush();
+  return out.join('');
+}
+function markdownList(items: Array<{ indent: number; ordered: boolean; text: string }>): string {
+  let html = '';
+  const open: Array<{ indent: number; tag: string }> = [];
+  for (const item of items) {
+    while (open.length && item.indent < open[open.length - 1].indent) html += `</li></${open.pop()!.tag}>`;
+    const top = open[open.length - 1];
+    if (!top || item.indent > top.indent) {
+      const tag = item.ordered ? 'ol' : 'ul';
+      open.push({ indent: item.indent, tag });
+      html += `<${tag}><li>`;
+    } else html += '</li><li>';
+    html += markdownInline(item.text);
+  }
+  while (open.length) html += `</li></${open.pop()!.tag}>`;
+  return html;
+}
+export async function parseMarkdownLocally(bytes: Uint8Array): Promise<ImportParsed> {
+  let text: string;
+  // The decoder drops a leading byte-order mark itself (ignoreBOM: false).
+  try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes); } catch { throw new ImportError('invalid_document'); }
+  if (text.length > MARKDOWN_TEXT_LIMIT) throw new ImportError('parsed_document_too_large', 413);
+  const body = markdownBlocks(text.replace(/\r\n?/g, '\n').split('\n'));
+  const warnings: string[] = [];
+  if (/^\s*[-*+]\s+\[[ xX]\]/m.test(text)) warnings.push('historical_checkboxes');
+  if (/!\[|<img|<iframe|<script|\]\((?!https?:\/\/|#)/i.test(text)) warnings.push('embedded_or_relative_content_not_converted');
+  return checkParsed({ body, warnings, pages: [], assets: [], parser_version: 'livo-import-md-builtin-1', hash: await sha256(bytes), needs_review: warnings.length > 0, incomplete: false });
 }
 
 export function createKnowledgeImport(repo: ImportRepository, config: ImportConfig) {
@@ -203,7 +325,7 @@ export function createKnowledgeImport(repo: ImportRepository, config: ImportConf
       const job:ImportJob={id:id(),actor_id:c.actor.id,source,status:'uploaded',version:1,policy_version:c.policy.version,created_at:new Date(now()).toISOString(),expires_at:new Date(now()+IMPORT_TTL).toISOString(),initial_parent:parent,items:[]};
       const inputs:Array<{name:string;bytes:Uint8Array;key?:string;url?:string;warnings?:string[]}>=[];
       if(source==='notion'){if(!c.policy.notion_secret||!knowledgeRuleMatches(c.policy.notion_subjects,c.actor))deny();if(!Array.isArray(body.page_ids)||!body.page_ids.length||body.page_ids.length>10)throw new ImportError('notion_selection_limit');for(const page of [...new Set(body.page_ids.map(notionPageId))]){if(!c.policy.notion_pages.includes(page))deny();inputs.push({name:'Notion.md',bytes:new Uint8Array(),key:'notion:'+page,url:'https://www.notion.so/'+page});}}
-      else {if(typeof body.name!=='string'||body.name.length>200||!body.name.toLowerCase().endsWith('.'+source))throw new ImportError('unsupported_format');inputs.push({name:body.name.replace(/[\\/\x00-\x1f]/g,'_'),bytes:fromBase64(body.data)});}
+      else {if(typeof body.name!=='string'||body.name.length>200||!body.name.toLowerCase().endsWith('.'+source))throw new ImportError('unsupported_format');inputs.push({name:body.name.replace(/[\\/\x00-\x1f]/g,'_'),bytes:fromBase64(body.data)});body.data='';}
       if(inputs.reduce((n,x)=>n+x.bytes.length,0)>IMPORT_LIMIT)throw new ImportError('file_size_limit');
       for(const input of inputs){const itemId=id(),hash=await sha256(input.bytes),key=`${c.actor.id}/${job.id}/${itemId}/original`;job.items.push({id:itemId,title:input.name.replace(/\.(md|docx|pdf)$/i,''),source_key:input.key||'file:'+hash,source_url:input.url,source_hash:hash,original:{key,name:input.name,type:mime(source),size:input.bytes.length},assets:[],status:'pending',...(input.warnings?.length?{error:input.warnings.join(',')}: {})});}
       // Persist the retention identity before the first object-store write. An interrupted

@@ -22,11 +22,9 @@ const AddTargetDialog = ({ reportType, projectId, currentUserId, onClose, onCrea
     { value: 'pdf', label: 'PDF' },
   ];
 
+  // Only Slack can deliver a report; Email, LINE Notify and Webhook targets were never sent.
   const CHANNEL_OPTIONS: { value: ChannelType; label: string }[] = [
     { value: 'slack', label: 'Slack' },
-    { value: 'email', label: 'Email' },
-    { value: 'line', label: 'LINE Notify' },
-    { value: 'webhook', label: 'Webhook' },
   ];
 
   const { createTarget } = useReportSendTargets();

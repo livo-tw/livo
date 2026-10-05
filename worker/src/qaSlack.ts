@@ -7,6 +7,7 @@ import { drainQaSlackInbox, handleQaSlack, isQaSlackPayload, qaRequestId, qaSlac
 import { qaSlackClient, qaSlackEnabled, qaSlackLink, syncQaSlackIssue, getQaSlackWorkflow } from './qaSlackSync';
 import { cleanupQaExpiredUploads } from './qaStorage';
 import { handleKnowledgeSlack, isKnowledgeSlackPayload } from './knowledgeSlackCore';
+import { slackLinkDisabled } from './slackLink';
 import { createCloudKnowledgeSlackActions } from './knowledgeSlack';
 
 export async function verifyQaSlackSignature(secret: string | undefined, timestamp: string | null, signature: string | null, body: string, now = Date.now()): Promise<boolean> {
@@ -45,6 +46,8 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       if (members.results.length !== 1) throw new Error('qa_forbidden');
       const member = members.results[0], auth: AuthCtx = { userId: member.auth_id, email: member.email, member: { ...member, workspaceId: ws } };
       if (isDemoMember(env, auth)) throw new Error('qa_forbidden');
+      // The member turned Slack linking off in My settings.
+      if (await slackLinkDisabled(env, ws, member.id)) throw new Error('slack_link_disabled');
       return { id: member.id, role: member.role, team, slack_user: user, locale: profile.locale, auth } as Actor;
     },
     api: async <T>(actor: QaSlackActor, body: Record<string, unknown>) => {

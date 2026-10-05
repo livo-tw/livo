@@ -12,7 +12,7 @@ afterEach(async () => { await i18n.changeLanguage('zh-TW'); });
 describe('QA translations use the shared locale resources', () => {
   it.each(['en', 'zh-TW', 'zh-CN'])('translates every workflow state and new reporting action in %s', language => {
     const required = [...QA_STATES.map(state => `qa.state.${state}`),
-      'qa.dropPermission', 'qa.dropSaved', 'qa.dropSaving', 'qa.dropUncertain', 'qa.dropFiles', 'qa.createBug', 'qa.priorityUnassigned',
+      'qa.dropPermission', 'qa.dropSaved', 'qa.dropSaving', 'qa.dropUncertain', 'qa.dropFiles', 'qa.createBug', 'qa.priorityDefault',
       'qa.slackSource', 'qa.notProvided', 'qa.finishPending',
       'standup.settings.shuffle', 'standup.noActiveMembers', 'standup.turnUnit', 'sidebar.standup',
       'deploymentEnvironments.title', 'deploymentEnvironments.restoreMissing'];

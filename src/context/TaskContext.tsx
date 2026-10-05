@@ -20,7 +20,8 @@ export interface TaskContextType {
   refreshStatuses: () => Promise<void>;
   refreshTags: () => Promise<void>;
   updateTaskInDb: (taskId: string, updates: Partial<Task>) => Promise<boolean | void>;
-  createTaskInDb: (task: Task) => Promise<void>;
+  /** The stored task (database key), or null when the insert failed. */
+  createTaskInDb: (task: Task) => Promise<Task | null>;
   createSubtask: (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task) => Promise<Task | null>;
   customFields: CustomField[];
   customFieldValues: TaskCustomFieldValue[];

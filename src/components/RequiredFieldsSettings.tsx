@@ -15,8 +15,12 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
   const { t } = useTranslation();
   const { requiredFields, saveRequiredFields } = useUIContext();
   const { permissions } = useAuthContext();
-  const { customFields } = useTaskContext();
+  const { customFields, updateCustomField } = useTaskContext();
   const [localBuiltin, setLocalBuiltin] = useState<RequiredFieldsConfig>(requiredFields);
+  // A custom field is required when the field itself says so (custom_fields.is_required, which the
+  // create form checks). The older required_custom_fields setting was never read; its choices are
+  // shown here so that saving moves them onto the fields.
+  const [legacyCustom, setLegacyCustom] = useState<Set<string>>(new Set());
   const [localCustom, setLocalCustom] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
@@ -32,12 +36,10 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
         .select('value')
         .eq('key', 'required_custom_fields')
         .maybeSingle();
-      if (data?.value && typeof data.value === 'object' && Array.isArray(data.value)) {
-        setLocalCustom(new Set(data.value));
-      }
+      setLegacyCustom(new Set(Array.isArray(data?.value) ? (data.value as unknown[]).filter((id): id is string => typeof id === 'string') : []));
     } catch {
       // If the setting doesn't exist, that's fine
-      setLocalCustom(new Set());
+      setLegacyCustom(new Set());
     }
   }, []);
 
@@ -50,6 +52,13 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
     }
     return customFields;
   }, [customFields, projectId]);
+
+  // Follows what the fields say (not the array instance, which a refresh replaces).
+  const requiredKey = customFields.map(field => `${field.id}:${field.isRequired ? 1 : 0}`).join(',');
+  useEffect(() => {
+    setLocalCustom(new Set(customFields.filter(field => field.isRequired || legacyCustom.has(field.id)).map(field => field.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requiredKey, legacyCustom]);
 
   const handleToggleBuiltin = (key: keyof RequiredFieldsConfig) => {
     // title and project are always required, can't be toggled off
@@ -72,17 +81,13 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Save builtin fields
-      await saveRequiredFields(localBuiltin);
-
-      // Save custom required fields separately
-      await supabase
-        .from('system_settings')
-        .upsert({
-          key: 'required_custom_fields',
-          value: Array.from(localCustom),
-          updated_at: new Date().toISOString()
-        } as Parameters<typeof supabase.from<'system_settings'>>[0] extends string ? never : Record<string, unknown>);
+      if (builtinHasChanges) await saveRequiredFields(localBuiltin);
+      for (const field of changedCustomFields) await updateCustomField(field.id, { isRequired: localCustom.has(field.id) });
+      // The old list is now on the fields themselves.
+      if (legacyCustom.size) {
+        await supabase.from('system_settings').upsert({ key: 'required_custom_fields', value: [], updated_at: new Date().toISOString() } as Parameters<typeof supabase.from<'system_settings'>>[0] extends string ? never : Record<string, unknown>);
+        setLegacyCustom(new Set());
+      }
 
       toast.success(t('requiredFields.saveSuccess'));
     } catch (error) {
@@ -94,7 +99,8 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
   };
 
   const builtinHasChanges = JSON.stringify(localBuiltin) !== JSON.stringify(requiredFields);
-  const hasChanges = builtinHasChanges; // Custom field changes are tracked automatically
+  const changedCustomFields = customFields.filter(field => field.isRequired !== localCustom.has(field.id));
+  const hasChanges = builtinHasChanges || changedCustomFields.length > 0;
 
   const groups = [...new Set(REQUIRED_FIELD_DEFS.map(f => f.group))];
 
@@ -122,8 +128,8 @@ const RequiredFieldsSettings = ({ projectId }: RequiredFieldsSettingsProps = {})
                     disabled={!canEdit || isLocked}
                     className="rounded border-border text-primary focus:ring-primary"
                   />
-                  <span className="text-sm text-foreground">{field.label}</span>
-                  {isLocked && <span className="text-[10px] text-muted-foreground ml-auto">{t('requiredFields.locked')}</span>}
+                  <span className="min-w-0 text-sm text-foreground">{field.label}</span>
+                  {isLocked && <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">{t('requiredFields.locked')}</span>}
                 </label>
               );
             })}

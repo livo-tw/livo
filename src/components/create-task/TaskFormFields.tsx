@@ -13,16 +13,18 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { Priority, Tag, TaskDeployment, Status } from '@/types';
+import type { RequiredFieldsConfig } from '@/context/UIContext';
 import { type ProjectGroup } from '@/lib/projectGroups';
 
 type EnvName = string;
 
-const priorities: { value: Priority; label: string; color: string }[] = [
-  { value: 'highest', label: 'Highest', color: '#FF5630' },
-  { value: 'high',    label: 'High',    color: '#FF8B00' },
-  { value: 'medium',  label: 'Medium',  color: '#FFAB00' },
-  { value: 'low',     label: 'Low',     color: '#0065FF' },
-  { value: 'lowest',  label: 'Lowest',  color: '#6B778C' },
+// Labels come from the translations (priority.*), like everywhere else a priority is shown.
+const priorities: { value: Priority; color: string }[] = [
+  { value: 'highest', color: '#FF5630' },
+  { value: 'high',    color: '#FF8B00' },
+  { value: 'medium',  color: '#FFAB00' },
+  { value: 'low',     color: '#0065FF' },
+  { value: 'lowest',  color: '#6B778C' },
 ];
 
 export interface TaskFormFieldsProps {
@@ -50,7 +52,7 @@ export interface TaskFormFieldsProps {
   refreshTags: () => Promise<void>;
   showValidationErrors: boolean;
   setShowValidationErrors: (v: boolean) => void;
-  requiredFields: Record<string, boolean>;
+  requiredFields: RequiredFieldsConfig;
   groupedProjects: ProjectGroup[];
   statuses: Status[];
   // Tag picker state
@@ -65,6 +67,10 @@ export interface TaskFormFieldsProps {
   setTagManageMode: (v: boolean | ((prev: boolean) => boolean)) => void;
   confirm: (opts: { title: string; description: string; destructive?: boolean }) => Promise<boolean>;
   hideDeployment?: boolean;
+  /** The running sprint, when there is one; the member decides whether the new task joins it. */
+  sprintName?: string;
+  joinSprint?: boolean;
+  setJoinSprint?: (value: boolean) => void;
 }
 
 const TaskFormFields = ({
@@ -77,7 +83,7 @@ const TaskFormFields = ({
   groupedProjects, statuses,
   tagPickerOpen, setTagPickerOpen, tagPickerRef,
   newTagName, setNewTagName, newTagColor, setNewTagColor,
-  tagManageMode, setTagManageMode, confirm,
+  tagManageMode, setTagManageMode, sprintName, joinSprint, setJoinSprint, confirm,
   hideDeployment,
 }: TaskFormFieldsProps) => {
   const { t } = useTranslation();
@@ -111,7 +117,7 @@ const TaskFormFields = ({
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.priorityLabel')}{requiredFields.priority && <span className="text-destructive"> *</span>}</label>
         <SearchableSelect value={priority} onChange={e => setPriority(e.target.value as Priority)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
-          {priorities.map(p => (<option key={p.value} value={p.value}>{p.label}</option>))}
+          {priorities.map(p => (<option key={p.value} value={p.value}>{t(`priority.${p.value}`)}</option>))}
         </SearchableSelect>
       </div>
       <div>
@@ -132,7 +138,7 @@ const TaskFormFields = ({
             </button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start">
-            <Calendar mode="single" selected={startDate} onSelect={setStartDate} initialFocus className={cn("p-3 pointer-events-auto")} />
+            <Calendar mode="single" selected={startDate} onSelect={setStartDate} disabled={dueDate ? { after: dueDate } : undefined} initialFocus className={cn("p-3 pointer-events-auto")} />
           </PopoverContent>
         </Popover>
       </div>
@@ -146,10 +152,17 @@ const TaskFormFields = ({
             </button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start">
-            <Calendar mode="single" selected={dueDate} onSelect={(d) => { setDueDate(d); setShowValidationErrors(false); }} initialFocus className={cn("p-3 pointer-events-auto")} />
+            <Calendar mode="single" selected={dueDate} onSelect={(d) => { setDueDate(d); setShowValidationErrors(false); }} disabled={startDate ? { before: startDate } : undefined} initialFocus className={cn("p-3 pointer-events-auto")} />
           </PopoverContent>
         </Popover>
       </div>
+
+      {sprintName && setJoinSprint && (
+        <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+          <input type="checkbox" checked={!!joinSprint} onChange={e => setJoinSprint(e.target.checked)} className="rounded border-border accent-primary" />
+          {t('taskCreate.joinSprint', { name: sprintName })}
+        </label>
+      )}
 
       {/* Tags */}
       <div className="relative" ref={tagPickerRef}>

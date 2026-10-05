@@ -26,6 +26,7 @@ CREATE TRIGGER qa_command_coordination_guard BEFORE INSERT ON qa_commands WHEN N
   WHEN NEW.operation='accept_handoff' THEN json_extract(q.data,'$.handoff.nextOwnerId')=NEW.actor_id AND json_extract(q.data,'$.handoff.acceptedAt') IS NULL AND json_extract(q.data,'$.handoff.resolvedAt') IS NULL
   WHEN NEW.operation='resolve_handoff' THEN (NEW.actor_role IN ('admin','super_admin') OR json_extract(q.data,'$.handoff.nextOwnerId')=NEW.actor_id) AND json_extract(q.data,'$.handoff.resolvedAt') IS NULL
   WHEN NEW.actor_role IN ('admin','super_admin') THEN 1
+  WHEN NEW.operation='comment' THEN 1
   WHEN NEW.operation IN ('triage','hold','request_handoff') AND EXISTS(SELECT 1 FROM qa_project_coordination c WHERE c.workspace_id=q.workspace_id AND c.id=q.project_id AND c.coordinator_id=NEW.actor_id) THEN 1
   WHEN NEW.operation IN ('triage','record_verification','close') THEN q.qa_owner_id=NEW.actor_id
   WHEN NEW.operation IN ('start_fix','submit_fix') THEN q.assignee_id=NEW.actor_id

@@ -4,6 +4,7 @@ import { FileText, MessageSquare, Clock, Timer, History, Link2, Copy, Trash2, X,
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { useTaskDetail } from './hooks/useTaskDetail';
 import TaskSpecTab from './TaskSpecTab';
 import TaskCommentsTab from './TaskCommentsTab';
@@ -26,7 +27,6 @@ const TaskDetailContent = ({ onClose }: Props) => {
     task, line, project, allTasks,
     otherViewers,
     activeTab, setActiveTab,
-    deleteConfirm, setDeleteConfirm,
     showSaveTemplate, setShowSaveTemplate,
     templateName, setTemplateName,
     templateScope, setTemplateScope,
@@ -78,12 +78,12 @@ const TaskDetailContent = ({ onClose }: Props) => {
         <div className="flex items-center gap-0.5 flex-shrink-0">
           {!isMobile && <RecordViewModeButtons value={taskDisplayMode} onChange={setTaskDisplayMode} />}
           {!isMobile && <div className="w-px h-4 bg-border mx-0.5 md:mx-1" />}
-          <button onClick={handleCopyLink} title={t('task.copyLink')} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+          <button onClick={handleCopyLink} title={t('task.copyLink')} aria-label={t('task.copyLink')} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
             <Link2 size={15} />
           </button>
           {/* Save as Template */}
           <div className="relative">
-            <button onClick={() => setShowSaveTemplate(v => !v)} className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors" title={t('task.saveTemplate')}>
+            <button onClick={() => setShowSaveTemplate(v => !v)} className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11" title={t('task.saveTemplate')} aria-label={t('task.saveTemplate')} aria-expanded={showSaveTemplate}>
               <Copy size={15} />
             </button>
             {showSaveTemplate && (
@@ -111,19 +111,14 @@ const TaskDetailContent = ({ onClose }: Props) => {
             )}
           </div>
           {permissions.canDeleteTask && (
-            deleteConfirm ? (
-              <div className="flex items-center gap-1 text-xs">
-                <span className="text-muted-foreground">{t('task.confirmDeleteQuestion')}</span>
-                <button onClick={handleDelete} className="px-2 py-1 rounded bg-destructive text-destructive-foreground text-xs font-medium">{t('common.delete')}</button>
-                <button onClick={() => setDeleteConfirm(false)} className="px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent">{t('button.cancel')}</button>
-              </div>
-            ) : (
-              <button onClick={() => setDeleteConfirm(true)} className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                <Trash2 size={15} />
-              </button>
-            )
+            // One confirmation dialog, which states that deleting cannot be undone.
+            <button onClick={() => void handleDelete()} title={t('task.deleteTitle')} aria-label={t('task.deleteTitle')} className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
+              <Trash2 size={15} />
+            </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+          {/* Kept apart from delete so a tap meant for close cannot hit it. */}
+          <div className="w-px h-4 bg-border mx-1" aria-hidden="true" />
+          <button onClick={onClose} title={t('common.close')} aria-label={t('common.close')} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
             <X size={16} />
           </button>
         </div>
@@ -158,8 +153,16 @@ const TaskDetailContent = ({ onClose }: Props) => {
           type="text"
           defaultValue={task.title}
           key={task.id}
-          onBlur={e => { const val = e.target.value.trim(); if (val && val !== task.title) updateTask({ title: val }); }}
-          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          onBlur={e => {
+            const val = e.target.value.trim();
+            // A task needs a title: an emptied one goes back to the saved title, and says so.
+            if (!val) { e.target.value = task.title; toast.info(t('taskDetail.titleRequired')); return; }
+            if (val !== task.title) updateTask({ title: val });
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Escape') { (e.target as HTMLInputElement).value = task.title; (e.target as HTMLInputElement).blur(); }
+          }}
           className="w-full text-foreground text-base md:text-lg font-semibold leading-snug bg-transparent border-0 outline-none focus:ring-1 focus:ring-primary/30 rounded px-0 py-0"
         />
       </div>
@@ -321,8 +324,8 @@ const TaskDependencyInline = ({ detail }: { detail: ReturnType<typeof useTaskDet
         </button>
         {/* Remove */}
         <button type="button" onClick={() => removeTaskDependency(depId)}
-          className="opacity-0 group-hover/row:opacity-100 text-muted-foreground hover:text-destructive transition-opacity flex-shrink-0 p-0.5"
-          title={tr('taskDetail.dependency.removeTitle')}>
+          className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-destructive transition-opacity flex-shrink-0 p-0.5"
+          title={tr('taskDetail.dependency.removeTitle')} aria-label={tr('taskDetail.dependency.removeTitle')}>
           <X size={12} />
         </button>
       </div>

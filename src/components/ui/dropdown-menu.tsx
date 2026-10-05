@@ -21,7 +21,7 @@ DropdownMenuTrigger.displayName = 'DropdownMenuTrigger';
 export function DropdownMenuContent({ className, children, ...props }: React.ComponentPropsWithoutRef<typeof PopoverContent>) {
   const context = React.useContext(MenuContext);
   const ref = React.useRef<HTMLDivElement>(null);
-  const options = () => Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || []);
+  const options = () => Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled),[role="menuitemradio"]:not(:disabled)') || []);
   return <PopoverContent {...props} ref={ref} role="menu" className={cn('z-[60] w-auto min-w-40 p-1', className)}
     onOpenAutoFocus={event => { event.preventDefault(); options()[0]?.focus(); }}
     onCloseAutoFocus={event => { if (context?.selected.current) event.preventDefault(); }}
@@ -35,8 +35,9 @@ export function DropdownMenuContent({ className, children, ...props }: React.Com
     }}>{children}</PopoverContent>;
 }
 
-export function DropdownMenuItem({ className, onSelect, children, ...props }: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onSelect'> & { onSelect?: () => void }) {
+/** A "menuitemradio" role (with aria-checked) marks one choice of a group. */
+export function DropdownMenuItem({ className, onSelect, children, role = 'menuitem', ...props }: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onSelect' | 'role'> & { onSelect?: () => void; role?: 'menuitem' | 'menuitemradio' }) {
   const context = React.useContext(MenuContext);
-  return <button {...props} type="button" role="menuitem" className={cn('flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50', className)}
+  return <button {...props} type="button" role={role} className={cn('flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50', className)}
     onClick={event => { props.onClick?.(event); if (!event.defaultPrevented) { context?.select(); onSelect?.(); } }}>{children}</button>;
 }

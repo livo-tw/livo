@@ -65,6 +65,8 @@ describe('knowledge work review and privacy flows', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Prepare preview' }));
     await screen.findByRole('textbox', { name: /^Review and edit content/ });
     expect(client.save).not.toHaveBeenCalled();
+    // An empty title gets a default in the interface language, not the server's English one.
+    expect(client.prepare).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringMatching(/^Meeting notes draft \d{4}-\d{2}-\d{2}$/) }));
     const save = screen.getByRole('button', { name: 'Save private draft' });
     expect(save).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox', { name: /confirm saving it/ }));
@@ -105,7 +107,7 @@ describe('knowledge work review and privacy flows', () => {
     const publish = vi.fn(async () => { throw new Error('knowledge_conflict'); });
     const client = fake({ get, publish });
     const view = render(<KnowledgeWorkPanel client={client} pageId="page-1" pageVersion={1} parents={[]} onChanged={vi.fn(async () => {})} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish effective version' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish as official' }));
     expect(publish).not.toHaveBeenCalled();
     view.rerender(<KnowledgeWorkPanel client={client} pageId="page-1" pageVersion={2} parents={[]} onChanged={vi.fn(async () => {})} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
@@ -137,12 +139,12 @@ describe('knowledge work review and privacy flows', () => {
     const get = vi.fn().mockResolvedValueOnce(detail()).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(detail(2));
     const client = fake({ get });
     render(<KnowledgeWorkPanel client={client} pageId="page-1" pageVersion={1} parents={[]} onChanged={vi.fn(async () => {})} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Publish effective version' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish as official' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /confirm publishing it/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm publication' }));
     await screen.findByText(/Saved, but the view could not refresh/);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByRole('button', { name: 'Publish effective version' });
+    await screen.findByRole('button', { name: 'Publish as official' });
     expect(client.publish).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,8 @@
+import { defaultTaskProject } from './defaultProject';
+import { hasRichTextContent } from '@/lib/richTextContent';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { customFieldDefault, customFieldFilled, customFieldHasValue, type CustomFieldDraft } from '@/lib/customFieldValues';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuthContext } from '@/context/AuthContext';
@@ -31,9 +34,11 @@ export function useCreateTaskForm() {
   const environmentConfig = useDeploymentEnvironments();
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { showCreateTask, setShowCreateTask, requiredFields } = useUIContext();
-  const { selectedProjectId, allProjects, productLines } = useProjectContext();
-  const { allTasks, setAllTasks, statuses, tags, refreshTags, createTaskInDb, createSubtask, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos, refreshStatusLogs, taskTemplates } = useTaskContext();
+  const { showCreateTask, setShowCreateTask, requiredFields, currentView } = useUIContext();
+  // Visible in the form: a task made from the backlog stays in the backlog unless the member ticks it.
+  const [joinSprint, setJoinSprint] = useState(true);
+  const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
+  const { allTasks, setAllTasks, statuses, tags, refreshTags, createTaskInDb, createSubtask, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos, refreshStatusLogs, taskTemplates, customFields, upsertCustomFieldValue } = useTaskContext();
   const { currentSprint } = useSprintContext();
   const { hasFeature } = useLicense();
   const { confirm, ConfirmDialog } = useConfirmDialog();
@@ -41,6 +46,9 @@ export function useCreateTaskForm() {
 
   const [projectId, setProjectId] = useState('');
   const [title, setTitle] = useState('');
+  // The chosen project's custom fields, starting from their defaults.
+  const [customValues, setCustomValues] = useState<Record<string, CustomFieldDraft>>({});
+  const [customTouched, setCustomTouched] = useState(false);
   const [statusId, setStatusId] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [assigneeId, setAssigneeId] = useState<string>('');
@@ -78,10 +86,15 @@ export function useCreateTaskForm() {
     return () => document.removeEventListener('pointerdown', handler);
   }, []);
 
+  // Reset only when the form opens: a project or line changing elsewhere (realtime)
+  // while it is open must not wipe what was typed.
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (showCreateTask) {
-      const defaultProject = selectedProjectId || allProjects[0]?.id || '';
-      setProjectId(defaultProject);
+    const opening = showCreateTask && !wasOpen.current;
+    wasOpen.current = showCreateTask;
+    if (opening) {
+      setJoinSprint(currentView !== 'backlog');
+      setProjectId(defaultTaskProject(groupProjectsByLine(productLines, allProjects), selectedProjectId, selectedLineId));
       setTitle(''); setStatusId(statuses[0]?.id || ''); setPriority('medium');
       setAssigneeId(''); setReviewerId('');
       setDueDate(undefined); setStartDate(undefined);
@@ -92,7 +105,18 @@ export function useCreateTaskForm() {
       setSubtaskItems([]); setNewSubtaskText('');
       setTimeout(() => titleRef.current?.focus(), 100);
     }
-  }, [showCreateTask, selectedProjectId, allProjects]);
+  }, [showCreateTask, selectedProjectId, selectedLineId, allProjects, productLines, currentView]);
+
+  const projectCustomFields = useMemo(() => (customFields || []).filter(field => field.projectId === projectId).sort((a, b) => a.sortOrder - b.sortOrder), [customFields, projectId]);
+  const customFieldsRef = useRef(projectCustomFields); customFieldsRef.current = projectCustomFields;
+  // Defaults are filled in when the form opens or the project changes, not when a field list refreshes.
+  useEffect(() => {
+    if (!showCreateTask) return;
+    setCustomValues(Object.fromEntries(customFieldsRef.current.map(field => [field.id, customFieldDefault(field)])));
+    setCustomTouched(false);
+  }, [showCreateTask, projectId]);
+  const setCustomValue = (fieldId: string, value: CustomFieldDraft) => { setCustomValues(previous => ({ ...previous, [fieldId]: value })); setCustomTouched(true); setShowValidationErrors(false); };
+  const missingCustomFields = projectCustomFields.filter(field => field.isRequired && !customFieldFilled(field, customValues[field.id]));
 
   const applyTemplate = (templateId: string) => {
     const tmpl = taskTemplates.find(t => t.id === templateId);
@@ -113,14 +137,15 @@ export function useCreateTaskForm() {
 
   const isValid = (() => {
     if (!title.trim() || !projectId) return false;
+    if (missingCustomFields.length) return false;
     if (requiredFields.dueDate && !dueDate) return false;
     if (requiredFields.startDate && !startDate) return false;
     if (requiredFields.assignee && !assigneeId) return false;
     if (requiredFields.reviewer && !reviewerId) return false;
     if (requiredFields.tags && selectedTagIds.length === 0) return false;
-    if (requiredFields.background && !background.trim()) return false;
-    if (requiredFields.requirement && !requirement.trim()) return false;
-    if (requiredFields.notes && !notes.trim()) return false;
+    if (requiredFields.background && !hasRichTextContent(background)) return false;
+    if (requiredFields.requirement && !hasRichTextContent(requirement)) return false;
+    if (requiredFields.notes && !hasRichTextContent(notes)) return false;
     if (requiredFields.checks && checkItems.length === 0) return false;
     if (requiredFields.todos && todoItems.length === 0) return false;
     if (requiredFields.gitlabUrl && !gitlabUrl.trim()) return false;
@@ -220,13 +245,14 @@ export function useCreateTaskForm() {
     if (requiredFields.assignee && !assigneeId) missing.push(t('taskCreate.fields.assignee'));
     if (requiredFields.reviewer && !reviewerId) missing.push(t('taskCreate.fields.reviewer'));
     if (requiredFields.tags && selectedTagIds.length === 0) missing.push(t('taskCreate.fields.tags'));
-    if (requiredFields.background && !background.trim()) missing.push(t('taskCreate.fields.background'));
-    if (requiredFields.requirement && !requirement.trim()) missing.push(t('taskCreate.fields.requirement'));
-    if (requiredFields.notes && !notes.trim()) missing.push(t('taskCreate.fields.notes'));
+    if (requiredFields.background && !hasRichTextContent(background)) missing.push(t('taskCreate.fields.background'));
+    if (requiredFields.requirement && !hasRichTextContent(requirement)) missing.push(t('taskCreate.fields.requirement'));
+    if (requiredFields.notes && !hasRichTextContent(notes)) missing.push(t('taskCreate.fields.notes'));
     if (requiredFields.checks && checkItems.length === 0) missing.push(t('taskCreate.fields.checks'));
     if (requiredFields.todos && todoItems.length === 0) missing.push(t('taskCreate.fields.todos'));
     if (requiredFields.gitlabUrl && !gitlabUrl.trim()) missing.push(t('taskCreate.fields.gitlabUrl'));
     if (requiredFields.deployments && deployments.length === 0) missing.push(t('taskCreate.fields.deployments'));
+    for (const field of missingCustomFields) missing.push(field.fieldName);
     toast.error(t('taskCreate.missingRequiredFields', { fields: missing.join('、') }));
   };
 
@@ -247,16 +273,20 @@ export function useCreateTaskForm() {
       completedAt: status?.autoDone ? now : undefined,
       gitlabUrl: gitlabUrl.trim() || undefined,
       sortOrder: 0, createdAt: now, commentCount: 0, attachmentCount: 0,
-      deployments, sprintId: currentSprint?.id || undefined,
+      deployments, sprintId: joinSprint && currentSprint ? currentSprint.id : undefined,
       tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     };
     try {
       setAllTasks(prev => [...prev, newTask]);
-      await createTaskInDb(newTask);
-      await logActivity(currentMemberId, 'create_task', title.trim(), taskId, taskKey);
+      const created = await createTaskInDb(newTask);
+      // The insert failed (already explained): keep the form open with what was typed.
+      if (!created) { setAllTasks(prev => prev.filter(task => task.id !== taskId)); return; }
+      // The database may have kept a different key; notifications use the stored one.
+      const storedKey = created.taskKey;
+      await logActivity(currentMemberId, 'create_task', title.trim(), taskId, storedKey);
       const proj = allProjects.find(p => p.id === projectId);
       sendSlackNotify({
-        type: 'task_created', taskKey, taskTitle: title.trim(), taskId,
+        type: 'task_created', taskKey: storedKey, taskTitle: title.trim(), taskId,
         projectName: proj?.name, actorName: currentMember?.name || t('common.unknown'),
         priority, assigneeName: assigneeId ? users.find(u => u.id === assigneeId)?.name : undefined,
         statusName: statuses.find(s => s.id === statusId)?.name,
@@ -279,13 +309,17 @@ export function useCreateTaskForm() {
         }
       }
       if (pendingFiles.length > 0) { setUploading(true); await uploadFiles(taskId); setUploading(false); }
+      for (const field of projectCustomFields) {
+        const value = customValues[field.id];
+        if (customFieldHasValue(value)) await upsertCustomFieldValue(taskId, field.id, value!);
+      }
       await supabase.from('status_logs').insert({ id: `sl_${randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId });
       if (selectedTagIds.length > 0) {
         await supabase.from('task_tags').insert(selectedTagIds.map(tagId => ({ id: `tt_${randomUUID()}`, task_id: taskId, tag_id: tagId })) as unknown as Record<string, unknown>[]);
       }
       if (subtaskItems.length > 0) {
         for (const subtaskTitle of subtaskItems) {
-          await createSubtask(taskId, subtaskTitle, projectId, statusId, newTask);
+          await createSubtask(taskId, subtaskTitle, projectId, statusId, created);
         }
       }
       toast.success(t('task.created'));
@@ -302,6 +336,15 @@ export function useCreateTaskForm() {
 
   const groupedProjects = groupProjectsByLine(productLines, allProjects);
 
+  // Closing asks first once something was typed or added, so a misclick does not lose it.
+  const dirty = !!title.trim() || hasRichTextContent(background) || hasRichTextContent(requirement) || hasRichTextContent(notes)
+    || checkItems.length > 0 || todoItems.length > 0 || subtaskItems.length > 0 || pendingFiles.length > 0 || deployments.length > 0 || !!gitlabUrl.trim() || customTouched;
+  const requestClose = async () => {
+    if (isSubmitting) return;
+    if (dirty && !(await confirm({ title: t('taskCreate.discardTitle'), description: t('taskCreate.discardDesc'), destructive: true }))) return;
+    setShowCreateTask(false);
+  };
+
   const fieldsProps = {
     projectId, setProjectId, statusId, setStatusId, priority, setPriority,
     assigneeId, setAssigneeId, reviewerId, setReviewerId,
@@ -313,7 +356,9 @@ export function useCreateTaskForm() {
     tagPickerOpen, setTagPickerOpen, tagPickerRef,
     newTagName, setNewTagName, newTagColor, setNewTagColor,
     tagManageMode, setTagManageMode, confirm,
+    sprintName: currentSprint?.name, joinSprint, setJoinSprint,
   };
+  const customFieldsProps = { fields: projectCustomFields, values: customValues, onChange: setCustomValue, showValidationErrors };
 
   return {
     showCreateTask, setShowCreateTask,
@@ -332,9 +377,9 @@ export function useCreateTaskForm() {
     checkItems, newCheckText, setNewCheckText, addCheck, removeCheck,
     subtaskItems, setSubtaskItems, newSubtaskText, setNewSubtaskText,
     pendingFiles, handleFileSelect, removePendingFile, handleDrop,
-    fieldsProps, isMobile,
+    fieldsProps, customFieldsProps, isMobile,
     hasFeature,
-    handleSubmitAttempt,
+    handleSubmitAttempt, requestClose,
     ConfirmDialog,
   };
 }

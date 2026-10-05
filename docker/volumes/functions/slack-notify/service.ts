@@ -145,7 +145,10 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       const inWindow = startHour <= endHour ? hour >= startHour && hour < endHour : hour >= startHour || hour < endHour;
       if (dmEnabled && inWindow) {
         const members = await admin.rows('members', { select: 'id,email', is_active: 'eq.true', id: `in.(${[...allowed.keys()].join(',')})` });
-        const targets = members.filter(m => typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
+        // Members who unlinked Slack in My settings get no direct messages.
+        const unlinked = new Set((await admin.rows('slack_link_preferences', { select: 'member_id', linking_disabled: 'eq.true',
+          member_id: `in.(${[...allowed.keys()].join(',')})` })).map(row => row.member_id));
+        const targets = members.filter(m => !unlinked.has(m.id) && typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
         const results = await Promise.allSettled(targets.map(async m => {
           const found = await slack('users.lookupByEmail', { email: m.email.trim() });
           // No Slack account, or a guest/bot/deactivated one: skipped on purpose, not a failure.

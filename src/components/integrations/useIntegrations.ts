@@ -4,7 +4,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { SlackSettings, WebhookSettings, EmailSettings, GitLabSettings, CalendarSettings } from './types';
 import { DEFAULT_SLACK, DEFAULT_WEBHOOK, DEFAULT_EMAIL, DEFAULT_GITLAB, DEFAULT_CALENDAR } from './constants';
-import { setWebhookConfig } from '@/lib/webhook';
 
 export function useIntegrations() {
   const { t } = useTranslation();
@@ -49,9 +48,6 @@ export function useIntegrations() {
     setSaving(s => ({ ...s, [key]: false }));
     if (error) toast.error(t('integrations.saveFailed') + error.message);
     else {
-      // Dispatch sites read the module-level config; without this a saved
-      // webhook config only took effect after a full page reload.
-      if (key === 'integration_webhook') setWebhookConfig(value as WebhookSettings);
       toast.success(t('integrations.saveSuccess'));
     }
   };

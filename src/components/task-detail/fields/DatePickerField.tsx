@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { CalendarIcon, X } from 'lucide-react';
 import { format, addDays, addWeeks, addMonths, nextMonday, isMonday, parseISO } from 'date-fns';
-import { zhTW, zhCN, enUS } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/dateLabels';
 import { useTranslation } from 'react-i18next';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -10,27 +10,25 @@ type DatePickerFieldProps = {
   value: string | undefined;           // YYYY-MM-DD or undefined
   onChange: (date: string | undefined) => void;
   minDate?: string;                    // YYYY-MM-DD — dates before this are disabled
+  maxDate?: string;                    // YYYY-MM-DD — dates after this are disabled (a start date after the due date)
   defaultMonth?: Date;                 // calendar opens at this month
   mode: 'start' | 'due';
   startDate?: string;                  // for due-date quick picks based on start
 };
 
-const getLocale = (lang: string) => {
-  if (lang.startsWith('zh-TW') || lang === 'zh-Hant') return zhTW;
-  if (lang.startsWith('zh')) return zhCN;
-  return enUS;
-};
 
-export default function DatePickerField({ value, onChange, minDate, defaultMonth, mode, startDate }: DatePickerFieldProps) {
+export default function DatePickerField({ value, onChange, minDate, maxDate, defaultMonth, mode, startDate }: DatePickerFieldProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
-  const locale = getLocale(i18n.language);
+  const locale = dateFnsLocale(i18n.language);
 
   const selected = value ? parseISO(value) : undefined;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const minDateObj = minDate ? parseISO(minDate) : undefined;
+  const maxDateObj = maxDate ? parseISO(maxDate) : undefined;
+  const outOfRange = (date: Date) => (!!minDateObj && date < minDateObj) || (!!maxDateObj && date > maxDateObj);
 
   const calendarDefault = useMemo(() => {
     if (selected) return selected;
@@ -111,7 +109,8 @@ export default function DatePickerField({ value, onChange, minDate, defaultMonth
               key={qp.label}
               type="button"
               onClick={() => handleQuick(qp.date)}
-              className="text-[11px] px-2 py-1 rounded-full border border-border bg-muted hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors font-medium"
+              disabled={outOfRange(qp.date)}
+              className="text-[11px] px-2 py-1 rounded-full border border-border bg-muted hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors font-medium disabled:pointer-events-none disabled:opacity-40"
             >
               {qp.label}
             </button>
@@ -123,7 +122,7 @@ export default function DatePickerField({ value, onChange, minDate, defaultMonth
           onSelect={handleSelect}
           defaultMonth={calendarDefault}
           locale={locale}
-          disabled={minDateObj ? { before: minDateObj } : undefined}
+          disabled={minDateObj || maxDateObj ? [...(minDateObj ? [{ before: minDateObj }] : []), ...(maxDateObj ? [{ after: maxDateObj }] : [])] : undefined}
           today={today}
           initialFocus
         />

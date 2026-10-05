@@ -1,10 +1,11 @@
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug, Package } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug, Package, LayoutDashboard } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
+import { scopeChangeBlocked, sidebarEntry, viewAfterScopeChange } from '@/hooks/useProjectScope';
 import { useTaskContext } from '@/context/TaskContext';
 import { useLicense } from '@/context/LicenseContext';
 import { logActivity } from '@/lib/activityLog';
@@ -12,12 +13,14 @@ import { logActivity } from '@/lib/activityLog';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import StandupLaunchDialog from '@/components/StandupLaunchDialog';
 import UpgradePrompt from '@/components/UpgradePrompt';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface AppSidebarProps {
   onNavigate?: () => void;
 }
 
 const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
+  const isMobile = useIsMobile();
   const { t } = useTranslation();
   const getProjectColor = useProjectColor();
   const { permissions, currentMember, currentMemberId } = useAuthContext();
@@ -103,6 +106,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     setContextMenu(null);
   };
 
+  const activeEntry = sidebarEntry(currentView, !!(selectedProjectId || selectedLineId));
   const nav = (action: () => void) => {
     setSelectedTask(null);
     const url = new URL(window.location.href);
@@ -118,7 +122,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     <>
     <nav
       aria-label={t('sidebar.ariaLabel')}
-      className="w-[240px] md:w-[240px] h-full flex flex-col flex-shrink-0 overflow-hidden border-r border-sidebar-border"
+      className="w-full md:w-[240px] h-full flex flex-col flex-shrink-0 overflow-y-auto border-r border-sidebar-border"
       style={{
         background: 'linear-gradient(to right, hsl(var(--sidebar-background)), hsl(var(--sidebar-gradient-end, var(--sidebar-background))))',
       }}
@@ -144,27 +148,24 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         </button>
 
         <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('knowledge-base'); })}
-          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-all ${currentView === 'knowledge-base' ? 'text-sidebar-primary-foreground bg-sidebar-primary/90 shadow-sm' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}>
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-all ${activeEntry === 'knowledge-base' ? 'text-sidebar-primary-foreground bg-sidebar-primary/90 shadow-sm' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}>
           <FolderOpen size={16} />{t('kb.title')}
         </button>
 
-        <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('releases'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'releases' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Package size={16} />{t('releaseWorkspace.title')}</button>
+        {featureTogglesReady && featureToggles.releases && <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('releases'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'releases' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Package size={16} />{t('releaseWorkspace.title')}</button>}
         {/* All Tasks */}
         {featureTogglesReady && featureToggles.qa && <>
-          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Bug size={16} />{t('qa.title')}</button>
-          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('my-qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'my-qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><ClipboardCheck size={16} />{t('qa.myTitle')}</button>
-          {selectedProjectId && <button onClick={() => nav(() => setCurrentView('qa'))} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-hover"><Bug size={16} />{t('qa.projectEntry')} · {allProjects.find(p => p.id === selectedProjectId)?.name}</button>}
+          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${activeEntry === 'qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Bug size={16} />{t('qa.title')}</button>
+          <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('my-qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${activeEntry === 'my-qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><ClipboardCheck size={16} />{t('qa.myTitle')}</button>
         </>}
         <button
-          onClick={() => nav(() => {
+          onClick={() => { if (!scopeChangeBlocked()) nav(() => {
             setSelectedProjectId(null);
             setSelectedLineId(null);
-            if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog'].includes(currentView)) {
-              setCurrentView('board');
-            }
-          })}
+            setCurrentView(viewAfterScopeChange(currentView, 'all'));
+          }); }}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-            selectedProjectId === null && selectedLineId === null && !['releases', 'qa', 'my-qa', 'knowledge-base', 'status-manage', 'team-manage', 'team-intro', 'system-admin', 'activity-log', 'my-settings', 'template-manage', 'work-report', 'approvals', 'backlog'].includes(currentView)
+            activeEntry === 'all-tasks'
               ? 'text-sidebar-primary-foreground font-semibold bg-sidebar-primary/90 shadow-sm'
               : 'text-sidebar-foreground hover:bg-sidebar-hover'
           }`}
@@ -175,8 +176,8 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           </span>
           <span className="text-sidebar-foreground/40 text-xs font-medium bg-sidebar-accent/50 px-1.5 py-0.5 rounded">{totalTaskCount}</span>
         </button>
-        {/* Standup */}
-        <button
+        {/* Standup: its panel replaces the sidebar on desktop and has no phone layout, as on the board. */}
+        {!isMobile && <button
           onClick={() => {
             setSelectedTask(null);
             if (!hasFeature('standup')) { setShowStandupUpgrade(true); return; }
@@ -186,7 +187,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         >
           <MessageCircle size={16} />
           {t('sidebar.standup')}
-        </button>
+        </button>}
 
         {/* Approvals */}
         {approvalsEnabled && <button
@@ -203,7 +204,8 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
       </div>
 
       {/* ─── 專案 Section (main scrollable area) ─── */}
-      <div className="flex-1 overflow-y-auto px-2 py-1">
+      {/* Keeps room for the projects on a short screen (a phone held sideways); the whole sidebar scrolls then. */}
+      <div className="flex-1 min-h-[7rem] overflow-y-auto px-2 py-1">
         <div className="px-3 mt-2 mb-1.5 flex items-center gap-1.5">
           <div className="w-1 h-3 rounded-full bg-sidebar-foreground/30" />
           <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projects')}</span>
@@ -216,7 +218,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           return (
             <div key={line.id} className="mb-0.5">
               <div className={`flex items-center rounded text-sm transition-colors ${
-                selectedLineId === line.id && !selectedProjectId
+                activeEntry === 'scope' && selectedLineId === line.id && !selectedProjectId
                   ? 'bg-sidebar-active text-sidebar-primary-foreground'
                   : 'text-sidebar-foreground hover:bg-sidebar-hover'
               }`}>
@@ -229,13 +231,11 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
                   {isExpanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
                 </button>
                 <button
-                  onClick={() => nav(() => {
+                  onClick={() => { if (!scopeChangeBlocked()) nav(() => {
                     setSelectedLineId(line.id);
                     setSelectedProjectId(null);
-                    if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog'].includes(currentView)) {
-                      setCurrentView('board');
-                    }
-                  })}
+                    setCurrentView(viewAfterScopeChange(currentView, 'scope'));
+                  }); }}
                   className="flex-1 flex items-center justify-between py-1.5 pr-3"
                 >
                   <span className="flex items-center gap-1.5">
@@ -247,19 +247,17 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
               </div>
               {isExpanded && (
                 <div className="ml-3 space-y-0.5 mt-0.5">
-                  {lineProjects.map(project => (
+                  {lineProjects.map(project => (<div key={project.id}>
                     <button
-                      key={project.id}
-                      onClick={() => nav(() => {
+                      onClick={() => { if (!scopeChangeBlocked()) nav(() => {
                         setSelectedProjectId(project.id);
                         setSelectedLineId(null);
-                        if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog'].includes(currentView)) {
-                          setCurrentView('board');
-                        }
-                      })}
+                        // Picking a project changes the scope, not the page: QA stays in QA.
+                        setCurrentView(viewAfterScopeChange(currentView, 'scope'));
+                      }); }}
                       onContextMenu={(e) => (permissions.canEditProject || permissions.canDeleteProject) ? handleContextMenu(e, project.id) : undefined}
                       className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-sm transition-colors group ${
-                        selectedProjectId === project.id
+                        activeEntry === 'scope' && selectedProjectId === project.id
                           ? 'bg-sidebar-active text-sidebar-primary-foreground'
                           : 'text-sidebar-foreground hover:bg-sidebar-hover'
                       }`}
@@ -280,7 +278,21 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
                         )}
                       </span>
                     </button>
-                  ))}
+                    {/* The selected project's own views, nested under it. */}
+                    {selectedProjectId === project.id && featureTogglesReady && featureToggles.qa && (
+                      <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border pl-2" role="group" aria-label={project.name}>
+                        {([
+                          { id: 'tasks', label: t('sidebar.projectTasks'), Icon: LayoutDashboard, active: ['board', 'all-list', 'my-tasks', 'gantt', 'backlog', 'dashboard'].includes(currentView), open: () => { if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog'].includes(currentView)) setCurrentView('board'); } },
+                          { id: 'qa', label: t('sidebar.projectQa'), Icon: Bug, active: currentView === 'qa', open: () => setCurrentView('qa') },
+                        ] as const).map(item => (
+                          <button key={item.id} type="button" aria-current={item.active ? 'page' : undefined} onClick={() => nav(item.open)}
+                            className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[13px] transition-colors ${item.active ? 'text-sidebar-primary-foreground font-medium bg-sidebar-hover' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-hover'}`}>
+                            <item.Icon size={14} aria-hidden="true" />{item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>))}
                 </div>
               )}
             </div>
@@ -295,7 +307,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         <div>
           <div className="px-3 pt-0.5 pb-1 flex items-center gap-1.5">
             <div className="w-1 h-2.5 rounded-full bg-sidebar-foreground/20" />
-            <span className="text-[9px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projectManagement')}</span>
+            <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projectManagement')}</span>
           </div>
           <div className="space-y-0.5">
             <button
@@ -312,7 +324,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           <div>
             <div className="px-3 pb-1 flex items-center gap-1.5">
               <div className="w-1 h-2.5 rounded-full bg-sidebar-foreground/20" />
-              <span className="text-[9px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.teamManagement')}</span>
+              <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.teamManagement')}</span>
             </div>
             <div className="space-y-0.5">
               <button
@@ -345,7 +357,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
           <div>
             <div className="px-3 pb-1 flex items-center gap-1.5">
               <div className="w-1 h-2.5 rounded-full bg-sidebar-foreground/20" />
-              <span className="text-[9px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.systemSettings')}</span>
+              <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.systemSettings')}</span>
             </div>
             <div className="space-y-0.5">
               <button

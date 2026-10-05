@@ -1,17 +1,19 @@
-import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import type { Task } from '@/types';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
+import { useProjectScope, useScopedProjectFilter } from '@/hooks/useProjectScope';
+// Task titles, names and tags are user text: escape them in the generated documents.
+import { escapeHtml } from '@/lib/html';
 import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { ChevronDown, ChevronUp, Download, Search, ClipboardList, FileSpreadsheet, FileText } from 'lucide-react';
-import DepartmentFilter from '@/components/DepartmentFilter';
-import MultiSelectDropdown from '@/components/MultiSelectDropdown';
+import BoardFilterChips from '@/components/board/BoardFilterChips';
+import { usePersistentSort } from '@/hooks/usePersistentSort';
+import { useBoardFilters } from '@/hooks/useBoardFilters';
 import ColumnConfigDropdown from '@/components/ColumnConfigDropdown';
-import { priorityConfig } from '@/components/ui/badges';
-import { getDepartment, sortUsersByDept, type Department } from '@/lib/department';
+import { taskDepartment, type Department } from '@/lib/department';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FIXED_KEYS } from '@/lib/columnDefs';
 import { useListColumns } from '@/hooks/useListColumns';
@@ -113,20 +115,12 @@ const AllListView = () => {
     selectedProjectId,
   });
 
-  const [sortKey, setSortKey] = useState<string>('taskKey');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
-  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
-  const [filterAssignees, setFilterAssignees] = useState<string[]>([]);
-  const [filterProjects, setFilterProjects] = useState<string[]>([]);
-  const [filterDept, setFilterDept] = useState<Department[]>([]);
-  const [filterReviewers, setFilterReviewers] = useState<string[]>([]);
-
-  const toggleArr = useCallback((setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
-    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
-
-  const hasFilters = filterStatuses.length > 0 || filterPriorities.length > 0 || filterAssignees.length > 0 || filterProjects.length > 0 || filterDept.length > 0 || filterReviewers.length > 0;
-  const clearFilters = useCallback(() => { setFilterStatuses([]); setFilterPriorities([]); setFilterAssignees([]); setFilterProjects([]); setFilterDept([]); setFilterReviewers([]); }, []);
+  const { sortKey, setSortKey, sortDir, setSortDir } = usePersistentSort('all', 'taskKey', 'desc');
+  // The same filter state and chips as the board (useBoardFilters, BoardFilterChips).
+  const boardFilters = useBoardFilters();
+  const { filterStatuses, filterPriorities, filterAssignees, filterProjects, setFilterProjects, filterDept, filterReviewers, hasFilters, clearFilters } = boardFilters;
+  useScopedProjectFilter(setFilterProjects);
+  const { projectIds: scopeIds } = useProjectScope();
 
   const exportCsv = useCallback((tasks: Task[]) => {
     const statusMap = Object.fromEntries(statuses.map(s => [s.id, s.name]));
@@ -182,7 +176,7 @@ const AllListView = () => {
 
   const exportExcel = useCallback((tasks: Task[]) => {
     const { headers, rows } = getExportData(tasks);
-    const tableHtml = `<table><thead><tr>${headers.map(h => `<th style="font-weight:bold;background:#4472C4;color:#fff;padding:4px 8px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td style="padding:4px 8px;border:1px solid #D9E2F3">${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    const tableHtml = `<table><thead><tr>${headers.map(h => `<th style="font-weight:bold;background:#4472C4;color:#fff;padding:4px 8px">${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td style="padding:4px 8px;border:1px solid #D9E2F3">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
     const blob = new Blob([`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body>${tableHtml}</body></html>`], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -199,7 +193,7 @@ const AllListView = () => {
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const printWin = window.open('', '_blank');
     if (!printWin) return;
-    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>LIVO ${t('list.allListTitle')}</title><style>
+    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>LIVO ${escapeHtml(t('list.allListTitle'))}</title><style>
       @page { size: A4 landscape; margin: 12mm; }
       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; color: #333; }
       h1 { font-size: 16px; margin-bottom: 8px; }
@@ -208,30 +202,35 @@ const AllListView = () => {
       td { padding: 5px 8px; border-bottom: 1px solid #ddd; font-size: 10px; }
       tr:nth-child(even) td { background: #f5f7fa; }
     </style></head><body>
-      <h1>LIVO ${t('list.allListTitle')} — ${dateStr}</h1>
-      <table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>
+      <h1>LIVO ${escapeHtml(t('list.allListTitle'))} — ${dateStr}</h1>
+      <table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>
     </body></html>`);
     printWin.document.close();
     printWin.focus();
     setTimeout(() => { printWin.print(); printWin.close(); }, 500);
   }, [getExportData]);
 
-  const filteredTasks = useMemo(() => {
-    let tasks = allTasks;
-    if (selectedProjectId) tasks = tasks.filter(t => t.projectId === selectedProjectId);
-    else if (selectedLineId) {
-      const lineProjectIds = allProjects.filter(p => p.lineId === selectedLineId).map(p => p.id);
-      tasks = tasks.filter(t => lineProjectIds.includes(t.projectId));
+  // The sidebar project or line; the count shows how many of these the filters keep.
+  const scopedTasks = useMemo(() => {
+    if (selectedProjectId) return allTasks.filter(t => t.projectId === selectedProjectId);
+    if (selectedLineId) {
+      const lineProjectIds = new Set(allProjects.filter(p => p.lineId === selectedLineId).map(p => p.id));
+      return allTasks.filter(t => lineProjectIds.has(t.projectId));
     }
+    return allTasks;
+  }, [allTasks, allProjects, selectedProjectId, selectedLineId]);
+
+  const filteredTasks = useMemo(() => {
+    let tasks = scopedTasks;
     if (filterStatuses.length > 0) tasks = tasks.filter(t => filterStatuses.includes(t.statusId));
     if (filterPriorities.length > 0) tasks = tasks.filter(t => filterPriorities.includes(t.priority));
     if (filterAssignees.length > 0) tasks = tasks.filter(t => t.assigneeId && filterAssignees.includes(t.assigneeId));
     if (filterProjects.length > 0) tasks = tasks.filter(t => filterProjects.includes(t.projectId));
-    if (filterDept.length > 0) tasks = tasks.filter(t => { const a = users.find(u => u.id === t.assigneeId); return filterDept.includes(getDepartment(a) as Department); });
+    if (filterDept.length > 0) tasks = tasks.filter(t => filterDept.includes(taskDepartment(t, users) as Department));
     if (filterReviewers.length > 0) tasks = tasks.filter(t => t.reviewerId && filterReviewers.includes(t.reviewerId));
     return tasks;
-  }, [allTasks, selectedProjectId, selectedLineId, filterStatuses, filterPriorities, filterAssignees, filterProjects, filterDept, filterReviewers, users]);
+  }, [scopedTasks, filterStatuses, filterPriorities, filterAssignees, filterProjects, filterDept, filterReviewers, users]);
 
   const toggleSort = useCallback((key: string) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -254,7 +253,7 @@ const AllListView = () => {
       case 'startedAt': return task.startedAt || '9999';
       case 'dueDate': return task.dueDate || '9999';
       case 'sprint': return sprintMap.get(task.sprintId || '') || 'zzz';
-      case 'department': return task.department || 'zzz';
+      case 'department': return taskDepartment(task, users) || 'zzz';
       case 'assignee': return userSortMap.get(task.assigneeId || '') ?? 999;
       case 'reviewer': return userSortMap.get(task.reviewerId || '') ?? 999;
       default: return '';
@@ -309,17 +308,12 @@ const AllListView = () => {
               onPdf={() => exportPdf(sortedTasks)}
               isMobile={isMobile}
             />
-            <span className="text-[13px] text-muted-foreground">{sortedTasks.length} / {allTasks.length}</span>
+            <span className="text-[13px] text-muted-foreground">{sortedTasks.length} / {scopedTasks.length}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
-          <DepartmentFilter value={filterDept} onChange={setFilterDept} />
-          <MultiSelectDropdown label={isMobile ? t('filter.assigneeMobile') : t('filter.assignee')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
-          <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
-          <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={Object.entries(priorityConfig).map(([k, v]) => ({ id: k, label: v.label, icon: v.icon }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
-          {!isMobile && <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />}
-          {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
-          {hasFilters && <button onClick={clearFilters} className="text-[13px] text-muted-foreground hover:text-foreground">{t('button.clear')}</button>}
+          <BoardFilterChips users={users} statusOptions={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))}
+            allProjects={scopeIds ? allProjects.filter(p => scopeIds.has(p.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters} />
         </div>
       </div>
 

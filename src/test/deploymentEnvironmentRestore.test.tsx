@@ -30,15 +30,19 @@ describe('Deployment environment restore preflight',()=>{
     await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('taskWork.restoreWorkData')));
     expect(mocks.remove).not.toHaveBeenCalled();expect(mocks.upsert).not.toHaveBeenCalled();
   });
-  it.each(['real','backup','live'])('preserves planning records by rejecting %s JSON replacement before deletion',async mode=>{
+  it('offers no JSON replacement on a real backend',()=>{
+    mocks.isMock=false;
+    const {container}=render(<AdminBackupSection currentMemberId="admin" hasFeature={()=>true} backupSettings={null} setBackupSettings={()=>{}} saveBackupSettings={async()=>{}}/>);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+  it.each(['backup','live'])('preserves planning records by rejecting %s JSON replacement before deletion',async mode=>{
     vi.spyOn(console,'error').mockImplementation(()=>{});
-    mocks.isMock=mode!=='real';
     if(mode==='live') mocks.planningRows=[{id:'personal-preference'}];
     const {container}=render(<AdminBackupSection currentMemberId="admin" hasFeature={()=>true} backupSettings={null} setBackupSettings={()=>{}} saveBackupSettings={async()=>{}}/>);
     const backup:Record<string,unknown[]>={tasks:[],members:[],projects:[],statuses:[],sprints:[],product_lines:[]};
     if(mode==='backup') backup.task_deadline_history=[{id:'history'}];
     fireEvent.change(container.querySelector('input[type="file"]')!,{target:{files:[{text:async()=>JSON.stringify(backup)}]}});
-    await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining(mode==='real'?'approvalCommand.serverRestore':'taskPlanning.restorePlanningData')));
+    await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('taskPlanning.restorePlanningData')));
     expect(mocks.remove).not.toHaveBeenCalled();expect(mocks.upsert).not.toHaveBeenCalled();
   });
   it('lists missing historical environments without accepting settings from the backup',()=>{

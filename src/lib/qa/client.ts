@@ -6,12 +6,13 @@ import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, createQaIssue, qaEventDetail, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
+import { applyQaCommand, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload, QaCoordination } from './domain';
 
 export class QaClientError extends Error {
   constructor(public readonly code: string, public readonly status: number, message = code) { super(message); this.name = 'QaClientError'; }
 }
+const qaInvalidFilter = (): never => { throw new QaError('qa_invalid_filter'); };
 
 // Demo data never leaves this tab or enters the real task tables.
 const demoIssues = new Map<string, QaDetail>();
@@ -94,6 +95,13 @@ export function createQaClient(options: QaClientOptions) {
     async getCoordination(projectId:string, signal?:AbortSignal):Promise<QaCoordination> {
       ensureEnabled(); return mock ? demoConfig(projectId) : request('get_coordination',{projectId},signal);
     },
+    /** Projects whose QA the signed-in member coordinates. */
+    async myCoordination(signal?:AbortSignal):Promise<{projectIds:string[]}> {
+      ensureEnabled();
+      if (!mock) return request('my_coordination',{},signal);
+      const ctx = options.context();
+      return {projectIds:[...demoCoordination.entries()].filter(([key,row])=>key===`${ctx.workspaceId}:${row.projectId}`&&row.coordinatorId===ctx.actor.id&&ctx.projectIds.has(row.projectId)).map(([,row])=>row.projectId).sort()};
+    },
     async saveCoordination(projectId:string, coordinatorId:string|null, expectedVersion:number, commandId=qaId()):Promise<QaCoordination> {
       ensureEnabled();
       if (!mock) return request('save_coordination',{projectId,coordinatorId,expectedVersion,commandId});
@@ -145,13 +153,18 @@ export function createQaClient(options: QaClientOptions) {
         new Set(input.states).size !== input.states.length || input.states.some(state => !QA_STATES.includes(state)))) throw new QaClientError('qa_invalid_state', 400);
       const offset = input.offset ?? 0, limit = input.limit ?? 50;
       if (!Number.isInteger(offset) || offset < 0 || offset > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new QaClientError('qa_invalid_page', 400);
+      let filters: ReturnType<typeof normalizeQaListFilters>;
+      try { filters = normalizeQaListFilters(input, value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value) ? value : qaInvalidFilter()); }
+      catch (error) { throw new QaClientError(error instanceof QaError ? error.code : 'qa_invalid_filter', 400); }
       const context = options.context();
-      const issues = [...demoIssues.values()].map(d => d.issue).filter(issue => issue.workspaceId === context.workspaceId &&
+      const issues = [...demoIssues.values()].map(d => d.issue).filter(issue => issue.workspaceId === context.workspaceId && matchesQaListFilters(issue, filters) &&
         (!input.projectId || issue.projectId === input.projectId) && (!input.state || issue.state === input.state) &&
         (!input.states || input.states.includes(issue.state)) &&
-        (!input.search || `${issue.title} ${issue.id}`.toLowerCase().includes(input.search.toLowerCase())) &&
-        (!input.mine || (input.mine === 'assigned' ? issue.assigneeId : input.mine === 'testing' ? issue.qaOwnerId : issue.reporterId) === context.actor.id))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+        (!input.search || (qaIdSearch(input.search) ? issue.id.toLowerCase().includes(qaIdSearch(input.search)!.toLowerCase()) : issue.title.toLowerCase().includes(input.search.toLowerCase()))) &&
+        (!input.mine || (input.mine === 'involved' ? [issue.assigneeId, issue.qaOwnerId, issue.reporterId].includes(context.actor.id)
+          : input.mine === 'handoff' ? !!issue.handoff && !issue.handoff.resolvedAt && issue.handoff.nextOwnerId === context.actor.id
+          : (input.mine === 'assigned' ? issue.assigneeId : input.mine === 'testing' ? issue.qaOwnerId : issue.reporterId) === context.actor.id)))
+        .sort((a, b) => compareQaIssues(a, b, filters.sort, filters.direction));
       return clone({ issues: issues.slice(offset, offset + limit), total: issues.length, hasMore: offset + limit < issues.length });
     },
     async get(id: string, signal?: AbortSignal): Promise<QaDetail> {

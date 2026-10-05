@@ -144,6 +144,20 @@ describe('QA board state updates provide visible feedback and recover safely', (
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); expect(column('failed').getByText('1')).toBeTruthy();
     await waitFor(() => expect(dnd.draggable).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false })));
   });
+  it('reloads in place when a bug changed in the detail view, without dropping an unconfirmed move', async () => {
+    const props = { client, actor: admin, workflow: DEFAULT_QA_WORKFLOW, filters: {}, onOpen: open };
+    const view = render(<QaKanban {...props} reloadToken={0} />);
+    await screen.findByText(current.title);
+    current = { ...current, state: 'in_progress' };
+    view.rerender(<QaKanban {...props} reloadToken={1} />);
+    await waitFor(() => expect(column('in_progress').getByText(current.title)).toBeTruthy());
+    expect(column('triaged').queryByText(current.title)).toBeNull();
+    command.mockRejectedValueOnce({ status: 503 });
+    drop('triaged'); await screen.findByRole('alert');
+    const loads = list.mock.calls.length;
+    view.rerender(<QaKanban {...props} reloadToken={2} />);
+    expect(list).toHaveBeenCalledTimes(loads); expect(screen.getByRole('button', { name: 'qa.retry' })).toBeTruthy();
+  });
   it('ignores a cancelled drop outside all columns', async () => {
     mount(); await screen.findByText(current.title);
     act(() => dnd.end!({ active: { id: current.id, data: { current: { issue: current } } }, over: null } as unknown as DragEndEvent));

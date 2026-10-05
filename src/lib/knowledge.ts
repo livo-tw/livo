@@ -68,3 +68,14 @@ export function searchKnowledge(pages: KnowledgePage[], query: string): Knowledg
   const needle = query.trim().toLocaleLowerCase();
   return pages.filter(p => `${p.title}\n${knowledgeText(p.body)}`.toLocaleLowerCase().includes(needle));
 }
+
+/**
+ * The pages a scoped knowledge directory lists. With a sidebar project or product line
+ * selected, pages of no project are left out, except the member's own private drafts
+ * (they belong to no project and would otherwise be unreachable). Unscoped: every page.
+ */
+export function knowledgeDirectoryPages<T extends { project_id: string | null; private_draft_owner_id?: string | null }>(pages: T[], scoped: boolean, memberId: string | null | undefined): T[] {
+  if (!scoped) return pages;
+  return pages.filter(page => page.project_id || (!!memberId && page.private_draft_owner_id === memberId));
+}
+

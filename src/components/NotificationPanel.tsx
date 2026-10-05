@@ -28,6 +28,10 @@ const NOTIFICATION_TYPE_KEYS: Record<string, string> = {
   approval_completed: 'notification.types.approvalCompleted',
 };
 
+// QA events that have their own sentence (qa.notify.*); others read "updated a bug".
+const QA_NOTIFY_EVENTS = ['create', 'created', 'comment', 'set_state', 'triage', 'submit_fix', 'record_deployment', 'record_verification',
+  'close', 'reopen', 'hold', 'edit', 'request_handoff', 'accept_handoff', 'resolve_handoff'];
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Notification {
@@ -62,7 +66,7 @@ const NotificationPanel = () => {
   const { currentMemberId } = useAuthContext();
   const { users } = useMemberContext();
   const { allTasks } = useTaskContext();
-  const { approvalsEnabled, featureToggles, featureTogglesReady, setSelectedTask, setTaskDisplayMode, currentView, setCurrentView } = useUIContext();
+  const { approvalsEnabled, featureToggles, featureTogglesReady, setSelectedTask, currentView, setCurrentView } = useUIContext();
   const qaEnabled = featureTogglesReady && featureToggles.qa;
   const [allNotifications, setNotifications] = useState<Notification[]>([]);
   const notifications = allNotifications.filter(notification => isEventEnabled(notification.type, approvalsEnabled) && (notification.type !== 'qa_update' || qaEnabled));
@@ -71,6 +75,14 @@ const NotificationPanel = () => {
     // Cloud stores approval notifications as JSON; Docker stores plain text.
     const approval = parseApprovalNotification(content);
     return approval ? formatApprovalNotification(approval, t) : content;
+  };
+  // What the sender did: the QA event for a bug ("reported a new bug"), otherwise the type.
+  const notificationAction = (type: string, content: string) => {
+    if (type === 'qa_update') {
+      const event = parseQaNotification(content)?.event ?? '';
+      return t(QA_NOTIFY_EVENTS.includes(event) ? `qa.notify.${event}` : 'qa.notify.update');
+    }
+    return NOTIFICATION_TYPE_KEYS[type] ? t(NOTIFICATION_TYPE_KEYS[type]) : t('notification.types.system');
   };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -136,7 +148,7 @@ const NotificationPanel = () => {
           setNotifications(prev => [newNotif, ...prev]);
 
           const senderName = userMap.get(r.sender_id)?.name || t('notification.systemSender');
-          const action = NOTIFICATION_TYPE_KEYS[r.type] ? t(NOTIFICATION_TYPE_KEYS[r.type]) : t('notification.types.system');
+          const action = notificationAction(r.type, r.content || '');
           sendNotification(`${senderName} ${action}`, { body: notificationText(r.type, r.content || ''), tag: r.id });
         }
       })
@@ -194,7 +206,6 @@ const NotificationPanel = () => {
       if (!['board', 'all-list', 'my-tasks', 'gantt', 'backlog', 'dashboard'].includes(currentView)) {
         setCurrentView('board');
       }
-      setTaskDisplayMode('side');
       setSelectedTask(task);
       setOpen(false);
     }
@@ -293,7 +304,7 @@ const NotificationPanel = () => {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-foreground leading-snug">
                           {!isDueSoon && <span className="font-bold">{sender?.name || t('notification.unknownSender')} </span>}
-                          {NOTIFICATION_TYPE_KEYS[n.type] ? t(NOTIFICATION_TYPE_KEYS[n.type]) : t('notification.types.system')}
+                          {notificationAction(n.type, n.content)}
                         </p>
                         {task && (
                           <p className="text-[13px] text-muted-foreground mt-0.5 line-clamp-1">

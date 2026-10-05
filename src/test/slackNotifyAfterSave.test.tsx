@@ -24,7 +24,7 @@ describe('web Slack notices for assignment changes', () => {
       status: undefined, assignee: users[0], setAllTasks: vi.fn(), setSelectedTask: vi.fn(), updateTaskInDb,
     } as unknown as UseTaskActionsParams;
     const { result } = renderHook(() => useTaskActions(params));
-    act(() => result.current.updateTask({ assigneeId: 'next' }));
+    act(() => { void result.current.updateTask({ assigneeId: 'next' }); });
     await Promise.resolve();
     expect(updateTaskInDb).toHaveBeenCalledOnce();
     expect(sendSlackNotify).not.toHaveBeenCalled();
@@ -44,13 +44,13 @@ describe('web Slack notices for assignment changes', () => {
       status: undefined, assignee: users[0], setAllTasks: vi.fn(), setSelectedTask: vi.fn(), updateTaskInDb,
     } as unknown as UseTaskActionsParams;
     const { result } = renderHook(() => useTaskActions(params));
-    act(() => result.current.updateTask({ assigneeId: 'next', title: 'Renamed' }));
+    act(() => { void result.current.updateTask({ assigneeId: 'next', title: 'Renamed' }); });
     await act(async () => { save(false); await Promise.resolve(); });
     expect(logActivity).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
     expect(sendSlackNotify).not.toHaveBeenCalled();
 
-    act(() => result.current.updateTask({ assigneeId: 'next', title: 'Renamed' }));
+    act(() => { void result.current.updateTask({ assigneeId: 'next', title: 'Renamed' }); });
     expect(logActivity).not.toHaveBeenCalled();
     await act(async () => { save(true); await Promise.resolve(); });
     expect(logActivity).toHaveBeenCalledWith('actor', 'update_title', expect.any(String), 'task-1', 'EX-1');

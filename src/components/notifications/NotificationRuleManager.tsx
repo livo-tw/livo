@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -8,20 +9,10 @@ import { useNotificationRules } from '@/hooks/useNotificationRules';
 import { useNotificationTemplates } from '@/hooks/useNotificationTemplates';
 import { useAppContext } from '@/context/AppContext';
 import { AddRuleDialog, type NewRuleForm } from './AddRuleDialog';
-
-const EVENT_LABELS: Record<string, string> = {
-  task_created: '任務建立',
-  status_changed: '狀態變更',
-  assignee_changed: '指派變更',
-  due_reminder: '截止提醒',
-  overdue: '已逾期',
-  approval_requested: '請求審核',
-  approval_completed: '審核完成',
-  comment_added: '新增留言',
-  custom: '自訂',
-};
+import { eventLabel, ruleEventFires } from './notificationLabels';
 
 const NotificationRuleManager = () => {
+  const { t } = useTranslation();
   const { rules, loading, fetchRules, createRule, deleteRule, toggleRule } = useNotificationRules();
   const { templates, fetchTemplates } = useNotificationTemplates();
   const { statuses } = useAppContext();
@@ -58,27 +49,27 @@ const NotificationRuleManager = () => {
       <div className="flex items-center justify-end">
         <Button size="sm" className="gap-1.5" onClick={() => setDialogOpen(true)}>
           <Plus size={14} />
-          新增規則
+          {t('notificationRules.addRule')}
         </Button>
       </div>
 
       {loading ? (
-        <div className="text-sm text-muted-foreground py-8 text-center">載入中…</div>
+        <div className="text-sm text-muted-foreground py-8 text-center">{t('common.loading')}</div>
       ) : rules.length === 0 ? (
         <div className="text-sm text-muted-foreground py-10 text-center border border-dashed border-border rounded-lg bg-muted/10">
-          尚無通知規則，點擊「新增規則」建立第一條規則。
+          {t('notificationRules.empty')}
         </div>
       ) : (
         <div className="border border-border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 border-b border-border">
               <tr>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">事件類型</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">狀態條件</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">範本</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">頻道</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">自動</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">啟用</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.eventType')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.table.statusCondition')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.table.template')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.table.channel')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.table.auto')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t('notificationRules.table.enabled')}</th>
                 <th className="px-4 py-2.5 w-10" />
               </tr>
             </thead>
@@ -89,23 +80,28 @@ const NotificationRuleManager = () => {
                   <tr key={rule.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
                       <Badge variant="secondary" className="text-xs font-normal">
-                        {EVENT_LABELS[rule.event_type] ?? rule.event_type}
+                        {eventLabel(t, rule.event_type)}
                       </Badge>
+                      {!ruleEventFires(rule.event_type) && (
+                        <p className="text-[10px] text-muted-foreground mt-1" title={t('notificationRules.neverFiresHint')}>
+                          {t('notificationRules.neverFires')}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {rule.from_status || rule.to_status ? (
                         <span>
-                          {rule.from_status || '任意'} → {rule.to_status || '任意'}
+                          {rule.from_status || t('notificationRules.any')} → {rule.to_status || t('notificationRules.any')}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground/60">任意狀態</span>
+                        <span className="text-muted-foreground/60">{t('notificationRules.anyStatus')}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {tmpl ? (
                         <span className="truncate max-w-[140px] block">{tmpl.name}</span>
                       ) : (
-                        <span className="text-muted-foreground/60">預設</span>
+                        <span className="text-muted-foreground/60">{t('notificationRules.default')}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -116,12 +112,12 @@ const NotificationRuleManager = () => {
                           </Badge>
                         ))}
                         {(rule.target_channels ?? []).length === 0 && (
-                          <span className="text-xs text-muted-foreground/60">無</span>
+                          <span className="text-xs text-muted-foreground/60">{t('common.none')}</span>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {rule.auto_send ? `${rule.auto_send_delay_seconds}s` : '手動'}
+                      {rule.auto_send ? `${rule.auto_send_delay_seconds}s` : t('notificationRules.manual')}
                     </td>
                     <td className="px-4 py-3">
                       <Switch
@@ -134,7 +130,7 @@ const NotificationRuleManager = () => {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        aria-label="刪除規則"
+                        aria-label={t('notificationRules.deleteRule')}
                         onClick={() => setDeleteConfirmId(rule.id)}
                       >
                         <Trash2 size={14} />
@@ -150,8 +146,8 @@ const NotificationRuleManager = () => {
 
       {/* 優先順序策略說明 */}
       <div className="bg-muted/30 border border-border rounded-lg p-4 text-sm text-muted-foreground space-y-1">
-        <p className="font-semibold text-foreground text-sm">訊息優先順序策略</p>
-        <p className="text-xs leading-relaxed">專案層級規則優先於全域規則。同一事件有多條規則時，取最高優先順序（最先匹配的專案規則）。</p>
+        <p className="font-semibold text-foreground text-sm">{t('notificationRules.priorityPolicyTitle')}</p>
+        <p className="text-xs leading-relaxed">{t('notificationRules.priorityPolicyDescription')}</p>
       </div>
 
       <AddRuleDialog
@@ -166,19 +162,19 @@ const NotificationRuleManager = () => {
       <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>刪除規則</DialogTitle>
+            <DialogTitle>{t('notificationRules.deleteRule')}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
-            確定要刪除此通知規則嗎？此操作無法復原。
+            {t('notificationRules.deleteRuleConfirm')}
           </p>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)}>取消</Button>
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)}>{t('common.cancel')}</Button>
             <Button
               variant="destructive"
               size="sm"
               onClick={() => { if (deleteConfirmId) { void deleteRule(deleteConfirmId); setDeleteConfirmId(null); } }}
             >
-              刪除
+              {t('common.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

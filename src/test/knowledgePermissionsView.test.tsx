@@ -103,14 +103,35 @@ describe('knowledge permissions and meeting notes', () => {
     const { rerender } = render(<KnowledgeBaseView />);
     fireEvent.click(await screen.findByRole('button', { name: 'Restricted minutes' }));
     await screen.findByText('Confidential planning detail');
-    fireEvent.click(screen.getByRole('button', { name: 'Revision history' }));
+    // History opens in a side sheet over the page, so the comment is typed first.
     fireEvent.change(screen.getByRole('textbox', { name: 'Leave a comment' }), { target: { value: 'Unsent private note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Revision history' }));
+    expect(await screen.findByRole('dialog', { name: 'Revision history' })).toBeInTheDocument();
     state.jobTitle = 'Engineer'; await liveActor(); rerender(<KnowledgeBaseView />);
     expect(screen.queryByText('Confidential planning detail')).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Leave a comment' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Leave a comment', hidden: true })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Revision history', hidden: true })).not.toBeInTheDocument());
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Restricted minutes' })).not.toBeInTheDocument());
   });
 
+  it('lets a member add a subpage under a page they can edit', async () => {
+    state.jobTitle = 'PM';
+    await page(ids[0], 'Planning handbook', pmPolicy());
+    render(<KnowledgeBaseView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Planning handbook' }));
+    await screen.findByText('Confidential planning detail');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'New subpage' }));
+    const form = within(screen.getByRole('dialog', { name: 'New page' }));
+    expect(form.getByRole('combobox', { name: 'Parent page' })).toHaveValue(ids[0]);
+    fireEvent.change(form.getByRole('textbox', { name: 'Page title' }), { target: { value: 'Example subpage' } });
+    fireEvent.click(form.getByRole('button', { name: 'Create' }));
+    await waitFor(async () => {
+      const { data } = await client.from('kb_pages').select('parent_id,created_by').eq('title', 'Example subpage');
+      expect(data).toEqual([{ parent_id: ids[0], created_by: 'm-001' }]);
+    });
+    await client.from('kb_pages').delete().eq('title', 'Example subpage');
+  });
   it('creates meeting notes with their restriction in the initial insert', async () => {
     state.role = 'super_admin'; state.jobTitle = 'PM'; await liveActor();
     render(<KnowledgeBaseView />);

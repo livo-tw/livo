@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchComments } from '@/lib/commentQueries';
 import { applyTheme, type ThemeKey } from '@/lib/themes';
-import { setWebhookConfig, type WebhookConfig } from '@/lib/webhook';
 import type {
   Task, User, Status, ProductLine, Project, Tag,
   TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog,
@@ -40,7 +39,6 @@ interface InitialLoadDeps {
   refreshFeatureToggles: () => Promise<void>;
   setIsLoading: (v: boolean) => void;
   setSprintActive: (v: boolean) => void;
-  webhookConfigRef: React.MutableRefObject<WebhookConfig | null>;
   refreshSprints: (keepActiveState?: boolean) => Promise<void>;
 }
 
@@ -85,7 +83,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         authRes,
         { data: settingsRows },
         { data: activeCheck },
-        { data: wbRow },
       ] = await Promise.all([
         supabase.from('members').select('*'),
         supabase.from('statuses').select('*').order('sort_order'),
@@ -111,7 +108,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         }),
         safe(supabase.from('system_settings').select('*').eq('key', 'required_fields').maybeSingle(), 'required_fields'),
         supabase.from('sprints').select('id').eq('is_active', true).limit(1),
-        safe(supabase.from('team_settings').select('value').eq('key', 'integration_webhook').maybeSingle(), 'webhook'),
       ]);
 
       if (cfRows) deps.setCustomFields(cfRows.map(mapCustomField));
@@ -185,10 +181,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
       }
       deps.setSprintActive(true);
 
-      if (wbRow?.value) {
-        deps.webhookConfigRef.current = wbRow.value as unknown as WebhookConfig;
-        setWebhookConfig(deps.webhookConfigRef.current);
-      }
 
       deps.setIsLoading(false);
     };

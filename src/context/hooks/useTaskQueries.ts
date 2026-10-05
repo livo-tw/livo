@@ -1,11 +1,10 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchComments } from '@/lib/commentQueries';
 import type {
   Task, Status, Tag, TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog,
   CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency, TaskDeployment,
 } from '@/types';
-import type { WebhookConfig } from '@/lib/webhook';
 import {
   mapTask, mapStatus, mapTag, mapTaskSpec, mapTaskCheck, mapTaskTodo,
   mapComment, mapStatusLog, mapCustomField, mapCustomFieldValue,
@@ -27,8 +26,6 @@ export function useTaskQueries() {
   const [customFieldValues, setCustomFieldValues] = useState<TaskCustomFieldValue[]>([]);
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
   const [taskDependencies, setTaskDependencies] = useState<TaskDependency[]>([]);
-
-  const webhookConfigRef = useRef<WebhookConfig | null>(null);
 
   const refreshStatuses = useCallback(async () => {
     const { data, error } = await supabase.from('statuses').select('*').order('sort_order');
@@ -168,7 +165,6 @@ export function useTaskQueries() {
     customFieldValues, setCustomFieldValues,
     taskTemplates, setTaskTemplates,
     taskDependencies, setTaskDependencies,
-    webhookConfigRef,
     // Refresh functions
     refreshStatuses, refreshTags, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos,
     refreshComments, refreshStatusLogs, appendStatusLog, refreshCustomFields, refreshCustomFieldValues,

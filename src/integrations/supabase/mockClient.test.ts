@@ -172,3 +172,15 @@ describe('mockClient upsert', () => {
     expect(await all()).toHaveLength(2);
   });
 });
+
+describe('mockClient counts', () => {
+  it('returns the number of matching rows like PostgREST, with or without the rows', async () => {
+    const head = await db.from(T).select('*', { count: 'exact', head: true }).eq('project_id', 'p1');
+    expect(head).toMatchObject({ data: null, count: 1, error: null });
+    // The count ignores the page limit; the rows follow it.
+    const page = await db.from(T).select('id', { count: 'exact' }).limit(1);
+    expect(page.count).toBe(3);
+    expect(page.data).toHaveLength(1);
+  });
+});
+

@@ -33,6 +33,7 @@ export function validateQaBackup(input: unknown): Record<string, any> {
         for (const key of ['steps', 'expected'] as const) str(issue[key], 20000);
         str(issue.observedVersion, 200); str(issue.component, 120); str(issue.fixSummary, 8000);
         str(issue.holdReason, 8000); str(issue.resolutionReason, 8000);
+        if (issue.reopenReason !== undefined) str(issue.reopenReason, 8000);
         if (!['untriaged', 'low', 'medium', 'high'].includes(issue.severity)) bad();
         integer(issue.priority, 1, 5); integer(issue.version, 1); integer(issue.fixCycle, 0);
         date(issue.createdAt); date(issue.updatedAt); date(issue.closedAt, true); date(issue.reopenedAt, true);

@@ -16,7 +16,7 @@
 //        apikey header). It cannot change the account: kong.yml only lets
 //        it read GET /auth/v1/user.
 //
-// Admin = an active admin / super_admin member signed in with a normal login
+// Admin = an active super_admin member signed in with a normal login
 // JWT, or the service-role key. A JWT obtained by exchange is refused: an API
 // key must not mint or revoke keys, or a leaked key could outlive its own
 // revocation.
@@ -151,7 +151,7 @@ async function resolveAdmin(db: SupabaseClient, authorization: string | null): P
   // was open), and could then mint keys for anyone.
   const member = check(await db.from('members').select(MEMBER_COLUMNS).eq('auth_id', user.id).eq('is_active', true).maybeSingle()) as MemberRow | null;
   if (!isAdminMember(member)) {
-    return { status: 403, body: { error: 'Permission denied: admin role required' } };
+    return { status: 403, body: { error: 'Permission denied: super_admin role required' } };
   }
   return { kind: 'member', member: member as MemberRow };
 }

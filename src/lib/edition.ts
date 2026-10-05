@@ -6,7 +6,9 @@
 // SOURCE_URL for that reason. A fork that deploys changed code should set
 // VITE_SOURCE_URL to its own repository.
 
-import i18n from '@/i18n';
+// The i18next instance src/i18n initializes; importing that module here would also
+// load its React binding, which component tests replace with a small mock.
+import i18n from 'i18next';
 
 export const SOURCE_URL: string = import.meta.env.VITE_SOURCE_URL || 'https://github.com/livo-tw/livo';
 

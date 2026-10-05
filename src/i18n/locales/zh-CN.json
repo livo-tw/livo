@@ -1,7 +1,9 @@
 {
   "qaHandoff": {
+    "coordinatorSaved": "协调人已更新",
+    "coordinatorButtonHint": "指定一位成员负责这个专案的 Bug：新 Bug 会通知他，他也能安排交接与记录阻碍（设定负责人人人都可以）。不会变更对方的系统角色。",
     "title": "QA 交接",
-    "roleHint": "接球与解决交接不代表 QA 验收通过，也不变更任务指派人。",
+    "roleHint": "接手与完成交接不代表 QA 验证通过，也不变更任务指派人。",
     "nextOwner": "下一位负责人",
     "reason": "交接原因／待处理事项",
     "replyBy": "回复期限",
@@ -9,15 +11,15 @@
     "externalDependency": "等待的外部单位／依赖",
     "status": "交接状态",
     "resolved": "已解决交接",
-    "accepted": "已接球",
-    "pending": "等待接球",
+    "accepted": "已接手",
+    "pending": "等待接手",
     "evidence": "解决方式与证据",
     "empty": "目前没有待处理的交接。",
     "replace": "重新安排交接",
     "request": "安排交接",
-    "accept": "我已接球",
+    "accept": "我来接手",
     "resolve": "填写交接结果",
-    "replaceHint": "送出后会取代目前交接，重新等待下一位负责人接球；原记录仍保留。",
+    "replaceHint": "送出后会取代目前交接，重新等待下一位负责人接手；原记录仍保留。",
     "replyTime": "回复期限（{{timezone}}）",
     "confirmRequest": "确认安排交接",
     "confirmResolve": "确认交接已解决",
@@ -25,7 +27,7 @@
     "draftConflict": "问题已变动。请重新确认目前交接，再安排或解决。",
     "unavailableMember": "成员目前无法显示",
     "coordinatorTitle": "项目 QA 协调人",
-    "coordinatorHint": "可协助分流、暂停与安排交接。此设置不授予 PASS 或关闭问题的权限。留空可取消设置。",
+    "coordinatorHint": "新 Bug 会通知协调人，协调人可记录阻碍与安排交接（设定负责人人人都可以）。此设定不授予验证通过或结案的权限。留空可取消设定。",
     "noCoordinator": "未指定协调人",
     "loadFailed": "无法读取协调设置，请重新整理。",
     "coordinatorConflict": "协调设置已被更新。请重新打开设置后确认。",
@@ -34,11 +36,11 @@
   },
   "knowledgeWork": {
     "teamBackupHint": "团队 JSON 备份不包含完整知识库和私人文件。完整备份和恢复需保留服务器数据库及文件存储区。",
-    "workspaceTitle": "工作信息与草稿",
+    "workspaceTitle": "搜寻与整理草稿",
     "searchHint": "搜索可读取的任务、QA、知识内容与附件名称。",
     "query": "关键词",
     "search": "搜索",
-    "effectiveOnly": "只搜索生效中的知识版本",
+    "effectiveOnly": "只搜索已发布正式版的页面",
     "partialResults": "部分来源无法读取，以下结果可能不完整。",
     "open": "打开",
     "addReference": "加入参考",
@@ -65,35 +67,35 @@
     "openDraft": "打开草稿",
     "privateListHint": "这里只列出你自己的私人草稿。",
     "noDrafts": "目前没有私人草稿。",
-    "documentStatus": "文件用途与生效版本",
-    "documentKind": "文件用途",
+    "documentStatus": "正式版本",
+    "documentKind": "文件类型",
     "specification": "规格",
     "decision": "决策",
-    "general": "一般知识",
+    "general": "一般（不发布正式版）",
     "owner": "负责人",
     "noOwner": "尚未指定负责人",
     "productVersion": "适用产品版本",
     "environment": "适用环境",
     "summary": "适用范围说明",
-    "metadataHint": "指定用途与负责人后才能发布生效版本。这些设置不会授予额外访问权。",
-    "editMetadata": "编辑用途与负责人",
+    "metadataHint": "要发布正式版，请把文件类型设为「规格」或「决策」，并指定负责人；保存后会接着确认发布。这些设置不会改变任何人的访问权限。",
+    "editMetadata": "设置文件类型与负责人",
     "privateDraft": "私人草稿",
-    "workingCopy": "编辑中的内容",
+    "workingCopy": "编辑中（尚未发布正式版）",
     "workingCopyHint": "此处显示编辑中的内容；正式采用的规格或决策请查看生效版本。",
-    "effective": "生效中",
+    "effective": "正式版",
     "superseded": "已被取代",
-    "publishedRevision": "生效版本 {{version}}",
-    "unpublishedChanges": "编辑内容有尚未发布的变更。",
+    "publishedRevision": "当前的正式版（第 {{version}} 版）",
+    "unpublishedChanges": "页面有尚未发布到正式版的修改。",
     "revision": "版本 {{version}}",
-    "publish": "发布生效版本",
-    "replace": "取代旧规格／决策",
-    "publicationReview": "确认要生效的内容与版本",
+    "publish": "发布为正式版",
+    "replace": "取代旧的正式版",
+    "publicationReview": "确认要发布为正式版的内容",
     "reviewBody": "查看本次内容",
     "replacing": "将取代“{{title}}”版本 {{version}}",
-    "confirmPublication": "我已检查此版本，确认将其发布为生效的规格或决策。",
+    "confirmPublication": "我已检查这个版本，确认发布为正式版。之后的编辑不会改到正式版，直到再次发布。",
     "confirmPublishButton": "确认发布",
-    "viewPredecessor": "查看前一生效版本",
-    "viewSuccessor": "查看后续生效版本",
+    "viewPredecessor": "查看前一个正式版",
+    "viewSuccessor": "查看后续的正式版",
     "shareDraft": "分享私人草稿",
     "shareReview": "确认分享目的地与内容",
     "destination": "分享目的地",
@@ -111,10 +113,10 @@
     "kinds": {
       "knowledge": "知识页",
       "task": "任务",
-      "qa": "QA 问题",
+      "qa": "Bug",
       "knowledge_file": "知识附件名称",
       "task_file": "任务附件名称",
-      "qa_file": "QA 附件名称"
+      "qa_file": "Bug 附件名称"
     },
     "errors": {
       "knowledge_invalid_input": "请检查输入内容。",
@@ -126,13 +128,16 @@
       "knowledge_scope_conflict": "目的地无法读取部分参考来源，请调整来源或目的地。",
       "knowledge_cycle": "此操作会造成循环关系，请选择其他版本或页面。",
       "knowledge_command_reused": "操作标识冲突。请重新加载后重试。",
-      "knowledge_incomplete_source": "来源不完整，请补齐后重新预览。",
+      "knowledge_incomplete_source": "内容太长或来源无法完整读取（上限约 10 万字）。请减少来源或缩短笔记后重新预览。",
       "knowledge_transport_error": "连接暂时失败，请重试。",
       "saved_refresh_failed": "已保存，但页面更新失败。请重新加载查看，无需再次保存。",
       "source_limit": "最多可选择 50 个来源。",
       "invalid_predecessor": "请选择另一份生效中的规格或决策。",
       "knowledge_requires_server_restore": "此备份不包含完整知识库与私人数据。请使用服务器数据库和文件备份恢复。"
-    }
+    },
+    "includeFileNames": "也搜寻附件名称",
+    "defaultWeeklyTitle": "周报草稿 {{from}} – {{to}}",
+    "defaultMeetingTitle": "会议记录草稿 {{date}}"
   },
   "taskWork": {
     "restoreWorkData": "备份或现有数据包含接手／清单版本／协作历史，请使用完整数据库还原，避免丢失记录。",
@@ -252,7 +257,8 @@
       "byAdmin": "管理员指定",
       "byEmail": "Email 对应",
       "ownerOnly": "账号对应仅限最高管理员修改。",
-      "reconfirm": "这笔对应需要最高管理员在下方重新对应后，才能使用 Slack 功能。"
+      "reconfirm": "这笔对应需要最高管理员在下方重新对应后，才能使用 Slack 功能。",
+      "memberUnlinked": "这位成员已在「我的设定」解除 Slack 连结，只有本人可以重新允许。"
     },
     "title": "从 Slack 建卡与留言",
     "demo": "演示模式不连接 Slack，请在 Docker 自托管版设置。",
@@ -272,9 +278,13 @@
       "commands": "启用 Interactivity，新增 /livo 命令、livo_create_task 与 livo_comment_task 消息快捷方式；加入 commands 权限后重新安装 App。",
       "env": "将 SLACK_APP_TOKEN 写入 docker/.env，设置 APP_BASE_URL，重跑安装程序，再重新创建 Compose 服务。内部密钥由安装程序生成。",
       "accounts": "首次使用依 Slack Email 对应已启用且可登录的 LIVO 账号；Email 不同的成员请在下方手动对应。解除绑定后，下次使用会重新验证 Email。"
-    }
+    },
+    "unbindTitle": "移除 Slack 对应？",
+    "unbindConfirm": "移除后，「{{slack}}」不能再以「{{member}}」的身份在 Slack 操作 LIVO，也收不到私信。"
   },
   "featureToggles": {
+    "releasesLabel": "发布工作区",
+    "releasesDescription": "管理版本发布清单、部署记录与 QA 验证关联；关闭后隐藏入口，既有发布资料保留。",
     "slackActionsLabel": "Slack 互动（建卡、留言）",
     "slackActionsDescription": "允许已绑定账号从 Slack 创建卡片及留言；仅 Docker 自托管版，默认关闭。",
     "externalDescription": "绑定后可在外部平台更新任务状态，系统会自动同步至 LIVO。",
@@ -348,7 +358,11 @@
     "verifyingIdentity": "验证身份中...",
     "notSet": "未设定",
     "upload": "上传",
-    "manage": "管理"
+    "manage": "管理",
+    "listSeparator": "、",
+    "labelSeparator": "：",
+    "unknownError": "未知错误",
+    "loadFailed": "加载失败，请重试。"
   },
   "button": {
     "cancel": "取消",
@@ -498,6 +512,8 @@
     "personalSettings": "个人设定"
   },
   "sidebar": {
+    "projectTasks": "任务",
+    "projectQa": "QA",
     "ariaLabel": "主导览",
     "navigation": "导览",
     "teamIntro": "团队介绍",
@@ -513,7 +529,7 @@
     "manageProductLines": "管理产线",
     "manageStatuses": "管理状态",
     "taskTemplate": "任务设定",
-    "teamManagement": "团队管理",
+    "teamManagement": "团队",
     "memberManagement": "成员管理",
     "teamSettings": "团队设定",
     "teamManage": "团队管理",
@@ -589,7 +605,8 @@
     "noTasksInSprint": "当前冲刺里没有这里的任务",
     "tasksInOtherSprints": "这里有 {{count}} 个任务属于其他冲刺（例如已结束的冲刺）。看板只显示当前冲刺和还没排进冲刺的任务，左侧数字则包含全部任务。",
     "otherSprintsShort": "另 {{count}} 个在其他冲刺",
-    "viewAllInList": "到「列表」查看全部任务"
+    "viewAllInList": "到「列表」查看全部任务",
+    "dropOtherProject": "卡片只能在自己的项目行内移动。要换项目，请在任务详情修改。"
   },
   "list": {
     "title": "待办事项列表",
@@ -640,13 +657,15 @@
       "title": "开始新冲刺",
       "nameLabel": "冲刺名称",
       "includeBacklog": "自动纳入所有待办任务",
-      "carryOverHint": "有 {{count}} 个任务将从上一个冲刺带入"
+      "carryOverHint": "有 {{count}} 个任务将从上一个冲刺带入",
+      "includeBacklogCount": "自动纳入待办清单中未完成的 {{count}} 个任务"
     },
     "prompt": {
       "title": "Sprint 完成！",
       "description": "所有成员已完成站会报告。是否要结束当前 Sprint？",
       "endSprint": "结束 Sprint"
-    }
+    },
+    "moveTasksFailed": "有 {{count}} 张任务没有移动成功，请重新整理后再试。"
   },
   "backlog": {
     "title": "待办清单",
@@ -835,7 +854,7 @@
     "created": "任务已建立",
     "createFailed": "建立任务失败：",
     "deleted": "任务已删除",
-    "deleteConfirm": "确定要删除「{{title}}」？此操作无法复原。",
+    "deleteConfirm": "确定要删除「{{title}}」？留言、附件与需求内容会一并删除，子任务会变成独立任务。此操作无法复原。",
     "deleteTitle": "删除任务",
     "linkCopied": "已复制卡片连结",
     "templateSaved": "已储存为模板",
@@ -867,7 +886,8 @@
       "subtasks": "子任务"
     },
     "properties": "任务属性",
-    "noNestedSubtasks": "不允许多层子任务"
+    "noNestedSubtasks": "不允许多层子任务",
+    "linkNotFound": "找不到链接里的卡片 {{key}}，可能已删除，或你没有查看权限。"
   },
   "taskCreate": {
     "title": "建立任务",
@@ -932,7 +952,10 @@
       "todos": "To Do List",
       "gitlabUrl": "GitLab MR 连结",
       "deployments": "部署环境"
-    }
+    },
+    "discardTitle": "放弃这张任务？",
+    "discardDesc": "已输入的内容还没有建立，关闭后会遗失。",
+    "joinSprint": "加入目前冲刺「{{name}}」"
   },
   "template": {
     "nameRequired": "请输入模板名称",
@@ -960,7 +983,8 @@
       "dragDropMessage": "拖拽档案到此处，或 <span class=\"text-primary font-medium\">点击上传</span>",
       "fileSizeNote": "单档上限 {{size}} MB",
       "saveFailed": "储存失败：",
-      "saved": "已储存"
+      "saved": "已储存",
+      "discardDraft": "需求内容还没保存，离开会丢失这次修改。确定要离开吗？"
     },
     "comments": {
       "empty": "暂无留言",
@@ -976,7 +1000,9 @@
       "deleted": "留言已删除",
       "updated": "留言已更新",
       "fileSizeExceeded": "档案大小超过 {{size}} MB 限制",
-      "attachmentUploadFailed": "附件上传失败："
+      "attachmentUploadFailed": "附件上传失败：",
+      "deleteTitle": "删除留言",
+      "deleteConfirm": "确定要删除这则留言？留言附带的文件也会一并删除。此操作无法复原。"
     },
     "metrics": {
       "createdStatus": "开卡",
@@ -1051,7 +1077,9 @@
       "fileSizeExceeded": "以下档案超过 {{size}} MB 限制：{{files}}",
       "uploadFailed": "以下档案上传失败：{{files}}",
       "uploadSuccess": "{{count}} 个档案上传成功",
-      "deleted": "已删除附件"
+      "deleted": "已删除附件",
+      "deleteTitle": "删除附件",
+      "deleteConfirm": "确定要删除「{{name}}」？此操作无法复原。"
     },
     "sidebar": {
       "customFields": "自订栏位",
@@ -1102,7 +1130,23 @@
       "deleteTagConfirm": "确定要删除标签「{{name}}」嗎？所有卡片上的此标签也会被移除。",
       "deleteTagRelationsFailed": "删除标签关联失败：",
       "deleteTagFailed": "删除标签失败：",
-      "tagDeleted": "标签「{{name}}」已删除"
+      "tagDeleted": "标签「{{name}}」已删除",
+      "departmentFromAssignee": "依经办人（{{dept}}）",
+      "approvalInProgressLocked": "签核进行中，完成或撤回后才能变更这个设定。",
+      "backToSelect": "返回选择",
+      "cancel": "取消",
+      "completedAutoNote": "（完成时自动记录）",
+      "create": "创建",
+      "customLayout": "自定义字段排版顺序",
+      "editingTags": "正在编辑标签",
+      "layout": "排版",
+      "manage": "管理",
+      "manageFields": "管理自定义字段",
+      "manageTags": "管理标签",
+      "newTagName": "新标签名称",
+      "pasteMrLink": "粘贴 MR 链接",
+      "saving": "保存中...",
+      "selectTag": "选择标签"
     },
     "dependency": {
       "sectionTitle": "任务依赖",
@@ -1146,7 +1190,8 @@
       "changeStatus": "点击更改状态",
       "deleteConfirm": "确定要删除子任务「{{title}}」？",
       "deleteTitle": "删除子任务",
-      "newPlaceholder": "输入子任务标题，按 Enter 新增..."
+      "newPlaceholder": "输入子任务标题，按 Enter 新增...",
+      "approvalInDetail": "这个子任务需要签核，已为你打开子任务，请在详情中送签。"
     },
     "statusTransitionBlocked": "此任务尚未经过「{{missingNames}}」，无法移至「{{targetName}}」",
     "approvalNeeded": "需要主管签核",
@@ -1154,7 +1199,8 @@
     "statusChanged": "状态更新为「{{statusName}}」",
     "assignedAsAssignee": "你被指派为经办人",
     "assignedAsReviewer": "你被指派为验收人",
-    "notificationCreateFailed": "建立通知失败:"
+    "notificationCreateFailed": "建立通知失败:",
+    "titleRequired": "标题不能空白，已恢复原本的标题。"
   },
   "customField": {
     "types": {
@@ -1254,11 +1300,13 @@
     "updated": "已更新",
     "deleted": "已删除",
     "added": "已新增",
-    "deleteConfirm": "确定要删除状态「{{name}}」嗎？使用此状态的任务会变成无效状态。",
+    "deleteConfirm": "确定要删除状态「{{name}}」吗？目前没有任务使用它。",
     "activityUpdated": "修改状态「{{oldName}}」→「{{newName}}」",
     "activityDeleted": "删除状态「{{name}}」",
     "activityCreated": "新增状态「{{name}}」",
-    "editingStatus": "{{name}} 编辑中"
+    "editingStatus": "{{name}} 编辑中",
+    "deleteHasTasks": "还有 {{count}} 张任务在「{{name}}」，请先把它们移到其他状态再删除。",
+    "deleteInHistory": "有任务曾经经过「{{name}}」，这个状态留在它们的历史记录里，无法删除。可以改名或调整顺序。"
   },
   "transitionRule": {
     "title": "流转规则",
@@ -1285,10 +1333,9 @@
     "roleLabel": "角色",
     "roleUpdated": "权限已更新",
     "memberAdded": "成员已新增",
-    "toggleConfirm": "确定要{{action}}此成员？",
     "memberToggled": "成员已{{action}}",
     "toggleActivity": "{{action}}成员「{{name}}」（{{transition}}）",
-    "deleteConfirm": "确定要永久删除「{{name}}」？此操作无法复原。",
+    "deleteConfirm": "确定要永久删除「{{name}}」？只有还没有任务、留言或记录的成员可以删除，否则请改用停用。此操作无法复原。",
     "memberDeleted": "成员已删除",
     "sortUpdated": "排序已更新",
     "cannotChangeSelfRole": "无法更改自己的角色",
@@ -1348,7 +1395,10 @@
     "createLoginAlreadyHasLogin": "这位成员已经有 Email 了，请改用「重设密码」",
     "createLoginInactive": "这位成员已停用，请先启用成员再创建登录账号",
     "createLoginRequiresSuperAdmin": "只有超级管理员能为管理员创建登录账号",
-    "createLoginDemoBlocked": "展示模式无法创建登录账号"
+    "createLoginDemoBlocked": "展示模式无法创建登录账号",
+    "deleteHasHistory": "「{{name}}」已有任务、留言或记录，无法删除。请改用「停用」：会移除登录，但保留这些记录。",
+    "deactivateConfirm": "停用「{{name}}」？停用后无法登录，任务、留言与记录都会保留，之后可以再启用。",
+    "activateConfirm": "启用「{{name}}」？启用后可以再登录。"
   },
   "bulkAction": {
     "selectedCount": "已选 {{count}} 个任务",
@@ -1358,8 +1408,11 @@
     "changePriority": "修改优先级",
     "deselectAll": "取消选择",
     "deleteConfirmTitle": "确认删除",
-    "deleteConfirmMessage": "确定要删除 {{count}} 个任务嗎？此操作不可复原。",
-    "deletedCount": "已删除 {{count}} 个任务"
+    "deleteConfirmMessage": "确定要删除 {{count}} 个任务吗？留言、附件与需求内容会一并删除。此操作无法复原。",
+    "deletedCount": "已删除 {{count}} 个任务",
+    "statusSkipped": "{{count}} 张未变更：有待签核或需要签核，或尚未经过状态规则要求的状态。请个别打开处理。",
+    "statusPartialFailed": "{{count}} 张保存失败，其他已更新。",
+    "partialFailed": "有 {{count}} 张任务没有更新成功。"
   },
   "notification": {
     "types": {
@@ -1465,7 +1518,31 @@
     "emailNotifyDueSoon": "即将到期",
     "emailNotifySaveButton": "储存通知设定",
     "emailNotifySaved": "Email 通知设定已储存",
-    "emailNotifySaveFailed": "储存失败："
+    "emailNotifySaveFailed": "储存失败：",
+    "slackLink": {
+      "title": "Slack 连结",
+      "tooltip": "LIVO 用哪个 Slack 帐号代表你：在 Slack 操作 LIVO、收 Slack 私讯都靠这个连结。",
+      "loadFailed": "无法读取 Slack 连结状态。",
+      "retry": "重新读取",
+      "linked": "已连结 Slack 帐号「{{name}}」",
+      "byEmail": "依 Email 自动对应",
+      "byAdmin": "由管理员手动对应",
+      "notLinkedYet": "还没有连结。你第一次在 Slack 使用 LIVO 时，会用你的 LIVO Email 自动连结同 Email 的 Slack 帐号。",
+      "emailMode": "LIVO 会用你的 Email 对应同 Email 的 Slack 帐号，用来在 Slack 认出你，并传送私讯通知。",
+      "disabled": "已解除连结：LIVO 不会用 Slack 帐号替你操作，也不会私讯你（任务通知、摘要、自动报告、签核）。频道里的讯息不受影响。",
+      "unlink": "解除连结",
+      "relink": "重新允许连结",
+      "relinkHint": "重新允许后，下次在 Slack 使用 LIVO 时会再用 Email 确认是你本人。",
+      "confirmTitle": "解除 Slack 连结？",
+      "confirmDesc": "解除后，LIVO 不会再用你的 Slack 帐号替你在 Slack 建卡、留言、签核或回复 Bug，也不会私讯你任务通知、每日摘要、自动报告与签核。之后可以随时在这里重新允许。",
+      "unlinked": "已解除 Slack 连结",
+      "relinked": "已重新允许 Slack 连结",
+      "saveFailed": "无法变更 Slack 连结，请稍后再试。",
+      "recentActions": "最近从 Slack 进行的操作",
+      "noActions": "还没有从 Slack 进行的操作。",
+      "actionsLoadFailed": "无法读取从 Slack 进行的操作。"
+    },
+    "selfHostScheduledPending": "自架版目前还不会发送 Slack 每日摘要与自动报告；设置会先保存，支持后就会依设置发送。"
   },
   "teamManage": {
     "title": "团队管理",
@@ -1474,8 +1551,7 @@
       "members": "成员",
       "taskConfig": "任务配置",
       "approval": "审批流程",
-      "notifications": "通知与消息",
-      "external": "外部平台"
+      "notifications": "通知与消息"
     },
     "statusManage": "状态管理",
     "productLineDesc": "管理项目的产线分类与组织架构"
@@ -1504,7 +1580,7 @@
     "externalPlatform": "外部平台绑定",
     "reportSend": "报告发送设定",
     "reportSendDesc": "管理报告的多渠道发送目标",
-    "channelIntegrationNote": "讯息范本定义通知内容，实际发送渠道（如 Slack）请在「外部平台整合」中设定。已绑定的渠道会自动用于发送通知与日报。"
+    "channelIntegrationNote": "这里的规则与模板决定通知内容。Slack 连接在「系统管理 → 服务整合」设置，连上后规则与报告才会发送。"
   },
   "slackNotify": {
     "loading": "载入中...",
@@ -1657,7 +1733,9 @@
       "guideStep2": "OAuth & Permissions → Bot Token Scopes 加入这 7 个权限：",
       "guideStep3": "「Install to Workspace」→ 复制 xoxb- 开头的 Bot User OAuth Token，贴到上方栏位。",
       "guideStep4": "在要接收通知的频道输入 /invite @你的bot，把 bot 邀请进频道。",
-      "guideOpenApps": "开启 Slack Apps 管理页"
+      "guideOpenApps": "开启 Slack Apps 管理页",
+      "disconnectTitle": "断开 Slack 连接？",
+      "disconnectConfirm": "断开后，任务通知、每日摘要、自动报告与在 Slack 操作 LIVO 都会停止，成员的 Slack 对应会保留。之后可以重新连接。"
     },
     "emailNotify": {
       "title": "Email 通知（Resend）",
@@ -1769,7 +1847,10 @@
       "title": "Webhook",
       "desc": "将任务事件以 HTTP POST 推送到自订端点",
       "secretLabel": "Secret（选填，用于签名验证）",
-      "eventsLabel": "触发事件"
+      "eventsLabel": "触发事件",
+      "legacyTitle": "旧版 Webhook 已停止发送",
+      "legacyDesc": "旧版 Webhook（{{url}}）从每位成员的浏览器送出，签章密钥也存在所有成员都读得到的设置里，因此已停止使用。请在上方「Webhooks」用同一个网址重新建立（由服务器发送并签章），再清除这笔旧设置。",
+      "legacyClear": "清除旧设置"
     },
     "gitlab": {
       "title": "GitLab",
@@ -1787,9 +1868,6 @@
       "syncStartDates": "同步开始日"
     },
     "external": {
-      "slack": "Slack",
-      "teams": "Microsoft Teams",
-      "line": "LINE",
       "actions": {
         "approve": "批准签核",
         "reject": "拒绝签核",
@@ -1805,26 +1883,7 @@
         "failed": "失败",
         "denied": "拒绝",
         "expired": "已过期"
-      },
-      "lastActive": "最后活躍",
-      "notBound": "未绑定",
-      "unbind": "解除绑定",
-      "bindAccount": "绑定账号",
-      "connectedTab": "已连结平台",
-      "logsTab": "操作记录",
-      "noLogs": "暂无操作记录",
-      "howToBind": "如何绑定账号？",
-      "slackInstruction": "Slack：管理员在「功能开关」开启「Slack 互动（建卡、留言）」后，你第一次在 Slack 使用 /livo 时，系统会依你的 Slack Email 自动绑定，不需另外操作。",
-      "teamsInstruction": "Teams：传送",
-      "toBot": "给 LIVO Bot",
-      "lineInstruction": "LINE：在 LIVO 官方账号输入",
-      "bindSyncDesc": "绑定后可在外部平台直接进行签核、状态更新等操作，系统会自动同步至 LIVO。",
-      "unbindComingSoon": "解除绑定功能即将推出，目前如需解除请联系管理员。",
-      "comingSoonBanner": "即将推出",
-      "comingSoonDesc": "双向通讯功能（从外部平台操作 LIVO）正在开发中，目前尚未开放。敬请期待！",
-      "slackBindInstruction": "管理员开启「Slack 互动（建卡、留言）」后，你第一次在 Slack 使用 /livo 时，系统会依你的 Slack Email 自动绑定。",
-      "teamsBindInstruction": "在 Microsoft Teams 中传送讯息「@LIVO bind」给 LIVO Bot，系统将自动完成账号绑定。",
-      "lineBindInstruction": "在 LINE 官方账号聊天室中传送「/bind」，系统将自动完成账号绑定。"
+      }
     }
   },
   "apiTokenAccess": {
@@ -1887,7 +1946,12 @@
     "confirmRestore": "确定要从 JSON 备份还原嗎？这会覆盖所有现有资料！建议先备份目前的资料。",
     "missingTables": "备份档案缺少必要表格:",
     "restoreSuccess": "还原完成！共 ",
-    "restoreError": "还原失败:"
+    "restoreError": "还原失败:",
+    "restoreServerOnly": "JSON 备份用来保存与查阅，不能在这里直接还原：任务、签核、知识库与附件彼此关联，部分还原会让数据不一致。要还原整个工作区，请由服务器管理员用数据库备份与文件备份一起还原。",
+    "qaRestoreLogin": "请重新登录后还原 QA 数据。",
+    "qaRestoreFailed": "QA 数据还原失败。",
+    "qaRestoreConflicts": "QA 备份有 {{conflicts}} 条冲突、{{missing}} 个附件缺失，请先排除再还原。",
+    "qaRestoredNote": "QA 记录已还原；JSON 备份只含附件信息，文件本身需保留或另行还原存储空间。"
   },
   "adminImportExport": {
     "sectionTitle": "资料汇入 / 汇出",
@@ -2112,17 +2176,13 @@
   "adminUsage": {
     "sectionTitle": "容量与清理",
     "capacityTitle": "容量使用状况",
-    "dbLabel": "资料库（上限 500 MB）",
-    "storageLabel": "档案储存（上限 1 GB）",
+    "storageLabel": "档案储存",
     "refreshButton": "重新整理",
     "cleanupTitle": "Log 清理",
-    "cleanupDesc": "清理操作历程、状态变更纪录和已读通知，释放资料库空间",
+    "cleanupDesc": "清理操作历程和已读通知，释放资料库空间。状态变更纪录是数据统计的来源，不会清理。",
     "activityLogs": "操作历程：",
-    "statusLogs": "状态纪录：",
     "readNotifications": "已读通知：",
     "retention": {
-      "1day": "保留 1 天",
-      "7days": "保留 7 天",
       "30days": "保留 30 天",
       "60days": "保留 60 天",
       "90days": "保留 90 天",
@@ -2132,7 +2192,13 @@
     "cleaning": "清理中...",
     "cleanupButtonPrefix": "清理 ",
     "cleanupButtonSuffix": " 天前的 Log",
-    "cleanupWarning": "清理后的 Log 无法复原，但不影响任务资料。"
+    "cleanupWarning": "清理后的 Log 无法复原；任务、状态变更纪录和数据统计不受影响。",
+    "cleanupConfirm": "确定要删除 {{days}} 天前的操作历程和已读通知吗？此操作无法复原。",
+    "cleanupLogDetail": "清理 {{days}} 天前的 Log（操作历程、已读通知）",
+    "storageLimit": "上限 {{size}}",
+    "recordsLabel": "数据笔数",
+    "recordsValue": "约 {{value}} 笔",
+    "storageNoLimit": "自架版没有容量上限；这里只加总附件与备份记录，实际用量以服务器磁盘为准。"
   },
   "dashboard": {
     "title": "数据统计",
@@ -2252,8 +2318,9 @@
       "line": "产线"
     },
     "sprint": {
-      "current": "当前 Sprint",
-      "all": "所有 Sprint"
+      "current": "当前冲刺",
+      "all": "全部任务",
+      "openTasks": "未完成任务"
     },
     "viewMode": {
       "day": "日",
@@ -2441,7 +2508,9 @@
     "deleteColumn": "删除栏",
     "deleteTable": "删除表格",
     "undo": "复原",
-    "redo": "重做"
+    "redo": "重做",
+    "rowShort": "行",
+    "columnShort": "列"
   },
   "confirm": {
     "defaultTitle": "确认操作"
@@ -2612,7 +2681,41 @@
     "notificationTemplateCreated": "新增消息模板「{{name}}」",
     "notificationTemplateUpdated": "编辑消息模板「{{name}}」",
     "notificationTemplateDeleted": "删除消息模板",
-    "createLogin": "启用账号"
+    "createLogin": "启用账号",
+    "extra": {
+      "add_tag": "新增标签",
+      "remove_tag": "移除标签",
+      "delete_tag": "删除标签",
+      "approval_rule_created": "新增签核规则",
+      "approval_rule_updated": "修改签核规则",
+      "approval_rule_deleted": "删除签核规则",
+      "bulk_assign": "批量指派",
+      "bulk_update_priority": "批量修改优先级",
+      "bulk_update_status": "批量修改状态",
+      "change_job_title": "变更职称",
+      "delete_product_line": "删除产线",
+      "edit_comment": "编辑留言",
+      "end_standup": "结束例会",
+      "export_csv": "导出 CSV",
+      "mention": "提及成员",
+      "notification_rule_created": "新增通知规则",
+      "notification_rule_deleted": "删除通知规则",
+      "notification_rule_toggled": "切换通知规则",
+      "notification_template_created": "新增通知模板",
+      "notification_template_updated": "修改通知模板",
+      "notification_template_deleted": "删除通知模板",
+      "unlink_parent": "取消父任务",
+      "create": "建立任务",
+      "approval_requested": "送出签核",
+      "approval_step_approved": "核准一关签核",
+      "approval_approved": "签核通过",
+      "approval_rejected": "驳回签核",
+      "approval_returned": "退回修改",
+      "approval_withdrawn": "撤回签核",
+      "approval_cancelled": "取消签核",
+      "approval_requirement_changed": "变更签核要求"
+    },
+    "otherAction": "其他操作"
   },
   "views": {
     "approvalsTitle": "待签核"
@@ -2632,7 +2735,10 @@
     "noteDesc": "备注说明",
     "notePlaceholder": "备注（选填）...",
     "approvalSuffix": "签核",
-    "noItems": "目前没有待签核项目"
+    "noItems": "目前没有待签核项目",
+    "bulkConfirmTitle": "核准 {{count}} 笔签核？",
+    "bulkConfirmDesc": "每一笔都会以你的名义核准，并依规则推进任务状态。",
+    "bulkPartialFailed": "有 {{count}} 笔签核没有核准成功，请个别确认。"
   },
   "memberList": {
     "title": "成员列表",
@@ -2728,7 +2834,6 @@
     "title": "发送报告到外部频道",
     "selectTargets": "选择要发送的目标频道：",
     "noTargets": "未选择任何目标",
-    "comingSoon": "即将推出",
     "addTarget": "新增发送目标",
     "addTargetTitle": "新增发送目标",
     "statusSent": "已发送",
@@ -2738,7 +2843,6 @@
     "partialResult": "成功 {{sent}} 个，失败 {{failed}} 个",
     "retryFailed": "重试失败",
     "sendToChannels": "发送到 {{count}} 个频道",
-    "nonSlackWarning": "部分频道即将推出，请移除非 Slack 目标后再发送",
     "formatText": "纯文字",
     "formatFull": "完整格式",
     "platform": "平台",
@@ -2751,7 +2855,9 @@
       "emailRecipients": "请输入收件人 Email",
       "lineToken": "请输入 LINE Notify Token",
       "webhookUrl": "请输入 Webhook URL"
-    }
+    },
+    "unsupported": "不支持，会略过",
+    "unsupportedHint": "目前只有 Slack 能发送报告。这个目标可以删除，或改用 Slack 频道。"
   },
   "theme": {
     "dark": "深色",
@@ -2861,6 +2967,7 @@
     "backToLogin": "前往登录页"
   },
   "kb": {
+    "moreActions": "更多操作",
     "title": "知识库",
     "subtitle": "把团队的做法与项目资料放在一起",
     "shared": "共用",
@@ -2880,7 +2987,7 @@
     "pageTitle": "页面标题",
     "parent": "上级页面（最多三层）",
     "noParent": "无，放在最上层",
-    "order": "排序（小到大）",
+    "order": "团队排序（数字小的在前）",
     "adminOnly": "仅管理员可编辑",
     "edit": "编辑",
     "save": "保存",
@@ -2969,11 +3076,11 @@
         "super_admin": "最高管理员"
       },
       "onlyMe": "仅限自己",
-      "workspaceMembers": "空间成员可看",
+      "workspaceMembers": "工作区成员可看",
       "selfHint": "只有你可以查看、编辑及评论。",
       "workspaceHint": "本空间的启用成员可查看与评论；只有你可编辑。",
       "parentLimit": "上层页面的限制仍会生效，这个选项不能开放上层未授权的人。",
-      "privateDraftHint": "这是私人草稿，仍仅限草稿拥有者。请先通过“文档状态”的发布或分享流程开放给他人。",
+      "privateDraftHint": "这是私人草稿，只有你能读取。要让其他人看到，请用“分享私人草稿”选择目的地，或发布为正式版。",
       "actionTabs": "要设置的权限"
     },
     "comments": {
@@ -3019,8 +3126,8 @@
       "emptyFavorites": "此范围没有收藏。",
       "showAll": "显示全部",
       "importFile": "导入文件",
-      "importVersion": "导入来源新版本",
-      "historicalListHint": "文字勾选符号属于历史记录，请在工作跟踪区建立或关联当前的工作。",
+      "importVersion": "上传新版原档（供比对，不改正文）",
+      "historicalListHint": "文字勾选符号属于历史记录，请在“行动与工作关联”建立或连结当前的工作。",
       "filters": "筛选",
       "activeFilters": "{{count}} 个筛选条件",
       "clearSearch": "清除搜索",
@@ -3039,7 +3146,15 @@
       "favoriteAction": "加入收藏",
       "unfavoriteAction": "取消收藏",
       "pinAction": "加入我的置顶",
-      "unpinAction": "取消我的置顶"
+      "unpinAction": "取消我的置顶",
+      "tabs": {
+        "tree": "目录",
+        "favorites": "收藏",
+        "pins": "置顶"
+      },
+      "collapseSidebar": "收起侧栏",
+      "expandSidebar": "展开侧栏",
+      "resizeSidebar": "拖动调整侧栏宽度（双击恢复默认）"
     },
     "sharing": {
       "copyLink": "复制链接",
@@ -3054,16 +3169,21 @@
       "accessHint": "链接仍会检查 LIVO 登录与页面权限；有账号也不代表能看受限页面。",
       "copyNotice": "PDF 与复制内容是已保存正文的独立副本；附件请另行下载。更改 LIVO 权限无法收回已导出的副本。",
       "updated": "更新时间：{{date}}"
-    }
+    },
+    "newChildPage": "新增子页面",
+    "parentForNew": "上层页面",
+    "placementSettings": "位置、团队排序与编辑限制",
+    "adminOnlyOption": "只有管理员可以编辑此页（其他人仍按权限阅读）"
   },
   "qa": {
+    "sortDefault": "最近更新",
     "completeInPanel": "请在修复版本区确认资料，完成这一步。",
     "verificationNote": "补充验证备注（选填）",
     "linkedTaskUnavailable": "以下已关联任务已不适用于此项目，请取消勾选以移除后再保存。",
     "moreActions": "更多操作",
     "yourNextStep": "接下来你可以",
     "waitingForAction": "等待 {{name}}：{{action}}",
-    "triageTeam": "QA 或管理员",
+    "triageTeam": "管理员或 QA 协调人",
     "addAttachment": "新增附件",
     "hideAttachmentUpload": "收起上传区",
     "targetMoreOptions": "更多选项",
@@ -3100,7 +3220,7 @@
     "title": "QA Bug 跟踪",
     "myTitle": "我的 QA",
     "featureLabel": "QA Bug 流程",
-    "featureDescription": "报告、分流、修复与验证 Bug。关闭后隐藏 QA 并停止访问，现有数据会保留。",
+    "featureDescription": "报告、指派、修复与验证 Bug。关闭后隐藏 QA 并停止访问，现有数据会保留。",
     "report": "报告 Bug",
     "reportTitle": "新增 Bug 报告",
     "edit": "编辑报告",
@@ -3126,7 +3246,7 @@
     "refresh": "刷新",
     "loading": "加载中…",
     "saving": "保存中…",
-    "search": "搜索标题或 ID",
+    "search": "搜索标题或 #编号",
     "searchButton": "搜索",
     "allStates": "所有状态",
     "empty": "当前没有符合条件的 Bug。",
@@ -3136,11 +3256,10 @@
     "assigned": "我负责修复",
     "testing": "我负责 QA",
     "reported": "我报告的",
-    "everyone": "所有人",
     "projectEntry": "项目 QA",
     "state": {
       "new": "新报告",
-      "triaged": "已分流",
+      "triaged": "已指派",
       "in_progress": "修复中",
       "verification": "待验证",
       "closed": "已结案",
@@ -3186,7 +3305,7 @@
     "close": "结案",
     "resolutionField": "结案结果",
     "reason": "原因",
-    "duplicateId": "原始 Bug ID",
+    "duplicateId": "原始 Bug 编号",
     "reopen": "重开",
     "hold": "记录阻碍",
     "taskLinks": "关联开发任务",
@@ -3237,10 +3356,9 @@
     "versionChoose": "选择已有版本",
     "fixVersionHint": "可自行输入，或从同项目的 QA 历史版本选择；请填写本次修复的 Build、版本或 Commit ID。",
     "unassigned": "未指派",
-    "priorityUnassigned": "优先级未安排",
     "createIntro": "描述问题并附上证据，让团队快速复现。",
     "workspaceIntro": "跟踪问题、修复与验证进度。",
-    "searchPlaceholder": "搜索标题或 Bug ID",
+    "searchPlaceholder": "搜索标题，或输入 #编号",
     "filtersApplied": "已应用筛选",
     "clearFilters": "清除筛选",
     "slackSource": "查看 Slack 原单",
@@ -3276,7 +3394,37 @@
     },
     "error": {
       "qa_invalid_environment": "部署环境列表已更新，请重新选择可用环境。",
-      "qa_historical_pass_unavailable": "原单的 PASS 证据不足，请先完成验证。"
+      "qa_historical_pass_unavailable": "原单的 PASS 证据不足，请先完成验证。",
+      "qa_forbidden": "你没有这个操作的权限，请确认你是这张 Bug 的回报人、修复者或验证 QA。",
+      "qa_unauthorized": "登入已过期，请重新登入。",
+      "qa_disabled": "QA 功能目前关闭，请洽管理员。",
+      "qa_project_unavailable": "这个专案已封存或无法使用。",
+      "qa_member_unavailable": "指定的成员已停用或不存在，请重新指派。",
+      "qa_member_inactive": "你的帐号已停用，请洽管理员。",
+      "qa_required": "请填写必填栏位。",
+      "qa_custom_field_required": "请填写必填的自订栏位。",
+      "qa_custom_field_unavailable": "自订栏位设定已更新，请重新打开表单。",
+      "qa_invalid_custom_field_value": "自订栏位的内容不正确，请检查后再送出。",
+      "qa_build_mismatch": "修复版本已改变，请重新整理后再回报。",
+      "qa_verification_required": "还有必要环境没有通过验证，不能结案。",
+      "qa_not_deployed": "这个环境还没有回报部署完成。",
+      "qa_triage_required": "请先指定修复负责人与 QA 负责人。",
+      "qa_targets_required": "请至少选一个要验证的环境。",
+      "qa_required_target": "请至少选一个要验证的环境。",
+      "qa_duplicate_unavailable": "选择的原始 Bug 不存在或无法使用。",
+      "qa_task_unavailable": "关联的任务不存在，或你没有查看权限。",
+      "qa_too_many_tasks": "关联的任务太多。",
+      "qa_file_too_large": "档案超过大小上限。",
+      "qa_invalid_file_type": "不支援这种档案格式。",
+      "qa_storage_unavailable": "档案储存暂时无法使用，请稍后再试。",
+      "qa_upload_expired": "上传已逾时，请重新上传。",
+      "qa_invalid_comment": "留言不能空白，也不能超过长度上限。",
+      "qa_issue_not_found": "找不到这张 Bug，可能已被删除。",
+      "qa_not_found": "找不到这张 Bug，可能已被删除。",
+      "qa_handoff_conflict": "这张 Bug 已有进行中的交接。",
+      "qa_command_id_reused": "这个操作已经送出过，请重新整理后确认结果。",
+      "qa_request_too_large": "内容太长，请缩短后再送出。",
+      "qa_invalid_date": "日期格式不正确。"
     },
     "verificationTab": "修复与验证",
     "changeState": "变更状态",
@@ -3311,7 +3459,62 @@
     "dropSaved": "已移至「{{status}}」",
     "dropFailed": "Bug 状态未能更新",
     "dropPermission": "只有回报者、修复负责人、QA 负责人或管理员可以变更此 Bug 的状态。",
-    "dropUncertain": "尚未确认服务器结果，卡片已恢复原位置。请重试，或重新整理确认最新状态。"
+    "dropUncertain": "尚未确认服务器结果，卡片已恢复原位置。请重试，或重新整理确认最新状态。",
+    "involved": "全部与我相关",
+    "noTargets": "还没有提交修复。修复负责人提交修复时，会设置要部署与验证的环境。",
+    "holdCurrent": "当前阻碍",
+    "clearHold": "解除阻碍",
+    "reopenReason": "重开原因",
+    "holdReplaceHint": "送出后会取代当前的阻碍说明。阻碍已排除时，请用「解除阻碍」。",
+    "fixedNeedsVerification": "每个必要环境都部署并验证通过后，才能以「验证修复」结案。",
+    "reasonOptional": "说明（选填）",
+    "terminalConfirmTitle": "把这张 Bug 移到「{{status}}」？",
+    "terminalConfirmDesc": "这只会改状态，不会留下验证记录或结案原因。要正式结案请用「结案」。",
+    "duplicateOf": "与 {{id}} 重复",
+    "historyHandoffTo": "交给 {{name}}",
+    "historyHandoffAccepted": "{{name}} 已接手",
+    "historyEvent": {
+      "create": "报告 Bug",
+      "edit": "编辑报告",
+      "triage": "设置负责人",
+      "start_fix": "开始修复",
+      "submit_fix": "提交修复",
+      "record_deployment": "确认部署",
+      "record_verification": "报告验证结果",
+      "set_state": "变更状态",
+      "close": "结案",
+      "reopen": "重开",
+      "hold": "记录阻碍",
+      "holdCleared": "解除阻碍",
+      "link_tasks": "关联开发任务",
+      "request_handoff": "安排交接",
+      "accept_handoff": "接手交接",
+      "resolve_handoff": "完成交接",
+      "update": "更新 Bug"
+    },
+    "notify": {
+      "create": "报告了新 Bug",
+      "created": "报告了新 Bug",
+      "comment": "在 Bug 留言",
+      "set_state": "变更了 Bug 状态",
+      "triage": "设置了 Bug 负责人",
+      "submit_fix": "提交了修复，请 QA 验证",
+      "record_deployment": "确认了部署",
+      "record_verification": "报告了验证结果",
+      "close": "结案了 Bug",
+      "reopen": "重开了 Bug",
+      "hold": "更新了 Bug 的阻碍",
+      "edit": "编辑了 Bug 报告",
+      "request_handoff": "请你接手 Bug",
+      "accept_handoff": "接手了交接",
+      "resolve_handoff": "完成了交接",
+      "update": "更新了 Bug"
+    },
+    "priorityDefault": "{{name}}（默认）",
+    "priorityDefaultHint": "还没有人设置优先级，暂用默认值。",
+    "overdue": "{{date}} 已逾期",
+    "blocked": "有阻碍",
+    "handoffOpen": "交接中"
   },
   "deploymentEnvironments": {
     "title": "部署环境",
@@ -3346,6 +3549,7 @@
     "processor_not_configured": "尚未配置私有文件处理服务。",
     "processor_busy": "私有处理器正忙，请稍后重试此项目。",
     "processing_timeout": "解析超出时间上限，请拆分文档或重试。",
+    "import_interrupted": "服务器处理这份文档时中断了。请稍后再试；如果一直发生，请把文档拆小或减少图片后再导入。",
     "processor_unavailable": "无法连接到私有文件处理服务，请系统运维者确认服务已启动后再重试此项目。",
     "page_limit": "PDF 超过 40 页处理上限，请拆成较小文件。",
     "encrypted_pdf": "无法解析加密 PDF，请提供已授权且解除保护的副本。",
@@ -3411,7 +3615,7 @@
     "readOnly": "仅可查看，无法导入此处",
     "mode": "来源已存在时",
     "create": "创建页面",
-    "update": "向现有页面添加来源版本",
+    "update": "新增原档版本到既有页面（不改正文）",
     "copy": "明确另存副本",
     "target": "现有页面",
     "preserve": "保留人工编辑正文。新来源以不可变版本保存供比较；核对后可在编辑器采用所需内容。",
@@ -3436,7 +3640,7 @@
     "notionUsers": "可以使用此连接的成员",
     "disconnect": "断开 Notion 连接",
     "connected": "已设置连接；令牌留空表示保留。",
-    "processorMissing": "尚未设置私有文件处理服务，请系统运维者启用；不会将文件发送到外部 OCR。",
+    "processorMissing": "Word 与 PDF 需要私有文件处理服务，请系统运维者启用；Markdown 与 Notion 不需要，可以直接导入。文件不会发送到外部 OCR。",
     "sourceVersions": "导入来源版本与原件",
     "download": "下载原件",
     "unknownError": "导入失败，现有正文未被覆盖。请更新预览或重试失败项目。",
@@ -3466,7 +3670,43 @@
     "storage_key_conflict": "来源内容已变动，请重新导入。",
     "import_payload_missing": "无法读取暂存的解析内容，请重试导入。",
     "import_metadata_too_large": "此次导入的附加数据过多，请分批导入。",
-    "parsed_document_too_large": "解析后的单篇正文超过 900,000 UTF-8 字节，请拆成较小的文档。"
+    "parsed_document_too_large": "解析后的单篇正文超过 900,000 UTF-8 字节，请拆成较小的文档。",
+    "asset_size_limit": "附件太大或数量太多，超出单次汇入上限。请分批汇入或缩小附件。",
+    "cleanup_failed": "汇入已结束，但暂存档清理没有完成；系统会再自动清理。",
+    "commit_failed": "这个项目没有写入成功，其他项目不受影响。请重试或略过这一项。",
+    "commit_in_progress": "这批汇入正在写入中，请稍候完成后再操作。",
+    "demo_import_disabled": "展示模式不提供文件汇入。",
+    "depth_limit": "页面最多三层，选的上层页面已经在第三层。请改选较上层的页面。",
+    "duplicate_mapping": "同一个项目被指定了两次目的地，请检查后再汇入。",
+    "file_not_found": "找不到这个原档，可能已被移除。",
+    "invalid_destination": "目的地设定不完整或不正确，请重新选择范围、上层页面与权限。",
+    "invalid_file": "档案无法读取或超过大小上限。",
+    "invalid_mapping": "没有可汇入的项目，或项目与这批汇入不符。请重新选择。",
+    "invalid_notion_pages": "Notion 页面清单不正确（一次最多 100 页）。",
+    "invalid_notion_token": "Notion 整合金钥格式不正确。",
+    "invalid_policy": "汇入权限设定不正确，请重新选择可使用的人员。",
+    "invalid_processor_configuration": "文件转换服务的设定不正确，请管理员检查服务器设定。",
+    "invalid_processor_result": "文件转换服务回传的内容无法使用（可能超过 40 页或 24 个附件）。",
+    "invalid_storage_key": "档案位置不正确，已拒绝存取。",
+    "item_not_ready": "有项目还没转换完成或转换失败，请等它完成或先略过。",
+    "job_changed": "这批汇入刚被其他操作更新，请重新整理后再试。",
+    "job_not_found": "找不到这批汇入，可能已过期或被取消。",
+    "job_not_ready": "转换还没完成，请稍候再汇入。",
+    "job_not_retryable": "这批汇入正在处理或已结束，不能重试。",
+    "notion_asset_limit": "Notion 页面附件超过 24 个，只汇入前 24 个；其余请到 Notion 另外下载。",
+    "notion_attachment_unavailable": "有 Notion 附件无法下载，已略过。",
+    "notion_attachment_unsupported": "有 Notion 附件格式不支援，已略过。",
+    "notion_rate_limited": "Notion 暂时限制了请求次数，请稍后再试。",
+    "notion_selection_limit": "请选择要汇入的 Notion 页面（一次最多 10 页）。",
+    "processing_failed": "文件转换失败，请确认档案可以正常开启后重试。",
+    "processing_superseded": "这个档案已重新开始转换，旧的结果不会使用。",
+    "scope_mismatch": "上层页面属于另一个专案，页面会跟上层放在同一个范围。请改选范围或上层页面。",
+    "source_missing": "找不到要汇入的档案内容，请重新上传。",
+    "source_size_limit": "档案超过单次汇入上限（10 MB）。",
+    "staging_failed": "档案暂存失败，请重试。",
+    "unknown_action": "这个操作不支援，请重新整理页面。",
+    "unsafe_processor_result": "转换结果含有不安全的内容，已拒绝汇入。",
+    "depthFull": "已在第三层"
   },
   "kbWorkflow": {
     "heading": "行动与工作关联",
@@ -3500,13 +3740,13 @@
     "project": "项目",
     "choose": "请选择",
     "status": "初始状态",
-    "assignee": "负责人",
+    "assignee": "经办人",
     "unassigned": "暂未分配",
     "deadline": "截止日期",
     "description": "可公开的工作说明",
     "confirmCreate": "确认创建并关联",
-    "sources": "原文版本",
-    "sourceHint": "原文版本单独保存；勾选清单或更新工作进度不会修改原文。",
+    "sources": "建立工作时的原文",
+    "sourceHint": "从这页建立任务或 Bug 时，系统会自动保存当时的正文，作为工作的出处；之后修改页面不会影响这些记录。",
     "capture": "保存当前正文版本",
     "relation": {
       "reference": "参考",
@@ -3523,8 +3763,13 @@
       "kb_workflow_invalid": "请检查必填内容、日期和所选项目。",
       "kb_workflow_task_key_conflict": "任务编号已被使用，请重试。",
       "qa_invalid_environment": "此环境已停用，请选择当前可用的环境。",
-      "qa_disabled": "Bug 功能已停用。"
-    }
+      "qa_disabled": "Bug 功能已停用。",
+      "kb_workflow_too_large": "内容太长，请缩短说明或拆成几张任务。"
+    },
+    "pickPlaceholder": "点击浏览，或输入标题、编号搜索",
+    "searching": "搜索中…",
+    "noTargets": "没有符合的项目",
+    "orCreate": "找不到？"
   },
   "releaseWorkspace": {
     "selfDecisionHint": "你自己申请的例外不会列在这里，需由其他管理员决定。",
@@ -3700,7 +3945,152 @@
       "assignee": "我负责",
       "reviewer": "我验收",
       "fix": "我修复",
-      "verify": "我验证"
+      "verify": "我验证",
+      "handoff": "待我接手"
+    }
+  },
+  "boardSort": {
+    "button": "排序",
+    "current": "排序方式：{{field}}",
+    "title": "排序方式",
+    "order": "顺序",
+    "fields": {
+      "default": "默认",
+      "priority": "优先级",
+      "dueDate": "到期日",
+      "createdAt": "创建时间"
+    },
+    "directions": {
+      "priority": {
+        "desc": "高 → 低",
+        "asc": "低 → 高"
+      },
+      "dueDate": {
+        "asc": "近 → 远",
+        "desc": "远 → 近"
+      },
+      "createdAt": {
+        "desc": "新 → 旧",
+        "asc": "旧 → 新"
+      }
+    }
+  },
+  "projectScope": {
+    "project": "当前范围：{{name}}",
+    "line": "当前范围：产品线「{{name}}」",
+    "clear": "显示全部项目"
+  },
+  "notificationRules": {
+    "events": {
+      "taskCreated": "任务创建",
+      "statusChanged": "状态变更",
+      "assigneeChanged": "指派变更",
+      "dueReminder": "到期提醒",
+      "overdue": "任务逾期",
+      "approvalRequested": "请求签核",
+      "approvalCompleted": "签核完成",
+      "commentAdded": "新增留言",
+      "custom": "自定义"
+    },
+    "tones": {
+      "neutral": "中性",
+      "celebration": "庆祝",
+      "urgent": "紧急",
+      "warning": "警示",
+      "friendly": "友好"
+    },
+    "defaultContent": {
+      "taskCreated": "📋 {{assigner_name}} 创建了新任务“{{task_name}}”｜指派给：{{assignee}}｜优先级：{{priority}}｜截止日期：{{due_date}}",
+      "statusChanged": "🔄 任务“{{task_name}}”的状态已从“{{prev_status}}”变更为“{{status}}”。变更人：{{changer_name}}",
+      "assigneeChanged": "👋 {{assignee}} 你好，{{assigner_name}} 已将任务“{{task_name}}”指派给你。优先级：{{priority}}，截止日期：{{due_date}}。请尽快处理。",
+      "dueReminder": "⚠️ 提醒：“{{task_name}}”即将到期（剩余 {{due_remaining}} 天）｜负责人：{{assignee}}",
+      "overdue": "🚨 “{{task_name}}”已逾期 {{overdue_days}} 天！｜负责人：{{assignee}}",
+      "approvalRequested": "⏳ {{requester_name}} 提交了任务“{{task_name}}”的签核请求，请前往签核页面审核。",
+      "approvalCompleted": "✅ “{{task_name}}”签核已完成｜签核人：{{approver_name}}",
+      "commentAdded": "💬 “{{task_name}}”有新评论｜来自 {{reporter}}",
+      "custom": "📢 {{task_name}}"
+    },
+    "sample": {
+      "taskName": "实现登录功能",
+      "assignee": "陈小明",
+      "reporter": "林小华",
+      "approver": "王经理",
+      "status": "进行中",
+      "prevStatus": "待处理",
+      "descriptionSummary": "实现 Google OAuth 和邮箱登录流程"
+    },
+    "addRule": "新增规则",
+    "any": "任意",
+    "anyStatus": "任意状态",
+    "autoDelay": "自动 {{seconds}}s",
+    "autoSend": "自动发送",
+    "default": "默认",
+    "deleteRule": "删除规则",
+    "deleteRuleConfirm": "确定要删除此通知规则吗？此操作无法撤销。",
+    "empty": "暂无通知规则，点击“新增规则”创建第一条规则。",
+    "eventType": "事件类型",
+    "listDescription": "定义哪些事件触发通知，以及使用哪个模板",
+    "manual": "手动",
+    "neverFires": "目前不会触发",
+    "neverFiresHint": "目前只有“状态变更”事件会触发通知",
+    "noTemplate": "无模板",
+    "priorityPolicyTitle": "消息优先级策略",
+    "priorityPolicyDescription": "项目级规则优先于全局规则。同一事件有多条规则时，采用优先级最高的规则（最先匹配的项目规则）。",
+    "dialog": {
+      "addTitle": "新增通知规则",
+      "triggerEvent": "触发事件",
+      "fromStatus": "原状态（留空＝任意）",
+      "toStatus": "新状态（留空＝任意）",
+      "template": "消息模板",
+      "templateDefault": "默认（使用任务标题）",
+      "useTemplate": "使用模板",
+      "selectTemplateOptional": "选择模板（可选）",
+      "templateNone": "无（使用任务标题）",
+      "channelType": "频道类型",
+      "channelTarget": "目标频道",
+      "delay": "延迟",
+      "autoSendDelay": "自动发送延迟（秒）"
+    },
+    "table": {
+      "statusCondition": "状态条件",
+      "template": "模板",
+      "channel": "频道",
+      "auto": "自动",
+      "enabled": "启用"
+    },
+    "templates": {
+      "description": "管理各事件的通知文案，支持变量替换",
+      "add": "新增模板",
+      "addTitle": "新增消息模板",
+      "editTitle": "编辑消息模板",
+      "edit": "编辑模板",
+      "delete": "删除模板",
+      "deleteConfirm": "确定要删除此模板吗？使用此模板的规则将改用默认消息。",
+      "create": "创建模板",
+      "empty": "暂无消息模板，点击“新增模板”创建第一个模板。",
+      "emptyShort": "暂无模板",
+      "name": "模板名称",
+      "namePlaceholder": "例如：任务完成通知",
+      "tone": "语气",
+      "content": "模板内容",
+      "contentPlaceholder": "例如：任务{{task}}已由{{assignee}}移至{{status}}",
+      "previewLabel": "预览：",
+      "previewSample": "预览（示例数据）",
+      "variablesAria": "模板变量"
+    },
+    "toast": {
+      "title": "卡片状态变更通知",
+      "movedTo": "“{{title}}”已移至",
+      "fromTo": "从“{{from}}”→“{{to}}”",
+      "dismiss": "关闭通知",
+      "noMessage": "（无预填消息）",
+      "selectTemplate": "选择模板…",
+      "noTemplate": "无模板（使用任务标题）",
+      "messagePlaceholder": "输入通知消息…",
+      "autoSendIn": "{{seconds}} 秒后自动发送",
+      "sending": "发送中…",
+      "collapse": "收起",
+      "send": "发送"
     }
   }
 }

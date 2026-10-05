@@ -1,5 +1,6 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Lock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import UserSelect from '@/components/UserSelect';
 import type { CustomField, TaskCustomFieldValue } from '@/types';
 import type { OtherViewer } from '../hooks/types';
@@ -31,6 +32,7 @@ const FieldLabel = ({ field, isLocked, locker }: { field: CustomField; isLocked:
 );
 
 export const CustomFieldInput = ({ field, cv, isLocked, locker, onChange, onFocus, onBlur }: Props) => {
+  const { t } = useTranslation();
   const focusProps = { onFocus, onBlur };
   const labelEl = <FieldLabel field={field} isLocked={isLocked} locker={locker} />;
 
@@ -79,7 +81,7 @@ export const CustomFieldInput = ({ field, cv, isLocked, locker, onChange, onFocu
         <input type="checkbox" checked={cv?.valueBoolean || false} disabled={isLocked}
           onChange={e => onChange({ valueBoolean: e.target.checked })}
           className="rounded border-border accent-primary" />
-        <span className="text-sm text-foreground">{cv?.valueBoolean ? '是' : '否'}</span>
+        <span className="text-sm text-foreground">{t(cv?.valueBoolean ? 'customField.booleanYes' : 'customField.booleanNo')}</span>
       </label>
     </div>
   );
@@ -90,7 +92,7 @@ export const CustomFieldInput = ({ field, cv, isLocked, locker, onChange, onFocu
         onChange={e => onChange({ valueText: e.target.value || undefined })}
         className="w-full text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground disabled:opacity-50"
         {...focusProps}>
-        <option value="">未選擇</option>
+        <option value="">{t('customField.selectPlaceholder')}</option>
         {(field.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
       </SearchableSelect>
     </div>
@@ -99,7 +101,7 @@ export const CustomFieldInput = ({ field, cv, isLocked, locker, onChange, onFocu
   if (field.fieldType === 'user') return (
     <div key={field.id}>{labelEl}
       <div className={isLocked ? 'opacity-50 pointer-events-none' : ''}>
-        <UserSelect value={cv?.valueUserId || ''} onChange={v => onChange({ valueUserId: v || undefined })} allowEmpty emptyLabel="未指定" />
+        <UserSelect value={cv?.valueUserId || ''} onChange={v => onChange({ valueUserId: v || undefined })} allowEmpty emptyLabel={t('customField.userUnspecified')} />
       </div>
     </div>
   );

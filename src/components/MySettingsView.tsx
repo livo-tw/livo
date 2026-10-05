@@ -1,15 +1,21 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Palette, Bell, FileText, Globe, Info, KeyRound, Mail, UserCircle } from 'lucide-react';
+import { Palette, Bell, FileText, Globe, Info, KeyRound, Link2, Mail, UserCircle } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useTranslation } from 'react-i18next';
 import ThemeSelector from '@/components/ThemeSelector';
 import MyAvatarSettings from '@/components/MyAvatarSettings';
 import ChangePasswordForm from '@/components/ChangePasswordForm';
 import SlackNotifyPreferences from '@/components/SlackNotifyPreferences';
+import ExternalPlatformSettings from '@/components/integrations/ExternalPlatformSettings';
 import EmailNotifyPreferences from '@/components/EmailNotifyPreferences';
 import AutoReportSettings from '@/components/AutoReportSettings';
 import UpgradePrompt from '@/components/UpgradePrompt';
 import { useLicense } from '@/context/LicenseContext';
+import { USE_CF_BACKEND } from '@/lib/apiBase';
+import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+
+// The self-hosted server does not run the scheduled Slack digest and automatic reports yet.
+const SELF_HOSTED = !USE_CF_BACKEND && !USING_MOCK_BACKEND;
 
 const MySettingsView = () => {
   const { t, i18n } = useTranslation();
@@ -80,6 +86,18 @@ const MySettingsView = () => {
           </div>
         </section>
 
+        {/* Slack link: the member's own choice, open to everyone */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground border-b border-border pb-2">
+            <Link2 size={16} className="text-primary" />
+            {t('settings.slackLink.title')}
+            <Tooltip><TooltipTrigger asChild><Info size={14} className="text-muted-foreground/50 cursor-help" /></TooltipTrigger><TooltipContent side="right"><p className="text-xs max-w-[240px]">{t('settings.slackLink.tooltip')}</p></TooltipContent></Tooltip>
+          </div>
+          <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-5">
+            <ExternalPlatformSettings />
+          </div>
+        </section>
+
         {/* Slack Digest — professional */}
         <section className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground border-b border-border pb-2">
@@ -90,6 +108,7 @@ const MySettingsView = () => {
           {hasFeature('slack-notify') ? (
             <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-5">
               <p className="text-sm text-muted-foreground mb-4">{t('settings.slackNotifyDesc')}</p>
+              {SELF_HOSTED && <p role="note" className="mb-4 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-800 dark:text-amber-300">{t('settings.selfHostScheduledPending')}</p>}
               <SlackNotifyPreferences />
             </div>
           ) : (
@@ -120,6 +139,7 @@ const MySettingsView = () => {
           {hasFeature('auto-reports') ? (
             <div className="bg-card rounded-lg border border-border shadow-sm p-4 md:p-5">
               <p className="text-sm text-muted-foreground mb-4">{t('settings.autoReportDesc')}</p>
+              {SELF_HOSTED && <p role="note" className="mb-4 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-800 dark:text-amber-300">{t('settings.selfHostScheduledPending')}</p>}
               <AutoReportSettings />
             </div>
           ) : (

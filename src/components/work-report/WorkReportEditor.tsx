@@ -80,44 +80,37 @@ const WorkReportEditor = ({
           </button>
         </div>
 
-        {/* Toolbar */}
+        {/* One toolbar: generate, keep, share, then history. */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={onGenerate}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+            disabled={loading}
+            className="flex items-center gap-1.5 whitespace-nowrap px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <RefreshCw size={14} />
-            {content ? t('workReport.regenerate') : t('workReport.generate')}
-          </button>
-          <button
-            onClick={onCopy}
-            disabled={!content.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-40"
-          >
-            <Copy size={14} />
-            {t('workReport.editor.copy')}
+            {loading ? t('workReport.editor.generating') : content ? t('workReport.regenerate') : t('workReport.generate')}
           </button>
           <button
             onClick={onSave}
             disabled={saving || !content.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 whitespace-nowrap px-4 py-2 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-40"
           >
             <Save size={14} />
             {saving ? t('workReport.editor.saving') : t('workReport.editor.save')}
           </button>
           <button
-            onClick={onToggleHistory}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-              showHistory ? 'border-primary bg-primary/10 text-primary' : 'border-border text-foreground hover:bg-accent'
-            }`}
+            onClick={onCopy}
+            disabled={!content.trim()}
+            className="flex items-center gap-1.5 whitespace-nowrap px-4 py-2 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-40"
           >
-            {t('workReport.editor.history')}
+            <Copy size={14} />
+            {t('workReport.editor.copy')}
           </button>
           {onSend && (
             <button
               onClick={onSend}
               disabled={!content.trim()}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-primary/10 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 whitespace-nowrap px-4 py-2 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-primary/10 transition-colors disabled:opacity-40"
             >
               <Send size={14} />
               {t('workReport.editor.send')}
@@ -131,6 +124,15 @@ const WorkReportEditor = ({
               <Check size={12} /> {t('workReport.editor.saved')}
             </span>
           )}
+          <button
+            onClick={onToggleHistory}
+            aria-pressed={showHistory}
+            className={`ml-auto flex items-center gap-1.5 whitespace-nowrap px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              showHistory ? 'border-primary bg-primary/10 text-primary' : 'border-border text-foreground hover:bg-accent'
+            }`}
+          >
+            {showHistory ? t('workReport.editor.hideHistory') : t('workReport.editor.history')}
+          </button>
         </div>
 
         {/* Content area */}
@@ -147,43 +149,6 @@ const WorkReportEditor = ({
           </div>
         )}
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-2 pt-2">
-          <button
-            onClick={onGenerate}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {loading ? t('workReport.editor.generating') : t('workReport.generate')}
-          </button>
-          <button
-            onClick={onSave}
-            disabled={saving || !content.trim()}
-            className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            {saving ? t('workReport.editor.saving') : t('workReport.editor.save')}
-          </button>
-          <button
-            onClick={onCopy}
-            disabled={!content.trim()}
-            className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            {t('workReport.editor.copy')}
-          </button>
-          <button
-            onClick={onSend}
-            disabled={!content.trim()}
-            className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            {t('workReport.editor.send')}
-          </button>
-          <button
-            onClick={onToggleHistory}
-            className="ml-auto px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showHistory ? t('workReport.editor.hideHistory') : t('workReport.editor.history')}
-          </button>
-        </div>
       </div>
     </div>
   );

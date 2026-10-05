@@ -7,6 +7,7 @@ import { canonicalQaJson, executeQaAction, qaErrorResponse } from '../src/qa';
 import { QaError, type QaIssue } from '../src/qa/domain';
 import type { Env, AuthCtx } from '../src/env';
 import { createCloudQaSlackActions } from '../src/qaSlack';
+import { handleSlackLinkRpc } from '../src/slackLink';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '../src/qa/workflow';
 import { runQuery } from '../src/db';
 
@@ -113,6 +114,15 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     expect(db.prepare("SELECT count(*) AS n FROM qa_events WHERE type='set_state'").get()?.n).toBe(4);
     expect(current).toMatchObject({closedAt:null,closedBy:null});
   });
+  it('lets any active member comment, also on a closed bug, the same as the self-hosted server',async()=>{
+    const env=environment();let current=await executeQaAction(env,auth,create) as QaIssue;
+    current=await executeQaAction(env,auth,{action:'command',id:current.id,commandId:'close-for-comment',expectedVersion:current.version,command:{type:'set_state',state:'closed'}}) as QaIssue;
+    db.exec(`INSERT INTO auth_users(id,email) VALUES('auth-bystander','bystander@example.com');
+      INSERT INTO members(workspace_id,id,name,email,avatar,color,role,is_active,auth_id) VALUES('ws-a','bystander','Bystander','bystander@example.com','B','#000000','member',1,'auth-bystander')`);
+    const bystander={...auth,userId:'auth-bystander',member:{...auth.member,id:'bystander',role:'member'}};
+    await executeQaAction(env,bystander,{action:'comment',id:current.id,commandId:'comment-closed',body:'Still happens on Stage'});
+    expect(db.prepare("SELECT actor_id,body FROM qa_comments WHERE issue_id=?").get(current.id)).toEqual({actor_id:'bystander',body:'Still happens on Stage'});
+  });
   it('keeps manual-state permission, feature, tenant and stale-version failures atomic',async()=>{
     const env=environment(),current=await executeQaAction(env,auth,create) as QaIssue;
     const body={action:'command',id:current.id,commandId:'manual-denied',expectedVersion:current.version,command:{type:'set_state',state:'failed'}};
@@ -153,6 +163,79 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     expect(new Set([...first.issues,...second.issues].map(row=>row.state))).toEqual(new Set(['new','triaged']));
     for(const input of [{states:[]},{states:['new','new']},{states:['bogus']},{state:'new',states:['new']}])
       await expect(executeQaAction(env,auth,{action:'list',input})).rejects.toThrow('qa_invalid_state');
+  });
+  it('filters and sorts like compareQaIssues in qa/domain.ts',async()=>{
+    const env=environment();
+    const rows:[string,number,string|null,string,string,string|null,string,string][]=[
+      ['qa-a',3,null,'2026-09-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','member-a','high','new'],
+      ['qa-b',1,'2026-10-20','2026-09-03T00:00:00.000Z','2026-10-02T00:00:00.000Z','member-a','low','new'],
+      ['qa-c',5,'2026-10-10','2026-09-02T00:00:00.000Z','2026-10-03T00:00:00.000Z',null,'medium','triaged'],
+      ['qa-d',1,null,'2026-09-04T00:00:00.000Z','2026-10-03T00:00:00.000Z',null,'untriaged','new'],
+    ];
+    for(const [id,priority,dueDate,createdAt,updatedAt,assigneeId,severity,state] of rows){
+      const data={...issue(),id,state,priority,dueDate,createdAt,updatedAt,assigneeId,severity};
+      db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,assignee_id,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?,?)').run('ws-a',id,'project-a',state,assigneeId,'member-a','Sorted',1,updatedAt,JSON.stringify(data));
+    }
+    const ids=async(input:Record<string,unknown>)=>((await executeQaAction(env,auth,{action:'list',input})) as {issues:QaIssue[]}).issues.map(row=>row.id).filter(id=>id.startsWith('qa-'));
+    // Same expectations as src/test/boardSort.test.ts (taken from PostgREST).
+    expect(await ids({})).toEqual(['qa-c','qa-d','qa-b','qa-a']);
+    expect(await ids({sort:'priority',direction:'desc'})).toEqual(['qa-d','qa-b','qa-a','qa-c']);
+    expect(await ids({sort:'priority',direction:'asc'})).toEqual(['qa-c','qa-a','qa-d','qa-b']);
+    expect(await ids({sort:'dueDate',direction:'asc'})).toEqual(['qa-c','qa-b','qa-d','qa-a']);
+    expect(await ids({sort:'dueDate',direction:'desc'})).toEqual(['qa-b','qa-c','qa-d','qa-a']);
+    expect(await ids({sort:'createdAt',direction:'desc'})).toEqual(['qa-d','qa-b','qa-c','qa-a']);
+    expect(await ids({priorities:[1,3]})).toEqual(['qa-d','qa-b','qa-a']);
+    expect(await ids({severities:['high','low']})).toEqual(['qa-b','qa-a']);
+    expect(await ids({assigneeIds:['member-a'],states:['new']})).toEqual(['qa-b','qa-a']);
+    expect(await ids({projectIds:['project-b']})).toEqual([]);
+    for(const input of [{assigneeIds:[]},{priorities:[9]},{severities:['critical']},{sort:'title'},{direction:'sideways'},{mine:'everyone'}])
+      await expect(executeQaAction(env,auth,{action:'list',input})).rejects.toThrow('qa_invalid_filter');
+    // My QA's default: bugs I fix, verify or reported, and no one else's.
+    db.exec(`INSERT INTO members(workspace_id,id,name,avatar,role,email,is_active) VALUES('ws-a','member-other','Other','','member','other@example.com',1)`);
+    for(const [id,qaOwner] of [['qa-e',null],['qa-f','member-a']] as const){
+      const data={...issue(),id,state:'new',reporterId:'member-other',assigneeId:null,qaOwnerId:qaOwner,updatedAt:'2026-10-04T00:00:00.000Z'};
+      db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('ws-a',id,'project-a','new',null,qaOwner,'member-other','Others',1,data.updatedAt,JSON.stringify(data));
+    }
+    expect(await ids({mine:'involved'})).toEqual(['qa-f','qa-c','qa-d','qa-b','qa-a']);
+    expect(await ids({mine:'testing'})).toEqual(['qa-f']);
+  });
+  it('finds bugs by their short id, lists open handoffs waiting on me and the projects I coordinate',async()=>{
+    const env=environment();
+    const put=(id:string,extra:Record<string,unknown>)=>{const data={...issue(),id,title:'Login '+id.slice(-4),updatedAt:'2026-10-04T00:00:00.000Z',...extra};
+      db.prepare('INSERT INTO qa_issues(workspace_id,id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(?,?,?,?,?,?,?,?,?)').run('ws-a',id,'project-a','new','member-a',data.title,1,data.updatedAt,JSON.stringify(data));};
+    const waiting='00000000-0000-4000-8000-00000000abcd',done='00000000-0000-4000-8000-00000000ef01';
+    put(waiting,{handoff:{id:'handoff-1',nextOwnerId:'member-a',resolvedAt:null}});
+    put(done,{handoff:{id:'handoff-2',nextOwnerId:'member-a',resolvedAt:'2026-10-04T01:00:00.000Z'}});
+    const ids=async(input:Record<string,unknown>)=>((await executeQaAction(env,auth,{action:'list',input})) as {issues:QaIssue[]}).issues.map(row=>row.id);
+    expect(await ids({search:'#0000abcd'})).toEqual([waiting]);
+    expect(await ids({search:waiting})).toEqual([waiting]);
+    // Without the # it is a title search.
+    expect(await ids({search:'0000abcd'})).toEqual([]);
+    expect(await ids({search:'Login ef01'})).toEqual([done]);
+    expect(await ids({mine:'handoff'})).toEqual([waiting]);
+    expect(await executeQaAction(env,auth,{action:'my_coordination'})).toEqual({projectIds:[]});
+    db.exec("INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES('ws-a','project-a','member-a',1,'member-a','now')");
+    expect(await executeQaAction(env,auth,{action:'my_coordination'})).toEqual({projectIds:['project-a']});
+    db.exec("UPDATE projects SET is_archived=1 WHERE workspace_id='ws-a' AND id='project-a'");
+    expect(await executeQaAction(env,auth,{action:'my_coordination'})).toEqual({projectIds:[]});
+  });
+  it('notifies the same people as the self-hosted server: new bugs to the coordinator or admins, comments to everyone on the bug',async()=>{
+    const env=environment();
+    db.exec(`INSERT INTO auth_users(id,email) VALUES('auth-reporter','reporter@example.com');
+      INSERT INTO members(workspace_id,id,name,email,avatar,color,role,is_active,auth_id) VALUES
+        ('ws-a','reporter','Reporter','reporter@example.com','R','#000000','member',1,'auth-reporter'),
+        ('ws-a','admin-2','Admin Two','admin2@example.com','A','#000000','admin',1,NULL),
+        ('ws-a','coordinator','Coordinator','coordinator@example.com','C','#000000','member',1,NULL)`);
+    const reporter={...auth,userId:'auth-reporter',member:{...auth.member,id:'reporter',role:'member'}};
+    const recipients=(issueId:string,event:string)=>(db.prepare("SELECT recipient_id,content FROM notifications WHERE workspace_id='ws-a'").all() as {recipient_id:string;content:string}[])
+      .filter(row=>{const content=JSON.parse(row.content);return content.issueId===issueId&&content.event===event;}).map(row=>row.recipient_id).sort();
+    const first=await executeQaAction(env,reporter,{...create,commandId:'create-admins'}) as QaIssue;
+    expect(recipients(first.id,'create')).toEqual(['admin-2','member-a']);
+    db.exec("INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES('ws-a','project-a','coordinator',1,'member-a','now')");
+    const second=await executeQaAction(env,reporter,{...create,id:'new-issue-2',commandId:'create-coordinator'}) as QaIssue;
+    expect(recipients(second.id,'create')).toEqual(['coordinator']);
+    await executeQaAction(env,auth,{action:'comment',id:second.id,commandId:'comment-reporter',body:'Seen on Stage'});
+    expect(recipients(second.id,'comment')).toEqual(['reporter']);
   });
   const customWorkflow=():QaWorkflow=>({...DEFAULT_QA_WORKFLOW,order:['verification','new','triaged','in_progress','verified','failed','closed','dismissed'],labels:{...DEFAULT_QA_WORKFLOW.labels,new:'待確認',triaged:'已排入',in_progress:'修復處理',verification:'等待復驗',closed:'結案完成'}});
   const fieldConfiguration={version:1,fields:[{id:'reason',fieldName:'Reason',fieldType:'text',isRequired:true,isEnabled:true,sortOrder:0}]};
@@ -331,6 +414,20 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     const payload={type:'event_callback',event_id:'event-a',team_id:'TEAM_A',event:{type:'message',user:'USER_A',channel:'CHANNEL_A',thread_ts:'100.1',ts:'101.1',text:'PASS'}};
     return {adapter,payload};
   }
+  it('refuses Slack actions for a member who unlinked Slack, and only the member changes that setting',async()=>{
+    inboxSetup();
+    vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(String(url).includes('users.info')
+      ?{ok:true,user:{id:'USER_A',team_id:'TEAM_A',profile:{email:'a@test'}}}:{ok:true,team_id:'TEAM_A'}),{headers:{'content-type':'application/json'}})));
+    const env=environment(),adapter=createCloudQaSlackActions(env,'ws-a',{waitUntil:()=>{}});
+    expect(await adapter.actor({team_id:'TEAM_A',user_id:'USER_A'})).toMatchObject({id:'member-a'});
+    expect(await handleSlackLinkRpc(env,auth,'livo_slack_link_set',{p_enabled:false})).toEqual({disabled:true,mode:'email',linked:null});
+    await expect(adapter.actor({team_id:'TEAM_A',user_id:'USER_A'})).rejects.toThrow('slack_link_disabled');
+    await expect(handleSlackLinkRpc(env,auth,'livo_slack_link_set',{p_enabled:'no'})).rejects.toThrow('slack_link_forbidden');
+    // Another workspace's member with the same id pattern is untouched.
+    expect(db.prepare("SELECT workspace_id,member_id,linking_disabled FROM slack_link_preferences").all()).toEqual([{workspace_id:'ws-a',member_id:'member-a',linking_disabled:1}]);
+    expect(await handleSlackLinkRpc(env,auth,'livo_slack_link_set',{p_enabled:true})).toMatchObject({disabled:false});
+    expect(await adapter.actor({team_id:'TEAM_A',user_id:'USER_A'})).toMatchObject({id:'member-a'});
+  });
   it('durably claims an inbox event once, recovers a lease, backs off, and completes once',async()=>{
     const {adapter,payload}=inboxSetup();
     expect(await adapter.enqueueEvent(payload)).toBe('event-a');expect(await adapter.enqueueEvent(payload)).toBe('');

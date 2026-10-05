@@ -7,57 +7,8 @@ import { useUIContext } from '@/context/UIContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Clock, User, List, ExternalLink, ClipboardList } from 'lucide-react';
 import type { ActivityLog } from '@/lib/activityLog';
+import { activityActionLabelKey } from '@/lib/activityActions';
 import { useTranslation } from 'react-i18next';
-
-const ACTION_LABEL_KEYS: Record<string, string> = {
-  create_task: 'activity.createTask',
-  update_title: 'activity.updateTitle',
-  update_status: 'activity.updateStatus',
-  update_priority: 'activity.updatePriority',
-  update_assignee: 'activity.updateAssignee',
-  update_reviewer: 'activity.updateReviewer',
-  update_project: 'activity.updateProject',
-  update_due_date: 'activity.updateDueDate',
-  update_department: 'activity.updateDepartment',
-  update_spec: 'activity.updateSpec',
-  add_comment: 'activity.addComment',
-  delete_comment: 'activity.deleteComment',
-  add_check: 'activity.addCheck',
-  toggle_check: 'activity.toggleCheck',
-  delete_check: 'activity.deleteCheck',
-  add_todo: 'activity.addTodo',
-  toggle_todo: 'activity.toggleTodo',
-  delete_todo: 'activity.deleteTodo',
-  upload_file: 'activity.uploadFile',
-  delete_file: 'activity.deleteFile',
-  delete_task: 'activity.deleteTask',
-  login: 'activity.login',
-  logout: 'activity.logout',
-  update_deploy: 'activity.updateDeploy',
-  complete_sprint: 'activityLog.completeSprint',
-  start_sprint: 'activityLog.startSprint',
-  start_standup: 'activityLog.startStandup',
-  gantt_date_change: 'activityLog.ganttDateChange',
-  cleanup_logs: 'activityLog.cleanupLogs',
-  manual_backup: 'activityLog.manualBackup',
-  import_jira: 'activityLog.importJira',
-  restore_backup: 'activityLog.restoreBackup',
-  add_member: 'activityLog.addMember',
-  delete_member: 'activityLog.deleteMember',
-  change_role: 'activityLog.changeRole',
-  toggle_member: 'activityLog.toggleMember',
-  reset_password: 'activityLog.resetPassword',
-  create_login: 'activityLog.createLogin',
-  add_status: 'activityLog.addStatus',
-  update_status_name: 'activityLog.updateStatusName',
-  delete_status: 'activityLog.deleteStatus',
-  add_product_line: 'activityLog.addProductLine',
-  update_product_line: 'activityLog.updateProductLine',
-  add_project: 'activityLog.addProject',
-  update_project_info: 'activityLog.updateProjectInfo',
-  delete_project: 'activityLog.deleteProject',
-  update_team_intro: 'activityLog.updateTeamIntro',
-};
 
 const formatTime = (iso: string) => {
   const d = new Date(iso);
@@ -133,8 +84,7 @@ const ActivityLogView = () => {
 
   const renderLogItem = (log: ActivityLog) => {
     const user = users.find(u => u.id === log.user_id);
-    const actionLabelKey = ACTION_LABEL_KEYS[log.action];
-    const actionLabel = log.action === 'task_work' ? t('taskWork.activity') : actionLabelKey ? t(actionLabelKey) : log.action;
+    const actionLabel = t(activityActionLabelKey(log.action));
     return (
       <div key={log.id} className="flex items-start gap-3 py-2.5 border-b border-border last:border-0">
         <div

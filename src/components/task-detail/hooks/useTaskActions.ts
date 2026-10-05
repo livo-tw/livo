@@ -2,8 +2,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useRef } from 'react';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { toast } from 'sonner';
+import { taskWriteErrorText } from '@/lib/approval/feedback';
 import { logActivity } from '@/lib/activityLog';
-import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import i18n from '@/i18n';
 import { createNotification, type EnvName } from '../utils';
 import type { Task, Status, User, Project, TaskCustomFieldValue } from '@/types';
@@ -52,7 +52,7 @@ export function useTaskActions(params: UseTaskActionsParams) {
     task, project, statuses, users, allProjects,
     currentMemberId, currentMember, status, assignee,
     setAllTasks, setSelectedTask, updateTaskInDb,
-    confirm, undoStack,
+    confirm,
     customFieldValues, upsertCustomFieldValue, trackPresence,
     taskSpecs, checkItems, todoItems,
     createTaskTemplate, createSubtask,
@@ -60,8 +60,9 @@ export function useTaskActions(params: UseTaskActionsParams) {
     setShowSaveTemplate, templateName, setTemplateName, templateScope,
   } = params;
 
-  const updateTask = (updates: Partial<Task>) => {
-    if (!task) return;
+  /** Resolves false when the save was refused or failed (updateTaskInDb reports why). */
+  const updateTask = (updates: Partial<Task>): Promise<boolean> => {
+    if (!task) return Promise.resolve(false);
     const updated = { ...task, ...updates };
     setAllTasks(prev => applyTaskUpdate(prev, updated, task.projectId));
     setSelectedTask(updated);
@@ -74,7 +75,7 @@ export function useTaskActions(params: UseTaskActionsParams) {
     const log = (...args: Parameters<typeof logActivity>) => { afterSave.push(() => { void logActivity(...args); }); };
     const notify = (...args: Parameters<typeof createNotification>) => { afterSave.push(() => { void createNotification(...args); }); };
     const notifyAfterSave = (payload: Parameters<typeof sendSlackNotify>[0]) => { afterSave.push(() => { void sendSlackNotify(payload); }); };
-    void saved.then(ok => { if (ok !== false) afterSave.forEach(run => run()); }, () => {});
+    const outcome = saved.then(ok => { if (ok !== false) afterSave.forEach(run => run()); return ok !== false; }, () => false);
 
     if (updates.title && updates.title !== task.title)
       log(currentMemberId, 'update_title', `「${task.title}」→「${updates.title}」`, task.id, task.taskKey);
@@ -145,43 +146,20 @@ export function useTaskActions(params: UseTaskActionsParams) {
         });
       }
     }
+    return outcome;
   };
 
+  // Deleting is permanent (comments, attachments and specs go with the task), so the
+  // confirmation says so and no undo is offered.
   const handleDelete = async () => {
     if (!task) return;
     if (!(await confirm({ title: i18n.t('task.deleteTitle'), description: i18n.t('task.deleteConfirm', { title: task.title }), destructive: true }))) return;
-    const deletedTask = { ...task };
-    logActivity(currentMemberId, 'delete_task', task.title, task.id, task.taskKey);
-    await supabase.from('tasks').delete().eq('id', task.id);
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    if (error) { toast.error(taskWriteErrorText(error.message)); return; }
     setAllTasks(prev => prev.filter(t => t.id !== task.id).map(t => t.parentTaskId === task.id ? { ...t, parentTaskId: undefined } : t));
     setSelectedTask(null);
-    undoStack.push({
-      type: 'delete_task',
-      description: i18n.t('undo.taskDeleted', { key: deletedTask.taskKey }),
-      undo: async () => {
-        const { id, taskKey, commentCount, attachmentCount, deployments, tagIds, ...rest } = deletedTask;
-        const dbRow: Record<string, unknown> = {
-          id, task_key: taskKey,
-          project_id: rest.projectId, title: rest.title,
-          status_id: rest.statusId, priority: rest.priority,
-          creator_id: rest.creatorId, sort_order: rest.sortOrder,
-          created_at: rest.createdAt,
-        };
-        if (rest.assigneeId) dbRow.assignee_id = rest.assigneeId;
-        if (rest.reviewerId) dbRow.reviewer_id = rest.reviewerId;
-        if (rest.dueDate) dbRow.due_date = rest.dueDate;
-        dbRow.due_date_kind = rest.dueDate ? rest.dueDateKind ?? null : null;
-        if (rest.startedAt) dbRow.started_at = rest.startedAt;
-        if (rest.completedAt) dbRow.completed_at = rest.completedAt;
-        if (rest.gitlabUrl) dbRow.gitlab_url = rest.gitlabUrl;
-        if (rest.sprintId) dbRow.sprint_id = rest.sprintId;
-        if (rest.department) dbRow.department = rest.department;
-        if (rest.parentTaskId) dbRow.parent_task_id = rest.parentTaskId;
-        const restored = await supabase.from('tasks').insert(dbRow).select('id,due_date,due_date_kind,due_date_version,started_at').single();
-        if (restored.error || !restored.data) throw new Error(i18n.t('taskPlanning.errors.planning_unavailable'));
-        setAllTasks(prev => [...prev, { ...deletedTask, ...deadlineTaskFields(restored.data) }]);
-      },
-    });
+    void logActivity(currentMemberId, 'delete_task', task.title, task.id, task.taskKey);
+    toast.success(i18n.t('undo.taskDeleted', { key: task.taskKey }));
   };
 
   const handleCreateSubtask = async () => {

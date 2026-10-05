@@ -1,19 +1,18 @@
-import { ProjectMultiSelect } from '@/components/project/ProjectOptions';
+import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import i18n from 'i18next';
 import { useUIContext } from '@/context/UIContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useProjectContext } from '@/context/ProjectContext';
-import { useAuthContext } from '@/context/AuthContext';
-import { logActivity } from '@/lib/activityLog';
+import { useProjectScope, useScopedProjectFilter } from '@/hooks/useProjectScope';
 import { toast } from 'sonner';
 import { SprintCompleteModal, SprintStartModal } from '@/components/board/SprintModals';
-import type { PendingTaskAction } from '@/context/SprintContext';
+import { useSprintFlow } from '@/hooks/useSprintFlow';
 import { priorityConfig } from '@/components/ui/badges';
 import { ChevronDown, ChevronRight, Zap, ArrowUp, ArrowDown, Lightbulb } from 'lucide-react';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DndContext, DragOverlay, useDroppable, useDraggable,
@@ -21,9 +20,9 @@ import {
   type DragStartEvent, type DragEndEvent,
 } from '@dnd-kit/core';
 import type { Task } from '@/types';
-import DepartmentFilter from '@/components/DepartmentFilter';
-import MultiSelectDropdown from '@/components/MultiSelectDropdown';
-import { sortUsersByDept, type Department } from '@/lib/department';
+import BoardFilterChips from '@/components/board/BoardFilterChips';
+import { useBoardFilters } from '@/hooks/useBoardFilters';
+import { taskDepartment, type Department } from '@/lib/department';
 
 /* ── Droppable zone ── */
 function DroppableZone({ id, children, isOver }: { id: string; children: React.ReactNode; isOver?: boolean }) {
@@ -85,7 +84,7 @@ function TaskRow({
         </span>
       )}
       {pConfig && (
-        <span className="flex-shrink-0 text-sm" title={pConfig.label}>{pConfig.icon}</span>
+        <span className="flex-shrink-0 text-sm" title={i18n.t(`priority.${task.priority}`, { defaultValue: pConfig.label })}>{pConfig.icon}</span>
       )}
       {assignee ? (
         <div
@@ -109,45 +108,33 @@ const BacklogView = () => {
   const { setSelectedTask } = useUIContext();
   const { allTasks, setAllTasks, statuses, updateTaskInDb } = useTaskContext();
   const { users } = useMemberContext();
-  const { currentMemberId, currentMember } = useAuthContext();
-  const { sprintActive, currentSprint, completeSprint, startSprint, getDefaultSprintName, sprints, refreshSprints } = useSprintContext();
+  const { sprintActive, currentSprint, getDefaultSprintName } = useSprintContext();
   const { selectedProjectId, allProjects } = useProjectContext();
-  const isMobile = useIsMobile();
+  const { inScope, projectIds: scopeIds } = useProjectScope();
 
   const [sprintCollapsed, setSprintCollapsed] = useState(false);
   const [backlogCollapsed, setBacklogCollapsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showCompleteModal, setShowCompleteModal] = useState(false);
-  const [showStartModal, setShowStartModal] = useState(false);
-  const [carryOverTaskIds, setCarryOverTaskIds] = useState<string[]>([]);
+  // Completing and starting a sprint, shared with the board and the stand-up.
+  const sprintFlow = useSprintFlow();
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Filters
-  const [filterDept, setFilterDept] = useState<Department[]>([]);
-  const [filterAssignees, setFilterAssignees] = useState<string[]>([]);
-  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
-  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
-  const [filterReviewers, setFilterReviewers] = useState<string[]>([]);
-  const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  // Filters: the same state and chips as the board (useBoardFilters, BoardFilterChips).
+  const boardFilters = useBoardFilters();
+  const { filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, setFilterProjects } = boardFilters;
+  useScopedProjectFilter(setFilterProjects);
 
-  const hasFilters = filterDept.length > 0 || filterAssignees.length > 0 || filterStatuses.length > 0 || filterPriorities.length > 0 || filterReviewers.length > 0 || filterProjects.length > 0;
-  const clearFilters = useCallback(() => { setFilterDept([]); setFilterAssignees([]); setFilterStatuses([]); setFilterPriorities([]); setFilterReviewers([]); setFilterProjects([]); }, []);
-  const toggleArr = useCallback((setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
-    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
-
-  const priorityOptions = useMemo(() => Object.entries(priorityConfig).map(([id, p]) => ({
-    id, label: p.label, icon: p.icon as React.ReactElement,
-  })), []);
 
   const userMap = useMemo(() => new Map(users.map(u => [u.id, u])), [users]);
 
   const doneIds = useMemo(() => statuses.filter(s => s.isDone).map(s => s.id), [statuses]);
 
   const applyFilters = useCallback((tasks: Task[]) => {
-    let result = tasks;
+    // The sidebar project or product line scopes the backlog like every other task view.
+    let result = tasks.filter(t => inScope(t.projectId));
     if (filterDept.length > 0) {
-      const deptUserIds = new Set(users.filter(u => filterDept.includes(u.department as Department)).map(u => u.id));
-      result = result.filter(t => t.assigneeId && deptUserIds.has(t.assigneeId));
+      // Same department rule as the board filter (lib/department taskDepartment).
+      result = result.filter(t => filterDept.includes(taskDepartment(t, users) as Department));
     }
     if (filterAssignees.length > 0) result = result.filter(t => t.assigneeId && filterAssignees.includes(t.assigneeId));
     if (filterStatuses.length > 0) result = result.filter(t => filterStatuses.includes(t.statusId));
@@ -155,7 +142,7 @@ const BacklogView = () => {
     if (filterReviewers.length > 0) result = result.filter(t => t.reviewerId && filterReviewers.includes(t.reviewerId));
     if (filterProjects.length > 0) result = result.filter(t => filterProjects.includes(t.projectId));
     return result;
-  }, [filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, users]);
+  }, [inScope, filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, users]);
 
   const sprintTasks = useMemo(() => {
     const raw = currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id) : [];
@@ -172,10 +159,6 @@ const BacklogView = () => {
     [sprintTasks, doneIds]
   );
 
-  const pendingTasks = useMemo(() =>
-    sprintTasks.filter(t => !doneIds.includes(t.statusId)),
-    [sprintTasks, doneIds]
-  );
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -218,7 +201,7 @@ const BacklogView = () => {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, {
-      keyboardCodes: { start: [KeyboardCode.Space], cancel: [KeyboardCode.Escape], end: [KeyboardCode.Space] },
+      keyboardCodes: { start: [KeyboardCode.Space], cancel: [KeyboardCode.Esc], end: [KeyboardCode.Space] },
     }),
   );
 
@@ -237,39 +220,10 @@ const BacklogView = () => {
   const handleDragCancel = useCallback(() => setActiveId(null), []);
 
   /* ── Sprint actions ── */
-  const handleCompleteSprint = async (action: PendingTaskAction) => {
-    setShowCompleteModal(false);
-    try {
-      const sprintName = currentSprint?.name || '';
-      const pendingIds = await completeSprint(action);
-      if (currentMemberId) {
-        await logActivity(currentMemberId, 'complete_sprint', `${t('activityLog.completeSprint')}「${sprintName}」`, undefined, undefined, 'sprint');
-      }
-      setCarryOverTaskIds(pendingIds || []);
-    } catch (err) {
-      console.error('[LIVO] BacklogView completeSprint:', err);
-      toast.error(t('error.updateFailed'));
-    }
-  };
-
-  const handleConfirmStart = async (name: string, includeBacklog: boolean) => {
-    setShowStartModal(false);
-    try {
-      await startSprint(name, carryOverTaskIds.length > 0 ? carryOverTaskIds : undefined, includeBacklog);
-      setCarryOverTaskIds([]);
-      if (currentMemberId) {
-        await logActivity(currentMemberId, 'start_sprint', `${t('activityLog.startSprint')}「${name}」`, undefined, undefined, 'sprint');
-      }
-    } catch (err) {
-      console.error('[LIVO] BacklogView startSprint:', err);
-      toast.error(t('error.updateFailed'));
-    }
-  };
-
-  const handleStartNewSprint = () => {
-    setCarryOverTaskIds([]);
-    setShowStartModal(true);
-  };
+  const handleStartNewSprint = sprintFlow.openStart;
+  // Completing moves every unfinished task of the sprint, not only the ones the filters show.
+  const sprintPendingTasks = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id && !doneIds.includes(t.statusId)) : [], [allTasks, currentSprint, doneIds]);
+  const sprintCompletedCount = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id && doneIds.includes(t.statusId)).length : 0, [allTasks, currentSprint, doneIds]);
 
   const selectedInSprint = useMemo(() => {
     const sprintIdSet = new Set(sprintTasks.map(t => t.id));
@@ -291,7 +245,7 @@ const BacklogView = () => {
           <div className="flex items-center gap-2">
             {sprintActive && currentSprint ? (
               <button
-                onClick={() => setShowCompleteModal(true)}
+                onClick={sprintFlow.openComplete}
                 className="flex items-center gap-1 px-2.5 md:px-3 py-1.5 rounded text-[13px] font-medium transition-colors border bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
               >
                 <Zap size={14} />
@@ -313,22 +267,14 @@ const BacklogView = () => {
 
       {/* Filters */}
       <div className="flex items-center gap-1.5 md:gap-2 px-3 md:px-5 pb-2 flex-wrap">
-        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 hidden md:inline">{t('filter.label')}</span>
-        <DepartmentFilter value={filterDept} onChange={setFilterDept} />
-        <MultiSelectDropdown label={isMobile ? t('filter.assigneeMobile') : t('filter.assignee')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
-        <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
-        <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={priorityOptions} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
-        {!isMobile && <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />}
-        {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
-        {hasFilters && (
-          <button onClick={clearFilters} className="text-[13px] text-primary hover:text-primary/80 font-medium">{t('button.clearFilters')}</button>
-        )}
+        <BoardFilterChips users={users} statusOptions={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))}
+          allProjects={scopeIds ? allProjects.filter(p => scopeIds.has(p.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters} />
       </div>
 
       {/* Batch action bar */}
-      {selectedIds.size > 0 && (
+      {selectedInSprint.length + selectedInBacklog.length > 0 && (
         <div className="mx-3 md:mx-5 mb-2 flex items-center gap-2 px-3 py-2 bg-muted rounded-lg border border-border">
-          <span className="text-xs font-medium text-foreground">{t('backlog.selected', { count: selectedIds.size })}</span>
+          <span className="text-xs font-medium text-foreground">{t('backlog.selected', { count: selectedInSprint.length + selectedInBacklog.length })}</span>
           {selectedInBacklog.length > 0 && currentSprint && (
             <button
               onClick={() => moveToSprint(selectedInBacklog)}
@@ -461,21 +407,22 @@ const BacklogView = () => {
       </div>
 
       {/* Modals */}
-      {showCompleteModal && (
+      {sprintFlow.showCompleteModal && (
         <SprintCompleteModal
           currentSprint={currentSprint}
-          completedCount={completedCount}
-          pendingTasks={sprintTasks.filter(t => !doneIds.includes(t.statusId))}
-          onClose={() => setShowCompleteModal(false)}
-          onComplete={handleCompleteSprint}
+          completedCount={sprintCompletedCount}
+          pendingTasks={sprintPendingTasks}
+          onClose={sprintFlow.closeComplete}
+          onComplete={action => void sprintFlow.complete(action)}
         />
       )}
-      {showStartModal && (
+      {sprintFlow.showStartModal && (
         <SprintStartModal
           defaultName={getDefaultSprintName()}
-          carryOverCount={carryOverTaskIds.length}
-          onClose={() => setShowStartModal(false)}
-          onConfirm={handleConfirmStart}
+          carryOverCount={sprintFlow.carryOverTaskIds.length}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
+          onClose={sprintFlow.cancelStart}
+          onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
         />
       )}
 

@@ -1,7 +1,7 @@
 import { createKnowledgeWorkData } from './knowledge-work-backend.ts';
 import { createWorkData, executeSlackWorkCommand } from './work-backend.ts';
 import { createReleaseData } from './release-backend.ts';
-import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, taskOption, UNAVAILABLE, type Row } from './core.ts';
+import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, SLACK_LINK_DISABLED, taskOption, UNAVAILABLE, type Row } from './core.ts';
 import { createApprovalData, executeSlackApprovalCommand } from './approval-backend.ts';
 import { sourceOf, type Actions } from './handler.ts';
 import { createWorkspaceData, WORKSPACE_ERRORS } from './workspace-backend.ts';
@@ -11,7 +11,8 @@ import { createPlanningData } from './planning-backend.ts';
 import { TaskPlanningError } from './planning-core.ts';
 import { KNOWLEDGE_SEARCH_SIZE, normalizeKnowledgeSearch } from './knowledge.ts';
 export function fail(message: string): never {
-  throw Object.assign(new Error(message), { name: 'ActionError', ...(message === NO_ACCOUNT ? { code: 'no_account' } : {}) });
+  // Both mean no LIVO account acts for this Slack user; a queued event from them is dropped, not retried.
+  throw Object.assign(new Error(message), { name: 'ActionError', ...(message === NO_ACCOUNT || message === SLACK_LINK_DISABLED ? { code: 'no_account' } : {}) });
 }
 export interface Environment { get(name: string): string | undefined }
 const encoder = new TextEncoder();
@@ -136,6 +137,8 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       if (!member || member.is_active !== true || !member.auth_id) fail(NO_ACCOUNT);
       const authUser = await admin.request(`/auth/v1/admin/users/${encodeURIComponent(member.auth_id)}`);
       if (authUser.deleted_at || (authUser.banned_until && Date.parse(authUser.banned_until) > Date.now())) fail(NO_ACCOUNT);
+      // The member unlinked Slack in My settings: do not act for them, and do not bind the account again.
+      if ((await admin.rows('slack_link_preferences', { select: 'member_id', member_id: `eq.${member.id}`, linking_disabled: 'eq.true', limit: '1' })).length) fail(SLACK_LINK_DISABLED);
       if (!binding?.is_verified) binding = (await admin.write('external_account_bindings', { member_id: member.id, platform: 'slack',
         platform_user_id: user, platform_team_id: team, display_name: info.profile?.display_name || info.real_name || member.name,
         is_verified: true, verified_by: 'email' }, { on_conflict: 'platform,platform_user_id,platform_team_id' }))[0];

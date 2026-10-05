@@ -1,7 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task, Project, Status, TaskDependency, TaskCustomFieldValue } from '@/types';
-import type { WebhookConfig } from '@/lib/webhook';
 const mocks = vi.hoisted(() => ({ run: vi.fn(), factory: vi.fn(), error: vi.fn() }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 vi.mock('@/lib/taskWork/client', () => ({ createTaskWorkCommandRunner: (...args: unknown[]) => { mocks.factory(...args); return mocks.run; }, taskWorkErrorCode: (error: { code?: string }) => error.code || 'work_unavailable' }));
@@ -37,7 +36,7 @@ describe('LIVO task relations shared command boundary', () => {
       id: 'child', task_key: 'EX-92', project_id: 'project', parent_task_id: 'parent', title: 'Child', status_id: 'doing', priority: 'medium',
       creator_id: 'me', assignee_id: null, reviewer_id: null, due_date: null, sort_order: 0, created_at: '2026-10-03T00:00:00Z', comment_count: 0,
     } });
-    const setAllTasks = vi.fn(); const view = renderHook(() => useTaskCRUD({ allTasks: [parent], statuses: [], setAllTasks, refreshTasks: vi.fn(), appendStatusLog: vi.fn(), webhookConfigRef: { current: null } }));
+    const setAllTasks = vi.fn(); const view = renderHook(() => useTaskCRUD({ allTasks: [parent], statuses: [], setAllTasks, refreshTasks: vi.fn(), appendStatusLog: vi.fn() }));
     const create = view.result.current.createCreateSubtask([project], 'me');
     await act(async () => expect(await create(parent.id, 'Child', project.id, 'doing')).toBeNull());
     expect(setAllTasks).not.toHaveBeenCalled();
@@ -51,7 +50,7 @@ describe('LIVO task relations shared command boundary', () => {
       creator_id: 'me', assignee_id: null, reviewer_id: null, due_date: '2027-02-01', sort_order: 0, created_at: '2026-10-03T00:00:00Z', comment_count: 0,
     } });
     const owned = { ...parent, dueDate: '2027-02-01', assigneeId: 'owner', reviewerId: 'checker' } as Task;
-    const view = renderHook(() => useTaskCRUD({ allTasks: [owned], statuses: [], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn(), webhookConfigRef: { current: null } }));
+    const view = renderHook(() => useTaskCRUD({ allTasks: [owned], statuses: [], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn() }));
     const createWith = async (required?: RequiredFieldsConfig) => {
       await act(async () => { await view.result.current.createCreateSubtask([project], 'me', required)(owned.id, 'Child', project.id, 'doing'); });
       return mocks.run.mock.calls.at(-1)?.[0];
@@ -64,7 +63,7 @@ describe('LIVO task relations shared command boundary', () => {
     expect(subtaskQuickCreateFields(legacy, DEFAULT_REQUIRED_FIELDS)).toEqual({ dueDate: null, assigneeId: null, reviewerId: null });
   });
   it('keeps the same runner through task refreshes and refuses a mismatched parent project', async () => {
-    const base = { allTasks: [parent], statuses: [] as Status[], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn(), webhookConfigRef: { current: null as WebhookConfig | null } };
+    const base = { allTasks: [parent], statuses: [] as Status[], setAllTasks: vi.fn(), refreshTasks: vi.fn(), appendStatusLog: vi.fn() };
     const view = renderHook(current => useTaskCRUD(current), { initialProps: base });
     view.result.current.createCreateSubtask([project], 'me');
     view.rerender({ ...base, allTasks: [{ ...parent }] });

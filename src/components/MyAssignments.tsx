@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { monthDayLabel } from '@/lib/dateLabels';
 import { Bug, ListChecks, Search, ArrowRight, RefreshCw, ClipboardCheck, Table2, ArrowLeft } from 'lucide-react';
 import { useMyAssignments } from '@/context/MyAssignmentsContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -13,6 +14,7 @@ import { QaStateBadge } from '@/components/qa/QaBadges';
 import { StatusBadge } from '@/components/ui/badges';
 import { assignmentDay, type MyAssignment } from '@/lib/myAssignments';
 import MyTasksView from '@/components/MyTasksView';
+import { useProjectScope } from '@/hooks/useProjectScope';
 
 function useOpenAssignment() {
   const { currentView, setCurrentView, setSelectedTask } = useUIContext();
@@ -34,7 +36,7 @@ function AssignmentRow({ item, onOpen, compact = false }: { item: MyAssignment; 
   const { t } = useTranslation();
   const { allProjects } = useProjectContext();
   const day = assignmentDay(item.dueDate), today = assignmentDay(new Date().toISOString());
-  const due = day < today ? t('myAssignments.overdue') : day === today ? t('myAssignments.today') : Number.isFinite(day) ? new Date(day).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : '';
+  const due = day < today ? t('myAssignments.overdue') : day === today ? t('myAssignments.today') : Number.isFinite(day) ? monthDayLabel(new Date(day)) : '';
   return <button type="button" className={`group flex w-full items-start gap-3 border-b border-border/60 text-left transition-colors hover:bg-accent/50 ${compact ? 'px-4 py-3' : 'rounded-lg px-4 py-4'}`} onClick={() => onOpen(item)} aria-label={t('myAssignments.openCard', { title: item.title })}>
     <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${item.kind === 'bug' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>{item.kind === 'bug' ? <Bug size={16} /> : <ClipboardCheck size={16} />}</span>
     <span className="min-w-0 flex-1"><span className="block break-words text-sm font-medium leading-5">{item.title}</span><span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span>{item.reference}</span><span>{allProjects.find(project => project.id === item.projectId)?.name || t('myAssignments.unknownProject')}</span>{item.roles.map(role => <span key={role} className="text-primary">{t(`myAssignments.roles.${role}`)}</span>)}</span>{!compact && <span className="mt-2 inline-flex">{item.issue ? <QaStateBadge state={item.issue.state} /> : item.status ? <StatusBadge name={item.status.name} color={item.status.color} /> : null}</span>}</span>
@@ -44,8 +46,11 @@ function AssignmentRow({ item, onOpen, compact = false }: { item: MyAssignment; 
 
 function AssignmentBrowser({ full = false, onNavigate }: { full?: boolean; onNavigate?: () => void }) {
   const { t } = useTranslation();
-  const { items, phase, refresh } = useMyAssignments();
+  const { items: allItems, phase, refresh } = useMyAssignments();
   const { setCurrentView, setSelectedTask } = useUIContext();
+  // The full "My tasks" page follows the sidebar scope; the top-bar dropdown always shows all work.
+  const { inScope, active: scoped, label: scopeLabel } = useProjectScope();
+  const items = full ? allItems.filter(item => inScope(item.projectId)) : allItems;
   const openCard = useOpenAssignment();
   const [kind, setKind] = useState<'all' | 'task' | 'bug'>('all');
   const [query, setQuery] = useState('');
@@ -58,7 +63,7 @@ function AssignmentBrowser({ full = false, onNavigate }: { full?: boolean; onNav
   const shown = full || query.trim() ? filtered : filtered.slice(0, 6);
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className={`${full ? 'px-4 pt-5 md:px-6' : 'px-4 pt-4'} shrink-0`}>
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{t('myAssignments.title')}</h2><p className="mt-1 text-xs text-muted-foreground">{known ? t('myAssignments.summary', { count: items.length }) : t(phase === 'error' ? 'myAssignments.partial' : 'myAssignments.loading')} · {t('myAssignments.allProjects')}</p></div><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={refresh} aria-label={t('myAssignments.refresh')}><RefreshCw size={15} className={phase === 'loading' ? 'animate-spin' : ''} /></Button></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{t('myAssignments.title')}</h2><p className="mt-1 text-xs text-muted-foreground">{known ? t('myAssignments.summary', { count: items.length }) : t(phase === 'error' ? 'myAssignments.partial' : 'myAssignments.loading')} · {full && scoped ? scopeLabel : t('myAssignments.allProjects')}</p></div><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={refresh} aria-label={t('myAssignments.refresh')}><RefreshCw size={15} className={phase === 'loading' ? 'animate-spin' : ''} /></Button></div>
       <div className="my-3 flex gap-1 rounded-lg bg-muted/60 p-1" role="group" aria-label={t('myAssignments.typeFilter')}>{(['all', 'task', 'bug'] as const).map(value => <button key={value} type="button" aria-pressed={kind === value} className={`min-h-9 min-w-0 flex-1 rounded-md px-2 text-xs font-medium ${kind === value ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setKind(value)}>{t(`myAssignments.types.${value}`)} <span className="tabular-nums">{value === 'bug' && !known ? '…' : items.filter(item => value === 'all' || item.kind === value).length}{value === 'all' && !known ? '+' : ''}</span></button>)}</div>
       <div className="mb-3 flex flex-wrap gap-2"><div className="relative min-w-0 flex-1"><Search size={15} className="absolute left-3 top-3 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('myAssignments.search')} aria-label={t('myAssignments.search')} className="h-10 pl-9" /></div>{full && <SearchableSelect aria-label={t('myAssignments.roleFilter')} className="h-10 max-w-full rounded-md border border-input bg-background px-2 text-sm" value={role} onChange={event => setRole(event.target.value as typeof role)}><option value="all">{t('myAssignments.allRoles')}</option><option value="assigned">{t('myAssignments.assignedRole')}</option><option value="review">{t('myAssignments.reviewRole')}</option></SearchableSelect>}</div>
       {phase === 'error' && <p role="alert" className="mb-3 rounded-lg bg-destructive/5 p-3 text-xs text-destructive">{t('myAssignments.qaFailed')} <button type="button" className="underline" onClick={refresh}>{t('kb.retry')}</button></p>}

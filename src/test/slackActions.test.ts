@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { canAssignSlackMember, slackEmailBelongsToOther, commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
-  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, projectOptionGroups, requiresWebCreate, shouldPostChannel, taskReceipt } from '../../docker/volumes/functions/slack-interact/core';
+  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, projectOptionGroups, requiresWebCreate, shouldPostChannel, SLACK_LINK_DISABLED, taskReceipt } from '../../docker/volumes/functions/slack-interact/core';
 import { constantTimeSecret, createActions, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
 import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
 import { resolveFeatureToggles } from '@/lib/featureToggles';
@@ -223,7 +223,7 @@ describe('backend security and effects', () => {
     expect(writes).toEqual([]);
   });
   // A Slack backend fake: one bound Slack user (UEXAMPLE), a member list and recorded writes.
-  function slackFake({ binding, members, slackEmail }: { binding?: Record<string, unknown>; members: Record<string, unknown>[]; slackEmail: string }) {
+  function slackFake({ binding, members, slackEmail, unlinked = false }: { binding?: Record<string, unknown>; members: Record<string, unknown>[]; slackEmail: string; unlinked?: boolean }) {
     const writes: { url: string; body: Record<string, unknown> }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
       const path = new URL(url).pathname;
@@ -236,6 +236,7 @@ describe('backend security and effects', () => {
         return response([{ id: 'binding-new', ...JSON.parse(String(init.body)) }]);
       }
       if (path.endsWith('/external_account_bindings')) return response(binding ? [{ platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE', ...binding }] : []);
+      if (path.endsWith('/slack_link_preferences')) return response(unlinked ? [{ member_id: actor.id }] : []);
       if (path.endsWith('/members')) {
         const params = new URL(url).searchParams;
         const filter = (key: string) => params.get(key)?.replace(/^eq\./, '');
@@ -281,6 +282,15 @@ describe('backend security and effects', () => {
   it('still refuses a deactivated member behind an admin-assigned binding', async () => {
     slackFake({ slackEmail: 'personal@example.org', members: [{ ...actor, is_active: false }, owner], binding: manual(owner.id) });
     await expect(createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' })).rejects.toThrow(NO_ACCOUNT);
+  });
+  it.each([
+    ['an email match', undefined],
+    ['an owner-assigned binding', 'admin'],
+  ])('refuses %s for a member who unlinked Slack in My settings, without binding again', async (_label, kind) => {
+    const writes = slackFake({ slackEmail: kind ? 'personal@example.org' : actor.email, members: [actor, owner], binding: kind ? manual(owner.id) : undefined, unlinked: true });
+    const failure = await createActions(env, () => {}).actor({ user_id: 'UEXAMPLE', team_id: 'TEXAMPLE' }).catch((error: Error & { code?: string }) => error);
+    expect(failure).toMatchObject({ message: SLACK_LINK_DISABLED, code: 'no_account' });
+    expect(writes).toEqual([]);
   });
   it('marks a first-time email match as verified by email', async () => {
     const writes = slackFake({ slackEmail: actor.email, members: [actor] });

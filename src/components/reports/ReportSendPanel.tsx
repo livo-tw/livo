@@ -70,12 +70,13 @@ const ReportSendPanel = ({ reportType, content, currentUserId, projectId, onClos
     setSelectedTargets(prev => prev.filter(t => t.id !== id));
   };
 
-  const hasNonSlackTargets = selectedTargets.some(t => t.channel_type !== 'slack');
+  // Only Slack delivers reports; older Email / LINE / Webhook targets are listed but skipped.
+  const sendableTargets = selectedTargets.filter(t => t.channel_type === 'slack');
 
   const handleSend = async () => {
-    if (selectedTargets.length === 0) return;
+    if (sendableTargets.length === 0) return;
     setHasSent(true);
-    await sendReport(content, reportType, selectedTargets);
+    await sendReport(content, reportType, sendableTargets);
   };
 
   const handleRetry = async () => {
@@ -115,7 +116,7 @@ const ReportSendPanel = ({ reportType, content, currentUserId, projectId, onClos
                     <ChannelBadge type={target.channel_type} />
                     <span className="flex-1 text-sm text-foreground truncate">{channelLabel(target)}</span>
                     {target.channel_type !== 'slack' && (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300 shrink-0">{t('reportSend.comingSoon')}</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0" title={t('reportSend.unsupportedHint')}>{t('reportSend.unsupported')}</span>
                     )}
                     <span className="text-[11px] text-muted-foreground shrink-0">{FORMAT_LABELS[target.format]}</span>
                     <button
@@ -192,12 +193,11 @@ const ReportSendPanel = ({ reportType, content, currentUserId, projectId, onClos
               </button>
               <button
                 onClick={() => void handleSend()}
-                disabled={selectedTargets.length === 0 || sending || hasNonSlackTargets}
-                title={hasNonSlackTargets ? t('reportSend.nonSlackWarning') : undefined}
+                disabled={sendableTargets.length === 0 || sending}
                 className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 <Send size={13} />
-                {t('reportSend.sendToChannels', { count: selectedTargets.length })}
+                {t('reportSend.sendToChannels', { count: sendableTargets.length })}
               </button>
             </>
           ) : (

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Copy, Download, Link, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+import { IconAction } from '@/components/ui/icon-action';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { copyText } from '@/lib/clipboard';
 import { knowledgePageText, knowledgePageUrl, knowledgePrintHtml, printKnowledgePage } from '@/lib/knowledgeSharing';
@@ -32,10 +32,10 @@ export default function KnowledgeShareActions({ page, scope, disabled = false, o
       toast.error(t(error instanceof Error && error.message === 'unavailable' ? 'kb.sharing.unavailable' : 'kb.sharing.failed'));
     } finally { setWorking(false); }
   }
-  return <div className="flex flex-wrap items-center gap-2">
-    <Button variant="outline" size="sm" disabled={disabled || working} className="gap-2" onClick={() => void execute('link')}>{working ? <Loader2 size={14} className="animate-spin" /> : <Link size={14} />}{t('kb.sharing.copyLink')}</Button>
+  return <>
+    <IconAction label={t('kb.sharing.copyLink')} disabled={disabled || working} onClick={() => void execute('link')}>{working ? <Loader2 size={16} className="animate-spin" /> : <Link size={16} />}</IconAction>
     <DropdownMenu>
-      <DropdownMenuTrigger asChild><Button variant="outline" size="sm" disabled={disabled || working} className="gap-2"><Download size={14} />{t('kb.sharing.export')}</Button></DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild><IconAction label={t('kb.sharing.export')} disabled={disabled || working}><Download size={16} /></IconAction></DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-w-[calc(100vw-32px)]">
         <DropdownMenuItem onSelect={() => void execute('text')}><Copy size={15} />{t('kb.sharing.copyContent')}</DropdownMenuItem>
         <DropdownMenuItem onSelect={() => void execute('pdf')}><Download size={15} />{t('kb.sharing.exportPdf')}</DropdownMenuItem>
@@ -43,5 +43,5 @@ export default function KnowledgeShareActions({ page, scope, disabled = false, o
         <p className="max-w-64 px-2 py-2 text-xs leading-5 text-muted-foreground">{t('kb.sharing.copyNotice')}</p>
       </DropdownMenuContent>
     </DropdownMenu>
-  </div>;
+  </>;
 }
