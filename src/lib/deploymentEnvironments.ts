@@ -37,11 +37,28 @@ export function missingRestoreEnvironments(rows: unknown, active: readonly strin
   return [...new Set(values.filter(value => !active.includes(value)))];
 }
 
+type EnvironmentKind = 'dev' | 'qa' | 'stage' | 'liveStaging' | 'prod';
+// The default catalog and the usual ways a team renames it ("Staging", "Production").
+const ENVIRONMENT_KINDS: Record<string, EnvironmentKind> = {
+  dev: 'dev', development: 'dev', qa: 'qa', stage: 'stage', staging: 'stage', stg: 'stage',
+  'live staging': 'liveStaging', prod: 'prod', production: 'prod', prd: 'prod',
+};
+const PRESENTATION: Record<EnvironmentKind, { color: string; abbreviation: string }> = {
+  dev: { color: '#36B37E', abbreviation: 'D' }, qa: { color: '#00B8D9', abbreviation: 'Q' },
+  stage: { color: '#FF8B00', abbreviation: 'S' }, liveStaging: { color: '#6554C0', abbreviation: 'LS' },
+  prod: { color: '#FF5630', abbreviation: 'P' },
+};
+
+export function deploymentEnvironmentKind(value: string): EnvironmentKind | undefined {
+  return ENVIRONMENT_KINDS[value.trim().toLowerCase().replace(/[\s_-]+/g, ' ')];
+}
+
 export function deploymentEnvironmentPresentation(value: string) {
-  const defaults: Record<string, { color: string; abbreviation: string }> = {
-    Dev: { color: '#36B37E', abbreviation: 'D' }, QA: { color: '#00B8D9', abbreviation: 'Q' },
-    Stage: { color: '#FF8B00', abbreviation: 'S' }, 'Live Staging': { color: '#6554C0', abbreviation: 'LS' },
-    Prod: { color: '#FF5630', abbreviation: 'P' },
-  };
-  return defaults[value] ?? { color: '#6B778C', abbreviation: value.slice(0, 3) };
+  const kind = deploymentEnvironmentKind(value);
+  return kind ? { ...PRESENTATION[kind] } : { color: '#6B778C', abbreviation: value.slice(0, 3) };
+}
+
+/** Where a new bug was found unless the reporter says otherwise: the staging environment, else the first one. */
+export function defaultObservedEnvironment(environments: readonly string[]): string | undefined {
+  return environments.find(value => deploymentEnvironmentKind(value) === 'stage') ?? environments[0];
 }

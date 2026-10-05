@@ -20,6 +20,17 @@ function harness() {
 }
 const event = (text:string):QaSlackPayload => ({type:'event_callback',team_id:'T1',event:{type:'message',user:'U1',channel:'C1',thread_ts:'100.1',ts:'101.1',text}});
 describe('QA Slack automation',()=>{
+  it('starts a new bug in the staging environment, whatever the team calls it',async()=>{
+    const initial=async(values:string[])=>{
+      const {d,flush}=harness();vi.mocked(d.environments).mockResolvedValue(values);
+      await handleQaSlack({command:'/livo',text:'bug new',trigger_id:'tr'},`new-${values.join()}`,d);await flush();
+      const view=vi.mocked(d.slack).mock.calls.find(call=>call[0]==='views.update')?.[1].view as {blocks:Array<{block_id?:string;element?:{initial_option?:{value:string}}}>};
+      return view.blocks.find(block=>block.block_id==='environment')?.element?.initial_option?.value;
+    };
+    expect(await initial(['Dev','QA','Stage','Live Staging','Prod'])).toBe('Stage');
+    expect(await initial(['Production','Live Staging','Staging'])).toBe('Staging');
+    expect(await initial(['Preview','Production'])).toBe('Preview');
+  });
   it('loads the configured catalog for creation and repair, without offering historic values',async()=>{
     const {d,flush}=harness();vi.mocked(d.environments).mockResolvedValue(['Preview','Production']);
     await handleQaSlack({command:'/livo',text:'bug new',trigger_id:'tr'},'new-env',d);await flush();

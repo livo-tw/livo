@@ -2,6 +2,7 @@ import { handleQaCoordinationSlack } from './slackHandoff.ts';
 /** Slack QA UI and intent routing shared by Socket Mode and HTTP transports. */
 import { canQaCommand, isHistoricalQaPass, isQaTerminal, type QaActor, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
 import { DEFAULT_QA_WORKFLOW, getQaStateLabel, type QaWorkflow } from './workflow.ts';
+import { defaultObservedEnvironment } from './environments.ts';
 import { slackProjectOptionGroups, type ProjectGroup } from './projectGroups.ts';
 import { handleQaWorkspace, parseQaWorkspaceCommand } from './slackWorkspace.ts';
 export type SlackBlock = Record<string, unknown>;
@@ -122,9 +123,10 @@ async function openQaForm(p: QaSlackPayload, d: QaSlackActions, intent: string, 
       }
       const environments = await d.environments(actor);
       if (!environments.length) throw new Error('qa_invalid_environment');
+      const observed = defaultObservedEnvironment(environments)!;
       view = modal('新增 QA Bug', [input('project', '專案', { type: 'external_select', min_query_length: 0, initial_option: option(projects[0].id, projects[0].name) }),
         input('title', '問題標題', field(((p.actions ? '' : p.message?.text) || draft).split('\n')[0], false, 200)),
-        input('environment', '發現環境', { type: 'static_select', options: environments.map(env => option(env, env)), initial_option: option(environments.includes('Stage') ? 'Stage' : environments[0], environments.includes('Stage') ? 'Stage' : environments[0]) }), input('version', '發現版本（可未知）', field('', false, 200), true),
+        input('environment', '發現環境', { type: 'static_select', options: environments.map(env => option(env, env)), initial_option: option(observed, observed) }), input('version', '發現版本（可未知）', field('', false, 200), true),
         input('actual', '實際問題與來源', field(actual, true)), input('steps', '重現步驟', field('', true), true), input('expected', '預期結果', field('', true), true)], source);
     } else {
       const detail = await d.api<QaDetail>(actor, { action: 'get', id: issueId });

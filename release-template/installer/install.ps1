@@ -827,6 +827,31 @@ if (Test-Path $FirstRun) {
   }
 }
 
+# ---- 交易日誌保留上限（max_slot_wal_keep_size）----
+# Supabase analytics（Logflare 1.31）的同步通道在閒置時不回報進度，PostgreSQL 會
+# 替它一直保留交易日誌（PG15 預設上限 4GB，見 Logflare issue #4075）。每次安裝／
+# 升級都把上限設為 512MB；落後超過上限的通道會被 PostgreSQL 重設，服務自己重新
+# 連線，資料表內容不受影響。docker\.env 可用 LIVO_MAX_SLOT_WAL_KEEP_SIZE 覆寫
+# （例如 1GB；-1 表示不設上限）。值已相同時不做任何變更。與 install.sh 相同。
+function Set-WalKeepLimit {
+  $want = Get-DotenvValue 'LIVO_MAX_SLOT_WAL_KEEP_SIZE'
+  if (-not $want) { $want = '512MB' }
+  if ($want -cnotmatch '^(-1|[0-9]+(kB|MB|GB|TB))$') {
+    Warn ('LIVO_MAX_SLOT_WAL_KEEP_SIZE=' + $want + ' 格式不對（例如 512MB、1GB 或 -1），交易日誌保留上限維持不變。')
+    return
+  }
+  $same = "SELECT pg_size_bytes(current_setting('max_slot_wal_keep_size')) = pg_size_bytes('" + $want + "')"
+  if ((Invoke-PsqlQuery $same) -eq 't') { Ok ('交易日誌保留上限：' + $want); return }
+  $null = Invoke-PsqlQuery ("ALTER SYSTEM SET max_slot_wal_keep_size = '" + $want + "'")
+  $null = Invoke-PsqlQuery 'SELECT pg_reload_conf()'
+  if ((Invoke-PsqlQuery $same) -eq 't') {
+    Ok ('交易日誌保留上限已設為 ' + $want)
+  } else {
+    Warn '無法設定交易日誌保留上限（不影響主要功能）。請截圖上方訊息並聯絡我們。'
+  }
+}
+Set-WalKeepLimit
+
 # ---- 授權重置碼（每套安裝唯一；已設定過則沿用既有的）----
 # reset_license() 會比對 system_settings key='license_reset_code'。
 # ON CONFLICT DO NOTHING → 重跑安裝不會改掉已存在的重置碼。

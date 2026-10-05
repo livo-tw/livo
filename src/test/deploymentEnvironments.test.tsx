@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { DEFAULT_DEPLOYMENT_ENVIRONMENTS, deploymentEnvironmentOptions, parseDeploymentEnvironments } from '../lib/deploymentEnvironments';
+import { DEFAULT_DEPLOYMENT_ENVIRONMENTS, defaultObservedEnvironment, deploymentEnvironmentOptions, deploymentEnvironmentPresentation, parseDeploymentEnvironments } from '../lib/deploymentEnvironments';
 import QaEnvironmentField from '../components/qa/QaEnvironmentField';
 import DeploymentEnvironmentSettings from '../components/DeploymentEnvironmentSettings';
 import TaskFormDeployment from '../components/create-task/TaskFormDeployment';
@@ -17,6 +17,19 @@ describe('Shared deployment environments', () => {
   });
   it.each([null, {}, {version:2,values:['Prod']}, {version:1,values:[]}, {version:1,values:['QA','QA']}, {version:1,values:[' QA']}, {version:1,values:['QA\n']}, {version:1,values:['a\u007f']}, {version:1,values:['x'.repeat(121)]}, {version:1,values:['QA'],extra:true}, {version:1,values:Array.from({length:31},(_,i)=>`env${i}`)}])('rejects malformed setting %j', value => {
     expect(parseDeploymentEnvironments(value)).toBeNull();
+  });
+  it('keeps the default colours when a team renames Stage and Prod', () => {
+    const look = (value: string) => deploymentEnvironmentPresentation(value);
+    expect(look('Staging')).toEqual(look('Stage'));
+    expect(look('Production')).toEqual(look('Prod'));
+    expect(look('live-staging')).toEqual(look('Live Staging'));
+    expect(look('Staging')).not.toEqual(look('Live Staging'));
+    expect(look('Production')).toEqual({ color: '#FF5630', abbreviation: 'P' });
+    expect(look('Canary')).toEqual({ color: '#6B778C', abbreviation: 'Can' });
+    expect(look('Stage(Dev)').abbreviation).toBe('Sta');
+    expect(defaultObservedEnvironment(['Production', 'Live Staging', 'Staging'])).toBe('Staging');
+    expect(defaultObservedEnvironment(['Canary', 'Production'])).toBe('Canary');
+    expect(defaultObservedEnvironment([])).toBeUndefined();
   });
   it('counts Unicode characters consistently with databases', () => {
     expect(parseDeploymentEnvironments({version:1,values:['🚀'.repeat(120)]})).not.toBeNull();

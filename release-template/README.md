@@ -235,7 +235,8 @@ Linux / macOS 安裝程式會自動修正程式檔權限，因此以嚴格的 um
    - 把新版前端換上這套安裝的金鑰與 API 埠；
    - 重新載入 API 閘道與後端函式；
    - 找出新版新增、還沒套用的**資料庫更新**並列出清單，先把整個資料庫備份到
-     `backups/`，你確認後才套用。
+     `backups/`，你確認後才套用；
+   - 把資料庫交易日誌的保留上限設為 512MB（見疑難排解「磁碟被資料庫的交易日誌占滿」）。
 
 資料庫更新只會新增或調整資料表、欄位與權限設定，**不會刪除任何資料**。每個更新
 在一個交易裡完成：中途失敗會自動復原，成功的只會套用一次，所以安裝程式可以放心
@@ -355,6 +356,17 @@ curl -s -X POST "$API/rest/v1/tasks" \
 - 確認磁碟空間足夠（`df -h` / 檢查 C 槽），可用 `docker system prune` 清理
 - 看記錄：`cd docker && docker compose logs --tail=30 db`
 - 排除後**重新執行安裝程式**即可
+
+**Q：磁碟被資料庫的交易日誌占滿（`pg_wal` 越來越大）**
+Supabase 的記錄服務（analytics）在沒有新記錄時不會回報同步進度，PostgreSQL
+會替它一直保留交易日誌，舊版最多留到 4GB。安裝程式每次執行都會把保留上限設為
+512MB：落後超過上限的同步通道會被 PostgreSQL 重設，記錄服務自己重新連線，
+資料表內容不受影響。舊安裝重新執行一次安裝程式即可套用，多出來的交易日誌會在
+下一次檢查點（checkpoint）後釋放。
+- 查看目前設定：`cd docker && docker compose exec -T db psql -U supabase_admin -d postgres -c "show max_slot_wal_keep_size;"`
+- 想改成別的值：在 `docker/.env` 加一行 `LIVO_MAX_SLOT_WAL_KEEP_SIZE=1GB`
+  （單位 kB / MB / GB / TB；`-1` 表示不設上限），再重新執行安裝程式。
+- **不要**手動刪除 `docker/volumes/db/data/pg_wal` 裡的檔案，資料庫會損毀。
 
 **Q：安裝到一半中斷了（斷電 / 手滑關掉）**
 直接重新執行安裝程式。若它偵測到資料庫結構不完整，會詢問是否重置資料庫後
