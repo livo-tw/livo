@@ -21,7 +21,7 @@ describe('Slack guests at delivery time', () => {
   it.each([guest, singleChannelGuest])('never DMs a Slack guest bound to a member', async user => {
     const results: Row[] = [], calls: string[] = [];
     const store: DeliveryStore = { config: async () => config, claim: async () => job, token: async () => 'xoxb-example',
-      project: async () => ({ id: 'project', line_id: 'line', is_archived: false }), binding: async () => user.id, thread: async () => undefined,
+      project: async () => ({ id: 'project', line_id: 'line', is_archived: false }), canReadTask: async () => true, binding: async () => user.id, thread: async () => undefined,
       currentTask: async () => ({ assignee_id: 'member' }), queueWeekly: async () => 0, weeklyTasks: async () => [], canSend: async () => true,
       finish: async (_job, _owner, result) => { results.push(result); return true; } };
     const fetcher = vi.fn(async (input: string | URL | Request) => {

@@ -306,7 +306,7 @@ for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/v
   ...['core.ts','engine.ts','access.ts','index.ts'].map(file => `volumes/functions/knowledge-work/${file}`),
   ...['knowledge-work-core.ts','knowledge-work-handler.ts','knowledge-work-backend.ts','knowledge-work-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
   ...['core.ts','environments.ts','service.ts','index.ts'].map(file => `volumes/functions/release-workspace/${file}`),
-  ...['release-core.ts','release-backend.ts'].map(file => `volumes/functions/slack-deliver/${file}`),
+  ...['release-core.ts','release-backend.ts','qa-core.ts','qa-backend.ts'].map(file => `volumes/functions/slack-deliver/${file}`),
   ...['release-core.ts','release-ui.ts','release-backend.ts','release-handler.ts'].map(file => `volumes/functions/slack-interact/${file}`),
   ...['work-core.ts','work-handler.ts','work-backend.ts','work-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
   ...['approval-handler.ts','approval-backend.ts','approval-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),

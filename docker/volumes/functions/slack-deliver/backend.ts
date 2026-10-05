@@ -1,5 +1,28 @@
-import { Database, trustedAdminBinding, type Environment } from '../slack-interact/backend.ts';
-import { type DeliveryStore, type Job, type Row, deliverJob } from './core.ts';
+import { Database, memberJwt, trustedAdminBinding, type Environment } from '../slack-interact/backend.ts';
+import { DeliveryError, type DeliveryStore, type Job, type Row, deliverJob } from './core.ts';
+import { qaDeliveryStore } from './qa-backend.ts';
+import { deliverQaJob } from './qa-core.ts';
+
+async function verifiedRecipient(db: Database, memberId: string, teamId: string) {
+  const member = (await db.rows('members', { select: 'id,auth_id,email', id: `eq.${memberId}`, is_active: 'eq.true', limit: '1' }))[0];
+  if (!member?.auth_id || (await db.rows('slack_link_preferences', { select: 'member_id', member_id: `eq.${memberId}`, linking_disabled: 'eq.true', limit: '1' })).length) return undefined;
+  const bindings = await db.rows('external_account_bindings', { select: 'id,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id', member_id: `eq.${memberId}`,
+    platform: 'eq.slack', platform_team_id: `eq.${teamId}`, is_verified: 'eq.true', verified_by: 'in.(email,admin)', limit: '2' });
+  if (bindings.length !== 1 || !/^U[A-Z0-9]+$/.test(bindings[0].platform_user_id)) return undefined;
+  if (bindings[0].verified_by === 'admin' && !(await trustedAdminBinding(db, bindings[0]))) return undefined;
+  return { member, binding: bindings[0] };
+}
+
+/** Read with the recipient's real auth_id and RLS, never the delivery service role. */
+export async function recipientCanRead(env: Environment, memberId: string, teamId: string, table: 'tasks' | 'qa_issues', recordId: string): Promise<boolean> {
+  try {
+    const recipient = await verifiedRecipient(new Database(env), memberId, teamId);
+    if (!recipient) return false;
+    const jwt = await memberJwt(env.get('JWT_SECRET') || '', recipient.member, recipient.binding);
+    const rows = await new Database(env, jwt).rows(table, { select: 'id', id: `eq.${recordId}`, ...(table === 'qa_issues' ? { workspace_id: 'eq.default' } : {}), limit: '1' });
+    return rows.length === 1 && rows[0].id === recordId;
+  } catch { throw new DeliveryError('recipient_permission_unavailable', true); }
+}
 
 export function deliveryStore(env: Environment): DeliveryStore {
   const db = new Database(env);
@@ -17,15 +40,9 @@ export function deliveryStore(env: Environment): DeliveryStore {
       return task && (await db.rows('projects', { select: 'id,line_id,is_archived', id: `eq.${task.project_id}`, limit: '1' }))[0];
     },
     binding: async (memberId, teamId) => {
-      const member = (await db.rows('members', { select: 'id', id: `eq.${memberId}`, is_active: 'eq.true', limit: '1' }))[0];
-      if (!member) return undefined;
-      const bindings = await db.rows('external_account_bindings', { select: 'platform_user_id,is_verified,verified_by,verified_by_member_id', member_id: `eq.${memberId}`,
-        platform: 'eq.slack', platform_team_id: `eq.${teamId}`, is_verified: 'eq.true', verified_by: 'in.(email,admin)', limit: '2' });
-      if (bindings.length !== 1 || !/^U[A-Z0-9]+$/.test(bindings[0].platform_user_id)) return undefined;
-      // A manual mapping without an active owner as issuer must not receive this member's notices.
-      if (bindings[0].verified_by === 'admin' && !(await trustedAdminBinding(db, bindings[0]))) return undefined;
-      return bindings[0].platform_user_id;
+      return (await verifiedRecipient(db, memberId, teamId))?.binding.platform_user_id;
     },
+    canReadTask: (memberId, teamId, taskId) => recipientCanRead(env, memberId, teamId, 'tasks', taskId),
     thread: async (taskId, teamId, channelId) => (await db.rows('slack_thread_mappings', { select: 'slack_thread_ts',
       task_id: `eq.${taskId}`, slack_team_id: `eq.${teamId}`, slack_channel_id: `eq.${channelId}`, order: 'created_at.desc,slack_thread_ts.desc', limit: '1' }))[0]?.slack_thread_ts,
     currentTask: async (taskId, requestId, memberId) => {
@@ -51,7 +68,9 @@ export async function drainDeliveries(env: Environment, store = deliveryStore(en
   for (let i = 0; i < 10 && Date.now() < until; i++) {
     const job: Job | undefined = await store.claim(owner);
     if (!job) break;
-    const status = await deliverJob(job, owner, store, env.get('APP_BASE_URL') || '', fetcher);
+    const status = job.payload.recordType === 'qa'
+      ? await deliverQaJob(job, owner, qaDeliveryStore(env, store, (member, team, issue) => recipientCanRead(env, member, team, 'qa_issues', issue)), env.get('APP_BASE_URL') || '', fetcher)
+      : await deliverJob(job, owner, store, env.get('APP_BASE_URL') || '', fetcher);
     counts.processed++; counts[status]++;
   }
   return counts;

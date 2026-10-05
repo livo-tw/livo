@@ -6,7 +6,7 @@ const env = new Map<string, string>();
 vi.stubGlobal('Deno', { env: { get: (k: string) => env.get(k) } });
 // A runtime path keeps this Deno file out of the app's type check (no Deno types there).
 const MEMBER_ACCOUNTS = '../../../docker/volumes/functions/manage-member/memberAccounts.ts';
-const { isApiKeyToken, isLocalHostname, resolveAppUrl, unusablePassword } = await import(/* @vite-ignore */ MEMBER_ACCOUNTS);
+const { isApiKeyToken, isLocalHostname, resolveAppUrl, unusablePassword, configuredInitialPassword, prepareLogin } = await import(/* @vite-ignore */ MEMBER_ACCOUNTS);
 
 const req = (origin?: string) => new Request('http://functions:9000/manage-member', { headers: origin ? { Origin: origin } : {} });
 const b64u = (s: string) => Buffer.from(s).toString('base64url');
@@ -64,5 +64,43 @@ describe('unusablePassword', () => {
       expect(password).toMatch(/[^A-Za-z0-9]/);
     }
     expect(unusablePassword()).not.toBe(unusablePassword());
+  });
+});
+
+
+describe('self-host account initial password', () => {
+  const interactive = jwt({ sub: 'user-example', role: 'authenticated', session_id: 'session-example' });
+  it('keeps the normal default when no deployment setting is present', () => {
+    expect(configuredInitialPassword('super_admin', interactive)).toBeNull();
+  });
+  it('limits the configured value to an interactive super_admin', () => {
+    env.set('MEMBER_DEFAULT_PASSWORD', 'ExampleInitial42');
+    expect(configuredInitialPassword('super_admin', interactive)).toBe('ExampleInitial42');
+    expect(configuredInitialPassword('admin', interactive)).toBeNull();
+    expect(configuredInitialPassword('member', interactive)).toBeNull();
+    expect(configuredInitialPassword('super_admin', jwt({ livo_pat: 'example-token' }))).toBeNull();
+  });
+  it('rejects invalid configured values before provisioning', () => {
+    for (const invalid of ['short', 'x'.repeat(73), '密'.repeat(25)]) {
+      env.set('MEMBER_DEFAULT_PASSWORD', invalid);
+      expect(() => configuredInitialPassword('super_admin', interactive)).toThrow('member_default_password_invalid');
+    }
+  });
+  it('provisions and returns the configured initial credential', async () => {
+    const createUser = vi.fn().mockResolvedValue({ data: { user: { id: 'user-example' } }, error: null });
+    const admin = { auth: { admin: { createUser } } };
+    const result = await prepareLogin(admin, 'temp_password', { email: 'member@example.com', name: 'Example Member' }, new Map(), 'ExampleInitial42');
+    expect(createUser).toHaveBeenCalledWith(expect.objectContaining({ password: 'ExampleInitial42', email: 'member@example.com' }));
+    expect(result.tempPassword).toBe('ExampleInitial42');
+  });
+  it('still generates an independent temporary password without an override', async () => {
+    const createUser = vi.fn().mockResolvedValue({ data: { user: { id: 'user-example' } }, error: null });
+    const result = await prepareLogin({ auth: { admin: { createUser } } }, 'temp_password', { email: 'member@example.com', name: 'Example Member' }, new Map());
+    expect(result.tempPassword).toHaveLength(12);
+  });
+  it('rejects an invalid override without writing an auth user', async () => {
+    const createUser = vi.fn();
+    await expect(prepareLogin({ auth: { admin: { createUser } } }, 'temp_password', { email: 'member@example.com', name: 'Example Member' }, new Map(), 'short')).rejects.toThrow('member_default_password_invalid');
+    expect(createUser).not.toHaveBeenCalled();
   });
 });

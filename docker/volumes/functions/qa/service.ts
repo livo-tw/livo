@@ -90,6 +90,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     if (members.length !== 1 || members[0].is_active !== true) fail('qa_forbidden', 403);
     if (settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
     let slackIdentity = null;
+    let slackSource = null;
     // Parse claims only after GoTrue has authenticated the complete token.
     try {
       const segment=sessionToken.split('.')[1];
@@ -98,11 +99,13 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         if(Object.keys(claims).some(key=>key.startsWith('livo_slack_'))){
           if(claims.sub!==user.id||!['livo_slack_binding','livo_slack_team','livo_slack_user'].every(key=>typeof claims[key]==='string'))fail('qa_forbidden',403);
           slackIdentity={bindingId:claims.livo_slack_binding,teamId:claims.livo_slack_team,userId:claims.livo_slack_user};
+          if(typeof claims.livo_slack_source?.channel==='string' && /^[CDG][A-Z0-9]+$/.test(claims.livo_slack_source.channel))
+            slackSource={channel:claims.livo_slack_source.channel};
         }
       }
     }catch{fail('qa_forbidden',403);}
     if(slackIdentity)await db.rpc('livo_qa_live_actor',{p_auth_id:user.id,p_identity:slackIdentity});
-    return { ...members[0], authId: user.id, qaAdmin: members[0].is_qa_admin === true, slackIdentity };
+    return { ...members[0], authId: user.id, qaAdmin: members[0].is_qa_admin === true, slackIdentity, slackSource };
   }
   async function getIssue(issueId: string): Promise<QaIssue> {
     const row = (await db.qaRows('qa_issues', { select: 'data', id: `eq.${id(issueId)}`, limit: 1 }))[0];
@@ -157,7 +160,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id, type === 'created' ? await triagers(issue.projectId) : []);
     const result = await db.rpc('livo_qa_commit', { p_auth_id: actor.authId, p_issue_id: request.id,
       p_command_id: commandId(request.commandId), p_payload_hash: hash, p_expected_version: request.expectedVersion ?? null,
-      p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
+      p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, slackSource:actor.slackSource, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
     const sync = syncQaSlackIssue(env, kind === 'comment' ? issue : result).catch(() => console.error('QA Slack card refresh failed'));
     const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil?: (work: Promise<unknown>) => void } };
     if (runtime.EdgeRuntime?.waitUntil) runtime.EdgeRuntime.waitUntil(sync); else await sync;

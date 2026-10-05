@@ -1,0 +1,30 @@
+import { Database, type Environment } from '../slack-interact/backend.ts';
+import { DeliveryError, type DeliveryStore } from './core.ts';
+import { type QaDeliveryState, type QaDeliveryStore } from './qa-core.ts';
+
+export async function loadQaDeliveryState(db: Database, issueId: string): Promise<QaDeliveryState | undefined> {
+  const row = (await db.rows('qa_issues', { select: 'data', id: `eq.${issueId}`, workspace_id: 'eq.default', limit: '1' }))[0];
+  if (!row?.data) return undefined;
+  const [projects, members, coordination] = await Promise.all([
+    db.rows('projects', { select: 'id,line_id,name,is_archived', id: `eq.${row.data.projectId}`, limit: '1' }),
+    db.rows('members', { select: 'id,name,role', is_active: 'eq.true', limit: '1000' }),
+    db.rows('qa_project_coordination', { select: 'coordinator_id', id: `eq.${row.data.projectId}`, workspace_id: 'eq.default', limit: '1' }),
+  ]);
+  if (!projects[0]) return undefined;
+  if (members.length >= 1000) throw new DeliveryError('recipient_lookup_incomplete', true);
+  const coordinator = members.find(m => m.id === coordination[0]?.coordinator_id);
+  return { issue: row.data, project: projects[0], members, triagers: coordinator ? [coordinator.id] : members.filter(m => ['admin', 'super_admin'].includes(m.role)).map(m => m.id) };
+}
+
+export function qaDeliveryStore(env: Environment, shared: DeliveryStore, canRead: QaDeliveryStore['canRead']): QaDeliveryStore {
+  const db = new Database(env);
+  return {
+    config: shared.config, token: shared.token, binding: shared.binding, canSend: shared.canSend, finish: shared.finish,
+    enabled: async () => { const flags = await db.setting('feature_toggles'); return flags?.qa === true && flags?.slackActions === true; },
+    state: issueId => loadQaDeliveryState(db, issueId),
+    canRead,
+    thread: async (issueId, teamId, channelId) => (await db.rows('qa_slack_links', { select: 'thread_ts', issue_id: `eq.${issueId}`, workspace_id: 'eq.default',
+      team_id: `eq.${teamId}`, channel_id: `eq.${channelId}`, order: 'created_at.desc,thread_ts.desc', limit: '1' }))[0]?.thread_ts,
+    workflow: () => db.setting('qa_workflow'),
+  };
+}

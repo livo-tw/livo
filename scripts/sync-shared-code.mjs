@@ -53,7 +53,7 @@ const SHARED = [
   ...['index.ts', 'service.ts', 'restore.ts', 'slackAdapter.ts', 'slackSync.ts'].map(file => ({ source: `docker/volumes/functions/qa/${file}`, copies: [`supabase/functions/qa/${file}`] })),
   { source: 'src/lib/qa/domain.ts', copies: ['worker/src/qa/domain.ts', 'docker/volumes/functions/qa/domain.ts', 'supabase/functions/qa/domain.ts'] },
   { source: 'docker/volumes/functions/slack-deliver/core.ts', copies: ['supabase/functions/slack-deliver/core.ts'] },
-  ...['release-core.ts','release-backend.ts'].map(file=>({source:`docker/volumes/functions/slack-deliver/${file}`,copies:[`supabase/functions/slack-deliver/${file}`]})),
+  ...['release-core.ts','release-backend.ts','qa-core.ts','qa-backend.ts'].map(file=>({source:`docker/volumes/functions/slack-deliver/${file}`,copies:[`supabase/functions/slack-deliver/${file}`]})),
   { source: 'docker/volumes/functions/slack-deliver/backend.ts', copies: ['supabase/functions/slack-deliver/backend.ts'] },
   { source: 'docker/volumes/functions/slack-deliver/index.ts', copies: ['supabase/functions/slack-deliver/index.ts'] },
   { source: 'docker/volumes/functions/slack-interact/core.ts', copies: ['supabase/functions/slack-interact/core.ts'] },

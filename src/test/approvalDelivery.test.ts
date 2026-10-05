@@ -50,7 +50,7 @@ describe('approval delivery live authorization and formatting',()=>{
   it('rechecks role after Slack user/channel lookups and sends nothing after a change',async()=>{
     const posted:Row[]=[];let reads=0;const finish=vi.fn(async()=>true);
     const store:DeliveryStore={config:async()=>({enabled:true,teamId:'TEXAMPLE',dmEnabled:true,routes:[{projectId:'p',channelId:'CEXAMPLE'}]}),
-      claim:async()=>job,token:async()=>'example-test-token',project:async()=>({id:'p'}),binding:async()=>'UEXAMPLE',thread:async()=>undefined,
+      claim:async()=>job,token:async()=>'example-test-token',project:async()=>({id:'p'}),canReadTask:async()=>true,binding:async()=>'UEXAMPLE',thread:async()=>undefined,
       currentTask:async()=>++reads===1?task:{...task,approval_request:{...request,version:3}},queueWeekly:async()=>0,weeklyTasks:async()=>[],canSend:async()=>true,finish};
     const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const url=String(input);

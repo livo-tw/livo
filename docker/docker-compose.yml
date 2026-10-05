@@ -456,6 +456,8 @@ services:
       # notifications etc.). Set in docker/.env; defaults to empty so the
       # functions fall back to their built-in default.
       APP_BASE_URL: ${APP_BASE_URL:-}
+      # Optional initial password for interactive super_admin account creation.
+      MEMBER_DEFAULT_PASSWORD: ${MEMBER_DEFAULT_PASSWORD:-}
       SLACK_INTERNAL_SECRET: ${SLACK_INTERNAL_SECRET:-}
       # Empty unless the optional knowledge-processor below is enabled; the
       # import dialog then reports that the processor is not configured.

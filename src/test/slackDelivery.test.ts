@@ -12,7 +12,7 @@ function setup() {
   const sent: Record<string, any>[] = [], results: Record<string, any>[] = [];
   let thread: string | undefined;
   const store: DeliveryStore = { config: async () => config, claim: async () => job, token: async () => 'example-token',
-    project: async () => project, binding: async () => 'UEXAMPLE', thread: async () => thread,
+    project: async () => project, binding: async () => 'UEXAMPLE', canReadTask: async () => true, thread: async () => thread,
     currentTask: async () => ({ assignee_id: 'member-example', reviewer_id: null, status_id: 'todo' }),
     queueWeekly: async () => 0, weeklyTasks: async () => [], canSend: async () => true,
     finish: vi.fn(async (_job, _owner, result) => { results.push(result); if (result.status === 'sent') thread = result.threadTs; return true; }) };
@@ -142,7 +142,7 @@ describe('durable Slack notification delivery', () => {
       return Response.json({ ok: true, ts: '1234567890.000001' });
     }) as unknown as typeof fetch;
     expect(await deliverJob({ ...job, target_type: 'member', target_id: 'member-example' }, 'owner', t.store, 'https://example.com', fetcher)).toBe('sent');
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(4);
     expect(t.store.thread).not.toHaveBeenCalled();
   });
   it('uses a fixed 60-minute root window, including the exact boundary and invalid timestamps', () => {
@@ -250,14 +250,15 @@ describe('durable Slack notification delivery', () => {
     expect(currentPersonalPayload(due, { ...task, due_date: '2026-10-20' })).toBeUndefined();
     expect(currentPersonalPayload(due, { ...task, assignee_id: 'other', reviewer_id: 'member-example' })).toBeUndefined();
   });
-  it('sends a standalone weekly DM containing only projects whose channel includes the recipient', async () => {
+  it('sends a standalone weekly DM containing only tasks allowed by recipient RLS', async () => {
     const t = setup(); const posted: Record<string, unknown>[] = [];
     t.store.config = async () => ({ ...config, dmEnabled: true, weekly: { enabled: true }, routes: [
       ...config.routes, { lineId: 'other-line', channelId: 'COTHER' }] });
     t.store.project = async () => { throw new Error('weekly job is not a task'); };
+    t.store.canReadTask = async (_member, _team, id) => id === 'visible-task';
     t.store.weeklyTasks = async () => [
-      { taskKey: 'EX-1', taskTitle: 'Visible', projectId: 'project-example', lineId: 'line-example', dueDate: '2026-10-04', projectName: 'Example' },
-      { taskKey: 'OTHER-1', taskTitle: 'Private', projectId: 'other-project', lineId: 'other-line', dueDate: '2026-10-06', projectName: 'Private' },
+      { taskId: 'visible-task', taskKey: 'EX-1', taskTitle: 'Visible', projectId: 'project-example', lineId: 'line-example', dueDate: '2026-10-04', projectName: 'Example' },
+      { taskId: 'private-task', taskKey: 'OTHER-1', taskTitle: 'Private', projectId: 'other-project', lineId: 'other-line', dueDate: '2026-10-06', projectName: 'Private' },
     ];
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));

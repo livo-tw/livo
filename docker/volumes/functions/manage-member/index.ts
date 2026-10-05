@@ -13,6 +13,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.98.0";
 import { isPlaceholderEmail, isValidEmail, normalizeEmail } from "./jiraCsv.ts";
 import {
   API_KEY_FORBIDDEN,
+  configuredInitialPassword,
   deliverLogin,
   discardLogin,
   isApiKeyToken,
@@ -163,7 +164,7 @@ Deno.serve(async (req) => {
       const newPassword =
         typeof password === "string" && password.length > 0
           ? password
-          : unusablePassword();
+          : (configuredInitialPassword(callerRole, token) || unusablePassword());
 
       // Find-or-create the auth user (scan ALL pages, not just the first).
       let authUserId: string;
@@ -482,11 +483,13 @@ Deno.serve(async (req) => {
         );
       }
 
+      const initialPassword = configuredInitialPassword(callerRole, token);
       const channel = await resolveLoginChannel(supabaseAdmin, req);
+      if (initialPassword) channel.method = 'temp_password';
       const authUsers = await loadAuthUsersByEmail(supabaseAdmin);
       let login;
       try {
-        login = await prepareLogin(supabaseAdmin, channel.method, { email, name: member.name }, authUsers);
+        login = await prepareLogin(supabaseAdmin, channel.method, { email, name: member.name }, authUsers, initialPassword);
       } catch (err) {
         if (err instanceof LoginError) return json({ error: err.code, message: err.message }, 409);
         return json({ error: err instanceof Error ? err.message : String(err) }, 400);

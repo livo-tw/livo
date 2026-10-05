@@ -36,7 +36,7 @@ describe('manual Slack mappings need an active owner as issuer', () => {
     ['plain-admin mapping', binding({ verified_by: 'admin', verified_by_member_id: 'member-admin' }), [owner, { id: 'member-admin', role: 'admin', is_active: true }], undefined],
     ['mapping by a deactivated owner', binding({ verified_by: 'admin', verified_by_member_id: owner.id }), [{ ...owner, is_active: false }], undefined],
   ])('personal delivery resolves the recipient for %s accordingly', async (_label, row, issuers, expected) => {
-    database({ members: [{ id: 'member-example', role: 'member', is_active: true }, ...issuers], external_account_bindings: [row] });
+    database({ members: [{ id: 'member-example', auth_id: 'auth-example', role: 'member', is_active: true }, ...issuers], external_account_bindings: [row] });
     expect(await deliveryStore(env).binding('member-example', 'TEXAMPLE')).toBe(expected);
   });
 

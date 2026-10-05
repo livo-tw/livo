@@ -12,8 +12,8 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 // slack-config POST is admin-JWT gated + demo-blocked (403 「展示帳號無法執行此操作」).
 //
 // Gated behind the `slack-notify` professional feature, exactly like
-// AdminNotifySection. The channel picker reuses the existing backup_settings
-// save path (task_notify_channel) so it stays in sync with AdminNotifySection.
+// AdminNotifySection. Cloud uses backup_settings.task_notify_channel; self-host
+// task and QA pickers read and save the actual system_settings.slack_delivery routes.
 
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -24,10 +24,11 @@ import {
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useLicense } from '@/context/LicenseContext';
-import { fnUrl } from '@/lib/apiBase';
+import { fnUrl, USE_CF_BACKEND } from '@/lib/apiBase';
 import UpgradePrompt from '@/components/UpgradePrompt';
 import { Field, inputCls } from './shared';
 import SlackActionsSection from './SlackActionsSection';
+import SlackDeliveryChannels from './SlackDeliveryChannels';
 
 // The 7 Bot Token Scopes needed for channel posts, DMs and user lookup.
 // These are literal Slack scope identifiers — not translated.
@@ -138,6 +139,7 @@ const SlackCard = () => {
       const s = await fetchStatus();
       if (!alive) return;
       if (s.configured) void loadChannels();
+      if (!USE_CF_BACKEND) { setLoadingStatus(false); return; }
       const { data } = await supabase
         .from('backup_settings')
         .select('id, task_notify_channel')
@@ -353,8 +355,9 @@ const SlackCard = () => {
                 </div>
               )}
 
-              {/* Channel picker (task notifications) */}
-              <Field label={t('integrations.slack.channelPickerLabel')}>
+              {/* Each backend uses its real notification settings. */}
+              {!USE_CF_BACKEND ? <SlackDeliveryChannels configured={configured} isDemoMode={isDemoMode}
+                channels={channels} channelsError={channelsError} /> : <Field label={t('integrations.slack.channelPickerLabel')}>
                 <SearchableSelect
                   className={inputCls}
                   value={channelValue}
@@ -375,7 +378,7 @@ const SlackCard = () => {
                     {t('integrations.slack.channelNeedInvite')}
                   </p>
                 )}
-              </Field>
+              </Field>}
 
               {/* Setup guide */}
               <div>

@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
         .eq('is_active', true)
         .maybeSingle();
       member = byAuth as typeof member;
-      if (!member || !member.role === 'super_admin') {
+      if (!member || member.role !== 'super_admin') {
         return json({ error: 'Permission denied: super_admin role required' }, 403);
       }
       memberId = member.id ?? null;

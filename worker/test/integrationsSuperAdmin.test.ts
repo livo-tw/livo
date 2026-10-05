@@ -29,7 +29,13 @@ describe('Docker integration functions', () => {
     for (const file of copies) {
       const source = fs.readFileSync(file, 'utf8');
       expect(source).not.toContain("['admin', 'super_admin'].includes(member.role");
-      expect(source).toContain("member.role === 'super_admin'");
+      // Check what the handler actually rejects, rather than looking for a role
+      // substring: `!member.role === 'super_admin'` contains one and rejects nobody.
+      const conditions = [...source.matchAll(/if\s*\(([^()]*member\.role[^()]*)\)\s*\{/g)];
+      expect(conditions).toHaveLength(1);
+      const rejects = new Function('member', `return ${conditions[0][1]};`) as (member: { role: string } | null) => boolean;
+      for (const member of [null, { role: 'member' }, { role: 'admin' }, { role: '' }]) expect(rejects(member)).toBe(true);
+      expect(rejects({ role: 'super_admin' })).toBe(false);
     }
   });
 });

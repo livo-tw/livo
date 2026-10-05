@@ -10,6 +10,7 @@ export interface DeliveryStore {
   token(): Promise<string | undefined>;
   project(taskId: string): Promise<Row | undefined>;
   binding(memberId: string, teamId: string): Promise<string | undefined>;
+  canReadTask(memberId: string, teamId: string, taskId: string): Promise<boolean>;
   thread(taskId: string, teamId: string, channelId: string): Promise<string | undefined>;
   currentTask(taskId: string, requestId?: string, memberId?: string): Promise<Row | undefined>;
   reminderPaused?(taskId:string,memberId:string):Promise<boolean>;
@@ -154,7 +155,7 @@ export function matchingChannels(config: Row | undefined, project: Row | undefin
 export function routeAllowed(config: Row | undefined, project: Row | undefined, job: Job): boolean {
   if (config?.enabled !== true || config.teamId !== job.team_id) return false;
   const channels = matchingChannels(config, project);
-  if (job.target_type === 'member') return memberAllowed(config, job.target_id) && channels.length > 0;
+  if (job.target_type === 'member') return memberAllowed(config, job.target_id) && !!project && !project.is_archived;
   return job.target_id !== job.payload.sourceChannelId && channels.includes(job.target_id);
 }
 /** Check every cursor, not just the first page; never guess on an incomplete read. */
@@ -255,20 +256,12 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         const info = (await slack('users.info', { user })).user;
         // Guests (single- or multi-channel) never receive personal task notices.
         if (!info || info.deleted || info.is_bot || info.is_restricted || info.is_ultra_restricted || info.team_id !== job.team_id) throw new DeliveryError('recipient_unavailable');
-        const membership = new Map<string, boolean>();
-        const visible = async (p: Row | undefined) => {
-          for (const id of matchingChannels(config, p)) {
-            if (!membership.has(id)) membership.set(id, await isChannelMember(slack, id, user));
-            if (membership.get(id)) return true;
-          }
-          return false;
-        };
         if (weekly) {
           const visibleTasks: Row[] = [];
-          for (const task of tasks) if (await visible({ id: task.projectId, line_id: task.lineId })) visibleTasks.push(task);
+          for (const task of tasks) if (task.taskId && await store.canReadTask(job.target_id, job.team_id, task.taskId)) visibleTasks.push(task);
           tasks = visibleTasks;
         }
-        if (weekly ? !tasks.length : !(await visible(project))) throw new DeliveryError('recipient_not_in_subscribed_channel');
+        if (weekly ? !tasks.length : !(await store.canReadTask(job.target_id, job.team_id, job.task_id))) throw new DeliveryError('recipient_permission_denied');
         channel = (await slack('conversations.open', { users: user })).channel?.id;
         if (!channel) throw new DeliveryError('dm_channel_unavailable');
       }
@@ -277,7 +270,9 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         if (!(await store.finish(job,owner,{status:'skipped',error:'reminder_paused'}))) throw new DeliveryError('delivery_lease_lost',false,true);
         return 'skipped';
       }
-      if (weekly) { const fresh=new Set((await store.weeklyTasks(job.target_id,job.payload.weekStart)).map(t=>t.taskId)); tasks=tasks.filter(t=>fresh.has(t.taskId));
+      if (weekly) { const fresh=await store.weeklyTasks(job.target_id,job.payload.weekStart); const visibleTasks:Row[]=[];
+        for(const task of fresh) if(task.taskId && await store.canReadTask(job.target_id,job.team_id,task.taskId)) visibleTasks.push(task);
+        tasks=visibleTasks;
         if(!tasks.length) { if(!(await store.finish(job,owner,{status:'skipped',error:'no_due_tasks'}))) throw new DeliveryError('delivery_lease_lost',false,true); return 'skipped'; } }
       let message = weekly ? weeklyMessage(tasks, job.payload.weekStart, appBase) : notificationMessage(payload, appBase);
       if (!(await store.canSend(job, owner))) throw new DeliveryError('delivery_lease_lost', false, true);
@@ -294,7 +289,16 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
       } else {
         if (freshPersonal) message = notificationMessage(freshPersonal,appBase);
-        // A binding changed while opening the DM must not deliver to the old identity.
+        const freshConfig = await store.config();
+        const stillAllowed = weekly ? freshConfig?.teamId === job.team_id && memberAllowed(freshConfig, job.target_id) && freshConfig?.weekly?.enabled === true
+          : routeAllowed(freshConfig, await store.project(job.task_id), job);
+        if (!stillAllowed) {
+          if (!await store.finish(job, owner, { status: 'skipped', error: 'route_no_longer_allowed' })) throw new DeliveryError('delivery_lease_lost', false, true);
+          return 'skipped';
+        }
+        if (job.target_type === 'member' && !weekly && !(await store.canReadTask(job.target_id, job.team_id, job.task_id)))
+          throw new DeliveryError('recipient_permission_denied');
+        // The RLS check also reads the binding; compare identity after that read.
         if (job.target_type === 'member' && await store.binding(job.target_id, job.team_id) !== recipientUser)
           throw new DeliveryError('recipient_not_verified');
         const sent = await slack('chat.postMessage', { channel, ...message, ...(thread ? { thread_ts: thread } : {}) });

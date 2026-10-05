@@ -26,7 +26,7 @@ describe('live responsibility snapshots in Slack delivery',()=>{
  it('rechecks ack and identity immediately before send after opening the DM',async()=>{
   let acknowledged=false;const posts:Row[]=[];
   const store:DeliveryStore={config:async()=>({enabled:true,dmEnabled:true,teamId:'TEXAMPLE',routes:[{projectId:'p1',channelId:'CEXAMPLE'}]}),
-   claim:async()=>job,finish:vi.fn(async()=>true),token:async()=>'fixture',project:async()=>({id:'p1',is_archived:false}),binding:async()=>'UEXAMPLE',thread:async()=>undefined,
+   claim:async()=>job,finish:vi.fn(async()=>true),token:async()=>'fixture',project:async()=>({id:'p1',is_archived:false}),canReadTask: async () => true, binding:async()=>'UEXAMPLE',thread:async()=>undefined,
    currentTask:async()=>({...task,assignee_acknowledged_at:acknowledged?'now':null,reviewer_acknowledged_at:acknowledged?'now':null}),queueWeekly:async()=>0,weeklyTasks:async()=>[],canSend:async()=>true};
   const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
    const path=String(input);if(path.endsWith('auth.test'))return Response.json({ok:true,team_id:'TEXAMPLE'});
@@ -40,7 +40,7 @@ describe('live responsibility snapshots in Slack delivery',()=>{
  });
  it('skips an assignment invalidated while the DM is opening',async()=>{
   let moved=false;const posts:Row[]=[];
-  const store:DeliveryStore={config:async()=>({enabled:true,dmEnabled:true,teamId:'TEXAMPLE',routes:[{projectId:'p1',channelId:'CEXAMPLE'}]}),claim:async()=>job,finish:vi.fn(async()=>true),token:async()=>'fixture',project:async()=>({id:'p1'}),binding:async()=>'UEXAMPLE',thread:async()=>undefined,
+  const store:DeliveryStore={config:async()=>({enabled:true,dmEnabled:true,teamId:'TEXAMPLE',routes:[{projectId:'p1',channelId:'CEXAMPLE'}]}),claim:async()=>job,finish:vi.fn(async()=>true),token:async()=>'fixture',project:async()=>({id:'p1'}),canReadTask: async () => true, binding:async()=>'UEXAMPLE',thread:async()=>undefined,
    currentTask:async()=>({...task,assignee_revision:moved?4:2,reviewer_revision:moved?6:4}),queueWeekly:async()=>0,weeklyTasks:async()=>[],canSend:async()=>true};
   const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{const path=String(input);
    if(path.endsWith('auth.test'))return Response.json({ok:true,team_id:'TEXAMPLE'});if(path.includes('/users.info'))return Response.json({ok:true,user:{team_id:'TEXAMPLE'}});

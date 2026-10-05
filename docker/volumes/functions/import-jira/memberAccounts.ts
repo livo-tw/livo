@@ -8,7 +8,9 @@
 //   supabase/functions/import-jira/memberAccounts.ts
 // After editing run `npm run sync:shared` (scripts/sync-shared-code.mjs).
 //
-// How the person gets in — never a shared default password:
+// Login delivery defaults to invitations or random temporary passwords.
+// A self-host operator can explicitly configure an initial password for
+// interactive super_admin member creation; API keys cannot use that setting.
 //   - a Resend key is bound in 系統管理 → 通知 (email_config): a set-password
 //     invitation. The link carries a GoTrue recovery token and opens the
 //     app's /set-password page (no GoTrue redirect settings involved);
@@ -131,6 +133,17 @@ export class LoginError extends Error {
 
 export type AuthUserIndex = Map<string, { id: string; email: string }>;
 
+/** Optional self-host initial password, restricted to an interactive super_admin. */
+export function configuredInitialPassword(callerRole: string, token: string): string | null {
+  if (callerRole !== 'super_admin' || isApiKeyToken(token)) return null;
+  const password = Deno.env.get('MEMBER_DEFAULT_PASSWORD') || '';
+  if (!password) return null;
+  if (password.length < 8 || new TextEncoder().encode(password).length > 72) {
+    throw new Error('member_default_password_invalid');
+  }
+  return password;
+}
+
 /** Every GoTrue user by lowercase email (listUsers is paginated). */
 export async function loadAuthUsersByEmail(admin: any): Promise<AuthUserIndex> {
   const index: AuthUserIndex = new Map();
@@ -164,9 +177,13 @@ export async function prepareLogin(
   method: LoginMethod,
   to: { email: string; name: string },
   authUsers: AuthUserIndex,
+  initialPassword?: string | null,
 ): Promise<PreparedLogin> {
   const email = to.email.trim().toLowerCase();
-  const tempPassword = method === 'temp_password' ? generateTempPassword() : null;
+  if (initialPassword != null && (initialPassword.length < 8 || new TextEncoder().encode(initialPassword).length > 72)) {
+    throw new Error('member_default_password_invalid');
+  }
+  const tempPassword = method === 'temp_password' ? (initialPassword || generateTempPassword()) : null;
   const existing = authUsers.get(email);
   if (existing) {
     const { data: linked } = await admin.from('members').select('id').eq('auth_id', existing.id).limit(1);
