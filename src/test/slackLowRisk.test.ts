@@ -123,4 +123,21 @@ describe('Slack people list', () => {
     if (status === 200) expect((await response.json()).users).toEqual([{ id: 'UPERSON', name: 'person', email: 'person@example.org' }]);
     else expect(slack).not.toHaveBeenCalled();
   });
+  it('adds the real name and handle when they differ from the display name, for match suggestions', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input)), table = url.pathname.split('/').pop()!;
+      if (url.hostname === 'slack.com') return Response.json({ ok: true, members: [
+        { id: 'UNICK', name: 'nkemp', real_name: 'Nora Kemp', profile: { display_name: 'Nova', email: 'nk@example.org' } },
+        { id: 'UPLAIN', name: 'carol', real_name: 'carol', profile: { email: 'carol@example.org' } }] });
+      if (url.pathname === '/auth/v1/user') return Response.json({ id: 'auth-owner' });
+      if (table === 'system_settings') return Response.json([{ value: { slackActions: true } }]);
+      if (table === 'slack_config') return Response.json([{ bot_token: 'example-bot' }]);
+      if (table === 'members') return Response.json(people.filter(p => p.auth_id === url.searchParams.get('auth_id')?.slice(3)));
+      return Response.json([]);
+    }));
+    const response = await handleSlackActionsConfig(new Request('https://example.com/functions/v1/slack-actions-config?slackUsers=1',
+      { headers: { Authorization: 'Bearer member-session' } }), env);
+    expect((await response.json()).users).toEqual([{ id: 'UPLAIN', name: 'carol', email: 'carol@example.org' },
+      { id: 'UNICK', name: 'Nova', email: 'nk@example.org', realName: 'Nora Kemp', handle: 'nkemp' }]);
+  });
 });

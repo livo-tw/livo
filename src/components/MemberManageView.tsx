@@ -54,11 +54,11 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
   return (
     <div className={embedded ? '' : 'flex-1 overflow-y-auto'}>
       <div className={embedded ? '' : 'px-4 py-6 md:px-6'}>
-      <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
-        <div className="flex items-center justify-between mb-4 md:mb-6">
-          <div className="flex items-center gap-2">
-            <Users size={20} className="text-primary" />
-            <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('member.title')}</h1>
+      <div className={embedded ? '' : 'w-full min-w-0'}>
+        <div className="flex items-center justify-between gap-3 mb-4 md:mb-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Users size={20} className="shrink-0 text-primary" />
+            <h1 className="whitespace-nowrap text-xl md:text-2xl font-bold text-foreground">{t('member.title')}</h1>
             <span className="text-xs text-muted-foreground ml-1">{t('member.totalCount', { count: users.length })}</span>
             {canReorder && <span className="text-[10px] text-muted-foreground ml-1">· {t('member.dragToReorder')}</span>}
             {viewers.length > 0 && (

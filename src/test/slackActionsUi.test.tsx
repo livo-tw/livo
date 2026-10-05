@@ -43,6 +43,61 @@ describe('Slack actions capability and feature switches', () => {
     const slackSelect = screen.getByLabelText('slackActions.manual.slackUser') as HTMLSelectElement;
     expect([...slackSelect.options].map(o => o.value)).toContain('UEXAMPLE');
   });
+  const owner = (bindings: unknown[], users: unknown[]) => {
+    Object.assign(state, { on: true, cloud: false, role: 'super_admin', demo: false });
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('slackUsers=1') ? json({ users }) : json({ connected: true, lastSeen: null, bindings })));
+    render(<SlackActionsSection />);
+  };
+  const values = (label: string) => [...(screen.getByLabelText(label) as HTMLSelectElement).options].map(o => o.value).filter(Boolean);
+  const mapping = (memberId: string, slackId: string, extra: Record<string, unknown> = {}) => ({ id: `binding-${memberId}`, member_id: memberId,
+    platform_user_id: slackId, display_name: slackId, memberName: memberId, active: true, verifiedBy: 'email', verifiedByOwner: false, is_verified: true, reconfirm_required: false, ...extra });
+  it('hides members and Slack accounts that are already mapped, but keeps mappings that need the owner again', async () => {
+    owner([
+      mapping('member-plain', 'UWORKING'),
+      mapping('admin-other', 'USUSPENDED', { verifiedBy: 'admin', is_verified: false, reconfirm_required: true }),
+      mapping('super-one', 'UUNTRUSTED', { verifiedBy: 'admin', verifiedByOwner: false }),
+      mapping('admin-self', 'UOWNERMADE', { verifiedBy: 'admin', verifiedByOwner: true }),
+    ], ['UWORKING', 'USUSPENDED', 'UUNTRUSTED', 'UOWNERMADE', 'UFREE'].map(id => ({ id, name: id.toLowerCase(), email: `${id.toLowerCase()}@example.org` })));
+    await waitFor(() => expect(screen.getAllByText('slackActions.manual.reconfirm')).toHaveLength(2));
+    fireEvent.click(screen.getByText('slackActions.manual.load'));
+    await waitFor(() => screen.getByLabelText('slackActions.manual.member'));
+    expect(values('slackActions.manual.member')).toEqual(['admin-other', 'super-one']);
+    expect(values('slackActions.manual.slackUser')).toEqual(['USUSPENDED', 'UUNTRUSTED', 'UFREE']);
+    fireEvent.click(screen.getByLabelText('slackActions.manual.showMapped'));
+    expect(values('slackActions.manual.member')).toEqual(['admin-self', 'member-plain', 'admin-other', 'super-one']);
+    expect(values('slackActions.manual.slackUser')).toEqual(['UWORKING', 'USUSPENDED', 'UUNTRUSTED', 'UOWNERMADE', 'UFREE']);
+    expect(screen.getByRole('option', { name: /^uworking · uworking@example\.org · slackActions\.manual\.mappedTag$/ })).toBeTruthy();
+  });
+  it('says so when every member is mapped, and keeps the switch to show them', async () => {
+    owner(['admin-self', 'member-plain', 'admin-other', 'super-one'].map((id, index) => mapping(id, `UMAPPED${index}`)),
+      [{ id: 'UMAPPED0', name: 'Mapped', email: 'mapped@example.org' }]);
+    await waitFor(() => expect(screen.getAllByText('slackActions.unbind')).toHaveLength(4));
+    fireEvent.click(screen.getByText('slackActions.manual.load'));
+    expect(await screen.findByText('slackActions.manual.allMembersMapped')).toBeTruthy();
+    expect(screen.getByText('slackActions.manual.allSlackMapped')).toBeTruthy();
+    expect(values('slackActions.manual.member')).toEqual([]);
+    fireEvent.click(screen.getByLabelText('slackActions.manual.showMapped'));
+    expect(values('slackActions.manual.member')).toHaveLength(4);
+    expect(screen.queryByText('slackActions.manual.allMembersMapped')).toBeNull();
+  });
+  it('lists Slack accounts that look like the chosen member first, without choosing one', async () => {
+    owner([], [{ id: 'UBOB', name: 'Bob', email: 'bob@example.org' }, { id: 'UPLAIN', name: 'plain.member', email: 'pm@example.org' },
+      { id: 'UCAROL', name: 'Carol', email: 'carol@example.org' }, { id: 'UNICK', name: 'Plainy', email: 'nick@example.org', realName: 'Plain Member' }]);
+    fireEvent.click(screen.getByText('slackActions.manual.load'));
+    await waitFor(() => screen.getByLabelText('slackActions.manual.member'));
+    const slackSelect = screen.getByLabelText('slackActions.manual.slackUser') as HTMLSelectElement;
+    expect(slackSelect.querySelector('optgroup')).toBeNull();
+    fireEvent.change(screen.getByLabelText('slackActions.manual.member'), { target: { value: 'member-plain' } });
+    const groups = [...slackSelect.querySelectorAll('optgroup')].map(group => [group.label, [...group.querySelectorAll('option')].map(o => o.value)]);
+    expect(groups).toEqual([['slackActions.manual.likely', ['UPLAIN', 'UNICK']], ['slackActions.manual.otherAccounts', ['UBOB', 'UCAROL']]]);
+    expect(slackSelect.value).toBe('');
+    expect(screen.getByText('slackActions.manual.likelyHint')).toBeTruthy();
+    expect((screen.getByText('slackActions.manual.bind') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('slackActions.manual.member'), { target: { value: 'super-one' } });
+    expect(slackSelect.querySelector('optgroup')).toBeNull();
+    expect([...slackSelect.options].map(o => o.value).filter(Boolean)).toEqual(['UBOB', 'UPLAIN', 'UCAROL', 'UNICK']);
+  });
   it('lets admins inspect status but cannot assign identities or unbind members', async () => {
     Object.assign(state, { on: true, cloud: false, role: 'admin', demo: false });
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ connected: false, lastSeen: null,

@@ -176,6 +176,31 @@ describe('Slack daily task workspace', () => {
     await flush(); expect(d.commit).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(lastView())).toContain('留言已儲存'); expect(JSON.stringify(lastView())).not.toContain('操作未完成');
   });
+  it('replaces the panel loading view when Slack rejects the create form, keeping the hash guard', async () => {
+    const { d, flush, lastView } = setup(); vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(d.slack).mockImplementation(async (method, body) => {
+      if (method === 'views.update' && body.view.callback_id === 'livo_create_task')
+        throw Object.assign(new Error('Slack operation failed'), { slackError: 'invalid_arguments' });
+      return { view: { id: 'VEXAMPLE', hash: 'hash-loading' } };
+    });
+    await handleInteraction({ ...base, type: 'block_actions', view: { id: 'VEXAMPLE', hash: 'hash-home', private_metadata: JSON.stringify(source) },
+      actions: [{ action_id: 'livo_workspace_new', value: '{}' }] }, 'new-rejected', d); await flush();
+    const updates = vi.mocked(d.slack).mock.calls.filter(([method]) => method === 'views.update').map(([, body]) => body);
+    expect(updates.map(body => [body.view.callback_id, body.hash])).toEqual([
+      ['livo_result', 'hash-home'], ['livo_create_task', 'hash-loading'], ['livo_result', 'hash-loading']]);
+    expect(JSON.stringify(lastView())).toContain('LIVO 暫時無法回應'); expect(d.reply).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+  it('still tells the person to reopen /livo when the panel was closed while loading', async () => {
+    const { d, flush } = setup();
+    vi.mocked(d.slack).mockImplementation(async method => {
+      if (method === 'views.update') throw Object.assign(new Error('Slack operation failed'), { slackError: 'not_found' });
+      return { view: { id: 'VEXAMPLE', hash: 'hash-loading' } };
+    });
+    await handleInteraction({ ...base, command: '/livo', text: '' }, 'closed', d); await flush();
+    expect(vi.mocked(d.slack).mock.calls.filter(([method]) => method === 'views.update')).toHaveLength(1);
+    expect(d.reply).toHaveBeenCalledWith(expect.anything(), '任務視窗已關閉或更新失敗，請重新執行 /livo。');
+  });
   it('does not send a false failure after a direct comment commits but its private receipt fails', async () => {
     const { d } = setup(); vi.mocked(d.reply).mockRejectedValue(new Error('Slack reply failed'));
     await handleInteraction({ ...base, command: '/livo', text: 'comment ABC-123 Feedback' }, 'direct-comment', d);

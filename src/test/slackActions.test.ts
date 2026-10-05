@@ -2,8 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { canAssignSlackMember, slackEmailBelongsToOther, commentModal, commentRecipients, convertMrkdwn, createModal, DISABLED, enabled, matchEmail,
-  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, projectOptionGroups, requiresWebCreate, shouldPostChannel, SLACK_LINK_DISABLED, taskReceipt } from '../../docker/volumes/functions/slack-interact/core';
-import { constantTimeSecret, createActions, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
+  messageDraft, NO_ACCOUNT, parseCommand, parseSubmission, projectOptionGroups, requiresWebCreate, shouldPostChannel, SLACK_LINK_DISABLED, taskReceipt,
+  LOAD_BUDGET_MS, NO_PROJECT, NO_STATUS, replaceLoadingView, TRIGGER_EXPIRED, UNRESPONSIVE, withinBudget } from '../../docker/volumes/functions/slack-interact/core';
+import { constantTimeSecret, createActions, fail, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
 import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
 import { resolveFeatureToggles } from '@/lib/featureToggles';
 const actor = { id: 'member-example', name: 'Example Member', email: 'member@example.com', is_active: true,
@@ -337,5 +338,137 @@ describe('backend security and effects', () => {
     expect(migration).toContain("'comment_add'"); expect(migration).toContain("'slack'");
     const dispatch = readFileSync(new URL('../../supabase/migrations/20260714_notify_dispatch.sql', import.meta.url), 'utf8');
     expect(dispatch).toContain('AFTER INSERT ON public.comments');
+  });
+});
+// Reported from a team server: `/livo new` opened a modal that stayed on
+// 「正在載入 LIVO…」 forever. Every failure after views.open must replace it.
+describe('the /livo new loading modal never hangs', () => {
+  const slackError = (code: string) => Object.assign(new Error('Slack operation failed'), { name: 'SlackApiError', slackError: code });
+  const updates = (d: Actions) => vi.mocked(d.slack).mock.calls.filter(([method]) => method === 'views.update').map(([, body]) => body);
+  const shownText = (d: Actions) => updates(d).at(-1)?.view.blocks[0].text?.text;
+  const payload = { command: '/livo', text: 'new Example', trigger_id: 'example-trigger', user_id: 'UEXAMPLE', team_id: 'TEXAMPLE', channel_id: 'CEXAMPLE' };
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  it('replaces the loading modal with a retry message when Slack rejects the create form', async () => {
+    const { d } = deps(); vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(d.slack).mockImplementation(async (method, body) => {
+      if (method === 'views.update' && body.view.callback_id === 'livo_create_task') throw slackError('invalid_arguments');
+      return { view: { id: 'VEXAMPLE' } };
+    });
+    expect(await handleInteraction(payload, 'rejected', d)).toEqual({});
+    expect(updates(d).map(body => body.view.callback_id)).toEqual(['livo_create_task', 'livo_result']);
+    expect(updates(d).every(body => body.view_id === 'VEXAMPLE')).toBe(true);
+    expect(shownText(d)).toBe(UNRESPONSIVE);
+    expect(d.reply).not.toHaveBeenCalled();
+  });
+  it('stops waiting for a slow account or catalog lookup and says so before the edge worker is stopped', async () => {
+    vi.useFakeTimers();
+    const { d } = deps(); vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(d.catalog).mockImplementation(() => new Promise(() => {}));
+    const pending = handleInteraction(payload, 'slow', d);
+    await vi.advanceTimersByTimeAsync(LOAD_BUDGET_MS - 1);
+    expect(updates(d)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({});
+    expect(shownText(d)).toBe(UNRESPONSIVE);
+    expect(console.error).toHaveBeenCalledWith('slack_form_load_failed reason=TimeoutError');
+    expect(LOAD_BUDGET_MS + 12000).toBeLessThan(30000); // load + one Slack call fit in the worker's 30 s minimum
+  });
+  it.each([
+    ['an unbound Slack account', () => fail(NO_ACCOUNT), NO_ACCOUNT],
+    ['no project to create a card in', () => fail(NO_PROJECT), NO_PROJECT],
+    ['a Slack or database outage', () => { throw slackError('ratelimited'); }, UNRESPONSIVE],
+  ])('explains %s in the modal instead of loading forever', async (_, failure, text) => {
+    const { d } = deps(); vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(d.catalog).mockImplementation(async () => failure());
+    await handleInteraction(payload, 'explained', d);
+    expect(updates(d)).toHaveLength(1); expect(shownText(d)).toBe(text);
+  });
+  it('translates the reason for the person once their Slack locale is known', async () => {
+    const { d } = deps(); vi.mocked(d.actor).mockResolvedValue({ ...actor, locale: 'en-US' });
+    vi.mocked(d.catalog).mockImplementation(async () => fail(NO_PROJECT));
+    await handleInteraction(payload, 'english', d);
+    expect(shownText(d)).toMatch(/^There is no project to create a card in/);
+  });
+  it('leaves a closed modal alone and falls back to a private message only when nothing can be shown', async () => {
+    const closed = deps();
+    vi.mocked(closed.d.slack).mockImplementation(async method => { if (method === 'views.update') throw slackError('not_found'); return { view: { id: 'VEXAMPLE' } }; });
+    await handleInteraction(payload, 'closed', closed.d);
+    expect(updates(closed.d)).toHaveLength(1); expect(closed.d.reply).not.toHaveBeenCalled();
+    const broken = deps();
+    vi.mocked(broken.d.slack).mockImplementation(async method => { if (method === 'views.update') throw slackError('internal_error'); return { view: { id: 'VEXAMPLE' } }; });
+    await handleInteraction(payload, 'broken', broken.d);
+    expect(updates(broken.d)).toHaveLength(2); expect(broken.d.reply).toHaveBeenCalledWith(payload, UNRESPONSIVE);
+  });
+  it('asks to run the command again when the trigger expired before the modal opened', async () => {
+    const { d } = deps();
+    vi.mocked(d.slack).mockRejectedValue(slackError('expired_trigger_id'));
+    await handleInteraction(payload, 'expired', d);
+    expect(d.actor).not.toHaveBeenCalled(); expect(d.reply).toHaveBeenCalledWith(payload, TRIGGER_EXPIRED);
+  });
+  it('shows the plain receipt when Slack rejects the detail view after saving', async () => {
+    const { d, jobs } = deps();
+    vi.mocked(d.slack).mockImplementation(async (method, body) => {
+      if (method === 'views.update' && body.view.callback_id !== 'livo_result') throw slackError('invalid_arguments');
+      return { view: { id: 'VEXAMPLE' } };
+    });
+    d.workspace = { detail: vi.fn(async () => task), comments: vi.fn(async () => ({ comments: [], page: 0, hasMore: false })),
+      list: vi.fn(), update: vi.fn() };
+    await handleInteraction({ type: 'view_submission', user: { id: 'UEXAMPLE' }, team: { id: 'TEXAMPLE' },
+      view: { id: 'VEXAMPLE', callback_id: 'livo_comment_task', private_metadata: '{}', state: { values: {
+        task: { task: { selected_option: { value: task.id } } }, comment: { comment: { value: 'Example' } } } } } }, 'saved', d);
+    await Promise.all(jobs);
+    expect(updates(d).map(body => body.view.callback_id)).toEqual(['livo_task_detail', 'livo_result']);
+    expect(shownText(d)).toBe(taskReceipt('comment', task, d.link(task)));
+  });
+  it('replaceLoadingView never overwrites a newer view or a possibly applied update', async () => {
+    for (const code of ['hash_conflict', 'not_found', 'timeout', 'unreachable']) {
+      const slack = vi.fn(async () => { throw slackError(code); });
+      expect(await replaceLoadingView(slack, 'VEXAMPLE', { type: 'modal' }, { type: 'fallback' }, 'hash-example')).toBe('left');
+      expect(slack).toHaveBeenCalledOnce();
+      expect(slack).toHaveBeenCalledWith('views.update', { view_id: 'VEXAMPLE', hash: 'hash-example', view: { type: 'modal' } });
+    }
+    expect(await replaceLoadingView(vi.fn(), undefined, {}, {})).toBe('failed');
+    await expect(withinBudget(Promise.resolve('loaded'), 10)).resolves.toBe('loaded');
+  });
+});
+describe('Slack Web API failures are logged with their code, never the token or content', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('logs the method, Slack error code and validation pointers', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('slack_config') ? response([{ bot_token: 'example-bot-token' }])
+      : response({ ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] must be less than 76 characters [json-pointer:/view/blocks/1/element/initial_option/text/text]'] } })));
+    const slack = createActions(env, () => {}).slack;
+    const error = await slack('views.update', { view_id: 'VEXAMPLE', view: { title: 'Secret customer title' } }).catch(e => e);
+    expect(error).toMatchObject({ name: 'SlackApiError', slackError: 'invalid_arguments', message: 'Slack operation failed' });
+    const line = String(log.mock.calls[0][0]);
+    expect(line).toContain('slack_api_error method=views.update error=invalid_arguments');
+    expect(line).toContain('json-pointer:/view/blocks/1/element/initial_option/text/text');
+    expect(line).not.toContain('example-bot-token'); expect(line).not.toContain('Secret customer title');
+  });
+  it('reports a missing scope and a Slack timeout by code', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let timeout = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('slack_config')) return response([{ bot_token: 'example-bot-token' }]);
+      if (timeout) throw new DOMException('The operation timed out.', 'TimeoutError');
+      return response({ ok: false, error: 'missing_scope', needed: 'users:read.email', provided: 'commands,chat:write' });
+    }));
+    const slack = createActions(env, () => {}).slack;
+    await expect(slack('users.info', { user: 'UEXAMPLE' })).rejects.toMatchObject({ slackError: 'missing_scope' });
+    expect(log).toHaveBeenLastCalledWith('slack_api_error method=users.info error=missing_scope needed=users:read.email');
+    timeout = true;
+    await expect(slack('views.update', { view_id: 'VEXAMPLE' })).rejects.toMatchObject({ slackError: 'timeout' });
+    expect(log).toHaveBeenLastCalledWith('slack_api_error method=views.update error=timeout');
+  });
+  it('splits the catalog reasons so the modal can say which one applies', async () => {
+    const lookup = (projects: unknown[], statuses: unknown[]) => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        return response(path.endsWith('/projects') ? projects : path.endsWith('/statuses') ? statuses : []);
+      }));
+      return createActions(env, () => {}).catalog(actor);
+    };
+    await expect(lookup([], [{ id: 'todo', name: 'Todo' }])).rejects.toThrow(NO_PROJECT);
+    await expect(lookup([{ id: 'project-example', name: 'Example' }], [])).rejects.toThrow(NO_STATUS);
   });
 });

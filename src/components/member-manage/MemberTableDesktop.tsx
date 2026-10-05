@@ -51,10 +51,10 @@ const MemberTableDesktop = ({
       <thead>
         <tr className="bg-muted/50">
           {canReorder && <th className="w-8"></th>}
-          <th className="text-left font-medium text-muted-foreground px-4 py-3 whitespace-nowrap">{t('memberList.memberHeader')}</th>
-          <th className="text-left font-medium text-muted-foreground px-4 py-3 whitespace-nowrap max-w-[180px]">Email</th>
-          <th className="text-left font-medium text-muted-foreground px-4 py-3 whitespace-nowrap">{t('memberList.jobTitleHeader')}</th>
-          <th className="text-left font-medium text-muted-foreground px-4 py-3 whitespace-nowrap min-w-[90px]">{t('memberList.roleHeader')}</th>
+          <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap">{t('memberList.memberHeader')}</th>
+          <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap max-w-[180px]">Email</th>
+          <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap">{t('memberList.jobTitleHeader')}</th>
+          <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap min-w-[90px]">{t('memberList.roleHeader')}</th>
           <th className="text-center font-medium text-muted-foreground px-2 py-3 whitespace-nowrap w-14">{t('memberList.assignedHeader')}</th>
           <th className="text-center font-medium text-muted-foreground px-2 py-3 whitespace-nowrap w-14">{t('memberList.completedHeader')}</th>
           <th className="text-center font-medium text-muted-foreground px-2 py-3 whitespace-nowrap w-14">{t('memberList.commentsHeader')}</th>
@@ -63,7 +63,7 @@ const MemberTableDesktop = ({
             <>
               <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap min-w-[64px]">{t('memberList.statusHeader')}</th>
               <th className="text-left font-medium text-muted-foreground px-3 py-3 whitespace-nowrap min-w-[120px]">{t('memberList.changeRoleHeader')}</th>
-              <th className="text-center font-medium text-muted-foreground px-3 py-3 whitespace-nowrap w-20">{t('memberList.actionsHeader')}</th>
+              <th className="sticky right-0 z-[1] bg-card bg-gradient-to-r from-muted/50 to-muted/50 text-center font-medium text-muted-foreground px-3 py-3 whitespace-nowrap w-28 shadow-[-1px_0_0_hsl(var(--border))]">{t('memberList.actionsHeader')}</th>
             </>
           )}
         </tr>
@@ -79,14 +79,14 @@ const MemberTableDesktop = ({
               onDragStart={() => onDragStart(index)}
               onDragOver={e => onDragOver(e, index)}
               onDragEnd={onDragEnd}
-              className={`border-t border-border hover:bg-muted/20 transition-colors ${!isActive ? 'opacity-50' : ''} ${dragIndex === index ? 'opacity-40' : ''} ${dragOverIndex === index && dragIndex !== index ? 'bg-primary/10' : ''}`}
+              className={`group border-t border-border hover:bg-muted/20 transition-colors ${!isActive ? 'opacity-50' : ''} ${dragIndex === index ? 'opacity-40' : ''} ${dragOverIndex === index && dragIndex !== index ? 'bg-primary/10' : ''}`}
             >
               {canReorder && (
                 <td className="px-2 py-3">
                   <GripVertical size={14} className="text-muted-foreground cursor-grab" />
                 </td>
               )}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-3 py-3 whitespace-nowrap">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0" style={{ backgroundColor: user.color }}>{user.avatar}</div>
                   <div>
@@ -96,18 +96,18 @@ const MemberTableDesktop = ({
                   </div>
                 </div>
               </td>
-              <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">
+              <td className="px-3 py-3 text-muted-foreground max-w-[180px] truncate">
                 {isPlaceholderEmail(user.email)
                   ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground" title={t('memberList.noLoginHint')}>{t('memberList.noLogin')}</span>
                   : user.email}
               </td>
-              <td className="px-4 py-3 text-muted-foreground">
+              <td className="px-3 py-3 text-muted-foreground">
                 <div className="flex items-center gap-2">
-                  <span className="max-w-48 break-words">{user.jobTitle || '—'}</span>
+                  <span className="max-w-40 break-words">{user.jobTitle || '—'}</span>
                   {isSuperAdmin && <button type="button" onClick={() => onEditJobTitle(user.id)} disabled={!!isLockedBy(`member-${user.id}`)} aria-label={t('memberJobTitle.editMember', { name: user.name })} title={t('memberJobTitle.edit')} className="shrink-0 p-1 rounded text-muted-foreground hover:text-primary hover:bg-muted transition-colors disabled:opacity-50"><Pencil size={13} aria-hidden="true" /></button>}
                 </div>
               </td>
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-3 py-3 whitespace-nowrap">
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white" style={{ backgroundColor: getMemberRoleColor(user) }}>
                   {getMemberRoleLabel(user)}
                 </span>
@@ -135,8 +135,9 @@ const MemberTableDesktop = ({
                       {ROLES.map(r => <option key={r} value={r}>{selectionRoleLabel(r)}</option>)}
                     </SearchableSelect>
                   </td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center justify-center gap-1">
+                  {/* Kept in view at the right edge, so the actions never scroll away on narrower screens. */}
+                  <td className="sticky right-0 bg-card group-hover:bg-gradient-to-r group-hover:from-muted/20 group-hover:to-muted/20 px-3 py-3 shadow-[-1px_0_0_hsl(var(--border))]">
+                    <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                       {user.id !== currentMemberId && (
                         <>
                           <button

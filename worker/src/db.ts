@@ -677,7 +677,20 @@ export async function runQuery(
       const prepare = (row: unknown) => deadlinePatch(row as Row,auth.member.id);
       req = { ...req, values: Array.isArray(req.values) ? req.values.map(prepare) : prepare(req.values) };
     }
-    const denied = enforceWritePolicy(req, table, meta, auth);
+    // A member may delete a task they created that nobody has picked up yet: never
+    // started, not completed, still in the first open column (same rule as
+    // canDeleteTaskRecord in the app and the Docker policy). The conditions go into
+    // the DELETE's WHERE, so a task picked up meanwhile is simply not deleted.
+    let creatorDelete = false;
+    if (table === 'tasks' && req.op === 'delete' && roleRank(auth?.member?.role) < 1 && req.filters?.length) {
+      const first = await env.DB.prepare(`SELECT id FROM statuses WHERE workspace_id=? AND is_done=0
+        AND sort_order=(SELECT MIN(sort_order) FROM statuses WHERE workspace_id=? AND is_done=0)`).bind(ws, ws).all<{ id: string }>();
+      req = { ...req, filters: [...req.filters,
+        { col: 'creator_id', op: 'eq', val: auth.member.id }, { col: 'started_at', op: 'is', val: null },
+        { col: 'completed_at', op: 'is', val: null }, { col: 'status_id', op: 'in', val: first.results.map(row => row.id) }] };
+      creatorDelete = true;
+    }
+    const denied = creatorDelete ? null : enforceWritePolicy(req, table, meta, auth);
     if (denied) return denied;
     if (table.startsWith('kb_') && req.op !== 'select') return await writeKnowledge(env, ctx, auth, req);
 

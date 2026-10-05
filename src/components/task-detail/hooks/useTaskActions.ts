@@ -154,8 +154,10 @@ export function useTaskActions(params: UseTaskActionsParams) {
   const handleDelete = async () => {
     if (!task) return;
     if (!(await confirm({ title: i18n.t('task.deleteTitle'), description: i18n.t('task.deleteConfirm', { title: task.title }), destructive: true }))) return;
-    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    const { data, error } = await supabase.from('tasks').delete().eq('id', task.id).select('id');
     if (error) { toast.error(taskWriteErrorText(error.message)); return; }
+    // The server deletes nothing when the creator's task has meanwhile been picked up.
+    if (!data?.length) { toast.error(i18n.t('task.deleteNotAllowed')); return; }
     setAllTasks(prev => prev.filter(t => t.id !== task.id).map(t => t.parentTaskId === task.id ? { ...t, parentTaskId: undefined } : t));
     setSelectedTask(null);
     void logActivity(currentMemberId, 'delete_task', task.title, task.id, task.taskKey);

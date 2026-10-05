@@ -1,4 +1,5 @@
-import { commentModal, createModal, DISABLED, messageModal, taskReceipt, UNAVAILABLE, type Row } from './core.ts';
+import { commentModal, createModal, DISABLED, loadFailure, loadFailureLog, messageModal, replaceLoadingView, taskReceipt, UNAVAILABLE,
+  UNRESPONSIVE, withinBudget, type Row } from './core.ts';
 import type { Actions } from './handler.ts';
 import { detailModal, editModal, homeModal, listModal, parseEditSubmission, parseWorkspaceCommand, searchModal, type TaskQuery } from './workspace-ui.ts';
 import { workspaceText } from './workspace-i18n.ts';
@@ -38,7 +39,7 @@ export async function handleWorkspaceInteraction(p: Row, d: Actions, source: Row
     if (!parsed && !search.replace(/[^\p{L}\p{N} _-]/gu, '').trim())
       return { response_action: 'errors', errors: { query: workspaceText('請輸入卡號或標題關鍵字。', source.locale) } };
     d.background((async () => {
-      let view: Row;
+      let view: Row, plain = UNRESPONSIVE;
       try {
         if (!(await d.enabled())) fail(DISABLED);
         const actor = await d.actor(p); source.locale = actor.locale;
@@ -54,6 +55,7 @@ export async function handleWorkspaceInteraction(p: Row, d: Actions, source: Row
           // Once committed, a Slack receipt or follow-up read failure must not
           // tell the user that saving failed and invite a duplicate mutation.
           await d.reply(receiptPayload(p, source), text).catch(() => {});
+          plain = '變更已儲存。重新開啟卡片可查看最新內容。';
           try {
             const task = await workspace.detail(actor, result.task.id);
             view = detailModal(task, d.link(task), source, await workspace.comments(actor, task.id, 0));
@@ -62,12 +64,14 @@ export async function handleWorkspaceInteraction(p: Row, d: Actions, source: Row
           } catch { view = notice('變更已儲存。重新開啟卡片可查看最新內容。', source, result.task.id); }
         }
       } catch (error) {
-        view = notice(safeError(error, source.locale), source, parsed?.fields.task_id);
-        if (parsed) await d.reply(receiptPayload(p, source), safeError(error, source.locale)).catch(() => {});
+        plain = safeError(error, source.locale);
+        view = notice(plain, source, parsed?.fields.task_id);
+        if (parsed) await d.reply(receiptPayload(p, source), plain).catch(() => {});
       }
-      await d.slack('views.update', { view_id: p.view.id, view }).catch(async () => {
-        if (!parsed) await d.reply(receiptPayload(p, source), workspaceText('搜尋視窗已關閉或更新失敗，請重新執行 /livo search。', source.locale)).catch(() => {});
-      });
+      // A rejected result view falls back to the same outcome as plain text.
+      const outcome = await replaceLoadingView(d.slack, p.view.id, view, messageModal(workspaceText(plain, source.locale)));
+      if (!parsed && (outcome === 'left' || outcome === 'failed'))
+        await d.reply(receiptPayload(p, source), workspaceText('搜尋視窗已關閉或更新失敗，請重新執行 /livo search。', source.locale)).catch(() => {});
     })());
     return { response_action: 'update', view: messageModal(workspaceText(parsed ? '正在儲存變更…' : '正在搜尋 LIVO…', source.locale)) };
   }
@@ -79,34 +83,37 @@ export async function handleWorkspaceInteraction(p: Row, d: Actions, source: Row
   d.background((async () => {
     let view: Row;
     try {
-      if (!(await d.enabled())) fail(DISABLED);
-      const actor = await d.actor(p); source.locale = actor.locale;
-      const actionId = action?.action_id, value = valueOf(action);
-      if (command?.kind === 'home' || actionId === 'livo_workspace_home') view = homeModal(source);
-      else if (command?.kind === 'search' || actionId === 'livo_workspace_search') view = searchModal(source);
-      else if (command?.kind === 'query' || ['livo_workspace_query', 'livo_tasks_page'].includes(actionId)) {
-        const query = (command?.kind === 'query' ? command.query : value) as TaskQuery;
-        view = listModal(query, await workspace.list(actor, query), source);
-      } else if (actionId === 'livo_workspace_new') view = createModal(await d.catalog(actor), actor, {},
-        { ...source, thread: '', echoExistingMessage: false });
-      else {
+      view = await withinBudget((async (): Promise<Row> => {
+        if (!(await d.enabled())) fail(DISABLED);
+        const actor = await d.actor(p); source.locale = actor.locale;
+        const actionId = action?.action_id, value = valueOf(action);
+        if (command?.kind === 'home' || actionId === 'livo_workspace_home') return homeModal(source);
+        if (command?.kind === 'search' || actionId === 'livo_workspace_search') return searchModal(source);
+        if (command?.kind === 'query' || ['livo_workspace_query', 'livo_tasks_page'].includes(actionId)) {
+          const query = (command?.kind === 'query' ? command.query : value) as TaskQuery;
+          return listModal(query, await workspace.list(actor, query), source);
+        }
+        if (actionId === 'livo_workspace_new') return createModal(await d.catalog(actor), actor, {},
+          { ...source, thread: '', echoExistingMessage: false });
         const key = command && 'key' in command ? command.key : value.key;
         const mapped = shortcut ? await d.mapped(actor, source.channel, source.thread) : undefined;
-        if (shortcut && !mapped) view = searchModal(source);
-        else {
-          const id = mapped?.id || value.taskId || key;
-          if (!id) fail(UNAVAILABLE);
-          const task = await workspace.detail(actor, String(id), !!key && !value.taskId && !mapped);
-          if (command?.kind === 'edit' || actionId === 'livo_task_edit') view = editModal(task, source);
-          else if (actionId === 'livo_task_comment') view = commentModal(task, '', { ...source, echoExistingMessage: false });
-          else view = detailModal(task, d.link(task), source, await workspace.comments(actor, task.id, value.page || 0));
-        }
-      }
-    } catch (error) { view = notice(safeError(error, source.locale), source); }
-    await d.slack('views.update', { view_id: opening.view?.id || p.view?.id,
-      ...(opening.view?.hash ? { hash: opening.view.hash } : {}), view }).catch(async () => {
-        await d.reply(receiptPayload(p, source), workspaceText('任務視窗已關閉或更新失敗，請重新執行 /livo。', source.locale)).catch(() => {});
-      });
+        if (shortcut && !mapped) return searchModal(source);
+        const id = mapped?.id || value.taskId || key;
+        if (!id) fail(UNAVAILABLE);
+        const task = await workspace.detail(actor, String(id), !!key && !value.taskId && !mapped);
+        if (command?.kind === 'edit' || actionId === 'livo_task_edit') return editModal(task, source);
+        if (actionId === 'livo_task_comment') return commentModal(task, '', { ...source, echoExistingMessage: false });
+        return detailModal(task, d.link(task), source, await workspace.comments(actor, task.id, value.page || 0));
+      })());
+    } catch (error) {
+      if (loadFailureLog(error)) console.error(loadFailureLog(error));
+      view = notice(loadFailure(error), source);
+    }
+    // Never leave the loading text up: a rejected view falls back to a plain message.
+    const outcome = await replaceLoadingView(d.slack, opening.view?.id || p.view?.id, view,
+      messageModal(workspaceText(UNRESPONSIVE, source.locale)), opening.view?.hash);
+    if (outcome === 'left' || outcome === 'failed')
+      await d.reply(receiptPayload(p, source), workspaceText('任務視窗已關閉或更新失敗，請重新執行 /livo。', source.locale)).catch(() => {});
   })());
   return {};
 }

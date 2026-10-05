@@ -4,6 +4,7 @@ import { generateId } from '@/lib/generateId';
 import { logActivity } from '@/lib/activityLog';
 import { sendSlackNotify } from '@/lib/slackNotify';
 import { createNotification } from '../utils';
+import { mentionedMembers } from '@/lib/mentions';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import type { Comment, Task, User, Project, Status } from '@/types';
@@ -94,18 +95,13 @@ export const useTaskComments = ({
     }
     await supabase.from('tasks').update({ comment_count: newCount }).eq('id', task.id);
     const plainText = newComment.replace(/<[^>]*>/g, '').trim();
-    const mentionRegex = /data-id="([^"]+)"/g;
-    const dmTargets: { email: string; name?: string; reason: string }[] = [];
-    const mentionedIds = new Set<string>();
-    let match;
-    while ((match = mentionRegex.exec(newComment)) !== null) {
-      const mentionedUser = users.find(u => u.id === match![1]);
-      if (mentionedUser && mentionedUser.id !== currentMemberId) {
-        dmTargets.push({ email: mentionedUser.email, name: mentionedUser.name, reason: i18n.t('taskDetail.comments.mentionNotification') });
-        mentionedIds.add(mentionedUser.id);
-        createNotification(mentionedUser.id, currentMemberId, 'mention', task.id, plainText.slice(0, 100));
-        logActivity(currentMemberId, 'mention', `@${mentionedUser.name}`, task.id, task.taskKey);
-      }
+    // Picked from the @ list or typed as "@Name": both reach the person.
+    const mentioned = mentionedMembers(newComment, users).filter(person => person.id !== currentMemberId);
+    const dmTargets = mentioned.map(person => ({ email: person.email, name: person.name, reason: i18n.t('taskDetail.comments.mentionNotification') }));
+    const mentionedIds = new Set(mentioned.map(person => person.id));
+    for (const person of mentioned) {
+      createNotification(person.id, currentMemberId, 'mention', task.id, plainText.slice(0, 100));
+      logActivity(currentMemberId, 'mention', `@${person.name}`, task.id, task.taskKey);
     }
     const commentPreview = plainText.slice(0, 100);
     if (task.assigneeId && task.assigneeId !== currentMemberId && !mentionedIds.has(task.assigneeId))
@@ -151,12 +147,27 @@ export const useTaskComments = ({
 
   const saveEditComment = async () => {
     if (!editingCommentId || !editingCommentContent.trim()) return;
+    const before = taskComments.find(c => c.id === editingCommentId)?.content ?? '';
     setTaskComments(prev =>
       prev.map(c => c.id === editingCommentId ? { ...c, content: editingCommentContent } : c)
     );
-    await supabase.from('comments').update({ content: editingCommentContent }).eq('id', editingCommentId);
+    const { error } = await supabase.from('comments').update({ content: editingCommentContent }).eq('id', editingCommentId);
+    if (error) {
+      setTaskComments(prev => prev.map(c => c.id === editingCommentId ? { ...c, content: before } : c));
+      toast.error(i18n.t('taskDetail.comments.updateFailed') + error.message);
+      return;
+    }
     const editPlain = editingCommentContent.replace(/<[^>]*>/g, '').trim();
     logActivity(currentMemberId, 'edit_comment', editPlain.slice(0, 100), task?.id, task?.taskKey);
+    // Only people added by this edit are told; those already mentioned were told when it was posted.
+    if (task) {
+      const already = new Set(mentionedMembers(before, users).map(person => person.id));
+      for (const person of mentionedMembers(editingCommentContent, users)) {
+        if (person.id === currentMemberId || already.has(person.id)) continue;
+        createNotification(person.id, currentMemberId, 'mention', task.id, editPlain.slice(0, 100));
+        logActivity(currentMemberId, 'mention', `@${person.name}`, task.id, task.taskKey);
+      }
+    }
     setEditingCommentId(null);
     setEditingCommentContent('');
     toast.success(i18n.t('taskDetail.comments.updated'));

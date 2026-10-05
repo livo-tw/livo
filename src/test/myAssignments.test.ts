@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildMyAssignments, loadMyQaAssignments } from '@/lib/myAssignments';
+import { assignmentBucket, buildMyAssignments, groupAssignments, loadMyQaAssignments } from '@/lib/myAssignments';
 import type { Task, Status } from '@/types';
 import type { QaIssue, QaListInput } from '@/lib/qa/domain';
 
@@ -19,6 +19,15 @@ describe('my assigned cards', () => {
   it('puts overdue and due-today cards first, then priority for cards without a due date', () => {
     const rows = buildMyAssignments([task('no-date-low', { priority: 'low' }), task('today', { dueDate: '2026-10-04' }), task('overdue', { dueDate: '2026-10-01' }), task('no-date-high', { priority: 'highest' })], statuses, [], 'example-member', new Date('2026-10-04T12:00:00'));
     expect(rows.map(row => row.id)).toEqual(['overdue', 'today', 'no-date-high', 'no-date-low']);
+  });
+  it('groups the sorted list into non-empty due-date sections without reordering', () => {
+    const now = new Date('2026-10-04T12:00:00');
+    const rows = buildMyAssignments([task('later', { dueDate: '2026-10-09' }), task('no-date'), task('overdue', { dueDate: '2026-10-01' }), task('later-soon', { dueDate: '2026-10-05' })], statuses, [], 'example-member', now);
+    expect(groupAssignments(rows, now).map(group => [group.bucket, group.items.map(row => row.id)])).toEqual([
+      ['overdue', ['overdue']], ['upcoming', ['later-soon', 'later']], ['none', ['no-date']]]);
+    expect(groupAssignments([], now)).toEqual([]);
+    expect([null, '2026-10-03', '2026-10-04', '2026-10-04T23:30:00', '2026-10-05', 'not a date'].map(value => assignmentBucket(value, now)))
+      .toEqual(['none', 'overdue', 'today', 'today', 'upcoming', 'none']);
   });
   it('reads every QA page and deduplicates assignee/testing overlap', async () => {
     const records = Array.from({ length: 105 }, (_, index) => issue(`example-${index}`));

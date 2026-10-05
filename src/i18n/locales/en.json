@@ -258,7 +258,14 @@
       "byEmail": "Matched by email",
       "ownerOnly": "Only the highest administrator can change account mappings.",
       "reconfirm": "The highest administrator must map this account again below before it can use Slack features.",
-      "memberUnlinked": "This member unlinked Slack in My settings; only they can allow it again."
+      "memberUnlinked": "This member unlinked Slack in My settings; only they can allow it again.",
+      "likely": "Likely matches",
+      "otherAccounts": "Other Slack accounts",
+      "likelyHint": "Similar Slack accounts ({{count}}) are listed first. Make sure it's the same person before mapping.",
+      "allMembersMapped": "Every member is already mapped to a Slack account.",
+      "allSlackMapped": "Every Slack account is already mapped.",
+      "showMapped": "Show mapped accounts",
+      "mappedTag": "mapped"
     },
     "title": "Create cards and comments from Slack",
     "demo": "Demo mode does not connect to Slack. Configure a Docker installation to use this feature.",
@@ -582,10 +589,10 @@
     "admin": "Admin",
     "member": "Member",
     "superAdminDesc": "All permissions (delete projects, edit projects, manage statuses, delete cards, manage members, view member list)",
-    "adminDesc": "Edit projects, manage statuses, delete cards, view member list, add members",
-    "memberDesc": "Basic operations only (view cards, comment, edit cards assigned to self)",
+    "adminDesc": "Edit projects, manage statuses, delete tasks and bugs, view member list, add members",
+    "memberDesc": "Basic operations (view cards, comment, edit cards assigned to self); can delete tasks they created that nobody has started, and bugs they reported that are not yet triaged",
     "qaAdmin": "QA administrator",
-    "qaAdminDesc": "Manage the QA workflow and custom bug fields. Other permissions match a regular member."
+    "qaAdminDesc": "Manage the QA workflow and custom bug fields, and delete bugs. Other permissions match a regular member."
   },
   "board": {
     "titleAll": "All — Board",
@@ -887,7 +894,8 @@
     },
     "properties": "Task Properties",
     "noNestedSubtasks": "Nested subtasks are not allowed",
-    "linkNotFound": "Card {{key}} from the link was not found. It may have been deleted, or you may not have access to it."
+    "linkNotFound": "Card {{key}} from the link was not found. It may have been deleted, or you may not have access to it.",
+    "deleteNotAllowed": "The task was not deleted. Someone may have started it, or you did not create it; only an admin can delete it now."
   },
   "taskCreate": {
     "title": "Create Task",
@@ -1002,7 +1010,8 @@
       "fileSizeExceeded": "File size exceeds the {{size}} MB limit",
       "attachmentUploadFailed": "Attachment upload failed: ",
       "deleteTitle": "Delete comment",
-      "deleteConfirm": "Delete this comment? A file attached to it is deleted too. This cannot be undone."
+      "deleteConfirm": "Delete this comment? A file attached to it is deleted too. This cannot be undone.",
+      "updateFailed": "Could not update the comment: "
     },
     "metrics": {
       "createdStatus": "Created",
@@ -2713,7 +2722,8 @@
       "approval_returned": "Returned for changes",
       "approval_withdrawn": "Withdrew an approval",
       "approval_cancelled": "Cancelled an approval",
-      "approval_requirement_changed": "Changed the approval requirement"
+      "approval_requirement_changed": "Changed the approval requirement",
+      "delete_qa_issue": "Deleted a bug"
     },
     "otherAction": "Other action"
   },
@@ -3514,7 +3524,12 @@
     "priorityDefaultHint": "Nobody has set a priority yet; the default is used.",
     "overdue": "Overdue since {{date}}",
     "blocked": "Blocked",
-    "handoffOpen": "Handoff open"
+    "handoffOpen": "Handoff open",
+    "delete": "Delete bug",
+    "deleteTitle": "Delete bug",
+    "deleteConfirm": "Delete \"{{title}}\"? Its comments, attachments and history are deleted too; linked tasks stay. This cannot be undone.",
+    "deleted": "Bug {{id}} deleted",
+    "deleteFailed": "Could not delete the bug. Refresh and try again."
   },
   "deploymentEnvironments": {
     "title": "Deployment environments",
@@ -3947,7 +3962,14 @@
       "fix": "I fix",
       "verify": "I verify",
       "handoff": "Handed to me"
-    }
+    },
+    "sections": {
+      "overdue": "Overdue",
+      "today": "Due today",
+      "upcoming": "Upcoming",
+      "none": "No due date"
+    },
+    "dueDate": "Due {{date}}"
   },
   "boardSort": {
     "button": "Sort",

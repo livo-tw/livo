@@ -11,6 +11,7 @@ import { statusChangeUpdates } from '@/lib/taskStatusChange';
 import { announceStatusChange } from '@/lib/taskAnnouncements';
 import { useTaskAnnouncements } from '@/hooks/useTaskAnnouncements';
 import type { Task } from '@/types';
+import { canDeleteTaskRecord } from '@/lib/permissions';
 
 type Props = { detail: TaskDetailState };
 
@@ -24,7 +25,7 @@ const TaskSubtasksTab = ({ detail }: Props) => {
     newSubtaskTitle, setNewSubtaskTitle,
     subtaskInputRef, subtaskStatusPickerId, setSubtaskStatusPickerId,
     handleCreateSubtask, setSelectedTask,
-    updateTaskInDb, isMobile, permissions,
+    updateTaskInDb, isMobile, currentMember,
   } = detail;
 
   if (!task) return null;
@@ -122,14 +123,16 @@ const TaskSubtasksTab = ({ detail }: Props) => {
                   {subAssignee.avatar}
                 </div>
               )}
-              {permissions.canDeleteTask && (
+              {canDeleteTaskRecord(sub, currentMember, statuses) && (
                 <button
                   type="button"
                   onClick={async (e) => {
                     e.stopPropagation();
                     if (!(await confirm({ description: t('taskDetail.subtasks.deleteConfirm', { title: sub.title }), title: t('taskDetail.subtasks.deleteTitle'), destructive: true }))) return;
-                    const { error } = await supabase.from('tasks').delete().eq('id', sub.id);
+                    const { data, error } = await supabase.from('tasks').delete().eq('id', sub.id).select('id');
                     if (error) { toast.error(t('error.deleteFailed') + error.message); return; }
+                    // The server deletes nothing when the creator's task has meanwhile been picked up.
+                    if (!data?.length) { toast.error(t('task.deleteNotAllowed')); return; }
                     setAllTasks(prev => prev.filter(t => t.id !== sub.id));
                     toast.success(t('task.deleted'));
                   }}

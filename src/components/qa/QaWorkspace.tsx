@@ -147,6 +147,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       .catch(() => { if (!controller.signal.aborted) update([]); });
     return () => controller.abort();
   }, [client, baseActor.id, revision]);
+  // completedCreate: the record's own operation just finished (created or deleted), so its pending guard no longer applies.
   const openIssue = useCallback((id: string, action?: QaCommand['type'], defaults?: QaActionDefaults, completedCreate = false) => {
     if (!completedCreate && hasQaNavigationGuard()) { toast.info(t('qa.finishPending')); return; }
     const url = new URL(window.location.href);
@@ -256,7 +257,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       </>}
     </div>
     {(creating || !!issueId) && <QaRecordView title={creating ? t('qa.reportTitle') : detail?.issue.title || t('qa.details')} creating={creating} busy={busy} suspended={recordSuspended} onClose={() => { if (recordBusy || hasQaNavigationGuard()) return; creatingRef.current = false; setCreating(false); openIssue(''); }}>
-      {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
+      {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} onDeleted={() => { setBoardRevision(value => value + 1); window.dispatchEvent(new Event('livo:qa-changed')); openIssue('', undefined, undefined, true); }} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
     </QaRecordView>}
   </div>;
 }

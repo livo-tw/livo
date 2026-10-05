@@ -40,7 +40,8 @@ const TeamManageView = ({ initialTab = 'members' }: Props) => {
   return (
     <div className="flex-1 overflow-auto">
       <div className="px-4 py-6 md:px-6">
-        <div className="max-w-5xl mx-auto">
+        {/* Full width: the member table and settings use the whole content area. */}
+        <div className="w-full min-w-0">
           {/* Page header */}
           <div className="mb-6">
             <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('teamManage.title')}</h1>

@@ -18,6 +18,22 @@ export function assignmentDay(value?: string | null): number {
   date.setHours(0, 0, 0, 0); return date.getTime();
 }
 
+export type AssignmentBucket = 'overdue' | 'today' | 'upcoming' | 'none';
+export const ASSIGNMENT_BUCKETS: AssignmentBucket[] = ['overdue', 'today', 'upcoming', 'none'];
+
+/** Where a due date falls relative to today (local calendar days). */
+export function assignmentBucket(dueDate?: string | null, now = new Date()): AssignmentBucket {
+  const day = assignmentDay(dueDate), today = assignmentDay(now.toISOString());
+  return day < today ? 'overdue' : day === today ? 'today' : Number.isFinite(day) ? 'upcoming' : 'none';
+}
+
+/** Splits an already sorted list into its non-empty due-date sections, keeping the order inside each. */
+export function groupAssignments(items: MyAssignment[], now = new Date()): { bucket: AssignmentBucket; items: MyAssignment[] }[] {
+  const groups = new Map<AssignmentBucket, MyAssignment[]>(ASSIGNMENT_BUCKETS.map((bucket): [AssignmentBucket, MyAssignment[]] => [bucket, []]));
+  for (const item of items) groups.get(assignmentBucket(item.dueDate, now))!.push(item);
+  return ASSIGNMENT_BUCKETS.filter(bucket => groups.get(bucket)!.length).map(bucket => ({ bucket, items: groups.get(bucket)! }));
+}
+
 /** Counts records once even when the same member has both responsibilities. */
 export function buildMyAssignments(tasks: Task[], statuses: Status[], issues: QaIssue[], memberId: string, now = new Date()): MyAssignment[] {
   if (!memberId) return [];
@@ -41,8 +57,7 @@ export function buildMyAssignments(tasks: Task[], statuses: Status[], issues: Qa
     if (issue.handoff && !issue.handoff.resolvedAt && issue.handoff.nextOwnerId === memberId) roles.push('handoff');
     if (roles.length) items.push({ key: `bug:${issue.id}`, id: issue.id, kind: 'bug', title: issue.title, reference: qaShortId(issue.id), projectId: issue.projectId, roles, dueDate: issue.dueDate, priority: issue.priority - 1, updated: issue.updatedAt, issue });
   }
-  const today = assignmentDay(now.toISOString());
-  const urgency = (item: MyAssignment) => { const day = assignmentDay(item.dueDate); return day < today ? 0 : day === today ? 1 : Number.isFinite(day) ? 2 : 3; };
+  const urgency = (item: MyAssignment) => ASSIGNMENT_BUCKETS.indexOf(assignmentBucket(item.dueDate, now));
   return items.sort((left, right) => urgency(left) - urgency(right) || assignmentDay(left.dueDate) - assignmentDay(right.dueDate) || left.priority - right.priority || right.updated.localeCompare(left.updated) || left.key.localeCompare(right.key));
 }
 

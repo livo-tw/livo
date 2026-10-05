@@ -1,7 +1,7 @@
 import { createKnowledgeWorkData } from './knowledge-work-backend.ts';
 import { createWorkData, executeSlackWorkCommand } from './work-backend.ts';
 import { createReleaseData } from './release-backend.ts';
-import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, option, projectOptionGroups, requiresWebCreate, SLACK_LINK_DISABLED, taskOption, UNAVAILABLE, type Row } from './core.ts';
+import { commentRecipients, convertMrkdwn, enabled, matchEmail, NO_ACCOUNT, NO_PROJECT, NO_STATUS, option, projectOptionGroups, requiresWebCreate, SLACK_LINK_DISABLED, taskOption, UNAVAILABLE, type Row } from './core.ts';
 import { createApprovalData, executeSlackApprovalCommand } from './approval-backend.ts';
 import { sourceOf, type Actions } from './handler.ts';
 import { createWorkspaceData, WORKSPACE_ERRORS } from './workspace-backend.ts';
@@ -50,7 +50,7 @@ export class Database {
       if (path === '/rest/v1/rpc/livo_slack_update' && typeof error?.message === 'string' && Object.prototype.hasOwnProperty.call(WORKSPACE_ERRORS, error.message))
         fail(WORKSPACE_ERRORS[error.message]);
       if (/^\/rest\/v1\/rpc\/livo_set_task_(deadline|reminder)$/.test(path) && typeof error?.message==='string' && /^planning_(forbidden|unavailable|conflict|invalid_input|invalid_date|invalid_kind|date_required|invalid_reason|reason_required|invalid_pause)$/.test(error.message)) throw new TaskPlanningError(error.message);
-      throw new Error('Database operation failed');
+      throw Object.assign(new Error('Database operation failed'), { name: 'DatabaseError' });
     }
     return res.status === 204 ? null : res.json();
   }
@@ -70,6 +70,19 @@ export async function trustedAdminBinding(db: Database, binding: Row | undefined
   const rows = await db.rows('members', { select: 'id,role,is_active', id: `eq.${issuer}`, role: 'eq.super_admin', is_active: 'eq.true', limit: '1' });
   return rows.length === 1 && rows[0].id === issuer && rows[0].role === 'super_admin' && rows[0].is_active === true;
 }
+/**
+ * Server log line for a failed Slack call: the method, Slack's error code, a
+ * missing scope and Slack's block validation pointers. Never the token, the
+ * request body or user text.
+ */
+export function slackFailureLog(method: string, code: string, result: Row = {}): string {
+  const clean = (value: unknown, max: number) => String(value ?? '').replace(/[^\x20-\x7e]/g, '').slice(0, max);
+  const needed = typeof result.needed === 'string' ? ` needed=${clean(result.needed, 200)}` : '';
+  const messages = Array.isArray(result.response_metadata?.messages)
+    ? result.response_metadata.messages.slice(0, 3).map((message: unknown) => clean(message, 200)).filter(Boolean) : [];
+  return `slack_api_error method=${clean(method, 60)} error=${code}${needed}${messages.length ? ` detail=${JSON.stringify(messages)}` : ''}`;
+}
+const slackFailure = (code: string) => Object.assign(new Error('Slack operation failed'), { name: 'SlackApiError', slackError: code });
 /** Slack Web API calls with the bot token from slack_config (or SLACK_BOT_TOKEN). */
 export function slackClient(env: Environment, admin = new Database(env)) {
   let tokenPromise: Promise<string> | undefined;
@@ -79,11 +92,23 @@ export function slackClient(env: Environment, admin = new Database(env)) {
   })();
   return async (method: string, body: Row): Promise<Row> => {
     const read = ['users.info', 'users.list', 'chat.getPermalink'].includes(method);
-    const res = await fetch(`https://slack.com/api/${method}${read ? '?' + new URLSearchParams(body) : ''}`, { method: read ? 'GET' : 'POST',
-      headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json; charset=utf-8' },
-      ...(read ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(12000) });
-    const result = await res.json();
-    if (!res.ok || !result.ok) throw new Error('Slack operation failed');
+    const authorization = `Bearer ${await token()}`;
+    let res: Response, result: Row;
+    try {
+      res = await fetch(`https://slack.com/api/${method}${read ? '?' + new URLSearchParams(body) : ''}`, { method: read ? 'GET' : 'POST',
+        headers: { Authorization: authorization, 'Content-Type': 'application/json; charset=utf-8' },
+        ...(read ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(12000) });
+      result = await res.json().catch(() => ({}));
+    } catch (error) {
+      const code = error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'unreachable';
+      console.error(slackFailureLog(method, code));
+      throw slackFailure(code);
+    }
+    if (!res.ok || !result.ok) {
+      const code = typeof result.error === 'string' && /^[a-z_]{1,60}$/.test(result.error) ? result.error : `http_${res.status}`;
+      console.error(slackFailureLog(method, code, result));
+      throw slackFailure(code);
+    }
     return result;
   };
 }
@@ -153,7 +178,8 @@ export function createActions(env: Environment, background: (work: Promise<unkno
         db.rows('projects', { select: 'id,name', is_archived: 'eq.false', order: 'name', limit: '1' }),
         db.rows('statuses', { select: 'id,name', order: 'sort_order,id', limit: '1' }), db.setting('required_fields'),
       ]);
-      if (!projects.length || !statuses.length) fail('沒有可用的專案或狀態，請洽管理員');
+      if (!projects.length) fail(NO_PROJECT);
+      if (!statuses.length) fail(NO_STATUS);
       if (requiresWebCreate(required || {}))
         fail('團隊設有額外必填欄位，請在 LIVO 網頁建立卡片');
       return { projects, statuses, required };

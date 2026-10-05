@@ -5,7 +5,8 @@ import { handleRelease } from './release-handler.ts';
 import type { ReleaseData } from './release-backend.ts';
 import type { WorkData } from './work-backend.ts';
 import { handleQaSlack, isQaSlackPayload, type QaSlackActions } from '../qa/slack.ts';
-import { commentModal, createModal, DISABLED, localize, messageDraft, messageModal, parseCommand, parseSubmission, taskReceipt, UNAVAILABLE, type Row } from './core.ts';
+import { commentModal, createModal, DISABLED, loadFailure, loadFailureLog, localize, messageDraft, messageModal, parseCommand, parseSubmission, replaceLoadingView,
+  slackErrorOf, taskReceipt, TRIGGER_EXPIRED, UNAVAILABLE, UNRESPONSIVE, withinBudget, type Row } from './core.ts';
 import { handleApprovalInteraction } from './approval-handler.ts';
 import type { ApprovalData } from './approval-backend.ts';
 import { handleWorkspaceInteraction } from './workspace-handler.ts';
@@ -119,7 +120,8 @@ export async function handleInteraction(p: Row, envelopeId: string, d: Actions):
           text = safeError(error);
           await d.reply({ ...p, user_id: p.user.id, channel_id: source.channel }, text).catch(() => {});
         }
-        await d.slack('views.update', { view_id: p.view.id, view: completedView || messageModal(text, successful) }).catch(() => {});
+        // A rejected detail view falls back to the plain receipt or error text.
+        await replaceLoadingView(d.slack, p.view.id, completedView || messageModal(text, successful), messageModal(text, successful));
       })());
       return { response_action: 'update', view: messageModal('正在儲存，完成後會收到 LIVO 通知。') };
     }
@@ -142,30 +144,38 @@ export async function handleInteraction(p: Row, envelopeId: string, d: Actions):
     }
     // Consume the short-lived trigger first, before email lookup or catalog reads.
     const opening = await d.slack('views.open', { trigger_id: p.trigger_id, view: messageModal('正在載入 LIVO…') });
-    let view: Row;
+    // From here on the person sees a loading modal. Every outcome must replace
+    // it: the form, a reason it cannot open, or a retry message.
+    let view: Row, locale: string | undefined;
     try {
-      const actor = await d.actor(p), source = sourceOf(p);
-      source.locale = actor.locale;
-      let draft: Row = {};
-      if (p.message) {
-        const permalink = await d.slack('chat.getPermalink', { channel: source.channel, message_ts: p.message.ts });
-        draft = messageDraft(p.message, permalink.permalink);
-      }
-      if (command?.kind === 'comment' || p.callback_id === 'livo_comment_task') {
-        const task = command?.kind === 'comment' ? await d.task(actor, command.key, true)
-          : await d.mapped(actor, source.channel, source.thread);
-        if (command && !task) throw Object.assign(new Error(UNAVAILABLE), { name: 'ActionError' });
-        view = commentModal(task, draft.description || '', source);
-      } else {
+      view = await withinBudget((async () => {
+        const actor = await d.actor(p), source = sourceOf(p);
+        source.locale = locale = actor.locale;
+        let draft: Row = {};
+        if (p.message) {
+          const permalink = await d.slack('chat.getPermalink', { channel: source.channel, message_ts: p.message.ts });
+          draft = messageDraft(p.message, permalink.permalink);
+        }
+        if (command?.kind === 'comment' || p.callback_id === 'livo_comment_task') {
+          const task = command?.kind === 'comment' ? await d.task(actor, command.key, true)
+            : await d.mapped(actor, source.channel, source.thread);
+          if (command && !task) throw Object.assign(new Error(UNAVAILABLE), { name: 'ActionError' });
+          return commentModal(task, draft.description || '', source);
+        }
         const catalog = await d.catalog(actor);
-        view = createModal(catalog, actor, { ...draft, ...(command?.kind === 'new' ? { title: command.text } : {}) }, source);
-      }
-    } catch (error) { view = messageModal(safeError(error)); }
-    await d.slack('views.update', { view_id: opening.view.id, view });
+        return createModal(catalog, actor, { ...draft, ...(command?.kind === 'new' ? { title: command.text } : {}) }, source);
+      })());
+    } catch (error) {
+      if (loadFailureLog(error)) console.error(loadFailureLog(error));
+      view = messageModal(workspaceText(loadFailure(error), locale));
+    }
+    const unresponsive = workspaceText(UNRESPONSIVE, locale);
+    if (await replaceLoadingView(d.slack, opening.view?.id, view, messageModal(unresponsive)) === 'failed')
+      await d.reply(p, unresponsive).catch(() => {});
     return {};
   } catch (error) {
     if (p.type === 'block_suggestion') return { options: [] };
-    await d.reply(p, safeError(error)).catch(() => {});
+    await d.reply(p, slackErrorOf(error) === 'expired_trigger_id' ? TRIGGER_EXPIRED : safeError(error)).catch(() => {});
     return {};
   }
 }

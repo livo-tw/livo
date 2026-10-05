@@ -20,13 +20,16 @@ export async function handleSlackActionsConfig(req: Request, env: Environment): 
         // Only owners can map accounts, so only they need every Slack email.
         if (member.role !== 'super_admin') return json({ error: 'forbidden' }, 403);
         // Workspace people an admin can assign (users:read and users:read.email).
-        const users: { id: string; name: string; email: string }[] = [];
+        const users: { id: string; name: string; email: string; realName?: string; handle?: string }[] = [];
         let cursor = '';
         for (let page = 0; page < 10; page++) {
           const list = await slack('users.list', { limit: '200', ...(cursor ? { cursor } : {}) });
           for (const u of list.members || []) {
             if (u.deleted || u.is_bot || u.id === 'USLACKBOT') continue;
-            users.push({ id: u.id, name: u.profile?.display_name || u.real_name || u.name || u.id, email: u.profile?.email || '' });
+            const name = u.profile?.display_name || u.real_name || u.name || u.id, realName = u.real_name || u.profile?.real_name || '';
+            // The other Slack names help the settings page suggest likely matches for a member.
+            users.push({ id: u.id, name, email: u.profile?.email || '', ...(realName && realName !== name ? { realName } : {}),
+              ...(u.name && u.name !== name ? { handle: u.name } : {}) });
           }
           cursor = list.response_metadata?.next_cursor || '';
           if (!cursor) break;
@@ -35,7 +38,7 @@ export async function handleSlackActionsConfig(req: Request, env: Environment): 
       }
       const heartbeat = await admin.setting('slack_socket_status');
       // Suspended manual mappings (issuer no longer an active owner) stay listed with a reconfirm hint.
-      const bindings = await admin.rows('external_account_bindings', { select: 'id,member_id,display_name,bound_at,verified_by,verified_by_member_id,is_verified,reconfirm_required',
+      const bindings = await admin.rows('external_account_bindings', { select: 'id,member_id,platform_user_id,display_name,bound_at,verified_by,verified_by_member_id,is_verified,reconfirm_required',
         platform: 'eq.slack', or: '(is_verified.eq.true,reconfirm_required.eq.true)', order: 'bound_at.desc' });
       const ids = [...new Set(bindings.flatMap(b => [b.member_id, b.verified_by_member_id]).filter(Boolean))];
       const members = ids.length ? await admin.rows('members', { select: 'id,name,is_active,role', id: `in.(${ids.join(',')})` }) : [];

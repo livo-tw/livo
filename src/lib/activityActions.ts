@@ -50,7 +50,7 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
 };
 
 /** Actions named under activityLog.extra (written by the app, Slack and the approval server). */
-const EXTRA_ACTIONS = new Set(['add_tag', 'remove_tag', 'delete_tag', 'approval_rule_created', 'approval_rule_updated', 'approval_rule_deleted', 'bulk_assign', 'bulk_update_priority', 'bulk_update_status', 'change_job_title', 'delete_product_line', 'edit_comment', 'end_standup', 'export_csv', 'mention', 'notification_rule_created', 'notification_rule_deleted', 'notification_rule_toggled', 'notification_template_created', 'notification_template_updated', 'notification_template_deleted', 'unlink_parent', 'create', 'approval_requested', 'approval_step_approved', 'approval_approved', 'approval_rejected', 'approval_returned', 'approval_withdrawn', 'approval_cancelled', 'approval_requirement_changed']);
+const EXTRA_ACTIONS = new Set(['add_tag', 'remove_tag', 'delete_tag', 'delete_qa_issue', 'approval_rule_created', 'approval_rule_updated', 'approval_rule_deleted', 'bulk_assign', 'bulk_update_priority', 'bulk_update_status', 'change_job_title', 'delete_product_line', 'edit_comment', 'end_standup', 'export_csv', 'mention', 'notification_rule_created', 'notification_rule_deleted', 'notification_rule_toggled', 'notification_template_created', 'notification_template_updated', 'notification_template_deleted', 'unlink_parent', 'create', 'approval_requested', 'approval_step_approved', 'approval_approved', 'approval_rejected', 'approval_returned', 'approval_withdrawn', 'approval_cancelled', 'approval_requirement_changed']);
 
 /**
  * The translation key for a recorded action. Every action has a name; an unknown

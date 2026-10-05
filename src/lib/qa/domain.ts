@@ -233,6 +233,15 @@ function customFields(value: unknown, ctx: QaContext, previous?: QaCustomFieldVa
   catch (error) { if (error instanceof QaFieldError) return fail(error.code); throw error; }
 }
 
+/**
+ * Deleting a bug is permanent: its comments, history and attachments go with it.
+ * Admins and QA admins delete any bug; the reporter deletes their own while it is
+ * still new, before anyone has triaged it. Both servers check this again.
+ */
+export function canQaDelete(issue: Pick<QaIssue, 'reporterId' | 'state'>, actor: QaActor): boolean {
+  return admin(actor) || actor.qaAdmin === true || (issue.reporterId === actor.id && issue.state === 'new');
+}
+
 /** Permissions are checked again inside both server adapters; UI is advisory. */
 export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['type']): boolean {
   const lead = admin(actor) || issue.qaOwnerId === actor.id;

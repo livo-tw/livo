@@ -3,6 +3,7 @@ import { resolveSlackToken } from './functions/slack';
 import { qaSlackCard } from './qa/slack';
 import type { QaIssue } from './qa/domain';
 import { parseQaWorkflow } from './qa/workflow';
+import { slackErrorCode } from './slackNotifyCore';
 
 export const qaSlackLink = (env: Env, issue: QaIssue) => `${appBaseUrl(env).replace(/\/$/, '')}/demo/?qa=${encodeURIComponent(issue.id)}`;
 export async function getQaSlackWorkflow(env: Env, ws: string) {
@@ -23,8 +24,13 @@ export function qaSlackClient(env: Env, ws: string) {
     const response = await fetch(`https://slack.com/api/${method}${read ? '?' + query : ''}`, { method: read ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${await token}`, 'Content-Type': 'application/json; charset=utf-8' },
       ...(read ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10000) });
-    const result = await response.json() as Record<string, any>;
-    if (!response.ok || !result.ok) throw new Error('qa_slack_unavailable');
+    const result = await response.json().catch(() => ({})) as Record<string, any>;
+    if (!response.ok || !result.ok) {
+      // Same server log line as the Docker slack-interact client: the method and
+      // Slack's error code, never the token or message content.
+      console.error(`slack_api_error method=${method.replace(/[^\w.]/g, '').slice(0, 60)} error=${slackErrorCode(result.error)}`);
+      throw new Error('qa_slack_unavailable');
+    }
     return result;
   };
 }

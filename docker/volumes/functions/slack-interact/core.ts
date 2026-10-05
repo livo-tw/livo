@@ -1,5 +1,6 @@
 import { groupProjectsByLine, slackProjectOptionGroups } from './projectGroups.ts';
 // Portable interaction rules: no tokens, network calls or runtime globals.
+// Slack is reached only through a `slack` function that the caller passes in.
 export type Row = Record<string, any>;
 export function requiresWebCreate(required: Row = {}): boolean {
   const supported = ['title', 'project', 'status', 'priority', 'dueDate', 'assignee', 'requirement'];
@@ -9,6 +10,61 @@ export const DISABLED = 'LIVO 的 Slack 功能目前未啟用，請洽管理員'
 export const NO_ACCOUNT = '找不到對應的 LIVO 帳號：請管理員確認你的 Slack Email 與 LIVO 相同，或在 LIVO 的 Slack 設定手動對應你的帳號';
 export const SLACK_LINK_DISABLED = '你已在 LIVO 解除 Slack 連結，LIVO 不會用這個 Slack 帳號替你操作。要恢復，請到 LIVO 的「我的設定 → Slack 連結」重新允許。';
 export const UNAVAILABLE = '找不到卡片，或你沒有權限查看這張卡片';
+export const NO_PROJECT = '沒有可建立卡片的專案：你在 LIVO 沒有可使用的未封存專案，請洽管理員';
+export const NO_STATUS = 'LIVO 尚未設定任務狀態，無法建立卡片，請洽管理員';
+export const UNRESPONSIVE = 'LIVO 暫時無法回應，請關閉視窗後再試一次；若持續失敗，請洽管理員';
+export const TRIGGER_EXPIRED = 'LIVO 回應太慢，Slack 沒有開啟表單，請再執行一次';
+/**
+ * Loading a modal's content must end before the edge runtime stops the worker.
+ * The runtime sends new requests to a worker during the first half of its 60 s
+ * wall clock and cancels whatever still runs at 60 s, so a request always has
+ * at least 30 s: 15 s to load plus one Slack call (12 s timeout) to show the
+ * result or the reason it failed.
+ */
+export const LOAD_BUDGET_MS = 15000;
+/** The Slack Web API error code carried by a failed Slack call ('' when unknown). */
+export const slackErrorOf = (error: unknown): string => {
+  const code = error && typeof error === 'object' ? (error as Row).slackError : undefined;
+  return typeof code === 'string' ? code : '';
+};
+/** Rejects with a TimeoutError when `work` has not settled within `ms`. */
+export function withinBudget<T>(work: Promise<T>, ms = LOAD_BUDGET_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('LIVO did not respond in time'), { name: 'TimeoutError' })), ms);
+  });
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+}
+const isActionError = (error: unknown): error is Error => error instanceof Error && error.name === 'ActionError';
+/** User-facing reason a form could not be loaded; internal failures stay generic. */
+export const loadFailure = (error: unknown): string => isActionError(error) ? error.message : UNRESPONSIVE;
+/**
+ * Server log line for an unexpected load failure (a Slack error code, a
+ * timeout or the error class; never its message), or '' for an expected one.
+ */
+export const loadFailureLog = (error: unknown): string => isActionError(error) ? ''
+  : `slack_form_load_failed reason=${slackErrorOf(error) || (error instanceof Error ? error.name : 'unknown')}`;
+// The person closed the modal or already moved to a newer view, or the update
+// timed out and may still have been applied: none of these may be overwritten.
+const LEAVE_VIEW = new Set(['not_found', 'hash_conflict', 'timeout', 'unreachable']);
+export type ViewOutcome = 'shown' | 'fallback' | 'left' | 'failed';
+/**
+ * Replaces a loading modal with its loaded view. A loading text must never
+ * stay up: when Slack rejects the view (invalid blocks, a view too large, …)
+ * the modal shows `fallback`, a plain message view, instead. 'failed' means
+ * nothing could be shown, so the caller should reach the person another way.
+ */
+export async function replaceLoadingView(slack: (method: string, body: Row) => Promise<Row>, viewId: string | undefined,
+  view: Row, fallback: Row, hash?: string): Promise<ViewOutcome> {
+  if (!viewId) return 'failed';
+  const update = (next: Row) => slack('views.update', { view_id: viewId, ...(hash ? { hash } : {}), view: next });
+  try { await update(view); return 'shown'; } catch (error) {
+    if (LEAVE_VIEW.has(slackErrorOf(error))) return 'left';
+  }
+  try { await update(fallback); return 'fallback'; } catch (error) {
+    return LEAVE_VIEW.has(slackErrorOf(error)) ? 'left' : 'failed';
+  }
+}
 const words: Record<string, [string, string]> = {
   '建立 LIVO 卡片': ['创建 LIVO 卡片', 'Create LIVO card'], '留言到 LIVO 卡片': ['留言到 LIVO 卡片', 'Comment on LIVO card'],
   '標題': ['标题', 'Title'], '專案': ['项目', 'Project'], '狀態': ['状态', 'Status'], '經辦人': ['经办人', 'Assignee'],

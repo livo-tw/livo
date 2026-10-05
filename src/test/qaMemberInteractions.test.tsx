@@ -259,12 +259,43 @@ describe('QA detail uses shared controls with a focused next action', () => {
     const edit = await screen.findByRole('menuitem', { name: 'qa.edit' });
     await waitFor(() => expect(edit).toHaveFocus());
     fireEvent.keyDown(edit, { key: 'End' });
-    expect(screen.getByRole('menuitem', { name: 'qa.taskLinks' })).toHaveFocus();
+    // Delete is kept last, after a separator, for those allowed to delete.
+    expect(screen.getByRole('menuitem', { name: 'qa.delete' })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: 'Home' });
     fireEvent.click(edit);
     await screen.findByRole('dialog', { name: 'qa.edit' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByLabelText(/qa.titleField/)).toBeTruthy();
+  });
+
+  it('deletes a bug after one confirmation and leaves the record', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined), onDeleted = vi.fn();
+    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn().mockResolvedValue([]), delete: remove } as unknown as QaClient;
+    render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={vi.fn()} onBack={vi.fn()} onDeleted={onDeleted} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.delete' }));
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'common.confirm' }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(remove).toHaveBeenCalledWith(detail.issue);
+  });
+
+  it('offers delete to the reporter of a new bug and to QA admins, not to other members', async () => {
+    const open = async (actor: QaActor, state: QaDetail['issue']['state'] = 'new') => {
+      const view = renderDetail({ issue: { ...issue, state } }, actor);
+      // No menu at all when the member has nothing else to do here.
+      const more = screen.queryByRole('button', { name: 'qa.moreActions' });
+      if (!more) { view.unmount(); return false; }
+      fireEvent.click(more);
+      await screen.findAllByRole('menuitem');
+      const found = !!screen.queryByRole('menuitem', { name: 'qa.delete' });
+      view.unmount();
+      return found;
+    };
+    expect(await open({ id: 'reporter', role: 'member' })).toBe(true);
+    expect(await open({ id: 'reporter', role: 'member' }, 'triaged')).toBe(false);
+    expect(await open({ id: 'qa-lead', role: 'member', qaAdmin: true }, 'triaged')).toBe(true);
+    expect(await open({ id: 'visitor', role: 'member' })).toBe(false);
   });
 
   it('explains who acts next to another member and hides unauthorized controls', () => {

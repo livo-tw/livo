@@ -14,6 +14,7 @@ import TaskSubtasksTab from './TaskSubtasksTab';
 import TaskTimeTab from './TaskTimeTab';
 import TaskSidebarFields from './TaskSidebarFields';
 import { useUIContext } from '@/context/UIContext';
+import { canDeleteTaskRecord } from '@/lib/permissions';
 import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 
 type Props = { onClose: () => void };
@@ -24,14 +25,14 @@ const TaskDetailContent = ({ onClose }: Props) => {
   const { t } = useTranslation();
   const detail = useTaskDetail();
   const {
-    task, line, project, allTasks,
+    task, line, project, allTasks, statuses,
     otherViewers,
     activeTab, setActiveTab,
     showSaveTemplate, setShowSaveTemplate,
     templateName, setTemplateName,
     templateScope, setTemplateScope,
     taskComments, taskActivityLogs,
-    permissions, currentMember,
+    currentMember,
     taskDisplayMode, setTaskDisplayMode,
     hasFeature, isMobile,
     handleDelete, handleCopyLink, handleSaveAsTemplate, handleUnlinkParent,
@@ -110,7 +111,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
               </div>
             )}
           </div>
-          {permissions.canDeleteTask && (
+          {canDeleteTaskRecord(task, currentMember, statuses) && (
             // One confirmation dialog, which states that deleting cannot be undone.
             <button onClick={() => void handleDelete()} title={t('task.deleteTitle')} aria-label={t('task.deleteTitle')} className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
               <Trash2 size={15} />

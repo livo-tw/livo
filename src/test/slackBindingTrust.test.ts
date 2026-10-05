@@ -92,6 +92,8 @@ describe('Slack settings for account mappings', () => {
       }
       if (table === 'external_account_bindings') {
         expect(url.searchParams.get('or')).toBe('(is_verified.eq.true,reconfirm_required.eq.true)');
+        // The settings page hides Slack accounts that already have a working mapping.
+        expect(url.searchParams.get('select')?.split(',')).toEqual(expect.arrayContaining(['member_id', 'platform_user_id', 'is_verified', 'reconfirm_required']));
         return Response.json(bindings);
       }
       return Response.json([]);

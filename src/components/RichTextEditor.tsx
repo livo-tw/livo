@@ -20,6 +20,8 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import type { User } from '@/types';
+import { mentionSuggestions } from '@/lib/mentions';
+import { isPlaceholderEmail } from '@/lib/memberEmail';
 import type { Editor } from '@tiptap/core';
 import { KnowledgeHighlight, KnowledgeTextBackground } from '@/lib/knowledgeEditorMarks';
 
@@ -106,7 +108,8 @@ const MentionList = forwardRef<{ onKeyDown: (props: { event: KeyboardEvent }) =>
               >
                 {item.avatar}
               </div>
-              <span>{item.name}</span>
+              <span className="min-w-0 truncate">{item.name}</span>
+              {!isPlaceholderEmail(item.email) && <span className="ml-auto min-w-0 truncate pl-2 text-[10px] text-muted-foreground">{item.email.split('@')[0]}</span>}
             </button>
           ))
         )}
@@ -149,11 +152,8 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
           return ['span', { class: 'mention', 'data-id': node.attrs.id }, `@${node.attrs.label}`];
         },
         suggestion: {
-          items: ({ query }: { query: string }) => {
-            return membersRef.current
-              .filter(m => m.name.toLowerCase().includes(query.toLowerCase()))
-              .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-          },
+          // Name first, then the e-mail account, so "@irene" also finds a member shown under another name.
+          items: ({ query }: { query: string }) => mentionSuggestions(membersRef.current, query),
           render: () => {
             let component: ReactRenderer<Record<string, unknown>> | null = null;
             let popup: HTMLDivElement | null = null;

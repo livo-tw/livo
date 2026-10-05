@@ -8,7 +8,7 @@ import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
-  applyQaCommand, canQaComment, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
+  applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
   type QaCommand, type QaContext, type QaIssue, type QaComment, type QaEvent,
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
@@ -133,6 +133,47 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   try {notifyChanges(env,c.executionCtx,[{table:'qa_issues',eventType:before?'UPDATE':'INSERT',new:{id:after.id,workspace_id:ws,project_id:after.projectId,version:after.version},old:null}],ws);}catch{/* polling/readback still works */}
   try {c.executionCtx.waitUntil(syncQaSlackIssue(env,ws,after).catch(()=>console.error('qa_slack_sync_failed')));}catch{/* committed state never depends on Slack */}
   return result;
+}
+/**
+ * Permanently removes a bug with its comments, history, attachments, uploads, Slack
+ * links, receipts and in-app notifications, in one D1 transaction. Every statement
+ * repeats the version and permission check, so a bug changed or re-triaged meanwhile
+ * is left untouched and the caller gets a conflict.
+ */
+async function deleteIssue(c:C,issue:QaIssue):Promise<{id:string;deleted:true}> {
+  const env=c.env,auth=c.get('auth'),ws=auth.member.workspaceId,id=issue.id,now=new Date().toISOString();
+  if(!await commandAuthId(env,auth))throw new QaError('qa_forbidden',403);
+  const [attachments,uploads]=await Promise.all([
+    env.DB.prepare('SELECT storage_key,size,restored_by FROM qa_attachments WHERE workspace_id=? AND issue_id=?').bind(ws,id).all<{storage_key:string;size:number;restored_by:string|null}>(),
+    env.DB.prepare('SELECT storage_key,multipart_id,state FROM qa_upload_sessions WHERE workspace_id=? AND issue_id=?').bind(ws,id).all<{storage_key:string;multipart_id:string|null;state:string}>(),
+  ]);
+  // Only finalized uploads were added to the workspace's used bytes (qa_attachment_finalize).
+  const released=attachments.results.filter(row=>row.restored_by===null).reduce((sum,row)=>sum+Number(row.size),0);
+  const guard=`EXISTS(SELECT 1 FROM qa_issues q JOIN members m ON m.workspace_id=q.workspace_id AND m.id=? AND m.is_active=1
+    WHERE q.workspace_id=? AND q.id=? AND q.version=? AND (m.role IN ('admin','super_admin') OR m.is_qa_admin=1 OR (q.reporter_id=m.id AND q.state='new')))`;
+  const g=[auth.member.id,ws,id,issue.version];
+  const scoped=(table:string,column='issue_id')=>env.DB.prepare(`DELETE FROM ${table} WHERE workspace_id=? AND ${column}=? AND ${guard}`).bind(ws,id,...g);
+  const results=await env.DB.batch([
+    env.DB.prepare(`INSERT INTO activity_logs(workspace_id,id,user_id,action,target_type,task_id,task_key,detail,created_at) SELECT ?,?,?,'delete_qa_issue','qa',?,?,?,? WHERE ${guard}`)
+      .bind(ws,crypto.randomUUID(),auth.member.id,id,`#${id.slice(-8)}`,issue.title,now,...g), // the app's qaShortId
+    env.DB.prepare(`DELETE FROM qa_upload_parts WHERE workspace_id=? AND upload_id IN (SELECT id FROM qa_upload_sessions WHERE workspace_id=? AND issue_id=?) AND ${guard}`).bind(ws,ws,id,...g),
+    scoped('qa_upload_sessions'),scoped('qa_attachments'),scoped('qa_comments'),scoped('qa_events'),scoped('qa_slack_links'),scoped('qa_commands'),
+    env.DB.prepare(`DELETE FROM notifications WHERE workspace_id=? AND type='qa_update' AND json_valid(content) AND json_extract(content,'$.issueId')=? AND ${guard}`).bind(ws,id,...g),
+    env.DB.prepare(`UPDATE workspaces SET storage_used_bytes=MAX(0,storage_used_bytes-?) WHERE id=? AND ? > 0 AND ${guard}`).bind(released,ws,released,...g),
+    env.DB.prepare(`DELETE FROM qa_issues WHERE workspace_id=? AND id=? AND version=? AND ${guard}`).bind(ws,id,issue.version,...g),
+  ]);
+  if(results[results.length-1]?.meta.changes!==1)throw new QaError('qa_conflict',409);
+  try {notifyChanges(env,c.executionCtx,[{table:'qa_issues',eventType:'DELETE',new:null,old:{id,workspace_id:ws,project_id:issue.projectId}}],ws);}catch{/* polling/readback still works */}
+  // Stored files go after the rows; a failed cleanup leaves an unreferenced object, never a broken bug.
+  const keys=[...new Set([...attachments.results,...uploads.results].map(row=>row.storage_key))];
+  const cleanup=async()=>{
+    for(const upload of uploads.results.filter(row=>row.multipart_id&&row.state!=='complete')){
+      try{await env.ATTACHMENTS.resumeMultipartUpload(upload.storage_key,upload.multipart_id!).abort();}catch{/* already finished or gone */}
+    }
+    for(let i=0;i<keys.length;i+=1000)await env.ATTACHMENTS.delete(keys.slice(i,i+1000));
+  };
+  try {c.executionCtx.waitUntil(cleanup().catch(()=>console.error('qa_delete_storage_cleanup_failed')));}catch{/* rows are already gone */}
+  return {id,deleted:true};
 }
 async function list(env:Env,ws:string,actor:string,input:QaListInput) {
   const clauses=['q.workspace_id=?'], params:(string|number)[]=[ws];
@@ -358,6 +399,12 @@ export async function handleQa(c:C):Promise<Response> {
       const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter((v):v is string=>!!v))];
       const names=people.length?await c.env.DB.prepare(`SELECT id,name FROM members WHERE workspace_id=? AND id IN (${people.map(()=>'?').join(',')})`).bind(ws,...people).all<{id:string;name:string}>():{results:[]};
       return c.json({issue,memberNames:Object.fromEntries(names.results.map(m=>[m.id,m.name])),coordination:await coordination(c.env,ws,issue.projectId,true),comments:comments.results,events:events.results,attachments:attachments.results.map(qaAttachmentWire)});
+    }
+    if(action==='delete') {
+      const id=qaId(body.id),issue=await getQaIssue(c.env,ws,id);
+      if(!Number.isSafeInteger(body.expectedVersion)||body.expectedVersion!==issue.version)throw new QaError('qa_conflict',409);
+      if(!canQaDelete(issue,{id:auth.member.id,role:auth.member.role,qaAdmin:active.is_qa_admin===1}))throw new QaError('qa_forbidden',403);
+      return c.json(await deleteIssue(c,issue));
     }
     if(['upload_init','upload_complete','download'].includes(action))return await handleQaStorage(c,action,body);
     if(!['create','command','comment'].includes(action))throw new QaError('qa_invalid_action');

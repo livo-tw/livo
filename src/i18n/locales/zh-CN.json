@@ -258,7 +258,14 @@
       "byEmail": "Email 对应",
       "ownerOnly": "账号对应仅限最高管理员修改。",
       "reconfirm": "这笔对应需要最高管理员在下方重新对应后，才能使用 Slack 功能。",
-      "memberUnlinked": "这位成员已在「我的设定」解除 Slack 连结，只有本人可以重新允许。"
+      "memberUnlinked": "这位成员已在「我的设定」解除 Slack 连结，只有本人可以重新允许。",
+      "likely": "可能相符",
+      "otherAccounts": "其他 Slack 账号",
+      "likelyHint": "名称相近的 {{count}} 个 Slack 账号已排在选单最前面，确认是本人再对应。",
+      "allMembersMapped": "所有成员都已对应 Slack 账号。",
+      "allSlackMapped": "所有 Slack 账号都已对应。",
+      "showMapped": "显示已对应的账号",
+      "mappedTag": "已对应"
     },
     "title": "从 Slack 建卡与留言",
     "demo": "演示模式不连接 Slack，请在 Docker 自托管版设置。",
@@ -582,10 +589,10 @@
     "admin": "管理员",
     "member": "成员",
     "superAdminDesc": "所有权限（删除专案、编辑专案、管理状态、删除卡片、管理成员、查看成员列表）",
-    "adminDesc": "编辑专案、管理状态、删除卡片、查看成员列表、新增成员",
-    "memberDesc": "仅基本操作（浏览卡片、留言、编辑自己被指派的卡片）",
+    "adminDesc": "编辑专案、管理状态、删除任务与 Bug、查看成员列表、新增成员",
+    "memberDesc": "基本操作（浏览卡片、留言、编辑自己被指派的卡片）；可删除自己建立且还没开始的任务、自己回报且还没分派的 Bug",
     "qaAdmin": "QA 管理员",
-    "qaAdminDesc": "管理 QA 流程与 Bug 自定义字段；其他功能与一般成员相同。"
+    "qaAdminDesc": "管理 QA 流程与 Bug 自定义字段，可删除 Bug；其他功能与一般成员相同。"
   },
   "board": {
     "titleAll": "全部 — 看板",
@@ -887,7 +894,8 @@
     },
     "properties": "任务属性",
     "noNestedSubtasks": "不允许多层子任务",
-    "linkNotFound": "找不到链接里的卡片 {{key}}，可能已删除，或你没有查看权限。"
+    "linkNotFound": "找不到链接里的卡片 {{key}}，可能已删除，或你没有查看权限。",
+    "deleteNotAllowed": "没有删除这张任务。它可能已经开始处理，或不是你建立的；这时只有管理员能删除。"
   },
   "taskCreate": {
     "title": "建立任务",
@@ -1002,7 +1010,8 @@
       "fileSizeExceeded": "档案大小超过 {{size}} MB 限制",
       "attachmentUploadFailed": "附件上传失败：",
       "deleteTitle": "删除留言",
-      "deleteConfirm": "确定要删除这则留言？留言附带的文件也会一并删除。此操作无法复原。"
+      "deleteConfirm": "确定要删除这则留言？留言附带的文件也会一并删除。此操作无法复原。",
+      "updateFailed": "留言更新失败："
     },
     "metrics": {
       "createdStatus": "开卡",
@@ -2713,7 +2722,8 @@
       "approval_returned": "退回修改",
       "approval_withdrawn": "撤回签核",
       "approval_cancelled": "取消签核",
-      "approval_requirement_changed": "变更签核要求"
+      "approval_requirement_changed": "变更签核要求",
+      "delete_qa_issue": "删除 Bug"
     },
     "otherAction": "其他操作"
   },
@@ -3514,7 +3524,12 @@
     "priorityDefaultHint": "还没有人设置优先级，暂用默认值。",
     "overdue": "{{date}} 已逾期",
     "blocked": "有阻碍",
-    "handoffOpen": "交接中"
+    "handoffOpen": "交接中",
+    "delete": "删除 Bug",
+    "deleteTitle": "删除 Bug",
+    "deleteConfirm": "确定要删除「{{title}}」？留言、附件和处理历程会一并删除，链接的任务不受影响。此操作无法复原。",
+    "deleted": "已删除 Bug {{id}}",
+    "deleteFailed": "删除失败，请刷新后再试。"
   },
   "deploymentEnvironments": {
     "title": "部署环境",
@@ -3947,7 +3962,14 @@
       "fix": "我修复",
       "verify": "我验证",
       "handoff": "待我接手"
-    }
+    },
+    "sections": {
+      "overdue": "已逾期",
+      "today": "今天到期",
+      "upcoming": "之后到期",
+      "none": "未设期限"
+    },
+    "dueDate": "到期日：{{date}}"
   },
   "boardSort": {
     "button": "排序",

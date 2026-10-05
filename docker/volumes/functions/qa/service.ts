@@ -1,5 +1,5 @@
 import { parseDeploymentEnvironments } from './environments.ts';
-import { applyQaCommand, canQaComment, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
+import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
   type QaAttachment, type QaCommand, type QaContext, type QaCreateInput, type QaIssue,
   type QaListInput, type QaListResult } from './domain.ts';
 import { validateQaBackup } from './restore.ts';
@@ -293,6 +293,22 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const command = object(request.command) as QaCommand;
         const next = applyQaCommand(issue, command, await context(actor, issue.projectId, issue, command));
         return commit(actor, request, hash, next, 'command', command.type, undefined, issue);
+      }
+      case 'delete': {
+        const issue = await getIssue(request.id);
+        if (!Number.isInteger(request.expectedVersion) || request.expectedVersion < 1) fail('qa_invalid_version');
+        if (issue.version !== request.expectedVersion) fail('qa_version_conflict', 409);
+        if (!canQaDelete(issue, { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin })) fail('qa_forbidden', 403);
+        // The database function checks the version and permission again inside its transaction.
+        const result = await db.rpc('livo_qa_delete', { p_auth_id: actor.authId, p_issue_id: issue.id,
+          p_expected_version: request.expectedVersion, p_identity: actor.slackIdentity });
+        // Files go after the rows; a failed cleanup leaves an unreferenced object, never a broken bug.
+        const paths = (Array.isArray(result?.paths) ? result.paths : []).filter((path: unknown): path is string => typeof path === 'string');
+        if (paths.length) {
+          try { await db.raw(`/storage/v1/object/${BUCKET}`, 'DELETE', { prefixes: paths }); }
+          catch { console.error('QA evidence cleanup failed'); }
+        }
+        return { id: issue.id, deleted: true };
       }
       case 'upload_init': {
         const issue = await getIssue(request.id), fileName = text(request.fileName, 255), mimeType = text(request.mimeType, 100).toLowerCase();

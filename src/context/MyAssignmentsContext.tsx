@@ -40,10 +40,11 @@ export function MyAssignmentsProvider({ children }: { children: React.ReactNode 
     };
     const onFocus = () => { if (document.visibilityState !== 'hidden') void refresh(); };
     void refresh();
-    window.addEventListener('focus', onFocus); document.addEventListener('visibilitychange', onFocus);
+    // The QA page announces its own changes (for example a deleted bug); self-hosted has no realtime for QA.
+    window.addEventListener('focus', onFocus); window.addEventListener('livo:qa-changed', onFocus); document.addEventListener('visibilitychange', onFocus);
     const interval = window.setInterval(onFocus, 30000);
     const channel = supabase.channel(`my-assigned-qa:${actor.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'qa_issues' }, onFocus).subscribe();
-    return () => { active = false; controller.abort(); clearInterval(interval); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); void supabase.removeChannel(channel); };
+    return () => { active = false; controller.abort(); clearInterval(interval); window.removeEventListener('focus', onFocus); window.removeEventListener('livo:qa-changed', onFocus); document.removeEventListener('visibilitychange', onFocus); void supabase.removeChannel(channel); };
   }, [client, enabled, identity, featureTogglesReady, featureTogglesError, revision]);
   const value = useMemo(() => ({ identity, snapshot, refresh: () => {
     if (!featureTogglesReady) void refreshFeatureToggles();

@@ -135,7 +135,7 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
     <>
     <div className={embedded ? '' : 'flex-1 overflow-y-auto'}>
       <div className={embedded ? '' : 'px-4 py-6 md:px-6'}>
-      <div className={embedded ? '' : 'max-w-5xl mx-auto'}>
+      <div className={embedded ? '' : 'w-full min-w-0'}>
         <div className="flex items-center justify-between mb-4 md:mb-6">
           <div className="flex items-center gap-2">
             <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('statusManage.title')}</h1>

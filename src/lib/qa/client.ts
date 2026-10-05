@@ -6,7 +6,7 @@ import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
+import { applyQaCommand, canQaDelete, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload, QaCoordination } from './domain';
 
 export class QaClientError extends Error {
@@ -196,6 +196,15 @@ export function createQaClient(options: QaClientOptions) {
         detail.events.push({ id: qaId(), issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: qaEventDetail(detail.issue, command.type, before), createdAt: ctx.now, version: detail.issue.version });
         return detail.issue;
       },{id:issue.id,version:issue.version,command});
+    },
+    /** Permanent. The servers re-check the version and canQaDelete before removing anything. */
+    async delete(issue: QaIssue): Promise<void> {
+      ensureEnabled();
+      if (!mock) { await request('delete', { id: issue.id, expectedVersion: issue.version }); return; }
+      const detail = getDemo(issue.id);
+      if (detail.issue.version !== issue.version) throw new QaClientError('conflict', 409);
+      if (!canQaDelete(detail.issue, options.context().actor)) throw new QaClientError('qa_forbidden', 403);
+      demoIssues.delete(issue.id);
     },
     async comment(id: string, body: string, commandId = qaId()): Promise<QaComment> {
       ensureEnabled();

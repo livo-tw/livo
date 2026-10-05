@@ -3,7 +3,7 @@ import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
-import { ArrowLeft, Bug, RefreshCw, MessageSquare, History, FileText, ClipboardCheck, ExternalLink, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, Bug, RefreshCw, MessageSquare, History, FileText, ClipboardCheck, ExternalLink, MoreHorizontal, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import UserSelect from '@/components/UserSelect';
@@ -19,7 +19,7 @@ import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
 import { useUIContext } from '@/context/UIContext';
-import { canQaComment, canQaCommand, isHistoricalQaPass, isQaTerminal, qaIdSearch, requiredTargetsPassed } from '@/lib/qa/domain';
+import { canQaComment, canQaCommand, canQaDelete, isHistoricalQaPass, isQaTerminal, qaIdSearch, requiredTargetsPassed } from '@/lib/qa/domain';
 import type { QaActor, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import type { QaWorkflow } from '@/lib/qa/workflow';
@@ -50,7 +50,7 @@ export function QaFailure({ error }: { error: unknown }) {
   return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{message}</p>{code && <p className="mt-1 font-mono text-xs">{t('qa.errorCode', { code })}</p>}</div>
 }
 
-export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onBusyChange?: (busy: boolean) => void }) {
+export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onDeleted, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onDeleted?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const { t } = useTranslation();
   const environments = useDeploymentEnvironments();
   const getProjectColor = useProjectColor();
@@ -100,6 +100,20 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const moreActions = (['edit', 'triage', 'start_fix', 'submit_fix', 'close', 'reopen', 'hold', 'link_tasks'] as ActionType[])
     .filter(type => can(type) && type !== primaryAction?.command && !(type === 'start_fix' && issue.state === 'in_progress'));
   const nextOwner = nextAction && ['start_fix', 'submit_fix'].includes(nextAction.command) ? issue.assigneeId : issue.qaOwnerId;
+  const canDelete = canQaDelete(issue, actor);
+  // Permanent, so one confirmation that says so. A bug already gone counts as deleted.
+  const removeIssue = async () => {
+    if (busy || !canDelete) return;
+    if (!(await confirm({ title: t('qa.deleteTitle'), description: t('qa.deleteConfirm', { title: issue.title }), destructive: true }))) return;
+    setBusy(true); setError(null);
+    try {
+      try { await client.delete(issue); }
+      catch (failure) { if ((failure as { status?: number })?.status !== 404) throw failure; }
+      toast.success(t('qa.deleted', { id: qaShortId(issue.id) }));
+      (onDeleted ?? onBack)();
+    } catch (failure) { setError(failure); toast.error(t('qa.deleteFailed')); }
+    finally { setBusy(false); }
+  };
   const openAction = (type: ActionType) => {
     if (busy || !can(type)) return;
     setError(null);
@@ -258,8 +272,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       <div className="min-w-0 space-y-4">
         <QaSection title={t('qa.actions')}>
           {primaryAction ? <div className="space-y-2"><p className="text-sm text-muted-foreground">{t('qa.yourNextStep')}</p>{tab === 'verification' && ['record_deployment', 'record_verification'].includes(primaryAction.command) ? <p className="text-sm leading-relaxed">{t('qa.completeInPanel')}</p> : <button type="button" className={`${qaPrimary} w-full`} disabled={busy} onClick={() => openAction(primaryAction.command)}>{t(`qa.${primaryAction.label}`)}</button>}</div> : nextAction && <p className="text-sm leading-relaxed text-muted-foreground">{t('qa.waitingForAction', { name: nextOwner ? member(nextOwner) : t('qa.triageTeam'), action: t(`qa.${nextAction.label}`) })}</p>}
-          {moreActions.length > 0 && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>}
-          {!Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
+          {(moreActions.length > 0 || canDelete) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
+          {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>
         <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
         <QaSection title={t('qa.properties')}>

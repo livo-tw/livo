@@ -502,6 +502,17 @@ Email 與簽名 webhook 沿用資料庫通知觸發器。Slack 通知失敗不�
 此版不會自動同步每一則討論串回覆，不讀取頻道歷史，也不匯入 Slack 附件。
 Socket Mode 協定參考：[Slack 官方文件](https://docs.slack.dev/apis/events-api/using-socket-mode/)。
 
+**表單停在「正在載入 LIVO…」**：此版會在 15 秒內把視窗換成原因（找不到對應的 LIVO 帳號、沒有可建立卡片的專案、或「LIVO 暫時無法回應」），不會一直停在載入中。查原因時在 `docker` 目錄執行：
+
+```sh
+docker logs --since 30m supabase-edge-functions 2>&1 | grep -E "slack_api_error|slack_form_load_failed|wall clock|CPU time|WorkerRequestCancelled"
+docker compose -f docker-compose.yml -f compose.frontend.yml logs --since 30m livo-slack-socket
+```
+
+- `slack_api_error method=… error=…` 是 Slack 回傳的錯誤碼：`missing_scope needed=…` 表示 Bot 缺少該權限，補上後重新安裝 App；`invalid_auth`、`token_revoked` 表示要在「整合 → Slack」重新連接 Bot Token；`invalid_arguments` 會附上 Slack 指出的欄位位置，請連同這行回報。
+- `slack_form_load_failed reason=TimeoutError` 表示資料庫或 Slack 回應太慢；`wall clock duration reached`、`WorkerRequestCancelled` 表示 edge runtime 中止了函式（舊版會因此停在載入中）。
+- relay 記錄出現 `Slack relay upstream unavailable` 表示 relay 沒有從 `functions` 拿到正常回應（函式被中止，或 `functions`、`kong` 容器沒有執行）。
+
 ### 日常任務面板（Docker）
 
 面板與新操作訊息提供繁體中文、簡體中文與英文，依操作者語系顯示；使用者填寫的卡片標題、名稱和留言保留原文。
