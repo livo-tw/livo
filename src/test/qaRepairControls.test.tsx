@@ -24,7 +24,7 @@ describe('compact repair targets', () => {
     expect(screen.getByLabelText(/qa.environment/)).toHaveValue('Stage');
     const build = screen.getByRole('combobox', { name: /qa.build/ });
     expect(build).toHaveValue('');
-    expect(build).toBeRequired();
+    expect(build).not.toBeRequired();
     expect(view.container.querySelectorAll('datalist option')).toHaveLength(1);
     expect(screen.queryByLabelText('qa.versionChoose')).toBeNull();
     const more = view.container.querySelector('details')!;
@@ -75,21 +75,24 @@ const target = (id: string, required = true, deployed = true): QaTarget => ({ id
   deployedAt: deployed ? '2026-10-03T00:00:00Z' : null, deployedBy: deployed ? 'developer' : null, deploymentEvidence: deployed ? 'Synthetic delivery' : '' });
 
 describe('verification intent and evidence guard', () => {
-  it('applies a dragged FAIL only to the first deployed required target and requires its note', () => {
+  it('applies a dragged FAIL only to the first deployed required target without requiring a note', () => {
     const command = vi.fn(async () => undefined);
     render(<QaVerificationPanel targets={[target('optional', false), target('waiting', true, false), target('first'), target('second')]}
       initialResult="fail" canDeploy canVerify busy={false} onCommand={command} />);
     const first = screen.getByRole('heading', { name: 'first / build-first' }).closest('article')!;
     expect(within(first).getByLabelText('qa.resultField')).toHaveValue('fail');
-    expect(within(first).getByLabelText(/qa.note/)).toBeRequired();
+    expect(within(first).getByLabelText(/qa.note/)).not.toBeRequired();
     expect(screen.getAllByLabelText('qa.resultField').map(node => (node as HTMLSelectElement).value)).toEqual(['pass', 'fail', 'pass']);
     fireEvent.click(within(first).getByRole('button', { name: 'qa.verification' }));
-    expect(command).not.toHaveBeenCalled();
+    expect(command).toHaveBeenCalledWith({ type: 'record_verification', targetId: 'first', build: 'build-first', result: 'fail', note: '' });
     fireEvent.change(within(first).getByLabelText(/qa.note/), { target: { value: 'Still reproduces' } });
     fireEvent.click(within(first).getByRole('button', { name: 'qa.verification' }));
     expect(command).toHaveBeenCalledWith({ type: 'record_verification', targetId: 'first', build: 'build-first', result: 'fail', note: 'Still reproduces' });
     const waiting = screen.getByRole('heading', { name: 'waiting / build-waiting' }).closest('article')!;
     expect(within(waiting).queryByLabelText('qa.resultField')).toBeNull();
+    expect(within(waiting).getByLabelText(/qa.deploymentEvidence/)).not.toBeRequired();
+    fireEvent.click(within(waiting).getByRole('button', { name: 'qa.deployment' }));
+    expect(command).toHaveBeenLastCalledWith({ type: 'record_deployment', targetId: 'waiting', build: 'build-waiting', evidence: '' });
     fireEvent.change(within(waiting).getByLabelText(/qa.deploymentEvidence/), { target: { value: 'Deployed the exact build' } });
     fireEvent.click(within(waiting).getByRole('button', { name: 'qa.deployment' }));
     expect(command).toHaveBeenLastCalledWith({ type: 'record_deployment', targetId: 'waiting', build: 'build-waiting', evidence: 'Deployed the exact build' });
@@ -101,7 +104,7 @@ describe('verification intent and evidence guard', () => {
     expect(screen.getByLabelText('qa.resultField')).toHaveValue('pass');
     expect(screen.getByLabelText('qa.note')).not.toBeRequired();
     fireEvent.change(screen.getByLabelText('qa.resultField'), { target: { value: 'blocked' } });
-    expect(screen.getByLabelText(/qa.note/)).toBeRequired();
+    expect(screen.getByLabelText(/qa.note/)).not.toBeRequired();
     view.rerender(<QaVerificationPanel targets={[target('first')]} canDeploy={false} canVerify={false} busy={false} onCommand={command} />);
     expect(screen.queryByRole('button', { name: 'qa.verification' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'qa.deployment' })).toBeNull();

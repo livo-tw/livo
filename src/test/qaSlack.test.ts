@@ -47,6 +47,7 @@ describe('QA Slack automation',()=>{
   });
   it.each(['multi','legacy'] as const)('accepts configured repair environments from %s submissions',async mode=>{
     const {d,api,flush}=harness();vi.mocked(d.environments).mockResolvedValue(['Preview','Production']);
+    vi.mocked(d.actor).mockResolvedValue({id:'rd',role:'member',team:'T1',slack_user:'U2'});
     const values={note:{note:{value:'fixed'}},build:{build:{value:'v5'}},environment:{environment:mode==='multi'?{selected_options:[{value:'Preview'},{value:'Production'}]}:{value:'Preview, Production'}}};
     await handleQaSlack({type:'view_submission',view:{id:'V1',callback_id:'livo_qa_submit',private_metadata:JSON.stringify({intent:'fix',issueId:'bug-a',version:4}),state:{values}}},'env-submit',d);await flush();
     expect(api).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({action:'command',command:expect.objectContaining({type:'submit_fix',targets:[{environment:'Preview',component:'',build:'v5',required:true},{environment:'Production',component:'',build:'v5',required:true}]})}));
@@ -164,6 +165,8 @@ describe('QA Slack automation',()=>{
   });
   it('keeps the normal live close command free of historical acknowledgement',async()=>{
     const {d,api,flush}=harness();
+    const passed:QaIssue={...issue(),state:'verified',runs:[{id:'run-example',sequence:1,fixCycle:1,targetId:'t',environment:'Stage',component:'Web',build:'v4',result:'pass',note:'',testerId:'qa',createdAt:'2026-10-06T00:00:00Z'}]};
+    api.mockImplementation(async(_actor,body)=>body.action==='get'?{issue:passed,comments:[],events:[],attachments:[]}:passed);
     await handleQaSlack({type:'view_submission',view:{id:'V1',callback_id:'livo_qa_submit',private_metadata:JSON.stringify({intent:'close',issueId:'bug-a',version:4}),state:{values:{note:{note:{value:'Reviewed'}}}}}},'normal-close',d);await flush();
     expect(api).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({action:'command',command:{type:'close',resolution:'fixed',reason:'Reviewed'}}));
   });

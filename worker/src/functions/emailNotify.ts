@@ -287,7 +287,6 @@ async function sendWorkspaceNotificationEmails(env: Env, ws: string, rows: Row[]
       const summary = target.content || TYPE_LABEL[target.type] || '你有一則新通知';
       const subject = `LIVO 通知：${summary.slice(0, 40)}`;
       const html = buildNotificationHtml(env, target.type, target.content, task);
-      if(target.type==='due_soon' && await env.DB.prepare("SELECT 1 FROM task_reminder_preferences WHERE workspace_id=? AND task_id=? AND member_id=? AND julianday(snoozed_until)>julianday('now')").bind(ws,target.taskId,target.recipientId).first()) continue;
       if (await sendResendEmail(cfg, member.email, subject, html)) sent++;
     }
     if (sent > 0) console.log(`[email-notify] ws=${ws} sent=${sent}/${targets.length}`);
@@ -327,7 +326,6 @@ export async function runDueReminders(env: Env): Promise<void> {
        JOIN statuses s ON s.id = t.status_id AND s.workspace_id=t.workspace_id
        WHERE t.assignee_id IS NOT NULL
          AND s.is_done = 0
-         AND NOT EXISTS(SELECT 1 FROM task_reminder_preferences p WHERE p.workspace_id=t.workspace_id AND p.task_id=t.id AND p.member_id=t.assignee_id AND julianday(p.snoozed_until)>julianday('now'))
          AND t.due_date >= ? AND t.due_date <= ?
          AND NOT EXISTS (
            SELECT 1 FROM notifications n

@@ -1,7 +1,6 @@
-import { workButton } from './work-ui.ts';
 import { planningButton } from './planning-ui.ts';
 import { option, type Row } from './core.ts';
-import { approvalText, approvalSubmitButton } from './approval-ui.ts';
+import { approvalText } from './approval-ui.ts';
 import { workspaceText } from './workspace-i18n.ts';
 import { knowledgeSearchLabel } from './knowledge.ts';
 
@@ -50,13 +49,12 @@ export function parseWorkspaceCommand(value: string): WorkspaceCommand | undefin
   return undefined;
 }
 
-export function homeModal(source: Row = {}): Row {
+export function homeModal(source: Row = {}, flags: { approvals?: boolean } = {}): Row {
   return modal('livo_workspace_home', 'LIVO', [
     section(tr(source, '*在 Slack 處理日常任務*\n查任務、搜尋卡片、修改狀態與人員、期限和優先級，或新增留言。')),
-    actions([planningButton('livo_reminders','我的到期提醒',{page:0},source.locale)]),
     actions([button('livo_workspace_query', tr(source, '我的任務'), { kind: 'my', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '待我驗收'), { kind: 'review', page: 0 })]),
-    actions([button('livo_approvals_page', approvalText('title', source.locale), { cursor: 0 })]),
+    ...(flags.approvals === true ? [actions([button('livo_approvals_page', approvalText('title', source.locale), { cursor: 0 })])] : []),
     actions([button('livo_workspace_query', tr(source, '今天到期'), { kind: 'today', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '未來 7 天到期'), { kind: 'due', page: 0 })]),
     actions([button('livo_workspace_query', tr(source, '已逾期'), { kind: 'overdue', page: 0 })]),
@@ -134,9 +132,6 @@ export function detailModal(task: Row, url: string, source: Row = {}, comments?:
     ...(/^https?:\/\//i.test(url) ? [{ type: 'button', text: { type: 'plain_text', text: tr(source, '開啟 LIVO') }, url }] : []),
   ]));
   blocks.push(actions([button('livo_task_context', tr(source, '查看任務內容'), { taskId: task.id, kind: 'requirement', page: 0 })]));
-  blocks.push(actions([approvalSubmitButton(task.id, source.locale)]));
-  blocks.push(actions([workButton('livo_work_open','title',{taskId:task.id,section:'responsibility',page:0},source.locale)]));
-  blocks.push(actions([planningButton('livo_deadline_open','修改期限',{taskId:task.id},source.locale),planningButton('livo_reminder_open','暫停到期提醒',{taskId:task.id},source.locale)]));
   if (comments) {
     blocks.push({ type: 'divider' });
     blocks.push(context(tr(source, '留言 · 第 {page} 頁（新到舊）', { page: clampPage(comments.page) + 1 })));

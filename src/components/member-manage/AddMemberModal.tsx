@@ -1,5 +1,6 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { X } from 'lucide-react';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MEMBER_ROLE_OPTIONS, selectionRoleLabel, type MemberRoleSelection } from '@/lib/memberRoleSelection';
 
@@ -26,19 +27,37 @@ const AddMemberModal = ({
   filteredJobTitles, onSubmit, loading, canEditJobTitle,
 }: AddMemberModalProps) => {
   const { t } = useTranslation();
+  const formId = useId();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="bg-card rounded-xl shadow-xl border border-border p-5 md:p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-bold text-foreground">{t('memberList.addMemberTitle')}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
-        </div>
-        <form onSubmit={onSubmit} className="space-y-3">
+    <Dialog open={show} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent
+        ref={contentRef}
+        aria-describedby={undefined}
+        className="flex min-h-0 max-w-md flex-col"
+        style={{ overflow: 'hidden' }}
+        onOpenAutoFocus={event => {
+          previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          event.preventDefault();
+          contentRef.current?.focus();
+        }}
+        onCloseAutoFocus={event => {
+          event.preventDefault();
+          if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
+        }}
+      >
+        <DialogHeader className="min-h-11 justify-center">
+          <DialogTitle className="text-base font-bold">{t('memberList.addMemberTitle')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scroll-padding-block:1rem]">
           <div>
-            <label className="text-sm font-medium text-foreground block mb-1">Email <span className="text-destructive">*</span></label>
+            <label htmlFor={`${formId}-email`} className="text-sm font-medium text-foreground block mb-1">Email <span className="text-destructive">*</span></label>
             <input
+              id={`${formId}-email`}
               type="email"
               value={form.email}
               onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
@@ -48,8 +67,9 @@ const AddMemberModal = ({
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.nameLabel')} <span className="text-destructive">*</span></label>
+            <label htmlFor={`${formId}-name`} className="text-sm font-medium text-foreground block mb-1">{t('memberList.nameLabel')} <span className="text-destructive">*</span></label>
             <input
+              id={`${formId}-name`}
               type="text"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -59,8 +79,10 @@ const AddMemberModal = ({
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.passwordLabel')}</label>
+            <label htmlFor={`${formId}-password`} className="text-sm font-medium text-foreground block mb-1">{t('memberList.passwordLabel')}</label>
             <input
+              id={`${formId}-password`}
+              aria-describedby={`${formId}-password-hint`}
               type="password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
@@ -69,12 +91,13 @@ const AddMemberModal = ({
               autoComplete="new-password"
               minLength={8}
             />
-            <p className="text-xs text-muted-foreground mt-1">{t('memberList.passwordHint')}</p>
+            <p id={`${formId}-password-hint`} className="text-xs text-muted-foreground mt-1">{t('memberList.passwordHint')}</p>
           </div>
           {canEditJobTitle ? <div>
-            <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.jobTitleLabel')}</label>
+            <label htmlFor={`${formId}-job-title`} className="text-sm font-medium text-foreground block mb-1">{t('memberList.jobTitleLabel')}</label>
             <div className="relative" ref={jobTitleRef}>
               <input
+                id={`${formId}-job-title`}
                 type="text"
                 value={form.jobTitle}
                 maxLength={200}
@@ -91,7 +114,7 @@ const AddMemberModal = ({
                       key={title}
                       type="button"
                       onClick={() => { setForm(f => ({ ...f, jobTitle: title })); setJobTitleOpen(false); }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors ${form.jobTitle === title ? 'bg-accent font-medium' : 'text-foreground'}`}
+                      className={`min-h-11 w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors ${form.jobTitle === title ? 'bg-accent font-medium' : 'text-foreground'}`}
                     >
                       {title}
                     </button>
@@ -101,8 +124,9 @@ const AddMemberModal = ({
             </div>
           </div> : <p className="text-xs text-muted-foreground">{t('memberJobTitle.superAdminOnly')}</p>}
           <div>
-            <label className="text-sm font-medium text-foreground block mb-1">{t('memberList.roleLabel')}</label>
+            <label htmlFor={`${formId}-role`} className="text-sm font-medium text-foreground block mb-1">{t('memberList.roleLabel')}</label>
             <SearchableSelect
+              id={`${formId}-role`}
               value={form.role}
               onChange={e => setForm(f => ({ ...f, role: e.target.value as MemberRoleSelection }))}
               className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background text-foreground outline-none focus:ring-2 focus:ring-ring"
@@ -110,7 +134,8 @@ const AddMemberModal = ({
               {ROLES.filter(role => canEditJobTitle || role === 'member').map(r => <option key={r} value={r}>{selectionRoleLabel(r)}</option>)}
             </SearchableSelect>
           </div>
-          <div className="flex gap-2 pt-2">
+          </div>
+          <DialogFooter className="mt-3 flex-row gap-2 border-t border-border pt-3">
             <button
               type="button"
               onClick={onClose}
@@ -125,10 +150,10 @@ const AddMemberModal = ({
             >
               {loading ? t('memberList.processingButton') : t('memberList.addButton')}
             </button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

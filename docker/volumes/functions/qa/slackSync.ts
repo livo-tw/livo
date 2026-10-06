@@ -1,5 +1,6 @@
 import { Database, slackClient, type Environment } from '../slack-interact/backend.ts';
 import { qaSlackCard } from './slack.ts';
+import { qaSlackCurrentState } from './slackWorkspace.ts';
 import type { QaIssue } from './domain.ts';
 import { parseQaWorkflow } from './workflow.ts';
 import { loadQaDeliveryState } from '../slack-deliver/qa-backend.ts';
@@ -23,7 +24,7 @@ export async function syncQaSlackIssue(env: Environment, issue: QaIssue): Promis
       let current = await load();
       if (!current) return;
       const workflowSetting = await db.setting('qa_workflow');
-      let message = { text: `Bug · ${current.title}`, blocks: qaSlackCard(current, qaSlackLink(env, current), parseQaWorkflow(workflowSetting)) };
+      let message = { text: `${qaSlackCurrentState(current.state,parseQaWorkflow(workflowSetting))}\nBug · ${current.title}`, blocks: qaSlackCard(current, qaSlackLink(env, current), parseQaWorkflow(workflowSetting)) };
       if (String(link.id).startsWith('delivery-qa:')) {
         const state = await loadQaDeliveryState(db, current.id);
         const job = (await db.rows('slack_delivery_outbox', { select: 'id,team_id,task_id,target_type,target_id,payload,attempts',

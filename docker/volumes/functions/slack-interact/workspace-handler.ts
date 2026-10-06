@@ -87,7 +87,7 @@ export async function handleWorkspaceInteraction(p: Row, d: Actions, source: Row
         if (!(await d.enabled())) fail(DISABLED);
         const actor = await d.actor(p); source.locale = actor.locale;
         const actionId = action?.action_id, value = valueOf(action);
-        if (command?.kind === 'home' || actionId === 'livo_workspace_home') return homeModal(source);
+        if (command?.kind === 'home' || actionId === 'livo_workspace_home') return homeModal(source, await d.flags?.().catch(() => ({ approvals: false })) ?? { approvals: false });
         if (command?.kind === 'search' || actionId === 'livo_workspace_search') return searchModal(source);
         if (command?.kind === 'query' || ['livo_workspace_query', 'livo_tasks_page'].includes(actionId)) {
           const query = (command?.kind === 'query' ? command.query : value) as TaskQuery;

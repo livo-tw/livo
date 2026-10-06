@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
 const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, role: 'admin', qaAdmin: false, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), getCoordination: vi.fn(), command: vi.fn(), comment: vi.fn() }));
@@ -57,6 +57,9 @@ describe('QA navigation preserves pending work', () => {
     const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
     const props = { detail: { ...detail, issue: current }, client, actor: { id: 'admin', role: 'admin' }, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'qaHandoff.title' }));
+    await screen.findByRole('dialog', { name: 'qaHandoff.title' });
     fireEvent.click(screen.getByRole('button', { name: 'qaHandoff.accept' }));
     await screen.findByText('qa.commandRetryHint'); const original = mocks.command.mock.calls[0];
     view.rerender(<QaIssueDetail {...props} detail={{ ...detail, issue: { ...current, version: 7 } }} />);
@@ -70,9 +73,42 @@ describe('QA navigation preserves pending work', () => {
     mocks.command.mockResolvedValue(accepted); const onRefresh = vi.fn().mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
     const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
     render(<QaIssueDetail detail={{ ...detail, issue: current }} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'qaHandoff.title' }));
+    await screen.findByRole('dialog', { name: 'qaHandoff.title' });
     fireEvent.click(screen.getByRole('button', { name: 'qaHandoff.accept' })); await screen.findByText('qaHandoff.savedRefreshFailed');
     expect(screen.queryByRole('button', { name: 'qaHandoff.accept' })).toBeNull(); expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' })); await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2)); expect(mocks.command).toHaveBeenCalledTimes(1);
+  });
+  it.each(['submit_fix', 'close'] as const)('retries an uncertain %s inside its dialog with the original revision and command ID', async action => {
+    const target = { id: 'target-one', environment: 'Stage', component: '', build: 'release-one', required: true, deployedAt: issue.createdAt, deployedBy: 'admin', deploymentEvidence: '' };
+    const current = { ...issue, state: action === 'close' ? 'verified' as const : 'in_progress' as const, version: 4, fixCycle: 1, assigneeId: 'admin', qaOwnerId: 'admin', targets: action === 'close' ? [target] : [], runs: action === 'close' ? [{ id: 'run-one', sequence: 1, fixCycle: 1, targetId: target.id, environment: target.environment, component: '', build: target.build, result: 'pass' as const, note: '', testerId: 'admin', createdAt: issue.createdAt }] : [] };
+    mocks.command.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValueOnce({ ...current, version: 5 });
+    const props = { detail: { ...detail, issue: current }, client: { getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient, actor: { id: 'admin', role: 'admin' }, initialAction: action, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
+    const view = render(<QaIssueDetail {...props} />);
+    const dialog = await screen.findByRole('dialog', { name: action === 'close' ? 'qa.close' : 'qa.submitFix' });
+    if (action === 'close') fireEvent.change(within(dialog).getByLabelText(/qa.resolutionField/), { target: { value: 'fixed' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
+    await screen.findByText('qa.commandRetryHint'); const original = mocks.command.mock.calls[0];
+    expect(screen.getAllByRole('button', { name: 'qa.retryCommand' })).toHaveLength(1);
+    expect(within(dialog).getByRole('button', { name: 'qa.save' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'qa.cancel' })).toBeDisabled();
+    view.rerender(<QaIssueDetail {...props} detail={{ ...detail, issue: { ...current, version: 7 } }} />);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.retryCommand' }));
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledOnce());
+    expect(mocks.command).toHaveBeenCalledTimes(2); expect(mocks.command.mock.calls[1]).toEqual(original); expect(original[0].version).toBe(4);
+    expect(original[1]).toMatchObject(action === 'close' ? { type: 'close', resolution: 'fixed', reason: '' } : { type: 'submit_fix', summary: '', targets: [{ environment: 'Stage', component: '', build: '', required: true }] });
+    expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
+  });
+  it('closes an acknowledged repair dialog and only reloads after a failed refresh, preserving the saved result', async () => {
+    const current = { ...issue, state: 'in_progress' as const, version: 4, assigneeId: 'admin', qaOwnerId: 'admin' };
+    mocks.command.mockResolvedValue({ ...current, state: 'verification', version: 5 });
+    const onRefresh = vi.fn().mockRejectedValueOnce(new TypeError('read failed')).mockResolvedValue(undefined);
+    render(<QaIssueDetail detail={{ ...detail, issue: current }} client={{ getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
+    const dialog = await screen.findByRole('dialog', { name: 'qa.submitFix' }); fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
+    await screen.findByText('qaHandoff.savedRefreshFailed'); expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' })); await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2)); expect(mocks.command).toHaveBeenCalledOnce();
   });
   it('keeps QA configuration delegation separate from project coordinator appointment', async () => {
     mocks.role = 'member'; mocks.qaAdmin = true; mocks.selectedProjectId = 'p1'; render(<QaWorkspace />);

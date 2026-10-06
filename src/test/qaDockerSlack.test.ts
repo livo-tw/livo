@@ -27,7 +27,7 @@ describe('Docker QA Slack card ordering', () => {
     await syncQaSlackIssue(env, issue);
     const updates = mocks.slack.mock.calls.filter(call => call[0] === 'chat.update');
     expect(updates).toHaveLength(2);
-    expect(updates[1][1].text).toBe('Bug · New title');
+    expect(updates[1][1].text).toBe('目前狀態：🆕 新回報\nBug · New title');
   });
   it('bounds continuously changing cards to three writes and reports retry needed', async () => {
     let version = 0;

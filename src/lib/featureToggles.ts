@@ -25,6 +25,11 @@ export const FEATURE_TOGGLES = [{
   label: 'featureToggles.releasesLabel',
   description: 'featureToggles.releasesDescription',
   resolveDefault: (_history: FeatureHistory) => false,
+}, {
+  key: 'deploymentQueue',
+  label: 'featureToggles.deploymentQueueLabel',
+  description: 'featureToggles.deploymentQueueDescription',
+  resolveDefault: (_history: FeatureHistory) => false,
 }] as const;
 
 export type FeatureKey = typeof FEATURE_TOGGLES[number]['key'];
@@ -59,4 +64,8 @@ export function resolveQaView<T extends string>(view: T, enabled: boolean): T | 
 
 export function resolveReleaseView<T extends string>(view: T, enabled: boolean): T | 'board' {
   return view === 'releases' && !enabled ? 'board' : view;
+}
+
+export function resolveDeploymentQueueView<T extends string>(view: T, enabled: boolean): T | 'board' {
+  return view === 'deployment-queue' && !enabled ? 'board' : view;
 }

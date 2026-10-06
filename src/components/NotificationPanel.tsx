@@ -1,7 +1,7 @@
 import { isEventEnabled } from '@/lib/featureToggles';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bell, BellRing, BellOff, Clock } from 'lucide-react';
+import { Bell, BellRing, BellOff, Clock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthContext } from '@/context/AuthContext';
@@ -11,6 +11,8 @@ import { useUIContext } from '@/context/UIContext';
 import { useBrowserNotification } from '@/hooks/useBrowserNotification';
 import { parseQaNotification } from '@/lib/qa/notifications';
 import { formatApprovalNotification, parseApprovalNotification } from '@/lib/approvalNotifications';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -86,6 +88,11 @@ const NotificationPanel = () => {
   };
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const isMobile = useIsMobile();
+  const panelRef = useFocusTrap(open && isMobile);
+  const panelId = useId();
+  const closePanel = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
   const { permission, requestPermission, sendNotification } = useBrowserNotification();
 
   // ── Lookup maps (O(1) lookups instead of O(n) in render) ─────────────────
@@ -166,6 +173,18 @@ const NotificationPanel = () => {
     return () => document.removeEventListener('pointerdown', handler);
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+    };
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [open, closePanel]);
+
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
@@ -216,10 +235,12 @@ const NotificationPanel = () => {
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={triggerRef}
         onClick={() => { setOpen(!open); if (!open) fetchNotifications(); }}
         aria-label={unreadCount > 0 ? t('notification.unreadCount', { count: unreadCount }) : t('notification.panelTitle')}
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-controls={open ? panelId : undefined}
         className="relative flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
       >
         <Bell size={18} aria-hidden="true" />
@@ -233,11 +254,22 @@ const NotificationPanel = () => {
       {open && (
         <>
           {/* mobile backdrop — tap to close */}
-          <div onClick={() => setOpen(false)} className="md:hidden fixed inset-0 z-[99] bg-black/40 backdrop-blur-[2px]" aria-hidden="true" />
-          <div role="dialog" aria-label={t('notification.panelTitle')} className="z-[100] bg-card border border-border shadow-xl overflow-hidden flex flex-col fixed inset-x-0 top-14 bottom-0 rounded-t-xl md:absolute md:inset-auto md:right-0 md:top-10 md:bottom-auto md:w-[400px] md:max-w-[calc(100vw-16px)] md:rounded-lg">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-            <span className="text-base font-bold text-foreground">{t('notification.panelTitle')}</span>
-            <div className="flex items-center gap-2">
+          <div onClick={closePanel} className="md:hidden fixed inset-0 z-[99] bg-black/40 backdrop-blur-[2px]" aria-hidden="true" />
+          <div ref={panelRef} id={panelId} role="dialog" aria-modal={isMobile || undefined} aria-label={t('notification.panelTitle')}
+            className="z-[100] bg-card border border-border shadow-xl overflow-hidden flex flex-col fixed inset-x-0 top-14 bottom-0 rounded-t-xl md:absolute md:inset-auto md:right-0 md:top-10 md:bottom-auto md:w-[400px] md:max-w-[calc(100vw-16px)] md:rounded-lg"
+            style={isMobile ? {
+              top: 'calc(var(--livo-viewport-top, 0px) + var(--livo-overlay-top-offset, 0px) + 56px)',
+              height: 'max(0px, calc(var(--livo-viewport-height, 100dvh) - var(--livo-overlay-top-offset, 0px) - 56px))',
+              bottom: 'auto', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            } : { maxHeight: 'max(0px, calc(var(--livo-viewport-height, 100dvh) - var(--livo-overlay-top-offset, 0px) - 112px))' }}>
+          <div className="border-b border-border px-4 py-2 flex-shrink-0">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="min-w-0 break-words text-base font-bold text-foreground">{t('notification.panelTitle')}</span>
+              <button type="button" onClick={closePanel} aria-label={t('common.close')} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {permission === 'unsupported' ? null : permission === 'granted' ? (
                 <span className="text-[12px] text-green-600 flex items-center gap-1" title={t('notification.browserEnabled')}>
                   <BellRing size={13} /> {t('notification.enabledBadge')}
@@ -249,20 +281,20 @@ const NotificationPanel = () => {
               ) : (
                 <button
                   onClick={requestPermission}
-                  className="text-[12px] text-primary hover:underline font-medium flex items-center gap-1"
+                  className="min-h-11 md:min-h-0 text-[12px] text-primary hover:underline font-medium flex items-center gap-1"
                   title={t('notification.enableButtonTitle')}
                 >
                   <BellRing size={13} /> {t('notification.enableButton')}
                 </button>
               )}
               {unreadCount > 0 && (
-                <button onClick={markAllRead} className="text-[13px] text-primary hover:underline font-medium">
+                <button onClick={markAllRead} className="min-h-11 md:min-h-0 text-[13px] text-primary hover:underline font-medium">
                   {t('notification.markAllRead')}
                 </button>
               )}
             </div>
           </div>
-          <div className="flex-1 md:max-h-[420px] overflow-y-auto">
+          <div className="min-h-0 flex-1 md:max-h-[420px] overflow-y-auto overscroll-contain">
             {notifications.length === 0 ? (
               <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
                 <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">

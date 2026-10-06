@@ -54,7 +54,7 @@ export function validateQaBackup(input: unknown): Record<string, any> {
         const targets = new Set<string>(), runIds = new Set<string>(), sequences = new Set<number>();
         for (const raw of issue.targets) {
           const target = record(raw); id(target.id); if (targets.has(target.id)) bad(); targets.add(target.id);
-          str(target.environment, 120, true); str(target.component, 120); str(target.build, 200, true);
+          str(target.environment, 120, true); str(target.component, 120); str(target.build, 200);
           if (typeof target.required !== 'boolean') bad();
           date(target.deployedAt, true); if (target.deployedBy !== null) id(target.deployedBy);
           str(target.deploymentEvidence, 8000);
@@ -63,7 +63,7 @@ export function validateQaBackup(input: unknown): Record<string, any> {
           const run = record(raw); id(run.id); id(run.targetId); id(run.testerId);
           if (runIds.has(run.id) || sequences.has(run.sequence)) bad(); runIds.add(run.id); sequences.add(run.sequence);
           integer(run.sequence, 1); integer(run.fixCycle, 1, issue.fixCycle);
-          str(run.environment, 120, true); str(run.component, 120); str(run.build, 200, true); str(run.note, 8000); date(run.createdAt);
+          str(run.environment, 120, true); str(run.component, 120); str(run.build, 200); str(run.note, 8000); date(run.createdAt);
           if (!['pass', 'fail', 'blocked'].includes(run.result)) bad();
           if (run.fixCycle === issue.fixCycle && !issue.targets.some(t => t.id === run.targetId && t.build === run.build && t.environment === run.environment && t.component === run.component)) bad();
         }

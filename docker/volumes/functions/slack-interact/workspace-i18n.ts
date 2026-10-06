@@ -1,5 +1,9 @@
 /** Server-side Slack copy only. User-authored titles, names and comments are never translated. */
 const translations: Record<string, readonly [string, string]> = {
+  '目前：{section}': ['当前：{section}', 'Current: {section}'],
+  '{section}尚無內容。': ['{section}暂无内容。', '{section}: no content yet.'],
+  '{section}目前沒有項目。': ['{section}目前没有项目。', '{section}: no items yet.'],
+  '進階清單、子任務與依賴操作請開啟 LIVO。': ['高级清单、子任务与依赖操作请打开 LIVO。', 'Open LIVO to manage checklists, subtasks and dependencies.'],
   "背景": ["背景","Background"],
   "需求": ["需求","Requirements"],
   "備註": ["备注","Notes"],

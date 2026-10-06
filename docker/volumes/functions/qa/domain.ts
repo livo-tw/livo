@@ -48,6 +48,7 @@ export type QaCommand =
   | { type: 'set_state'; state: QaState }
   | { type: 'edit'; customFields?: QaCustomFieldValues; title: string; actual: string; steps: string; expected: string; observedEnvironment: string; observedVersion: string; component: string }
   | { type: 'triage'; assigneeId: string; qaOwnerId: string; severity: QaSeverity; priority: number; dueDate: string | null }
+  | { type: 'update_fields'; projectId: string; assigneeId: string | null; qaOwnerId: string | null; severity: QaSeverity; priority: number; dueDate: string | null }
   | { type: 'start_fix' }
   | { type: 'submit_fix'; summary: string; targets: Array<Pick<QaTarget, 'environment' | 'component' | 'build' | 'required'>> }
   | { type: 'record_deployment'; targetId: string; build: string; evidence: string }
@@ -59,7 +60,7 @@ export type QaCommand =
   | { type: 'accept_handoff'; handoffId: string }
   | { type: 'resolve_handoff'; handoffId: string; evidence: string }
   | { type: 'link_tasks'; taskIds: string[] };
-export interface QaActor { id: string; role: string; qaCoordinatorProjectIds?: readonly string[]; qaAdmin?: boolean; }
+export interface QaActor { id: string; role: string; qaCoordinatorProjectIds?: readonly string[]; qaAdmin?: boolean; /** From current server configuration, never command input. */ deploymentOperator?: boolean; }
 export interface QaContext {
   actor: QaActor; workspaceId: string; now: string; newId: () => string;
   /** Trusted same-workspace, active entities resolved by the backend. */
@@ -250,6 +251,9 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
   const coordinator = actor.qaCoordinatorProjectIds?.includes(issue.projectId) === true;
   // Status editing uses the existing participant scope, including completed issues.
   if (type === 'set_state') return participant;
+  // Responsibility and scheduling metadata use the existing team-wide assignment scope.
+  // Editing a completed record never changes its workflow or verification history.
+  if (type === 'update_fields') return true;
   if (type === 'reopen') return participant && (isQaTerminal(issue.state) || ['verification', 'verified'].includes(issue.state));
   if (isQaTerminal(issue.state)) return false;
   switch (type) {
@@ -258,9 +262,9 @@ export function canQaCommand(issue: QaIssue, actor: QaActor, type: QaCommand['ty
     case 'request_handoff': return participant || coordinator;
     case 'accept_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && !issue.handoff.acceptedAt && issue.handoff.nextOwnerId === actor.id;
     case 'resolve_handoff': return !!issue.handoff && !issue.handoff.resolvedAt && (admin(actor) || issue.handoff.nextOwnerId === actor.id);
-    case 'start_fix': return developer && ['triaged', 'in_progress', 'failed'].includes(issue.state);
-    case 'submit_fix': return developer && ['triaged', 'in_progress', 'verification', 'verified', 'failed'].includes(issue.state);
-    case 'record_deployment': return (developer || lead) && ['verification', 'verified'].includes(issue.state);
+    case 'start_fix': return developer && (['triaged', 'in_progress', 'failed'].includes(issue.state) || (issue.state === 'new' && !!issue.assigneeId && !!issue.qaOwnerId));
+    case 'submit_fix': return developer && (['triaged', 'in_progress', 'verification', 'verified', 'failed'].includes(issue.state) || (issue.state === 'new' && !!issue.assigneeId && !!issue.qaOwnerId));
+    case 'record_deployment': return (developer || lead || actor.deploymentOperator === true) && ['verification', 'verified'].includes(issue.state);
     case 'record_verification': return lead && ['verification', 'verified'].includes(issue.state);
     case 'close': return lead;
     case 'link_tasks': return lead || developer;
@@ -341,6 +345,24 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       next.observedVersion = str(command.observedVersion, 200); next.component = str(command.component, 120);
       break;
     }
+    case 'update_fields': {
+      keys(command, ['type', 'projectId', 'assigneeId', 'qaOwnerId', 'severity', 'priority', 'dueDate']);
+      const projectId = id(command.projectId);
+      if (!ctx.projectIds.has(projectId)) return fail('qa_project_unavailable');
+      if (projectId !== issue.projectId) {
+        if (issue.taskIds.some(taskId => !ctx.taskIds.has(taskId))) return fail('qa_task_unavailable');
+        if (issue.duplicateOfId && !ctx.duplicateIssueIds?.has(issue.duplicateOfId)) return fail('qa_duplicate_unavailable');
+      }
+      next.projectId = projectId;
+      next.assigneeId = command.assigneeId === null ? null : member(command.assigneeId, ctx);
+      next.qaOwnerId = command.qaOwnerId === null ? null : member(command.qaOwnerId, ctx);
+      next.severity = enumValue(command.severity, QA_SEVERITIES);
+      if (!Number.isInteger(command.priority) || command.priority < 1 || command.priority > 5) return fail('qa_invalid_priority');
+      next.priority = command.priority;
+      if (command.dueDate !== null && (typeof command.dueDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(command.dueDate) || !Number.isFinite(Date.parse(command.dueDate)) || new Date(command.dueDate).toISOString().slice(0, 10) !== command.dueDate)) return fail('qa_invalid_date');
+      next.dueDate = command.dueDate;
+      break;
+    }
     case 'triage': {
       keys(command, ['type', 'assigneeId', 'qaOwnerId', 'severity', 'priority', 'dueDate']);
       next.assigneeId = member(command.assigneeId, ctx); next.qaOwnerId = member(command.qaOwnerId, ctx);
@@ -355,16 +377,18 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
       break;
     }
     case 'start_fix':
-      keys(command, ['type']); next.state = 'in_progress'; break;
+      keys(command, ['type']);
+      if (issue.state === 'new' && (!issue.assigneeId || !issue.qaOwnerId || !ctx.memberIds.has(issue.assigneeId) || !ctx.memberIds.has(issue.qaOwnerId))) return fail('qa_triage_required');
+      next.state = 'in_progress'; break;
     case 'submit_fix': {
       keys(command, ['type', 'summary', 'targets']);
-      next.fixSummary = str(command.summary, 8000, true);
+      next.fixSummary = str(command.summary, 8000);
       if (!issue.assigneeId || !issue.qaOwnerId || !ctx.memberIds.has(issue.assigneeId) || !ctx.memberIds.has(issue.qaOwnerId)) return fail('qa_triage_required');
       if (!Array.isArray(command.targets) || !command.targets.length || command.targets.length > 30) return fail('qa_targets_required');
       const seen = new Set<string>();
       next.targets = command.targets.map((raw): QaTarget => {
         record(raw); keys(raw, ['environment', 'component', 'build', 'required']);
-        const environment = str(raw.environment, 120, true), component = str(raw.component, 120), build = str(raw.build, 200, true);
+        const environment = str(raw.environment, 120, true), component = str(raw.component, 120), build = str(raw.build, 200);
         activeEnvironment(environment, ctx);
         const key = JSON.stringify([environment, component.toLowerCase()]);
         if (seen.has(key) || typeof raw.required !== 'boolean') return fail('qa_invalid_target');
@@ -378,18 +402,18 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
     case 'record_deployment': {
       keys(command, ['type', 'targetId', 'build', 'evidence']);
       const target = next.targets.find(item => item.id === command.targetId);
-      if (!target || str(command.build, 200, true) !== target.build) return fail('qa_build_mismatch', 409);
-      target.deploymentEvidence = str(command.evidence, 8000, true); target.deployedBy = ctx.actor.id; target.deployedAt = ctx.now;
+      if (!target || str(command.build, 200) !== target.build) return fail('qa_build_mismatch', 409);
+      target.deploymentEvidence = str(command.evidence, 8000); target.deployedBy = ctx.actor.id; target.deployedAt = ctx.now;
       break;
     }
     case 'record_verification': {
       keys(command, ['type', 'targetId', 'build', 'result', 'note']);
       const target = next.targets.find(item => item.id === command.targetId);
-      if (!target || str(command.build, 200, true) !== target.build) return fail('qa_build_mismatch', 409);
+      if (!target || str(command.build, 200) !== target.build) return fail('qa_build_mismatch', 409);
       if (!target.deployedAt) return fail('qa_not_deployed');
       if (issue.runs.length >= 2000) return fail('qa_history_limit');
       const result = enumValue(command.result, ['pass', 'fail', 'blocked']);
-      const note = str(command.note, 8000, result !== 'pass');
+      const note = str(command.note, 8000);
       next.runs.push({ id: ctx.newId(), sequence: issue.runs.reduce((seq, run) => Math.max(seq, run.sequence), 0) + 1,
         fixCycle: issue.fixCycle, targetId: target.id, environment: target.environment, component: target.component,
         build: target.build, result, note, testerId: ctx.actor.id, createdAt: ctx.now });
@@ -477,6 +501,10 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
   }
   if (type === 'hold') return issue.holdReason;
   if (type === 'reopen') return issue.reopenReason ?? issue.holdReason;
+  if (type === 'update_fields') {
+    const fields = (value: QaIssue) => ({ projectId: value.projectId, assigneeId: value.assigneeId, qaOwnerId: value.qaOwnerId, severity: value.severity, priority: value.priority, dueDate: value.dueDate });
+    return JSON.stringify({ ...(before ? { before: fields(before) } : {}), after: fields(issue) });
+  }
   if (type === 'triage') return `RD: ${issue.assigneeId} · QA: ${issue.qaOwnerId}\n${issue.severity} · P${issue.priority}${issue.dueDate ? '\n' + issue.dueDate : ''}`;
   if (type === 'link_tasks') return issue.taskIds.join('\n');
   if (type === 'edit' || type === 'create' || type === 'created') return `${issue.title}\n${issue.observedEnvironment} · ${issue.observedVersion || '版本未知'}\n${issue.actual}\n${issue.steps}\n${issue.expected}`;

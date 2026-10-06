@@ -6,7 +6,8 @@ import { deliverJob, type DeliveryStore, type Job, type Row } from '../../docker
 const values: Record<string, string> = { SUPABASE_URL: 'https://db.example.com', SUPABASE_SERVICE_ROLE_KEY: 'example-service',
   SUPABASE_ANON_KEY: 'example-anon', JWT_SECRET: 'example-signing-secret-at-least-32-chars' };
 const env = { get: (key: string) => values[key] };
-function backend(options: { inactive?: boolean; noAuth?: boolean; disabled?: boolean; duplicate?: boolean; denied?: boolean; issuerRole?: string } = {}) {
+function backend(options: { inactive?: boolean; noAuth?: boolean; disabled?: boolean; duplicate?: boolean; denied?: boolean; issuerRole?: string;
+  qaIssue?: Row | null; qaStatus?: number; qaUnavailable?: boolean } = {}) {
   const reads: Row[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input)), table = url.pathname.split('/').at(-1);
@@ -20,11 +21,20 @@ function backend(options: { inactive?: boolean; noAuth?: boolean; disabled?: boo
       const binding = { id: 'binding', platform_user_id: 'UEXAMPLE', platform_team_id: 'TEXAMPLE', is_verified: true, verified_by: 'admin', verified_by_member_id: 'issuer' };
       return Response.json(options.duplicate ? [binding, binding] : [binding]);
     }
-    if (table === 'tasks' || table === 'qa_issues') {
+    if (table === 'qa_issues') throw new Error('QA tables are not an authenticated member API');
+    if (table === 'tasks' || table === 'qa') {
       const auth = (init?.headers as Row).Authorization;
       expect(auth).not.toBe('Bearer example-service');
       const claims = JSON.parse(Buffer.from(auth.split('.')[1], 'base64url').toString());
       reads.push({ table, claims, query: Object.fromEntries(url.searchParams) });
+      if (table === 'qa') {
+        expect(url.pathname).toBe('/functions/v1/qa'); expect(init?.method).toBe('POST');
+        expect((init?.headers as Row).apikey).toBe('example-anon');
+        expect(JSON.parse(String(init?.body))).toEqual({ action: 'get', id: 'record' });
+        if (options.qaUnavailable) throw new Error('QA transport unavailable');
+        if (options.qaStatus) return Response.json({ error: { code: 'qa_forbidden' } }, { status: options.qaStatus });
+        return Response.json({ issue: options.qaIssue === undefined ? { id: 'record', workspaceId: 'default' } : options.qaIssue });
+      }
       return Response.json(options.denied ? [] : [{ id: 'record' }]);
     }
     throw new Error('unexpected database read');
@@ -33,23 +43,36 @@ function backend(options: { inactive?: boolean; noAuth?: boolean; disabled?: boo
 }
 afterEach(() => vi.unstubAllGlobals());
 describe('Slack personal delivery uses the recipient LIVO identity', () => {
-  it.each(['tasks', 'qa_issues'] as const)('reads %s under auth_id RLS with verified Slack claims', async table => {
+  it.each(['tasks', 'qa_issues'] as const)('reads %s through its member contract with verified Slack claims', async table => {
     const reads = backend();
     expect(await recipientCanRead(env, 'member', 'TEXAMPLE', table, 'record')).toBe(true);
     expect(reads[0].claims).toMatchObject({ sub: 'auth-member', role: 'authenticated', livo_slack_binding: 'binding', livo_slack_team: 'TEXAMPLE', livo_slack_user: 'UEXAMPLE' });
-    expect(reads[0].query.select).toBe('id');
-    if (table === 'qa_issues') expect(reads[0].query.workspace_id).toBe('eq.default');
+    expect(reads).toHaveLength(1);
+    if (table === 'tasks') expect(reads[0]).toMatchObject({ table: 'tasks', query: { select: 'id', id: 'eq.record', limit: '1' } });
+    else expect(reads[0].table).toBe('qa');
   });
   it.each([{ inactive: true }, { noAuth: true }, { disabled: true }, { duplicate: true }, { issuerRole: 'admin' }])('fails closed for an unusable identity %j', async options => {
     const reads = backend(options);
     expect(await deliveryStore(env).binding('member', 'TEXAMPLE')).toBeUndefined();
     expect(await recipientCanRead(env, 'member', 'TEXAMPLE', 'tasks', 'record')).toBe(false);
+    expect(await recipientCanRead(env, 'member', 'TEXAMPLE', 'qa_issues', 'record')).toBe(false);
     expect(reads).toHaveLength(0);
   });
   it('honors an RLS-filtered empty task read', async () => {
     backend({ denied: true });
     expect(await recipientCanRead(env, 'member', 'TEXAMPLE', 'tasks', 'record')).toBe(false);
   });
+  it.each([null, {}, { id: 'another-record', workspaceId: 'default' }, { id: 'record', workspaceId: 'another-workspace' }])(
+    'fails closed when the QA member response does not identify this workspace record: %j', async qaIssue => {
+      backend({ qaIssue });
+      expect(await recipientCanRead(env, 'member', 'TEXAMPLE', 'qa_issues', 'record')).toBe(false);
+    });
+  it.each([{ qaStatus: 403 }, { qaStatus: 404 }, { qaStatus: 503 }, { qaUnavailable: true }])(
+    'never substitutes a service-role QA read after the member endpoint fails: %j', async options => {
+      const reads = backend(options);
+      await expect(recipientCanRead(env, 'member', 'TEXAMPLE', 'qa_issues', 'record')).rejects.toThrow('recipient_permission_unavailable');
+      expect(reads).toHaveLength(1); expect(reads[0].table).toBe('qa');
+    });
 });
 
 const config: Row = { enabled: true, teamId: 'TEXAMPLE', dmEnabled: true, routes: [] };

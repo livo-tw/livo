@@ -86,6 +86,9 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     if (project) {
       setEditingProject(project);
       setShowCreateProject(true);
+      // The editor is outside a mobile Sheet. Release its focus and pointer
+      // lock before the project form takes over.
+      onNavigate?.();
     }
     setContextMenu(null);
   };
@@ -153,6 +156,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         </button>
 
         {featureTogglesReady && featureToggles.releases && <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('releases'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'releases' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Package size={16} />{t('releaseWorkspace.title')}</button>}
+        {featureTogglesReady && featureToggles.deploymentQueue && <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('deployment-queue'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${currentView === 'deployment-queue' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Package size={16} />{t('deploymentQueue.title')}</button>}
         {/* All Tasks */}
         {featureTogglesReady && featureToggles.qa && <>
           <button onClick={() => nav(() => { setSelectedProjectId(null); setSelectedLineId(null); setCurrentView('qa'); })} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium ${activeEntry === 'qa' ? 'bg-sidebar-primary/90 text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-hover'}`}><Bug size={16} />{t('qa.title')}</button>

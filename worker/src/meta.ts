@@ -33,6 +33,8 @@ export interface TableMeta {
    * `ownerCol` is required whenever any rule is 'own'.
    */
   write?: { insert: WriteRule; update: WriteRule; delete: WriteRule; ownerCol?: string };
+  /** Protected system-setting keys add a super_admin write floor in db.ts. */
+  superOnlyKeys?: readonly string[];
   /** Columns stored as INTEGER 0/1 but exposed as JSON booleans. */
   boolCols?: string[];
   /** Columns stored as TEXT JSON but exposed as parsed JSON values. */

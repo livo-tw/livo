@@ -12,7 +12,11 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
   let teamPromise: Promise<string> | undefined;
   const adapter: QaSlackActions = {
     enabled: async () => { const flags = await db.setting('feature_toggles'); return flags?.qa === true && flags?.slackActions === true; },
-    actor: async payload => await actions.actor(payload) as QaSlackActor,
+    actor: async payload => {
+      const actor = await actions.actor(payload) as QaSlackActor & { jwt: string };
+      const permission = await createQaService(env, actor.jwt).handle({ action: 'deployment_permission' }) as { deploymentOperator: boolean };
+      return { ...actor, deploymentOperator: permission.deploymentOperator === true };
+    },
     api: async <T>(actor: QaSlackActor, body: Record<string, unknown>): Promise<T> => {
       if (!await adapter.enabled()) throw new Error('qa_disabled');
       return await createQaService(env, (actor as QaSlackActor & { jwt: string }).jwt).handle(body) as T;

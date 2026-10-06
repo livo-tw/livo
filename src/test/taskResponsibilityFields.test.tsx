@@ -1,66 +1,65 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@/types';
-import type { TaskResponsibility } from '@/lib/taskWork/client';
-const mocks = vi.hoisted(() => ({ get: vi.fn(), run: vi.fn() }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
-vi.mock('@/lib/taskWork/client', () => ({ createTaskWorkCommandRunner: () => mocks.run, getTaskResponsibility: mocks.get, taskWorkErrorCode: (error: { code?: string }) => error.code || 'work_unavailable' }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, args?: { date?: string }) => args?.date ? `${key}:${args.date}` : key, i18n: { language: 'en' } }) }));
-import TaskResponsibilityFields from '@/components/task-detail/fields/TaskResponsibilityFields';
-const task = { id: 'task-1', assigneeId: 'me', reviewerId: 'other', assigneeRevision: 4, reviewerRevision: 2, statusId: 'doing' } as Task;
-const row: TaskResponsibility = { id: task.id, assignee_id: 'me', reviewer_id: 'other', assignee_revision: 4, reviewer_revision: 2, assignee_acknowledged_at: null, reviewer_acknowledged_at: null };
-beforeEach(() => { mocks.get.mockReset().mockResolvedValue(row); mocks.run.mockReset(); });
-describe('responsibility acceptance controls', () => {
-  it('uses the live revision and leaves task status unchanged', async () => {
-    const saved = { ...row, assignee_revision: 7, assignee_acknowledged_at: '2026-10-03T01:00:00Z' };
-    mocks.get.mockResolvedValue({ ...row, assignee_revision: 7 }); mocks.run.mockResolvedValue({ task: saved });
-    const onSaved = vi.fn(); render(<TaskResponsibilityFields task={task} memberId="me" role="assignee" onSaved={onSaved} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'taskWork.acceptAssignment' }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(saved));
-    expect(mocks.run).toHaveBeenCalledWith({ operation: 'acknowledge', taskId: task.id, role: 'assignee', expectedRevision: 7 });
-    expect(task.statusId).toBe('doing');
+import { createRef } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { Task, User } from '@/types';
+import type { TaskDetailState } from '@/components/task-detail/hooks/useTaskDetail';
+
+const mocks = vi.hoisted(() => ({ from: vi.fn() }));
+vi.mock('react-i18next', async importOriginal => ({
+  ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }),
+}));
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: mocks.from } }));
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ approvalsEnabled: false }) }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users }) }));
+vi.mock('@/components/PortalConfirmDialog', () => ({ usePortalConfirmDialog: () => ({ confirm: vi.fn(), ConfirmDialog: null as null }) }));
+import TaskSidebarFields from '@/components/task-detail/TaskSidebarFields';
+
+const users = [
+  { id: 'example-member', name: 'Example member', email: 'member@example.com', role: 'member', jobTitle: '', isActive: true },
+  { id: 'example-reviewer', name: 'Example reviewer', email: 'reviewer@example.com', role: 'member', jobTitle: '', isActive: true },
+  { id: 'third-member', name: 'Third member', email: 'third@example.com', role: 'member', jobTitle: '', isActive: true },
+] as User[];
+const task: Task = { id: 'task-example', taskKey: 'EX-1', projectId: 'project-example', title: 'Example task', statusId: 'open', priority: 'medium',
+  assigneeId: users[0].id, reviewerId: users[1].id, assigneeRevision: 4, reviewerRevision: 2,
+  creatorId: users[0].id, sortOrder: 0, createdAt: '2026-10-03T00:00:00Z', commentCount: 0, attachmentCount: 0, deployments: [] };
+function detail(card = task) {
+  return { task: card, allProjects: [], productLines: [], users, statuses: [], tags: [], customFields: [],
+    permissions: { canEditProject: false, canDeleteTask: false }, sidebarFieldOrder: ['assignee', 'reviewer'], SIDEBAR_DEFAULT_ORDER: ['assignee', 'reviewer'],
+    currentMemberId: users[0].id, currentMember: users[0], statusDropdownRef: createRef<HTMLDivElement>(), tagDropdownRef: createRef<HTMLDivElement>(),
+    updateTask: vi.fn(), setSelectedTask: vi.fn(), setAllTasks: vi.fn(), isMobile: false } as unknown as TaskDetailState;
+}
+function expectAssignmentControls() {
+  const controls = screen.getAllByRole('combobox');
+  expect(controls).toHaveLength(2);
+  expect(controls[0]).toHaveTextContent('Example member');
+  expect(controls[1]).toHaveTextContent('Example reviewer');
+  expect(screen.queryByText(/taskWork\.(acceptAssignment|acceptReview|awaitingAcknowledgement|acknowledgedAt|acknowledgementDescription)/)).toBeNull();
+  expect(mocks.from).not.toHaveBeenCalled();
+  return controls;
+}
+
+beforeEach(() => {
+  mocks.from.mockReset();
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); });
+
+describe('task assignment is effective without acceptance', () => {
+  it('keeps both assigned members visible without fetching or offering acceptance', () => {
+    render(<TaskSidebarFields detail={detail()} />);
+    expectAssignmentControls();
   });
-  it('only offers review acceptance to the current reviewer', async () => {
-    const view = render(<TaskResponsibilityFields task={task} memberId="me" role="reviewer" onSaved={vi.fn()} />);
-    await screen.findByText('taskWork.awaitingAcknowledgement');
-    expect(screen.queryByRole('button', { name: 'taskWork.acceptReview' })).toBeNull();
-    view.rerender(<TaskResponsibilityFields task={task} memberId="other" role="reviewer" onSaved={vi.fn()} />);
-    expect(await screen.findByRole('button', { name: 'taskWork.acceptReview' })).toBeTruthy();
+  it('does not display historical acceptance receipts as a current task requirement', () => {
+    render(<TaskSidebarFields detail={detail({ ...task, assigneeAcknowledgedAt: '2026-10-03T01:00:00Z', reviewerAcknowledgedAt: '2026-10-03T01:00:00Z' })} />);
+    expectAssignmentControls();
   });
-  it('shows the receipt time and prevents repeated confirmation', async () => {
-    mocks.get.mockResolvedValue({ ...row, assignee_acknowledged_at: '2026-10-03T01:00:00Z' });
-    render(<TaskResponsibilityFields task={task} memberId="me" role="assignee" onSaved={vi.fn()} />);
-    expect(await screen.findByText(/^taskWork.acknowledgedAt:/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'taskWork.acceptAssignment' })).toBeNull();
-  });
-  it('discards a late receipt when the assignment changes', async () => {
-    let resolve!: (value: unknown) => void;
-    mocks.run.mockImplementation(() => new Promise(done => { resolve = done; }));
-    const onSaved = vi.fn(); const view = render(<TaskResponsibilityFields task={task} memberId="me" role="assignee" onSaved={onSaved} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'taskWork.acceptAssignment' }));
-    mocks.get.mockResolvedValue({ ...row, assignee_id: 'other', assignee_revision: 5 });
-    view.rerender(<TaskResponsibilityFields task={{ ...task, assigneeId: 'other', assigneeRevision: 5 }} memberId="me" role="assignee" onSaved={onSaved} />);
-    await act(async () => resolve({ task: { ...row, assignee_acknowledged_at: '2026-10-03T01:00:00Z' } }));
-    expect(onSaved).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'taskWork.acceptAssignment' })).toBeNull();
-  });
-  it('ignores an old account read after switching account', async () => {
-    let resolve!: (value: unknown) => void;
-    mocks.get.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const view = render(<TaskResponsibilityFields task={task} memberId="me" role="assignee" onSaved={vi.fn()} />);
-    view.rerender(<TaskResponsibilityFields task={task} memberId="other" role="assignee" onSaved={vi.fn()} />);
-    await screen.findByText('taskWork.awaitingAcknowledgement');
-    await act(async () => resolve({ ...row, assignee_id: 'other', assignee_acknowledged_at: '2026-10-03T01:00:00Z' }));
-    expect(screen.queryByText(/^taskWork.acknowledgedAt:/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'taskWork.acceptAssignment' })).toBeNull();
-  });
-  it('keeps the acceptance button for an uncertain response and gives a clear reload for conflicts', async () => {
-    mocks.run.mockRejectedValueOnce({ code: 'work_transport_error' }).mockRejectedValueOnce({ code: 'work_conflict' });
-    render(<TaskResponsibilityFields task={task} memberId="me" role="assignee" onSaved={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'taskWork.acceptAssignment' }));
-    await screen.findByText('taskWork.errors.work_transport_error');
-    fireEvent.click(screen.getByRole('button', { name: 'taskWork.acceptAssignment' }));
-    await screen.findByText('taskWork.errors.work_conflict');
-    expect(screen.getByRole('button', { name: 'taskWork.reload' })).toBeTruthy();
+  it('keeps reviewer assignment editable through the normal task update', async () => {
+    const state = detail(); render(<TaskSidebarFields detail={state} />);
+    fireEvent.click(expectAssignmentControls()[1]);
+    fireEvent.click(await screen.findByRole('option', { name: /Third member/ }));
+    expect(state.updateTask).toHaveBeenCalledExactlyOnceWith({ reviewerId: 'third-member' });
+    expect(state.setSelectedTask).not.toHaveBeenCalled();
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });

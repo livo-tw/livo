@@ -12,6 +12,7 @@ import { ProjectBadge } from '@/components/ui/badges';
 import { QaPriorityBadge, QaSeverityBadge, QaStateBadge, qaPriorities, qaStateColors } from './QaBadges';
 import QaTargetEditor, { type QaTargetDraft } from './QaTargetEditor';
 import QaVerificationPanel from './QaVerificationPanel';
+import QaIssueSidebarFields from './QaIssueSidebarFields';
 import { QaText } from './QaText';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -43,7 +44,7 @@ import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from 'sonner';
 
 type ActionType = QaCommand['type'];
-const actionLabels: Record<ActionType, string> = { edit: 'edit', triage: 'triage', start_fix: 'startFix', submit_fix: 'submitFix', record_deployment: 'deployment', record_verification: 'verification', set_state: 'changeState', close: 'close', reopen: 'reopen', hold: 'hold', link_tasks: 'taskLinks', request_handoff: 'actions', accept_handoff: 'actions', resolve_handoff: 'actions' };
+const actionLabels: Record<ActionType, string> = { update_fields: 'properties', edit: 'edit', triage: 'triage', start_fix: 'startFix', submit_fix: 'submitFix', record_deployment: 'deployment', record_verification: 'verification', set_state: 'changeState', close: 'close', reopen: 'reopen', hold: 'hold', link_tasks: 'taskLinks', request_handoff: 'actions', accept_handoff: 'actions', resolve_handoff: 'actions' };
 const displayDate = (value: string) => new Date(value).toLocaleString();
 export function QaFailure({ error }: { error: unknown }) {
   const { t } = useTranslation();
@@ -63,9 +64,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const [acknowledgedIssue, setAcknowledgedIssue] = useState<QaDetail['issue'] | null>(null);
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
-  const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), issue.projectId])] } : baseActor;
+  const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), detail.issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
-  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
+  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['update_fields', 'start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
   const [commandBusy, setBusy] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [unknownCommand, setUnknownCommand] = useState(false);
@@ -78,11 +79,13 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const [comment, setComment] = useState('');
   const canResolveFixed = isHistoricalQaPass(issue) || (['verified', 'verification'].includes(issue.state) && requiredTargetsPassed(issue));
   const [resolution, setResolution] = useState<QaResolution | ''>(() => initialDefaults?.resolution === 'wont_fix' ? 'wont_fix' : canResolveFixed ? 'fixed' : '');
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
   const projectTasks = allTasks.filter(task => task.projectId === issue.projectId);
   const unavailableLinks = links.filter(id => !projectTasks.some(task => task.id === id));
-  const [targets, setTargets] = useState<QaTargetDraft[]>([{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
+  const [targets, setTargets] = useState<QaTargetDraft[]>(() => issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
   const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
   const commandSending = useRef(false);
@@ -97,12 +100,14 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const memberNames = new Map(users.map(user => [user.id, user.name]));
   const eventText = { t, member: (id: string) => memberNames.get(id) ?? id, date: displayDate,
     task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
+    project: (id: string) => allProjects.find(project => project.id === id)?.name || id,
     stateLabel: (state: string) => workflow?.labels[state as keyof QaWorkflow['labels']] || t(`qa.state.${state}`) };
   const primaryAction = nextAction && can(nextAction.command) ? nextAction : null;
   const moreActions = (['edit', 'triage', 'start_fix', 'submit_fix', 'close', 'reopen', 'hold', 'link_tasks'] as ActionType[])
     .filter(type => can(type) && type !== primaryAction?.command && !(type === 'start_fix' && issue.state === 'in_progress'));
   const nextOwner = nextAction && ['start_fix', 'submit_fix'].includes(nextAction.command) ? issue.assigneeId : issue.qaOwnerId;
   const canDelete = canQaDelete(issue, actor);
+  const canOpenHandoff = !!issue.handoff || ['request_handoff', 'accept_handoff', 'resolve_handoff'].some(type => can(type as ActionType));
   // Permanent, so one confirmation that says so. A bug already gone counts as deleted.
   const removeIssue = async () => {
     if (busy || !canDelete) return;
@@ -116,10 +121,18 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     } catch (failure) { setError(failure); toast.error(t('qa.deleteFailed')); }
     finally { setBusy(false); }
   };
+  const focusOwners = () => {
+    sidebarRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    const label = t(!issue.assigneeId ? 'qa.assignee' : 'qa.qaOwner');
+    const control = Array.from(sidebarRef.current?.querySelectorAll<HTMLButtonElement>('button[role="combobox"]') || []).find(button => button.getAttribute('aria-label') === label);
+    control?.focus();
+  };
+  useEffect(() => { if (initialAction === 'update_fields') focusOwners(); }, []); // Focus the owner fields when opened from a card.
   const openAction = (type: ActionType) => {
     if (busy || !can(type)) return;
     setError(null);
-    if (type === 'record_deployment' || type === 'record_verification') setTab('verification');
+    if (type === 'update_fields') focusOwners();
+    else if (type === 'record_deployment' || type === 'record_verification') setTab('verification');
     else if (type === 'start_fix') void send({ type: 'start_fix' });
     else {
       // The close form starts from what the current evidence allows.
@@ -214,13 +227,15 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     catch (failure) { const status = (failure as { status?: number })?.status; if (pendingComment.current) { const unknown = !status || status >= 500; setUnknownCommand(unknown); if (!unknown) pendingComment.current = undefined; } setError(failure); toast.error(t('qa.failed')); }
     finally { setBusy(false); }
   };
+  const commandRetryNotice = unknownCommand ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div> : null;
   const stateControl = <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
             options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
             onValueChange={state => void changeState(state)} /></div>;
   const actionSection = <QaSection title={t('qa.actions')}>
+          {!isQaTerminal(issue.state) && (!issue.assigneeId || !issue.qaOwnerId) && <p className="mb-3 text-sm text-muted-foreground">{t('qa.assignOwnersHint')}</p>}
           {isMobile && stateControl}
           {primaryAction ? <div className="space-y-2"><p className="text-sm text-muted-foreground">{t('qa.yourNextStep')}</p>{tab === 'verification' && ['record_deployment', 'record_verification'].includes(primaryAction.command) ? <p className="text-sm leading-relaxed">{t('qa.completeInPanel')}</p> : <button type="button" className={`${qaPrimary} w-full`} disabled={busy} onClick={() => openAction(primaryAction.command)}>{t(`qa.${primaryAction.label}`)}</button>}</div> : nextAction && <p className="text-sm leading-relaxed text-muted-foreground">{t('qa.waitingForAction', { name: nextOwner ? member(nextOwner) : t('qa.triageTeam'), action: t(`qa.${nextAction.label}`) })}</p>}
-          {(moreActions.length > 0 || canDelete) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
+          {(moreActions.length > 0 || canDelete || canOpenHandoff) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canOpenHandoff && <DropdownMenuItem onSelect={() => setHandoffOpen(true)}>{t('qaHandoff.title')}</DropdownMenuItem>}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
           {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>;
   return <div className="w-full min-w-0 space-y-4 p-3 md:p-5">
@@ -230,9 +245,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       <h1 className="break-words text-xl font-bold leading-relaxed md:text-2xl">{issue.title}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-3"><QaStateBadge state={issue.state} label={workflow?.labels[issue.state]} /><QaPriorityBadge priority={issue.priority} issue={issue} /><QaSeverityBadge severity={issue.severity} /><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: issue.fixCycle })}</span></div>
     </header>
-    {error !== null && !action && <QaFailure error={error} />}
-    {unknownCommand && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div>}
-    {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
+    {error !== null && !action && !handoffOpen && <QaFailure error={error} />}
+    {!handoffOpen && !action && commandRetryNotice}
+    {notice && !handoffOpen && !action && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     {busy && <p role="status" className="text-sm">{t('qa.saving')}</p>}
     {isMobile && actionSection}
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -266,7 +281,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         </QaSection>
         <QaSection title={t('qa.runs')}>
           {!issue.runs.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}
-          <ol className="space-y-3">{[...issue.runs].reverse().map(run => <li key={run.id} className="rounded border border-border p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{t(`qa.result.${run.result}`)} · {run.environment} / {run.component} / {run.build}</strong><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: run.fixCycle })} · {member(run.testerId)} · {displayDate(run.createdAt)}</span></div><p className="mt-1 whitespace-pre-wrap break-words">{run.note}</p></li>)}</ol>
+          <ol className="space-y-3">{[...issue.runs].reverse().map(run => <li key={run.id} className="rounded border border-border p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{t(`qa.result.${run.result}`)} · {[run.environment, run.component, run.build].filter(Boolean).join(' / ')}</strong><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: run.fixCycle })} · {member(run.testerId)} · {displayDate(run.createdAt)}</span></div><p className="mt-1 whitespace-pre-wrap break-words">{run.note}</p></li>)}</ol>
         </QaSection>
         </>}
         {tab === 'comments' && <>
@@ -281,12 +296,12 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         </>}
       </div>
       </div>
-      <div className="min-w-0 space-y-4">
+      <div ref={sidebarRef} className="min-w-0 space-y-4">
         {!isMobile && actionSection}
-        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
         <QaSection title={t('qa.properties')}>
           {!isMobile && stateControl}
-          <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
+          <QaIssueSidebarFields issue={issue} disabled={busy || !can('update_fields')} onCommand={send} />
+          <dl className="mt-4 grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
         {fields.error !== null && <div role="alert" className="text-sm text-destructive">{t('qa.failed')} <button type="button" className={qaButton} onClick={fields.retry}>{t('qa.refresh')}</button></div>}
@@ -299,6 +314,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-4xl flex-col overflow-hidden p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
         <DialogHeader><DialogTitle>{action ? t(`qa.${actionLabels[action]}`) : ''}</DialogTitle></DialogHeader>
         {error !== null && <div className="space-y-2"><QaFailure error={error} /><button className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
+        {commandRetryNotice}
+        {notice && <div className="space-y-2"><p role="status" className="text-sm text-muted-foreground">{notice}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
           {action === 'edit' && can('edit') && <div className="mt-4 flex min-h-0 flex-1 overflow-hidden"><QaReportForm fixedFooter initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '', customFields: input.customFields })} /></div>}
           {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 min-h-0 space-y-3 overflow-y-auto overscroll-contain" onSubmit={submitAction}><fieldset disabled={busy} className="space-y-3">
             {action === 'triage' && <>
@@ -307,7 +324,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
               <QaSelect label={t('qa.severity')} name="severity" required defaultValue={issue.severity === 'untriaged' ? '' : issue.severity}><option value="">{t('qa.choose')}</option>{['low', 'medium', 'high'].map(s => <option value={s} key={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>
               <section className="rounded-lg border border-border p-3"><h3 className="text-sm font-medium">{t('qa.additionalDetails')}</h3><div className="mt-3 space-y-3"><QaSelect label={t('qa.priority')} name="priority" required defaultValue={issue.priority}>{qaPriorities.map((value, index) => <option key={value} value={index + 1}>{t(`priority.${value}`)}</option>)}</QaSelect><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} /></div></section>
             </>}
-            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline required maxLength={8000} />
+            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline maxLength={8000} />
               <QaTargetEditor targets={targets} onChange={setTargets} versions={versions} disabled={busy} />
             </>}
             {action === 'close' && <><QaSelect label={t('qa.resolutionField')} required value={resolution} onChange={event => setResolution(event.target.value as QaResolution | '')}><option value="">{t('qa.choose')}</option>{['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].map(value => <option key={value} value={value} disabled={value === 'fixed' && !canResolveFixed}>{t(`qa.resolution.${value}`)}</option>)}</QaSelect>{!canResolveFixed && <p className="text-xs text-muted-foreground">{t('qa.fixedNeedsVerification')}</p>}{resolution === 'duplicate' && <QaField label={t('qa.duplicateId')} name="duplicateOfId" required placeholder="#1a2b3c4d" maxLength={130} />}</>}
@@ -320,6 +337,15 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
             <p className="text-xs text-muted-foreground">{t('qa.unsent')}</p>
             <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-border bg-card py-3 pb-[max(12px,env(safe-area-inset-bottom))]"><button className={qaPrimary} type="submit" disabled={(action === 'submit_fix' && !environments.ready) || (action === 'link_tasks' && unavailableLinks.length > 0)}>{t('qa.save')}</button><button className={qaButton} type="button" onClick={() => setAction(null)}>{t('qa.cancel')}</button></div>
           </fieldset></form>}
+      </DialogContent>
+    </Dialog>
+    <Dialog open={handoffOpen} onOpenChange={open => { if (!busy) setHandoffOpen(open); }}>
+      <DialogContent aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
+        <DialogHeader><DialogTitle>{t('qaHandoff.title')}</DialogTitle></DialogHeader>
+        {error !== null && <QaFailure error={error} />}
+        {commandRetryNotice}
+        {notice && <div className="space-y-2"><p role="status" className="text-sm text-muted-foreground">{notice}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
+        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
       </DialogContent>
     </Dialog>
     {ConfirmDialog}

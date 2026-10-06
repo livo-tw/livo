@@ -4,15 +4,16 @@ import {createWorkData,executeSlackWorkCommand} from '../../docker/volumes/funct
 import {workForm,parseWorkSubmission,workPage,workNotice} from '../../docker/volumes/functions/slack-interact/work-ui';
 import {handleWork} from '../../docker/volumes/functions/slack-interact/work-handler';
 import {TaskWorkError,parseTaskWorkCommand} from '../../docker/volumes/functions/slack-interact/work-core';
-import type {Actions} from '../../docker/volumes/functions/slack-interact/handler';
+import {handleInteraction,type Actions} from '../../docker/volumes/functions/slack-interact/handler';
 type Row=Record<string,any>;
 const actor={id:'m1',jwt:'verified-member',locale:'en'};
 const task:Row={id:'t1',task_key:'EXAMPLE-1',title:'<@everyone>',project_id:'p1',assignee_id:'m1',reviewer_id:'m1',assignee_revision:3,reviewer_revision:7};
 const cmd=()=>parseTaskWorkCommand({commandId:'command-example',taskId:'t1',operation:'acknowledge',role:'assignee',expectedRevision:3});
+const editCmd=()=>parseTaskWorkCommand({commandId:'delete-example',taskId:'t1',operation:'delete_item',list:'checks',itemId:'i1',expectedVersion:4});
 function actions(overrides:Row={}) {
  const jobs:Promise<unknown>[]=[],slack=vi.fn(async(_method:string,_body:Row)=>({view:{id:'Vexample'}})),command=vi.fn(async(_actor:Row,input:Row)=>({commandId:input.commandId,task}));
- const d={work:{command,...overrides},workspace:{detail:vi.fn(async()=>task)},enabled:async()=>true,actor:vi.fn(async()=>actor),search:vi.fn(async()=>[]),
-  background:(p:Promise<unknown>)=>jobs.push(p),slack,reply:vi.fn(async()=>{})} as unknown as Actions;
+  const d={work:{command,page:vi.fn(async(_actor:Row,_taskId:string,section:string,page:number)=>({task,section,page,rows:[],hasMore:false})),...overrides},workspace:{detail:vi.fn(async()=>task),comments:vi.fn(async()=>({comments:[],page:0,hasMore:false}))},enabled:async()=>true,actor:vi.fn(async()=>actor),search:vi.fn(async()=>[]),
+  background:(p:Promise<unknown>)=>jobs.push(p),slack,reply:vi.fn(async()=>{}),link:()=> 'https://example.com/?task=t1'} as unknown as Actions;
  return {d,jobs,slack,command};
 }
 describe('Slack TaskWork private forms and live reads',()=>{
@@ -24,11 +25,21 @@ describe('Slack TaskWork private forms and live reads',()=>{
   const parsed=parseWorkSubmission({...form,state:{values:{text:{value:{value:'New'}},done:{value:{selected_option:{value:'true'}}}}}});
   expect(parsed).toMatchObject({expectedVersion:4,text:'New',isDone:true});
  });
- it('shows both own responsibilities and hides already acknowledged or other-person actions',()=>{
+ it('shows immediately effective assignments without acknowledgement controls or pending hints',()=>{
   const page=(t:Row)=>workPage({task:t,section:'responsibility',rows:[],page:0,hasMore:false},{locale:'zh-CN'},'m1');
   const buttons=(v:Row)=>v.blocks.flatMap((b:Row)=>b.elements||[]).filter((b:Row)=>b.action_id==='livo_work_ack');
-  expect(buttons(page(task)).map((b:Row)=>JSON.parse(b.value).expectedRevision)).toEqual([3,7]);
+  expect(buttons(page(task))).toHaveLength(0);expect(JSON.stringify(page(task))).toContain('已指派给你');
+  expect(JSON.stringify(page(task))).not.toMatch(/未确认|尚未确认|确认接手|livo_work_ack/);
   expect(buttons(page({...task,assignee_acknowledged_at:'now',reviewer_id:'other'}))).toHaveLength(0);
+  expect(page(task)).toEqual(page({...task,assignee_acknowledged_at:'now',reviewer_acknowledged_at:'now'}));
+ });
+ it('uses unique action IDs for section controls and both pagination buttons',()=>{
+  const view=workPage({task,section:'checks',rows:[],page:1,hasMore:true},{locale:'en'},'m1');
+  for(const block of view.blocks.filter((b:Row)=>b.type==='actions')) {
+    const ids=block.elements.map((b:Row)=>b.action_id);expect(new Set(ids).size).toBe(ids.length);
+  }
+  const ids=view.blocks.flatMap((b:Row)=>b.elements||[]).map((b:Row)=>b.action_id);
+  expect(ids).toEqual(expect.arrayContaining(['livo_work_open_checks','livo_work_open_todos','livo_work_open_children','livo_work_open_dependencies','livo_work_open_responsibility','livo_work_open_previous','livo_work_open_next']));
  });
  it('reads through member JWT/RLS, pages 8+1, and refuses missing JWT without service fallback',async()=>{
   const rows=vi.fn(async(table:string,_params:Row):Promise<Row[]>=>table==='tasks'?[task]:Array.from({length:9},(_,i)=>({id:`i${i}`,version:0})));
@@ -57,27 +68,67 @@ describe('Slack TaskWork private forms and live reads',()=>{
   expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual(cmd());
   await expect(executeSlackWorkCommand(env,actor,cmd(),async()=>Response.json({error:'internal secret'},{status:500}))).rejects.toMatchObject({code:'work_unavailable',status:503});
  });
- it('ACKs promptly, resolves live actor, and collapses duplicate Slack submissions',async()=>{
-  const a=actions(),view=workForm(cmd(),task,{locale:'en'}),payload={type:'view_submission',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view:{...view,id:'Vdedup',hash:'h1',state:{values:{}}}};
+ it('retires advanced Slack forms and rechecks member access on each submission without writing',async()=>{
+  const a=actions(),view=workForm(editCmd(),task,{locale:'en'}),payload={type:'view_submission',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view:{...view,id:'Vdedup',hash:'h1',state:{values:{}}}};
   const response=await handleWork(payload,a.d,{locale:'en'});await handleWork(payload,a.d,{locale:'en'});await Promise.all(a.jobs);
-  expect(response?.response_action).toBe('update');expect(a.command).toHaveBeenCalledTimes(1);expect(a.command).toHaveBeenCalledWith(actor,cmd());expect(a.d.reply).not.toHaveBeenCalled();
+  expect(response?.response_action).toBe('update');expect(a.command).not.toHaveBeenCalled();expect(a.d.actor).toHaveBeenCalledTimes(2);expect(a.d.workspace!.detail).toHaveBeenCalledTimes(2);expect(a.d.reply).not.toHaveBeenCalled();
  });
- it('rejects an old assignment button without upgrading its displayed revision',async()=>{
+ it('opens the current authorized panel from an obsolete assignment button without an acknowledgement write',async()=>{
   const a=actions();await handleWork({type:'block_actions',trigger_id:'trigger',user:{id:'UEXAMPLE'},actions:[{action_id:'livo_work_ack',value:JSON.stringify({taskId:'t1',role:'assignee',expectedRevision:1})}]},a.d,{locale:'en'});await Promise.all(a.jobs);
-  expect(a.command).not.toHaveBeenCalled();expect(JSON.stringify(a.slack.mock.calls)).toContain('data changed');
+  expect(a.command).not.toHaveBeenCalled();expect(a.d.workspace!.detail).toHaveBeenCalledWith(actor,'t1',false);
+  expect(JSON.stringify(a.slack.mock.calls)).toContain('Acknowledgement is no longer required');
+  expect(JSON.stringify(a.slack.mock.calls)).not.toContain('livo_work_ack');
  });
- it('retries an uncertain save with exactly the original command ID and body',async()=>{
-  let attempt=0;const captured:Row[]=[];const a=actions({command:async(_actor:Row,c:Row)=>{captured.push(c);if(!attempt++)throw new TaskWorkError('work_unavailable',503);return {};}});
-  const view=workForm(cmd(),task,{locale:'en'}),payload={type:'view_submission',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view:{...view,id:'Vretry',hash:'h1',state:{values:{}}}};
+ it('treats an old acknowledgement form as a fresh read on every submit',async()=>{
+  const a=actions(),payload={type:'view_submission',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view:{id:'Vold',hash:'h1',callback_id:'livo_work_save',private_metadata:JSON.stringify({command:cmd()}),state:{values:{}}}};
   await handleWork(payload,a.d,{locale:'en'});await Promise.all(a.jobs);
-  const retry=a.slack.mock.calls[a.slack.mock.calls.length-1][1].view;
-  expect(JSON.parse(retry.private_metadata).retryCommand).toEqual(cmd());
-  await handleWork({type:'block_actions',team:payload.team,user:payload.user,view:{...retry,id:'Vretry',hash:'h2'},actions:[{action_id:'livo_work_retry',value:'{}'}]},a.d,{locale:'en'});await Promise.all(a.jobs);
-  expect(captured).toEqual([cmd(),cmd()]);
+  await handleWork(payload,a.d,{locale:'en'});await Promise.all(a.jobs);
+  expect(a.command).not.toHaveBeenCalled();expect(a.d.actor).toHaveBeenCalledTimes(2);expect(a.d.workspace!.detail).toHaveBeenCalledTimes(2);
+  expect(JSON.stringify(a.slack.mock.calls)).toContain('Acknowledgement is no longer required');
  });
- it('returns a valid modal update for malformed forms that have no text input block',async()=>{
-  const a=actions(),view=workForm(cmd(),task,{});const response=await handleWork({type:'view_submission',view:{...view,private_metadata:'invalid-json'}},a.d,{});
+ it('fails closed when an obsolete button no longer has record access',async()=>{
+  const a=actions();a.d.workspace!.detail=vi.fn(async()=>{throw new TaskWorkError('work_forbidden',403);});
+  await handleWork({type:'block_actions',trigger_id:'trigger',user:{id:'UEXAMPLE'},actions:[{action_id:'livo_work_ack',value:JSON.stringify({taskId:'t1',role:'assignee',expectedRevision:1})}]},a.d,{locale:'en'});await Promise.all(a.jobs);
+  expect(a.command).not.toHaveBeenCalled();expect(a.d.work!.page).not.toHaveBeenCalled();expect(JSON.stringify(a.slack.mock.calls)).not.toContain(task.title);
+ });
+ it.each(['checks','todos','children','dependencies','responsibility','previous','next'])('routes the unique work button %s through the member read contract',async suffix=>{
+  const a=actions(),section=['previous','next'].includes(suffix)?'checks':suffix;
+  await handleWork({type:'block_actions',trigger_id:'trigger',user:{id:'UEXAMPLE'},actions:[{action_id:`livo_work_open_${suffix}`,value:JSON.stringify({taskId:'t1',section,page:1})}]},a.d,{});await Promise.all(a.jobs);
+  expect(a.d.workspace!.detail).toHaveBeenCalledWith(actor,'t1',false);expect(a.d.work!.page).not.toHaveBeenCalled();expect(a.command).not.toHaveBeenCalled();
+  const rendered=a.slack.mock.calls.at(-1)![1].view;
+  const buttons=rendered.blocks.flatMap((b:Row)=>b.elements||[]).filter((b:Row)=>b.type==='button');
+  expect(buttons.map((b:Row)=>b.action_id||b.url)).toEqual(['livo_task_edit','livo_task_comment','https://example.com/?task=t1','livo_task_context','livo_workspace_home']);
+  expect(JSON.stringify(rendered)).not.toMatch(/livo_work_|livo_deadline_|livo_reminder_|livo_approval/);
+ });
+ it('replaces a rejected rich view with a visible static error',async()=>{
+  const a=actions();a.slack.mockImplementation(async(method:string,body:Row)=>{
+    if(method==='views.update'&&body.view.blocks.some((b:Row)=>b.type==='actions'))throw new Error('invalid_arguments');return {view:{id:'Vexample'}};
+  });
+  await handleWork({type:'block_actions',trigger_id:'trigger',user:{id:'UEXAMPLE'},actions:[{action_id:'livo_work_open_checks',value:JSON.stringify({taskId:'t1',section:'checks'})}]},a.d,{locale:'en'});await Promise.all(a.jobs);
+  expect(JSON.stringify(a.slack.mock.calls.at(-1))).toContain('work panel could not be displayed');expect(a.d.reply).not.toHaveBeenCalled();
+ });
+ it('replies privately when an old form has been closed, without an advanced write',async()=>{
+  const a=actions();a.slack.mockRejectedValue(new Error('view_not_found'));const view=workForm(editCmd(),task,{locale:'en'});
+  await handleWork({type:'view_submission',user:{id:'UEXAMPLE'},view:{...view,id:'Vclosed',hash:'h1',state:{values:{}}}},a.d,{locale:'en',channel:'CEXAMPLE'});await Promise.all(a.jobs);
+  expect(a.command).not.toHaveBeenCalled();expect(a.d.reply).toHaveBeenCalledWith(expect.objectContaining({channel_id:'CEXAMPLE',user_id:'UEXAMPLE'}),expect.stringContaining('work panel could not be displayed'));
+ });
+ it('treats historical retry controls as a fresh task read rather than repeating a write',async()=>{
+  const a=actions(),retry=workNotice('work_unavailable',{locale:'en'},editCmd());
+  await handleWork({type:'block_actions',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view:{...retry,id:'Vretry',hash:'h2'},actions:[{action_id:'livo_work_retry',value:'{}'}]},a.d,{locale:'en'});await Promise.all(a.jobs);
+  expect(a.command).not.toHaveBeenCalled();expect(a.d.workspace!.detail).toHaveBeenCalledWith(actor,'t1',false);
+ });
+ it('returns a finite safe modal update for malformed historical forms that have no text input block',async()=>{
+  const a=actions(),view:Row={type:'modal',id:'Vmalformed',callback_id:'livo_work_save',private_metadata:'invalid-json',blocks:[],state:{values:{}}};
+  const response=await handleWork({type:'view_submission',view},a.d,{});
   expect(response).toMatchObject({response_action:'update',view:{type:'modal'}});expect(response).not.toHaveProperty('errors');expect(a.command).not.toHaveBeenCalled();
+  expect(a.d.actor).not.toHaveBeenCalled();expect(a.d.workspace!.detail).not.toHaveBeenCalled();expect(a.jobs).toHaveLength(0);
+ });
+ it('acknowledges unexpected submissions of retired read-only notices without reading or writing a task',async()=>{
+  const a=actions(),view=workForm(cmd(),task,{locale:'en'});
+  expect(view).not.toHaveProperty('submit');expect(view.callback_id).not.toBe('livo_work_save');
+  const response=await handleInteraction({type:'view_submission',team:{id:'TEXAMPLE'},user:{id:'UEXAMPLE'},view},'obsolete-notice',a.d);
+  expect(response).toEqual({});expect(a.command).not.toHaveBeenCalled();expect(a.d.actor).not.toHaveBeenCalled();
+  expect(a.d.workspace!.detail).not.toHaveBeenCalled();expect(a.jobs).toHaveLength(0);
  });
  it('stores a maximum-size retry payload in private metadata, not button value',()=>{
   const c=parseTaskWorkCommand({commandId:'large-command',taskId:'t1',operation:'add_item',list:'todos',text:'字'.repeat(2000)}),view=workNotice('work_unavailable',{locale:'en'},c);

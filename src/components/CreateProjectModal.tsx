@@ -9,7 +9,7 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useLicense } from '@/context/LicenseContext';
 import { logActivity } from '@/lib/activityLog';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
-import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const PRESET_COLORS = [...PROJECT_COLOR_PALETTE, LEGACY_PROJECT_COLOR];
 
@@ -26,10 +26,10 @@ const CreateProjectModal = () => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const latestProjectsRef = useRef(allProjects);
   latestProjectsRef.current = allProjects;
   const { viewers, trackEditing, isLockedBy, acquireLock, releaseLock } = usePresenceLock(showCreateProject ? 'project-manage-presence' : 'project-manage-inactive', !hasFeature('realtime-collab'));
-  const focusTrapRef = useFocusTrap(showCreateProject);
 
   const isEditing = !!editingProject;
   const heldLockRef = useRef<string | null>(null);
@@ -131,21 +131,25 @@ const CreateProjectModal = () => {
   };
 
   return (
-    <div
-      ref={focusTrapRef}
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={() => setShowCreateProject(false)}
-      onKeyDown={e => e.key === 'Escape' && setShowCreateProject(false)}
-    >
-      <div
-        className="bg-card rounded-lg shadow-xl border border-border w-[min(360px,calc(100vw-32px))] mx-4"
-        onClick={e => e.stopPropagation()}
+    <Dialog open={showCreateProject} onOpenChange={setShowCreateProject}>
+      <DialogContent
+        aria-describedby={undefined}
+        className="flex min-h-0 w-[min(360px,calc(100vw-32px))] max-w-none flex-col gap-0 bg-card p-0"
+        style={{ overflow: 'hidden' }}
+        onOpenAutoFocus={event => {
+          previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          event.preventDefault();
+          nameRef.current?.focus();
+        }}
+        onCloseAutoFocus={event => {
+          event.preventDefault();
+          if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
+          else document.getElementById('livo-navigation-toggle')?.focus();
+        }}
       >
         {/* Header */}
-        <div className="px-5 pt-5 pb-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-foreground">{isEditing ? t('project.editTitle') : t('project.createTitle')}</h2>
+        <DialogHeader className="flex-row items-center justify-between space-y-0 px-5 pb-3 pt-5 pr-14">
+          <DialogTitle className="text-sm font-bold text-foreground">{isEditing ? t('project.editTitle') : t('project.createTitle')}</DialogTitle>
           {viewers.length > 0 && (
             <div className="flex items-center gap-1">
               {viewers.map(v => (
@@ -155,14 +159,15 @@ const CreateProjectModal = () => {
               ))}
             </div>
           )}
-        </div>
+        </DialogHeader>
 
         {/* Form */}
-        <div className="px-5 pb-5 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-4 space-y-4">
           {/* Product Line */}
           <div>
             <label className="text-[11px] font-medium text-muted-foreground mb-1 block">{t('project.lineLabel')}</label>
             <SearchableSelect
+              aria-label={t('project.lineLabel')}
               value={lineId}
               onChange={e => setLineId(e.target.value)}
               className="w-full border border-border rounded px-2.5 py-1.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
@@ -182,10 +187,11 @@ const CreateProjectModal = () => {
             <input
               ref={nameRef}
               type="text"
+              aria-label={t('project.nameLabel')}
               value={name}
               onChange={e => { setName(e.target.value.slice(0, 200)); setError(''); }}
               placeholder={t('project.namePlaceholder')}
-              className="w-full border border-border rounded px-2.5 py-1.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
+              className="min-h-11 md:min-h-9 [@media(pointer:coarse)]:min-h-11 w-full border border-border rounded px-2.5 py-1.5 text-base md:text-sm [@media(pointer:coarse)]:text-base bg-card text-foreground outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
               maxLength={200}
             />
           </div>
@@ -195,11 +201,12 @@ const CreateProjectModal = () => {
             <label className="text-[11px] font-medium text-muted-foreground mb-1 block">{t('project.keyLabel')}</label>
             <input
               type="text"
+              aria-label={t('project.keyLabel')}
               value={key}
               onChange={e => { setKey(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6)); setError(''); }}
               placeholder={t('project.keyPlaceholder')}
               disabled={isEditing}
-              className={`w-full border border-border rounded px-2.5 py-1.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50 uppercase ${isEditing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`min-h-11 md:min-h-9 [@media(pointer:coarse)]:min-h-11 w-full border border-border rounded px-2.5 py-1.5 text-base md:text-sm [@media(pointer:coarse)]:text-base bg-card text-foreground outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50 uppercase ${isEditing ? 'opacity-50 cursor-not-allowed' : ''}`}
               maxLength={6}
             />
             {isEditing
@@ -218,7 +225,7 @@ const CreateProjectModal = () => {
                   aria-label={`${t('project.colorLabel')}: ${c}`}
                   aria-pressed={color === c}
                   onClick={() => setColor(c)}
-                  className="w-7 h-7 rounded-md transition-all"
+                  className="h-11 w-11 md:h-7 md:w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 rounded-md transition-all"
                   style={{
                     backgroundColor: c,
                     border: color === c ? '3px solid #172B4D' : '2px solid transparent',
@@ -231,19 +238,20 @@ const CreateProjectModal = () => {
 
           {/* Error */}
           {error && <p className="text-[11px] text-destructive">{error}</p>}
+        </div>
 
-          {/* Actions */}
-          <div className="flex justify-end gap-2 pt-2">
+        {/* Actions remain reachable while the form scrolls above the keyboard. */}
+        <DialogFooter className="flex-row justify-end border-t border-border px-5 pb-4 pt-3">
             <button
               onClick={() => setShowCreateProject(false)}
-              className="px-3 py-1.5 rounded text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
+              className="min-h-11 min-w-20 px-3 py-1.5 rounded text-sm font-medium text-muted-foreground hover:bg-accent transition-colors"
             >
               {t('common.cancel')}
             </button>
             <button
               onClick={handleSubmit}
               disabled={!isValid || isSubmitting}
-              className={`px-4 py-1.5 rounded text-xs font-medium transition-colors ${
+              className={`min-h-11 min-w-20 px-4 py-1.5 rounded text-sm font-medium transition-colors ${
                 isValid && !isSubmitting
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-muted text-muted-foreground cursor-not-allowed'
@@ -251,10 +259,9 @@ const CreateProjectModal = () => {
             >
               {isSubmitting ? t('common.processing') : isEditing ? t('common.save') : t('common.create')}
             </button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

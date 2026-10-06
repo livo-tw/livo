@@ -50,6 +50,13 @@ describe('QA notification channel routing and personal permissions', () => {
     const t = setup(); t.reroute(); expect(await deliverQaJob(personal, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
     expect(t.posts[0].channel).toBe('DEXAMPLE'); expect(t.posts[0]).not.toHaveProperty('thread_ts'); expect(t.store.canRead).toHaveBeenCalledTimes(2);
   });
+  it('delivers a newly reported Bug to its project coordinator before responsibility is assigned', async () => {
+    const t = setup(); t.reroute();
+    t.store.state = async () => ({ ...state, issue: { ...issue, state: 'new', assigneeId: null, qaOwnerId: null }, triagers: ['member'] });
+    expect(await deliverQaJob({ ...personal, payload: { ...personal.payload, eventType: 'created' } },
+      'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
+    expect(t.posts).toHaveLength(1); expect(t.posts[0].channel).toBe('DEXAMPLE'); expect(t.store.canRead).toHaveBeenCalledTimes(2);
+  });
   it.each(['permission', 'binding', 'responsibility', 'deleted', 'route'] as const)('does not leak a queued notice after %s changes', async reason => {
     const t = setup();
     t.store.canSend = async () => { if (reason === 'permission') t.deny(); if (reason === 'binding') t.unbind();

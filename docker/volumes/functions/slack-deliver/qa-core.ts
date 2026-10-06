@@ -1,5 +1,6 @@
 import { qaNotificationRecipients, type QaCommand, type QaIssue } from '../qa/domain.ts';
 import { qaSlackCard } from '../qa/slack.ts';
+import { qaSlackCurrentState } from '../qa/slackWorkspace.ts';
 import { parseQaWorkflow } from '../qa/workflow.ts';
 import { activeThread, DeliveryError, escapeSlack, failureResult, matchingChannels, memberAllowed, plainText, slackTransport, type DeliveryStore, type Job, type Row } from './core.ts';
 
@@ -20,25 +21,26 @@ export function qaRouteAllowed(config: Row | undefined, state: QaDeliveryState |
 export function qaRecipientResponsible(state: QaDeliveryState, job: Job): boolean {
   const type = job.payload.eventType === 'created' ? 'create' : job.payload.eventType;
   if (type === 'create' && state.issue.state !== 'new') return false;
-  const known = ['create', 'comment', 'triage', 'edit', 'set_state', 'request_handoff', 'accept_handoff', 'resolve_handoff',
+  const known = ['create', 'comment', 'triage', 'edit', 'update_fields', 'set_state', 'request_handoff', 'accept_handoff', 'resolve_handoff',
     'start_fix', 'link_tasks', 'record_deployment', 'submit_fix', 'record_verification', 'close', 'reopen', 'hold'];
   return known.includes(type) && qaNotificationRecipients(state.issue, type as QaCommand['type'] | 'create' | 'comment', job.payload.actorId, state.triagers).includes(job.target_id);
 }
-const events: Record<string, string> = { created: '新增 Bug', comment: '新增留言', triage: '指派責任人', edit: '更新 Bug', set_state: '狀態變更',
+const events: Record<string, string> = { created: '新增 Bug', comment: '新增留言', triage: '指派責任人', edit: '更新 Bug', update_fields:'更新 Bug 欄位', set_state: '狀態變更',
   submit_fix: '回報修復', record_deployment: '部署紀錄', record_verification: '驗證紀錄', close: '結案', reopen: '重新開啟',
   hold: '記錄卡關', start_fix: '開始修復', link_tasks: '連結任務', request_handoff: '建立交接', accept_handoff: '接收交接', resolve_handoff: '解除交接' };
 export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase: string, workflow?: Row): Row {
   const issue = state.issue, url = `${appBase.replace(/\/$/, '')}/?qa=${encodeURIComponent(issue.id)}`;
   const name = (id: string | null) => String(state.members.find(m => m.id === id)?.name || '未指定').slice(0, 50);
   const title = `${job.target_type === 'member' ? '[個人通知] ' : ''}${events[job.payload.eventType] || 'Bug 更新'}`;
-  const summary = `*${title}*\n<${url}|Bug - ${escapeSlack(issue.title.slice(0, 120))}>\n` +
+  const currentState=qaSlackCurrentState(issue.state,parseQaWorkflow(workflow));
+  const summary = `*${escapeSlack(currentState)}*\n*通知原因：${title}*\n<${url}|Bug - ${escapeSlack(issue.title.slice(0, 120))}>\n` +
     `👤 修復：${escapeSlack(name(issue.assigneeId))}｜驗證：${escapeSlack(name(issue.qaOwnerId))}\n` +
     `⚡ P${issue.priority}｜📅 ${escapeSlack(issue.dueDate || '未設定')}\n` +
     `專案：${escapeSlack(String(state.project.name).slice(0, 80))}｜操作人：${escapeSlack(name(job.payload.actorId))}`;
   const detail = escapeSlack(plainText(job.payload.detail).slice(0, 1500)).slice(0, 2800);
   const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: summary } },
     ...(detail ? [{ type: 'section', text: { type: 'mrkdwn', text: detail } }] : []),
-    ...qaSlackCard(issue, url, parseQaWorkflow(workflow))];
+    ...qaSlackCard(issue, url, parseQaWorkflow(workflow)).slice(1)];
   return { text: summary + (detail ? '\n' + detail : ''), blocks, unfurl_links: false, unfurl_media: false };
 }
 /** QA shares the durable queue and receipt rules; ordinary task routes are never used. */

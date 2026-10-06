@@ -58,8 +58,7 @@ describe('shared project colour surfaces', () => {
     state.projects = projects; state.editing = projects[1];
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByDisplayValue('Project B'), { target: { value: 'Project B renamed' } });
-    const buttons = screen.getAllByRole('button');
-    fireEvent.click(buttons[buttons.length - 1]);
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }));
     await waitFor(() => expect(state.update).toHaveBeenCalledWith('p-b', { name: 'Project B renamed' }));
   });
 
@@ -71,9 +70,9 @@ describe('shared project colour surfaces', () => {
       fireEvent.change(screen.getByPlaceholderText('project.namePlaceholder'), { target: { value: 'First project' } });
       fireEvent.change(screen.getByPlaceholderText('project.keyPlaceholder'), { target: { value: 'FP' } });
       expect(screen.getByRole('alert')).toHaveTextContent('project.noProductLine');
-      const buttons = screen.getAllByRole('button');
-      expect(buttons[buttons.length - 1]).toBeDisabled();
-      fireEvent.click(buttons[buttons.length - 1]);
+      const create = screen.getByRole('button', { name: 'common.create' });
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
       expect(state.create).not.toHaveBeenCalled();
     } finally { state.lines = lines; }
   });

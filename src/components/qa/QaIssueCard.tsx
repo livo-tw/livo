@@ -24,7 +24,8 @@ export function qaNextAction(state: string): { command: QaCommand['type']; label
  */
 export function getQaNextAction(issue: QaIssue, actor: QaActor): { command: QaCommand['type']; label: string } | undefined {
   if (isQaTerminal(issue.state)) return qaNextAction(issue.state);
-  if (issue.state !== 'new' && (!issue.assigneeId || !issue.qaOwnerId)) return { command: 'triage', label: 'triage' };
+  if (!issue.assigneeId || !issue.qaOwnerId) return { command: 'update_fields', label: 'assignOwners' };
+  if (issue.state === 'new') return { command: 'start_fix', label: 'startFix' };
   if ((issue.state === 'verification' || issue.state === 'verified') && !issue.targets.length && !isHistoricalQaPass(issue)) return { command: 'submit_fix', label: 'submitFix' };
   if (issue.state === 'verification' && issue.targets.some(target => !target.deployedAt) && canQaCommand(issue, actor, 'record_deployment')) return { command: 'record_deployment', label: 'deployment' };
   if (issue.state === 'verified' && !requiredTargetsPassed(issue) && !isHistoricalQaPass(issue)) return { command: 'record_verification', label: 'verification' };

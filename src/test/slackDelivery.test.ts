@@ -24,23 +24,23 @@ function setup() {
   return { store, sent, results, fetcher };
 }
 describe('durable Slack notification delivery', () => {
-  it('rechecks a pause after opening the DM while keeping assignment notifications enabled', async () => {
-    const t=setup(); let paused=false,posts=0;
+  it.each(['assignee','reviewer'])('delivers current %s due reminders despite historical snooze settings without consulting them', async role => {
+    const t=setup(); let posts=0;
     t.store.config=async()=>({...config,dmEnabled:true});
-    t.store.currentTask=async()=>({assignee_id:'member-example',due_date:'2026-10-10',statuses:{is_done:false}});
-    t.store.reminderPaused=vi.fn(async()=>paused);
+    t.store.currentTask=async()=>({assignee_id:role==='assignee'?'member-example':null,reviewer_id:role==='reviewer'?'member-example':null,due_date:'2026-10-10',statuses:{is_done:false}});
+    t.store.reminderPaused=vi.fn(async()=>true);
     const fetcher=vi.fn(async(input:string|URL|Request)=>{
       const endpoint=String(input);
       if(endpoint.includes('/auth.test'))return Response.json({ok:true,team_id:'TEXAMPLE'});
       if(endpoint.includes('/users.info'))return Response.json({ok:true,user:{team_id:'TEXAMPLE'}});
       if(endpoint.includes('/conversations.members'))return Response.json({ok:true,members:['UEXAMPLE']});
-      if(endpoint.includes('/conversations.open')){paused=true;return Response.json({ok:true,channel:{id:'DEXAMPLE'}});}
+      if(endpoint.includes('/conversations.open'))return Response.json({ok:true,channel:{id:'DEXAMPLE'}});
       posts++;return Response.json({ok:true,ts:'1791158400.000001'});
     }) as unknown as typeof fetch;
     const due:Job={...job,target_type:'member',target_id:'member-example',payload:{...job.payload,kind:'personal',reason:'due_soon',dueDate:'2026-10-10'}};
-    expect(await deliverJob(due,'owner',t.store,'https://example.com',fetcher)).toBe('skipped');expect(posts).toBe(0);
-    expect(await deliverJob({...due,id:2,payload:{...due.payload,reason:'assigned'}},'owner',t.store,'https://example.com',fetcher)).toBe('sent');
-    expect(posts).toBe(1);expect(t.store.reminderPaused).toHaveBeenCalledTimes(1);
+    expect(await deliverJob(due,'owner',t.store,'https://example.com',fetcher)).toBe('sent');expect(posts).toBe(1);
+    expect(await deliverJob({...due,id:2,payload:{...due.payload,reason:role==='assignee'?'assigned':'review'}},'owner',t.store,'https://example.com',fetcher)).toBe('sent');
+    expect(posts).toBe(2);expect(t.store.reminderPaused).not.toHaveBeenCalled();
   });
   it.each([undefined, 'UREBOUND'])('does not post to an old DM after binding changes to %s', async changedUser => {
     const t = setup(); let user: string | undefined = 'UEXAMPLE', posts = 0;
@@ -242,13 +242,37 @@ describe('durable Slack notification delivery', () => {
     expect(await deliverJob(job, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('review');
     expect(t.sent).toHaveLength(0);
   });
-  it('drops due reminders after completion, due-date changes, or reassignment', () => {
+  it('drops due reminders after completion, due-date changes, or loss of both responsibilities', () => {
     const due: Job = { ...job, target_type: 'member', target_id: 'member-example', payload: { ...job.payload, reason: 'due_soon', dueDate: '2026-10-10' } };
     const task = { assignee_id: 'member-example', due_date: '2026-10-10', statuses: { is_done: false } };
     expect(currentPersonalPayload(due, task)).toBeDefined();
     expect(currentPersonalPayload(due, { ...task, statuses: { is_done: true } })).toBeUndefined();
     expect(currentPersonalPayload(due, { ...task, due_date: '2026-10-20' })).toBeUndefined();
-    expect(currentPersonalPayload(due, { ...task, assignee_id: 'other', reviewer_id: 'member-example' })).toBeUndefined();
+    expect(currentPersonalPayload(due, { ...task, completed_at: '2026-10-09T12:00:00Z' })).toBeUndefined();
+    expect(currentPersonalPayload(due, { ...task, assignee_id: 'other', reviewer_id: 'another-reviewer' })).toBeUndefined();
+  });
+  it('delivers a reviewer-only due reminder and rechecks that responsibility before posting', async () => {
+    const due: Job = { ...job, target_type: 'member', target_id: 'member-example',
+      payload: { ...job.payload, kind: 'personal', reason: 'due_soon', dueDate: '2026-10-10' } };
+    const task = { assignee_id: null as string | null, reviewer_id: 'member-example', due_date: '2026-10-10', statuses: { is_done: false } };
+    expect(currentPersonalPayload(due, task)).toBeDefined();
+    expect(currentPersonalPayload(due, { ...task, assignee_id: 'other' })).toBeDefined();
+    const t = setup(); let reviewer: string | null = 'member-example';
+    t.store.config = async () => ({ ...config, dmEnabled: true });
+    t.store.currentTask = async () => ({ ...task, reviewer_id: reviewer });
+    t.store.reminderPaused = vi.fn(async () => false);
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const endpoint = String(input);
+      if (endpoint.includes('/auth.test')) return Response.json({ ok: true, team_id: 'TEXAMPLE' });
+      if (endpoint.includes('/users.info')) return Response.json({ ok: true, user: { team_id: 'TEXAMPLE' } });
+      if (endpoint.includes('/conversations.open')) return Response.json({ ok: true, channel: { id: 'DEXAMPLE' } });
+      t.sent.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: '1791158400.000001' });
+    }) as unknown as typeof fetch;
+    expect(await deliverJob(due, 'owner', t.store, 'https://example.com', fetcher)).toBe('sent');
+    expect(t.sent).toHaveLength(1); expect(t.sent[0].channel).toBe('DEXAMPLE');
+    t.store.canSend = async () => { reviewer = null; return true; };
+    expect(await deliverJob({ ...due, id: 2 }, 'owner', t.store, 'https://example.com', fetcher)).toBe('skipped');
+    expect(t.sent).toHaveLength(1); expect(t.results[1].error).toBe('recipient_no_longer_responsible');
   });
   it('sends a standalone weekly DM containing only tasks allowed by recipient RLS', async () => {
     const t = setup(); const posted: Record<string, unknown>[] = [];

@@ -1,6 +1,8 @@
 import type { Row } from './core.ts';
 import { deadlineChange, pauseThroughDay, reminderUntil, TaskPlanningError } from './planning-core.ts';
 const words:Record<string,[string,string]>={
+  '個人暫停提醒已移除；到期通知依卡片期限自動發送，請直接修改期限。':['个人暂停提醒已移除；到期通知按卡片期限自动发送，请直接修改期限。','Personal reminder pauses have been removed. Due notifications follow the card deadline; edit the deadline directly.'],
+  '任務面板':['任务面板','Task panel'],'期限':['期限','Deadline'],
   '期限與提醒':['期限与提醒','Deadline & reminders'],'修改期限':['修改期限','Edit deadline'],'我的到期提醒':['我的到期提醒','My due reminders'],
   '暫停到期提醒':['暂停到期提醒','Pause due reminders'],'到期日':['到期日','Due date'],'期限性質':['期限性质','Deadline kind'],
   '未指定':['未指定','Unknown'],'暫估':['暂估','Estimated'],'承諾':['承诺','Committed'],'改期原因':['改期原因','Reason for change'],
@@ -32,35 +34,25 @@ function base(callback:string,title:string,source:Row,blocks:Row[],meta:Row={},s
 }
 const input=(id:string,label:string,element:Row,locale:string,optional=false)=>({type:'input',block_id:id,label:plain(planningText(label,locale)),element:{...element,action_id:id},optional});
 const opt=(value:string,label:string,locale:string)=>({value,text:plain(planningText(label,locale))});
-export function planningForm(kind:'deadline'|'reminder',task:Row,pref:Row,source:Row):Row {
-  const locale=source.locale||'zh-TW', timeZone=source.timezone||'Asia/Taipei';
-  const blocks:Row[]=[section(`${task.task_key} · ${task.title}`)];
-  if(kind==='deadline') blocks.push(
+export function planningForm(kind:'deadline'|'reminder',task:Row,_pref:Row,source:Row):Row {
+  if(kind==='reminder')return planningNotice('個人暫停提醒已移除；到期通知依卡片期限自動發送，請直接修改期限。',source,task.id);
+  const locale=source.locale||'zh-TW',kindValue=task.due_date_kind||'unknown';
+  const blocks:Row[]=[section(`${task.task_key} · ${task.title}`),
     input('date','到期日',{type:'datepicker',...(task.due_date?{initial_date:task.due_date}:{})},locale,true),
-    input('kind','期限性質',{type:'static_select',initial_option:opt(task.due_date_kind||'unknown',task.due_date_kind==='committed'?'承諾':task.due_date_kind==='estimated'?'暫估':'未指定',locale),
+    input('kind','期限性質',{type:'static_select',initial_option:opt(kindValue,kindValue==='committed'?'承諾':kindValue==='estimated'?'暫估':'未指定',locale),
       options:[opt('unknown','未指定',locale),opt('estimated','暫估',locale),opt('committed','承諾',locale)]},locale),
     input('reason','改期原因',{type:'plain_text_input',multiline:true,max_length:2000},locale,true),
-    section(planningText('承諾期限延後或清除時必填原因。',locale)));
-  else blocks.push(section(planningText('只有你自己的自動到期提醒會暫停；指派、驗收、簽核、提及與完整工作摘要照常。',locale)),
-    section(`${pref.snoozed_until||planningText('尚未暫停',locale)} · ${timeZone}`),
-    input('through','暫停至（含當日）',{type:'datepicker'},locale),section(planningText('最多一年；時間依 Slack 個人時區。',locale)),
-    actions([planningButton('livo_reminder_resume','恢復提醒',{taskId:task.id,version:pref.version||0},locale)]));
-  blocks.push(actions([planningButton('livo_task_open','返回',{taskId:task.id},locale)]));
-  return base(`livo_planning_${kind}`,kind==='deadline'?'修改期限':'暫停到期提醒',source,blocks,
-    {taskId:task.id,version:kind==='deadline'?task.due_date_version||0:pref.version||0,expected:{dueDate:task.due_date||null,kind:task.due_date_kind||null},timeZone},'儲存');
+    section(planningText('承諾期限延後或清除時必填原因。',locale)),
+    actions([planningButton('livo_task_open','返回',{taskId:task.id},locale)])];
+  return base('livo_planning_deadline','修改期限',source,blocks,
+    {taskId:task.id,version:task.due_date_version||0,expected:{dueDate:task.due_date||null,kind:task.due_date_kind||null}},'儲存');
 }
-export function planningList(rows:Row[],page:number,hasMore:boolean,source:Row):Row {
-  const locale=source.locale||'zh-TW',blocks:Row[]=[];
-  if(!rows.length)blocks.push(section(planningText('目前沒有暫停中的提醒。',locale)));
-  for(const row of rows){const t=Array.isArray(row.tasks)?row.tasks[0]:row.tasks;blocks.push(section(`${t.task_key} · ${t.title}\n${row.snoozed_until}`),
-    actions([planningButton('livo_reminder_open','暫停到期提醒',{taskId:row.task_id},locale),planningButton('livo_reminder_resume','恢復提醒',{taskId:row.task_id,version:row.version},locale)]));}
-  const nav=[];if(page>0)nav.push(planningButton('livo_reminders','上一頁',{page:page-1},locale));if(hasMore)nav.push(planningButton('livo_reminders','下一頁',{page:page+1},locale));
-  if(nav.length)blocks.push(actions(nav));
-  return base('livo_planning_list','我的到期提醒',source,blocks);
+export function planningList(_rows:Row[],_page:number,_hasMore:boolean,source:Row):Row {
+  return planningNotice('個人暫停提醒已移除；到期通知依卡片期限自動發送，請直接修改期限。',source);
 }
 export function planningNotice(text:string,source:Row,taskId?:string):Row {
-  return base('livo_planning_notice','期限與提醒',source,[section(planningText(text,source.locale)),
-    actions([taskId?planningButton('livo_task_open','返回',{taskId},source.locale):planningButton('livo_reminders','我的到期提醒',{page:0},source.locale)])]);
+  return base('livo_planning_notice','期限',source,[section(planningText(text,source.locale)),
+    actions([taskId?planningButton('livo_task_open','返回',{taskId},source.locale):planningButton('livo_workspace_home','任務面板',{},source.locale)])]);
 }
 export function parsePlanning(view:Row):{kind:'deadline'|'reminder';fields:Row} {
   let meta:Row;try{meta=JSON.parse(view.private_metadata||'{}');}catch{throw new TaskPlanningError('planning_invalid_input');}

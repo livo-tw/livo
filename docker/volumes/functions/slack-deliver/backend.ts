@@ -13,13 +13,20 @@ async function verifiedRecipient(db: Database, memberId: string, teamId: string)
   return { member, binding: bindings[0] };
 }
 
-/** Read with the recipient's real auth_id and RLS, never the delivery service role. */
+/** Use the recipient's normal read contract, never the delivery service role. */
 export async function recipientCanRead(env: Environment, memberId: string, teamId: string, table: 'tasks' | 'qa_issues', recordId: string): Promise<boolean> {
   try {
     const recipient = await verifiedRecipient(new Database(env), memberId, teamId);
     if (!recipient) return false;
     const jwt = await memberJwt(env.get('JWT_SECRET') || '', recipient.member, recipient.binding);
-    const rows = await new Database(env, jwt).rows(table, { select: 'id', id: `eq.${recordId}`, ...(table === 'qa_issues' ? { workspace_id: 'eq.default' } : {}), limit: '1' });
+    const recipientDb = new Database(env, jwt);
+    if (table === 'qa_issues') {
+      // QA tables deliberately reject authenticated PostgREST reads. Its member
+      // API owns workspace scoping and verifies this recipient's active identity.
+      const detail = await recipientDb.request('/functions/v1/qa', 'POST', { action: 'get', id: recordId });
+      return detail?.issue?.id === recordId && detail.issue.workspaceId === 'default';
+    }
+    const rows = await recipientDb.rows('tasks', { select: 'id', id: `eq.${recordId}`, limit: '1' });
     return rows.length === 1 && rows[0].id === recordId;
   } catch { throw new DeliveryError('recipient_permission_unavailable', true); }
 }

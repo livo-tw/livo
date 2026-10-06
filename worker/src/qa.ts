@@ -5,6 +5,7 @@ import { DEMO_BLOCKED_MESSAGE, isDemoMember } from './env';
 import { notifyChanges } from './notify';
 import { syncQaSlackIssue } from './qaSlackSync';
 import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
+import { isDeploymentQueueOperator } from './deploymentQueue';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
@@ -73,11 +74,23 @@ async function context(env: Env, auth: AuthCtx, projectId: string, taskIds: stri
     env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>(),
     loadFields ? env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields'").bind(ws).first<{value:string}>() : Promise.resolve(null),
   ]);
-  const config=await coordination(env,ws,projectId);
+  const [config, deploymentOperator] = await Promise.all([coordination(env,ws,projectId), deploymentQueueOperator(env, auth)]);
   const environments = parseDeploymentEnvironments(environmentRow ? JSON.parse(environmentRow.value) : undefined);
   if (!environments) throw new QaError('qa_invalid_environment');
-  return {...(loadFields ? {fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),fieldConfigurationRaw:fieldRow?.value??null}:{}),environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role,qaCoordinatorProjectIds:config.coordinatorId===auth.member.id?[projectId]:[]},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
+  return {...(loadFields ? {fieldConfiguration:parseQaFieldConfiguration(fieldRow?.value),fieldConfigurationRaw:fieldRow?.value??null}:{}),environmentValues:environments.values,actor:{id:auth.member.id,role:auth.member.role,deploymentOperator,qaCoordinatorProjectIds:config.coordinatorId===auth.member.id?[projectId]:[]},workspaceId:ws,now:new Date().toISOString(),newId:()=>crypto.randomUUID(),
     memberIds:new Set(members.results.map(r=>r.id)),projectIds:new Set(project?[project.id]:[]),taskIds:new Set(tasks.results.map(r=>r.id)),duplicateIssueIds:new Set(duplicate?[duplicate.id]:[])};
+}
+export async function deploymentQueueOperator(env: Env, auth: AuthCtx): Promise<boolean> {
+  const ws = auth.member.workspaceId;
+  const [member, settings] = await Promise.all([
+    env.DB.prepare('SELECT id FROM members WHERE workspace_id=? AND id=? AND auth_id=? AND is_active=1').bind(ws,auth.member.id,auth.userId).first(),
+    env.DB.prepare("SELECT key,value FROM system_settings WHERE workspace_id=? AND key IN ('deployment_queue','feature_toggles')").bind(ws).all<{key:string;value:string}>(),
+  ]);
+  if (!member) return false;
+  try {
+    const values = Object.fromEntries(settings.results.map(row=>[row.key,JSON.parse(row.value)]));
+    return isDeploymentQueueOperator(values.deployment_queue, values.feature_toggles, auth.member.id);
+  } catch { return false; }
 }
 async function receipt(env: Env, ws: string, commandId: string, hash: string, actor: string): Promise<unknown | undefined> {
   const row = await env.DB.prepare('SELECT request_hash,result_json,actor_id FROM qa_commands WHERE workspace_id=? AND id=?').bind(ws,commandId).first<{request_hash:string;result_json:string;actor_id:string}>();
@@ -328,6 +341,7 @@ export async function handleQa(c:C):Promise<Response> {
       return c.json(qaVersionSuggestions(sources,ws,projectId));
     }
     if(action==='get_coordination')return c.json(await coordination(c.env,ws,qaId(body.projectId)));
+    if(action==='deployment_permission')return c.json({deploymentOperator:await deploymentQueueOperator(c.env,auth)});
     // The projects whose QA the caller coordinates, so cards can offer triage outside the selected project.
     if(action==='my_coordination'){
       const rows=await c.env.DB.prepare('SELECT q.id FROM qa_project_coordination q JOIN projects p ON p.workspace_id=q.workspace_id AND p.id=q.id AND p.is_archived=0 WHERE q.workspace_id=? AND q.coordinator_id=? ORDER BY q.id LIMIT 1000')
@@ -427,7 +441,14 @@ export async function handleQa(c:C):Promise<Response> {
     const command=body.command as QaCommand;if(!command||typeof command.type!=='string')throw new QaError('qa_invalid_command');
     const requestedTasks=command.type==='link_tasks'&&Array.isArray(command.taskIds)?command.taskIds:before.taskIds;
     if(requestedTasks.length>100)throw new QaError('qa_too_many_tasks');requestedTasks.forEach(qaId);
-    const ctx=await context(c.env,auth,before.projectId,requestedTasks,command.type==='close'?command.duplicateOfId:before.duplicateOfId??undefined,command.type==='edit');
+    const destinationId=command.type==='update_fields'?qaId(command.projectId):before.projectId;
+    const moving=destinationId!==before.projectId;
+    const ctx=await context(c.env,auth,destinationId,moving?before.taskIds:requestedTasks,command.type==='close'?command.duplicateOfId:before.duplicateOfId??undefined,command.type==='edit');
+    if(moving){
+      const source=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=? AND is_archived=0').bind(auth.member.workspaceId,before.projectId).first<{id:string}>();
+      if(!source)throw new QaError('qa_project_unavailable');
+      ctx.projectIds=new Set([...ctx.projectIds,source.id]);
+    }
     const after=applyQaCommand(before,command,ctx);
     return c.json(await commit(c,commandId,hash,before,after,command.type,after,undefined,ctx.fieldConfigurationRaw));
   }catch(err){return qaErrorResponse(c,err);}

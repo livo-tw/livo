@@ -128,6 +128,10 @@ export function createActions(env: Environment, background: (work: Promise<unkno
   };
   const actions: Actions = {
     enabled: async () => enabled(await admin.setting('feature_toggles')),
+    flags: async () => {
+      const value = await admin.setting('feature_toggles');
+      return { approvals: !!value && typeof value === 'object' && value.approvals === true };
+    },
     heartbeat: async connected => { await admin.write('system_settings', { key: 'slack_socket_status',
       value: { connected, at: new Date().toISOString() }, updated_at: new Date().toISOString() }, { on_conflict: 'key' }); },
     actor: async p => {

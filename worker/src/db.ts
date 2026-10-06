@@ -20,6 +20,7 @@ import type {
 import { TABLES } from './tables';
 import { decideMembersUpdate } from './memberProfile';
 import { protectTeamIntroTemplate } from './teamIntroTemplate';
+import { parseDeploymentQueueSettings } from './deploymentQueue';
 import { writeKnowledge } from './knowledge';
 import { knowledgePermissionSql } from './knowledgeSql';
 import { rowToWire, valueToDb, nowIso } from './meta';
@@ -125,6 +126,28 @@ function enforceWritePolicy(
     const values = Array.isArray(req.values) ? req.values : [req.values];
     if (values.some(value => value && typeof value === 'object' && protectedKeys.includes(String((value as Row).key)))) return permissionDenied(table);
     if (req.op === 'update') req.filters = [...(req.filters || []), ...protectedKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
+    // Operator appointments are an explicit super_admin-only setting. Broad
+    // administrator updates cannot replace or rename that protected row.
+    const queueKey = 'deployment_queue';
+    const rows = valuesAsRows(req.values);
+    const superOnlyKeys = meta.superOnlyKeys || [queueKey];
+    if (rank < 2 && (rows.some(row => superOnlyKeys.includes(String(row.key)))
+      || req.filters?.some(filter => filter.col === 'key' && filter.op === 'eq' && superOnlyKeys.includes(String(filter.val))))) return permissionDenied(table);
+    if (rank < 2 && req.op === 'update') req.filters = [...(req.filters || []), ...superOnlyKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
+    const touchesQueue = rows.some(row => row.key === queueKey)
+      || req.filters?.some(filter => filter.col === 'key' && filter.op === 'eq' && filter.val === queueKey);
+    if (rank < 2) {
+      if (touchesQueue) return permissionDenied(table);
+      if (req.op === 'update') req.filters = [...(req.filters || []), { col: 'key', op: 'neq', val: queueKey }];
+    } else if (touchesQueue) {
+      if (rows.some(row => row.key !== undefined && row.key !== queueKey)
+        || (['insert','upsert'].includes(req.op) && rows.some(row => row.key === queueKey && row.value === undefined))
+        || rows.some(row => row.value !== undefined && (!row.value || typeof row.value !== 'object' || Array.isArray(row.value) || !parseDeploymentQueueSettings(row.value)))) return permissionDenied(table);
+    } else if (req.op === 'update') {
+      // Keep a broad values patch away from the protected setting: its schema
+      // and identity can only be changed by explicitly selecting this key.
+      req.filters = [...(req.filters || []), { col: 'key', op: 'neq', val: queueKey }];
+    }
   }
 
   // Notifications are shown and e-mailed in the name of sender_id: a client may only

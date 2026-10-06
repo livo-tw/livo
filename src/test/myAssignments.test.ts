@@ -8,6 +8,21 @@ const issue = (id: string, overrides: Partial<QaIssue> = {}) => ({ id, title: id
 const statuses = [{ id: 'open', isDone: false }, { id: 'finished', isDone: true }] as Status[];
 
 describe('my assigned cards', () => {
+  it('includes assignee and reviewer responsibilities immediately without acceptance receipts', () => {
+    const pending = [
+      task('assigned', { assigneeRevision: 4, assigneeAcknowledgedAt: undefined }),
+      task('reviewed', { assigneeId: 'another-member', reviewerId: 'example-member', reviewerRevision: 3, reviewerAcknowledgedAt: undefined }),
+      task('both', { reviewerId: 'example-member', assigneeAcknowledgedAt: undefined, reviewerAcknowledgedAt: undefined }),
+    ];
+    const rows = buildMyAssignments(pending, statuses, [], 'example-member');
+    expect(rows).toHaveLength(3);
+    expect(rows.find(row => row.id === 'assigned')?.roles).toEqual(['assignee']);
+    expect(rows.find(row => row.id === 'reviewed')?.roles).toEqual(['reviewer']);
+    expect(rows.find(row => row.id === 'both')?.roles).toEqual(['assignee', 'reviewer']);
+    const historical = pending.map(card => ({ ...card, assigneeAcknowledgedAt: '2026-10-03T01:00:00Z', reviewerAcknowledgedAt: '2026-10-03T01:00:00Z' }));
+    expect(buildMyAssignments(historical, statuses, [], 'example-member').map(row => ({ id: row.id, roles: row.roles })))
+      .toEqual(rows.map(row => ({ id: row.id, roles: row.roles })));
+  });
   it('combines responsibilities once, includes pending-close PASS and FAIL, and excludes finished/reported-only cards', () => {
     const owned = issue('dual', { qaOwnerId: 'example-member', state: 'verified' });
     const result = buildMyAssignments([task('dual-task', { reviewerId: 'example-member' }), task('review', { assigneeId: 'another-member', reviewerId: 'example-member' }), task('done', { statusId: 'finished' })], statuses,

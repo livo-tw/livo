@@ -283,6 +283,7 @@ export const TABLES: TableRegistry = {
     wsConflict: true,
     wsPk: true, // physical PRIMARY KEY (workspace_id, key)
     write: { insert: 'admin', update: 'admin', delete: 'none' },
+    superOnlyKeys: ['deployment_queue'],
   },
   team_settings: {
     pk: 'key',

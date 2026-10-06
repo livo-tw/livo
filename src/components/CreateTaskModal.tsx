@@ -153,7 +153,11 @@ const CreateTaskModal = () => {
         aria-modal="true"
         className={`fixed inset-0 z-50 bg-black/50 ${isMobile ? '' : 'flex items-center justify-center'}`}
         style={IS_DEMO_PRO ? { top: DEMO_BANNER_HEIGHT } : undefined}
-        onKeyDown={e => { if (e.key === 'Escape') void requestClose(); }}
+        onKeyDown={e => {
+          // Portaled pickers bubble through React, even though they are a
+          // separate layer. Let them handle Escape before the task dialog.
+          if (e.key === 'Escape' && !e.defaultPrevented && e.currentTarget.contains(e.target as Node)) void requestClose();
+        }}
         onClick={() => { if (!isMobile) void requestClose(); }}
       >
         <div

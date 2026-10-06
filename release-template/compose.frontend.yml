@@ -17,6 +17,7 @@ services:
     working_dir: /srv/app
     environment:
       PORT: "3000"
+      APP_BASE_URL: ${APP_BASE_URL:-}
       LIVO_API_UPSTREAM: http://kong:8000
     # Both compose files run as one project (name: supabase in docker-compose.yml).
     # Kong and this service share its default network; host port overrides do

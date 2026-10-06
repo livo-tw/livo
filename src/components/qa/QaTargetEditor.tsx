@@ -27,7 +27,7 @@ export default function QaTargetEditor({ targets, onChange, versions, disabled =
       return <fieldset key={index} disabled={disabled} className="min-w-0 space-y-3 rounded-lg border border-border/80 p-3">
         {targets.length > 1 && <legend className="px-1 text-xs font-medium text-muted-foreground">{t('qa.targetNumber', { number: index + 1 })}</legend>}
         <QaEnvironmentField label={t('qa.environment')} required disabled={disabled} value={target.environment} onChange={environment => update(index, { environment })} />
-        <QaVersionInput label={t('qa.build')} required disabled={disabled} value={target.build} suggestions={versions} onChange={build => update(index, { build })} />
+        <QaVersionInput label={t('qa.build')} hint={t('qa.fixVersionHint')} disabled={disabled} value={target.build} suggestions={versions} onChange={build => update(index, { build })} />
         <details className="min-w-0 rounded-md bg-muted/30 px-2.5 py-2">
           <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"><SlidersHorizontal size={13} aria-hidden="true" />{t('qa.targetMoreOptions')}</summary>
           <div className="mt-3 space-y-3">

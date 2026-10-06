@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { AppProvider } from '@/context/AppContext';
 import { useAuthContext } from '@/context/AuthContext';
-import { resolveApprovalView, resolveQaView, resolveReleaseView } from '@/lib/featureToggles';
+import { resolveApprovalView, resolveQaView, resolveReleaseView, resolveDeploymentQueueView } from '@/lib/featureToggles';
 import ProjectScopeBar from '@/components/project/ProjectScopeBar';
 import { SCOPED_VIEWS } from '@/hooks/useProjectScope';
 import { useUIContext } from '@/context/UIContext';
@@ -45,6 +45,7 @@ const SystemAdminView = lazy(() => import('@/components/SystemAdminView'));
 const WorkReportView = lazy(() => import('@/components/WorkReportView'));
 const TeamIntroView = lazy(() => import('@/components/TeamIntroView'));
 const KnowledgeBaseView = lazy(() => import('@/components/KnowledgeBaseView'));
+const DeploymentQueueView = lazy(() => import('@/components/deployment-queue/DeploymentQueueView'));
 const BacklogView = lazy(() => import('@/components/BacklogView'));
 const QaWorkspace = lazy(() => import('@/components/qa/QaWorkspace'));
 const ReleaseWorkspaceView = lazy(() => import('@/components/releases/ReleaseWorkspaceView'));
@@ -65,7 +66,8 @@ const AppContent = () => {
   const { currentView: requestedView, setCurrentView, approvalsEnabled, featureToggles, featureTogglesReady, standupMode, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
   const qaEnabled = featureTogglesReady && featureToggles.qa;
   const releasesEnabled = featureTogglesReady && featureToggles.releases;
-  const currentView = resolveReleaseView(resolveQaView(resolveApprovalView(requestedView, approvalsEnabled), qaEnabled), releasesEnabled);
+  const deploymentQueueEnabled = featureTogglesReady && featureToggles.deploymentQueue;
+  const currentView = resolveDeploymentQueueView(resolveReleaseView(resolveQaView(resolveApprovalView(requestedView, approvalsEnabled), qaEnabled), releasesEnabled), deploymentQueueEnabled);
   useEffect(() => {
     if (requestedView !== currentView) setCurrentView(currentView);
   }, [requestedView, currentView, setCurrentView]);
@@ -209,6 +211,7 @@ const AppContent = () => {
               {currentView === 'releases' && <Suspense fallback={<ViewFallback />}><ReleaseWorkspaceView /></Suspense>}
               {currentView === 'activity-log' && (hasFeature('activity-log') ? <ActivityLogView /> : <UpgradePrompt feature="activity-log" />)}
               {currentView === 'my-settings' && <MySettingsView />}
+              {deploymentQueueEnabled && currentView === 'deployment-queue' && <Suspense fallback={<ViewFallback />}><DeploymentQueueView /></Suspense>}
               {currentView === 'my-tasks' && <MyTasksView />}
               {qaEnabled && (currentView === 'qa' || currentView === 'my-qa') && <Suspense fallback={<ViewFallback />}><QaWorkspace mine={currentView === 'my-qa'} /></Suspense>}
               {currentView === 'work-report' && (hasFeature('work-report') ? <Suspense fallback={<ViewFallback />}><WorkReportView /></Suspense> : <UpgradePrompt feature="work-report" />)}
@@ -239,7 +242,7 @@ const AppContent = () => {
       {/* Modals */}
       <CreateProjectModal />
       <CreateTaskModal />
-      {selectedTask && taskDisplayMode === 'modal' && (
+      {selectedTask && (taskDisplayMode === 'modal' || (compactTaskLayout && taskDisplayMode === 'side')) && (
         <TaskDetailModal onClose={() => setSelectedTask(null)} />
       )}
       <CommandPalette />

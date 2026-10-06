@@ -7,6 +7,7 @@ import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './fields.ts';
 import { qaVersionSuggestions } from './versions.ts';
+import { isDeploymentQueueOperator } from './deploymentQueue.ts';
 
 export interface QaEnvironment { get(name: string): string | undefined }
 type Row = Record<string, any>;
@@ -112,6 +113,13 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     if (!row) return fail('qa_issue_not_found', 404);
     return row.data;
   }
+  async function deploymentPermission(actor: Row): Promise<boolean> {
+    const [queue, toggles] = await Promise.all([
+      db.rows('system_settings', { select: 'value', key: 'eq.deployment_queue', limit: 1 }),
+      db.rows('system_settings', { select: 'value', key: 'eq.feature_toggles', limit: 1 }),
+    ]);
+    return isDeploymentQueueOperator(queue[0]?.value, toggles[0]?.value, actor.id);
+  }
   async function coordination(projectId:string,includeArchived=false) {
     const project=(await db.rows('projects',{select:'id',id:`eq.${id(projectId)}`,...(includeArchived?{}:{is_archived:'eq.false'}),limit:1}))[0];
     if(!project)fail('qa_project_unavailable',404);
@@ -122,22 +130,29 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const candidateIds = new Set([actor.id, issue?.assigneeId, issue?.qaOwnerId]);
     if (command?.type === 'request_handoff') candidateIds.add(id(command.nextOwnerId));
     if (command?.type === 'triage') { candidateIds.add(id(command.assigneeId)); candidateIds.add(id(command.qaOwnerId)); }
+    if (command?.type === 'update_fields') {
+      if (command.assigneeId !== null) candidateIds.add(id(command.assigneeId));
+      if (command.qaOwnerId !== null) candidateIds.add(id(command.qaOwnerId));
+    }
     const candidates = [...candidateIds].filter(Boolean).map(id);
-    const linked = command?.type === 'link_tasks' ? command.taskIds : [];
+    const destinationId = command?.type === 'update_fields' ? id(command.projectId) : projectId;
+    const projectCandidates = [...new Set([id(projectId), destinationId])];
+    const moving = destinationId !== projectId;
+    const linked = command?.type === 'link_tasks' ? command.taskIds : moving ? issue?.taskIds ?? [] : [];
     if (!Array.isArray(linked) || linked.length > 50) fail('qa_invalid_tasks');
     const [members, projects, tasks, duplicates, environmentRows, fieldRows] = await Promise.all([
       db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
-      db.rows('projects', { select: 'id', id: `eq.${id(projectId)}`, is_archived: 'eq.false', limit: 1 }),
-      linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${id(projectId)}` }) : [],
+      db.rows('projects', { select: 'id', id: `in.(${projectCandidates.join(',')})`, is_archived: 'eq.false' }),
+      linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${destinationId}` }) : [],
       // A duplicate must be another bug of the same project, as in the cloud.
-      command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, project_id: `eq.${id(projectId)}`, limit: 1 }) : [],
+      command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, project_id: `eq.${id(projectId)}`, limit: 1 }) : moving && issue?.duplicateOfId ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(issue.duplicateOfId)}`, project_id: `eq.${destinationId}`, limit: 1 }) : [],
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
       !issue || command?.type === 'edit' ? db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }) : [],
     ]);
-    const config = await coordination(projectId);
+    const [config, deploymentOperator] = await Promise.all([coordination(projectId), deploymentPermission(actor)]);
     const environments = parseDeploymentEnvironments(environmentRows[0]?.value);
     if (!environments) return fail('qa_invalid_environment');
-    return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin, qaCoordinatorProjectIds:config.coordinatorId===actor.id?[projectId]:[] }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
+    return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin, deploymentOperator, qaCoordinatorProjectIds:config.coordinatorId===actor.id?[projectId]:[] }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
       memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
@@ -179,6 +194,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return qaVersionSuggestions(rows as Array<{workspaceId:string;projectId:string}>, WORKSPACE, projectId);
       }
       case 'get_coordination': return coordination(id(request.projectId));
+      case 'deployment_permission': return { deploymentOperator: await deploymentPermission(actor) };
       // The projects whose QA the caller coordinates, so cards can offer triage outside the selected project.
       case 'my_coordination': {
         const rows = await db.qaRows('qa_project_coordination', { select: 'id', coordinator_id: `eq.${actor.id}`, order: 'id', limit: 1000 });

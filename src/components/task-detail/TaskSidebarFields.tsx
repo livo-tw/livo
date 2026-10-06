@@ -22,8 +22,6 @@ import TaskDeploymentSection from './TaskDeploymentSection';
 import { CustomFieldInput } from './fields/CustomFieldInput';
 import DatePickerField from './fields/DatePickerField';
 import TaskPlanningFields from './fields/TaskPlanningFields';
-import TaskResponsibilityFields from './fields/TaskResponsibilityFields';
-import { responsibilityTaskPatch, type TaskResponsibility } from '@/lib/taskWork/client';
 import { deadlineTaskFields } from '@/lib/taskPlanning/client';
 import ApprovalHistory from './ApprovalHistory';
 
@@ -72,12 +70,6 @@ const TaskSidebarFields = ({ detail }: Props) => {
   const runApproval = useMemo(() => createApprovalCommandRunner(supabase), [currentMemberId]);
   const visibleTask = useRef(task); visibleTask.current = task;
   if (!task) return null;
-  const saveResponsibility = (row: TaskResponsibility) => {
-    const merge = (card: typeof task) => card.id !== row.id ? card : { ...card, ...responsibilityTaskPatch(row, card) };
-    setAllTasks(previous => previous.map(merge));
-    setSelectedTask(previous => previous ? merge(previous) : previous);
-  };
-
   const project = allProjects.find(p => p.id === task.projectId);
   const creator = users.find(u => u.id === task.creatorId);
   const assignee = users.find(u => u.id === task.assigneeId);
@@ -248,7 +240,6 @@ const TaskSidebarFields = ({ detail }: Props) => {
           if (autoDept) updates.department = autoDept;
           updateTask(updates);
         }} allowEmpty emptyLabel={t('common.unassigned', '未指定')} />
-        <TaskResponsibilityFields task={task} memberId={currentMemberId} role="assignee" onSaved={saveResponsibility} />
       </div>
     </div>
   );
@@ -271,7 +262,6 @@ const TaskSidebarFields = ({ detail }: Props) => {
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.reviewer', '驗收人')}</label>
       <div className="mt-1">
         <UserSelect value={task.reviewerId || ''} onChange={v => updateTask({ reviewerId: v || undefined })} allowEmpty emptyLabel={t('common.unassigned', '未指定')} />
-        <TaskResponsibilityFields task={task} memberId={currentMemberId} role="reviewer" onSaved={saveResponsibility} />
       </div>
     </div>
   );

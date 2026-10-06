@@ -157,7 +157,10 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   }, []);
 
   const searchDropdown = searchFocused && searchQuery.trim() && (
-    <div className="absolute top-full mt-1 left-0 right-0 bg-card border border-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+    <div
+      className="absolute top-full mt-1 left-0 right-0 bg-card border border-border rounded-lg shadow-xl z-50 overflow-y-auto overscroll-contain"
+      style={{ maxHeight: `min(20rem, max(0px, calc(var(--livo-viewport-height, 100dvh) - var(--livo-app-top-offset, 0px) - ${compactToolbar ? '8rem' : '4rem'} - env(safe-area-inset-bottom, 0px))))` }}
+    >
       {searchResults.length === 0 ? (
         <div className="px-4 py-3 text-sm text-muted-foreground text-center">{t('search.noResults')}</div>
       ) : (
@@ -167,7 +170,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
             <button
               key={task.id}
               onClick={() => handleSelectSearchResult(task)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0"
+              className="w-full min-h-11 flex items-center gap-3 px-4 py-2.5 text-left hover:bg-accent transition-colors border-b border-border last:border-b-0"
             >
               <span className="text-xs font-mono text-muted-foreground flex-shrink-0">{task.taskKey}</span>
               <span className="text-sm text-foreground truncate flex-1">{task.title}</span>

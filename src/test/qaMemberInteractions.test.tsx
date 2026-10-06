@@ -175,27 +175,31 @@ describe('shared UserSelect form and dialog behavior', () => {
 });
 
 describe('QA detail uses shared controls with a focused next action', () => {
-  it('prefers QA for testing and project developers for repair while still allowing everyone active', async () => {
-    state.users = [person('pm', 'Morgan', true, 'PM'), person('other', 'Reese', true, 'FE'),
-      person('qa', 'Blair', true, 'QA'), person('dev', 'Alex', true, 'BE'),
-      person('reviewer', 'Taylor', true, 'SRE'), person('inactive', 'Casey', false, 'QA')];
-    state.tasks = [{ id: 'same', projectId: 'p1', assigneeId: 'dev', reviewerId: 'reviewer' },
-      { id: 'other', projectId: 'p2', assigneeId: 'other' }] as Task[];
-    renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: 'qa.triage' }));
+  it('prefers QA and project developers in the direct sidebar while allowing every active member', async () => {
+    state.users = [person('pm', 'Morgan', true, 'PM'), person('other', 'Reese', true, 'FE'), person('qa', 'Blair', true, 'QA'), person('dev', 'Alex', true, 'BE'), person('reviewer', 'Taylor', true, 'SRE'), person('inactive', 'Casey', false, 'QA')];
+    state.tasks = [{ id: 'same', projectId: 'p1', assigneeId: 'dev', reviewerId: 'reviewer' }, { id: 'other', projectId: 'p2', assigneeId: 'other' }] as Task[];
+    const { command } = renderDetail();
+    command.mockImplementation(async (current, next) => { const { type, ...patch } = next; return type === 'update_fields' ? { ...current, ...patch, version: current.version + 1 } : current; });
+    expect(screen.getByRole('button', { name: 'qa.assignOwners' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'qa.triage' })).toBeNull();
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.assignee' }));
     let options = within(await screen.findByRole('listbox')).getAllByRole('option');
-    expect(options).toHaveLength(5);
-    ['Alex', 'Taylor', 'Morgan', 'Reese', 'Blair'].forEach((name, index) => expect(options[index]).toHaveTextContent(name));
+    expect(options).toHaveLength(6); expect(options[0]).toHaveTextContent('qa.unassigned');
+    ['Alex', 'Taylor', 'Morgan', 'Reese', 'Blair'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
+    expect(screen.queryByRole('option', { name: /Casey/ })).toBeNull();
     fireEvent.click(screen.getByRole('option', { name: /Morgan/ }));
-    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.assignee' })).toHaveTextContent('Morgan'));
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
     options = within(await screen.findByRole('listbox')).getAllByRole('option');
-    expect(options).toHaveLength(5);
-    ['Blair', 'Morgan', 'Reese', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index]).toHaveTextContent(name));
+    expect(options).toHaveLength(6);
+    ['Blair', 'Morgan', 'Reese', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
     fireEvent.change(screen.getByRole('combobox', { name: 'common.search · qa.qaOwner' }), { target: { value: 'Morgan' } });
     fireEvent.click(await screen.findByRole('option', { name: /Morgan/ }));
-    expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Morgan');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Morgan'));
+    expect(command.mock.calls[0][1]).toMatchObject({ type: 'update_fields', assigneeId: 'pm', qaOwnerId: null });
+    expect(command.mock.calls[1][0]).toMatchObject({ version: issue.version + 1 });
+    expect(command.mock.calls[1][1]).toMatchObject({ type: 'update_fields', assigneeId: 'pm', qaOwnerId: 'pm' });
+    expect(command.mock.calls.every(call => ![call[1].assigneeId, call[1].qaOwnerId].includes('inactive'))).toBe(true);
   });
 
   it('starts an assigned repair in one click without an empty confirmation form', async () => {
@@ -218,36 +222,33 @@ describe('QA detail uses shared controls with a focused next action', () => {
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
     expect(command).toHaveBeenCalledTimes(1);
   });
-  it('shows one verification submission and asks for a note only when the result needs one', async () => {
+  it.each(['fail', 'blocked'] as const)('submits one real %s verification with an optional blank note', async result => {
     const candidate = { ...issue, state: 'verification' as const, assigneeId: 'dev', qaOwnerId: 'qa', targets: [{ id: 'example-target', environment: 'Stage', component: '', build: 'example-1', required: true, deployedAt: issue.updatedAt, deployedBy: 'dev', deploymentEvidence: 'Example evidence' }] };
     const { command } = renderDetail({ issue: candidate });
     fireEvent.click(screen.getByRole('button', { name: 'qa.verification' }));
     expect(screen.getAllByRole('button', { name: 'qa.verification' })).toHaveLength(1);
     expect(screen.getByText('qa.completeInPanel')).toBeTruthy();
     expect(screen.getByLabelText('qa.note')).not.toBeVisible();
-    fireEvent.change(screen.getByLabelText('qa.resultField'), { target: { value: 'fail' } });
-    expect(screen.getByLabelText(/qa.note/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText('qa.resultField'), { target: { value: result } });
+    expect(screen.getByLabelText(/qa.note/)).toBeVisible(); expect(screen.getByLabelText(/qa.note/)).not.toBeRequired();
     fireEvent.click(screen.getByRole('button', { name: 'qa.verification' }));
-    expect(command).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText(/qa.note/), { target: { value: 'The example error still occurs' } });
-    fireEvent.click(screen.getByRole('button', { name: 'qa.verification' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith(candidate, { type: 'record_verification', targetId: 'example-target', build: 'example-1', result: 'fail', note: 'The example error still occurs' }, expect.any(String)));
+    await waitFor(() => expect(command).toHaveBeenCalledWith(candidate, { type: 'record_verification', targetId: 'example-target', build: 'example-1', result, note: '' }, expect.any(String)));
+    expect(command).toHaveBeenCalledTimes(1);
   });
-  it('shows one next action, keeps exceptions in More actions, and submits selected active IDs only', async () => {
+
+  it('suggests direct owner editing and keeps optional triage in More with only active IDs', async () => {
     const { command } = renderDetail();
-    expect(screen.getAllByRole('button', { name: 'qa.triage' })).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'qa.close' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'qa.assignOwners' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'qa.triage' })).toBeNull(); expect(screen.queryByRole('button', { name: 'qa.close' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     expect(await screen.findByRole('menuitem', { name: 'qa.close' })).toBeTruthy();
-    expect(screen.queryByRole('menuitem', { name: 'qa.triage' })).toBeNull();
-    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'qa.edit' }), { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'qa.triage' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'qa.triage' }));
     const dialog = await screen.findByRole('dialog', { name: 'qa.triage' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
-    expect(command).not.toHaveBeenCalled();
-    await choose('qa.assignee', /Alex/); await choose('qa.qaOwner', /Blair/);
-    fireEvent.change(screen.getByLabelText(/qa.severity/), { target: { value: 'high' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' })); expect(command).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'qa.assignee' }));
+    expect(screen.queryByRole('option', { name: /Casey/ })).toBeNull(); fireEvent.click(await screen.findByRole('option', { name: /Alex/ }));
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'qa.qaOwner' })); fireEvent.click(await screen.findByRole('option', { name: /Blair/ }));
+    fireEvent.change(within(dialog).getByLabelText(/qa.severity/), { target: { value: 'high' } });
     expect(Object.fromEntries(new FormData(dialog.querySelector('form')!))).toMatchObject({ assigneeId: 'dev', qaOwnerId: 'qa', severity: 'high', priority: '3' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(issue, expect.objectContaining({ type: 'triage', assigneeId: 'dev', qaOwnerId: 'qa', severity: 'high' }), expect.any(String)));

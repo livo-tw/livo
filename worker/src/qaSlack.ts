@@ -2,7 +2,7 @@ import { parseDeploymentEnvironments } from './qa/environments';
 import { groupProjectsByLine } from './qa/projectGroups';
 import type { Context } from 'hono';
 import { isDemoMember, type AppContext, type AuthCtx, type Ctx, type Env } from './env';
-import { executeQaAction } from './qa';
+import { executeQaAction, deploymentQueueOperator } from './qa';
 import { drainQaSlackInbox, handleQaSlack, isQaSlackPayload, qaRequestId, qaSlackCard, type QaSlackActions, type QaSlackActor, type QaSlackPayload } from './qa/slack';
 import { qaSlackClient, qaSlackEnabled, qaSlackLink, syncQaSlackIssue, getQaSlackWorkflow } from './qaSlackSync';
 import { cleanupQaExpiredUploads } from './qaStorage';
@@ -48,7 +48,7 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       if (isDemoMember(env, auth)) throw new Error('qa_forbidden');
       // The member turned Slack linking off in My settings.
       if (await slackLinkDisabled(env, ws, member.id)) throw new Error('slack_link_disabled');
-      return { id: member.id, role: member.role, team, slack_user: user, locale: profile.locale, auth } as Actor;
+      return { id: member.id, role: member.role, team, slack_user: user, locale: profile.locale, deploymentOperator: await deploymentQueueOperator(env, auth), auth } as Actor;
     },
     api: async <T>(actor: QaSlackActor, body: Record<string, unknown>) => {
       if (!await qaSlackEnabled(env, ws)) throw new Error('qa_disabled');

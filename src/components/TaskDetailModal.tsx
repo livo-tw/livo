@@ -30,7 +30,10 @@ const TaskDetailModal = () => {
       aria-label={selectedTask.title}
       className="fixed inset-0 z-50 flex items-start justify-center pt-0 md:pt-6 bg-black/50"
       style={{ top: `calc(var(--livo-viewport-top, 0px) + ${topOffset}px)`, height: `calc(var(--livo-viewport-height, 100dvh) - ${topOffset}px)`, bottom: 'auto' }}
-      onKeyDown={e => e.key === 'Escape' && setSelectedTask(null)}
+      onKeyDown={e => {
+        // A portaled picker owns its Escape; a child may also handle it first.
+        if (e.key === 'Escape' && !e.defaultPrevented && e.currentTarget.contains(e.target as Node)) setSelectedTask(null);
+      }}
       onClick={e => { if (!isMobile && e.target === e.currentTarget) setSelectedTask(null); }}
     >
       <div

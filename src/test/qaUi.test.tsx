@@ -72,10 +72,12 @@ describe('QA feature gate and conflict recovery', () => {
     fireEvent.click(title); await screen.findByRole('heading', { name: issue.title, level: 1 });
     expect(screen.getAllByText('Incoming reports').length).toBeGreaterThan(0);
   });
-  it('opens the gated triage form from a card without directly changing its state', async () => {
+  it('opens the owner fields from a card without a separate triage form or changing its state', async () => {
     mocks.enabled = true; render(<QaWorkspace />); await screen.findByText(issue.title);
-    fireEvent.click(screen.getByRole('button', { name: 'qa.triage' }));
-    expect(await screen.findByLabelText(/qa.assignee/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.assignOwners' }));
+    expect(await screen.findByRole('combobox', { name: 'qa.assignee' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'qa.triage' })).toBeNull();
+    expect(screen.getByText('qa.assignOwnersHint')).toBeTruthy();
     expect(mocks.command).not.toHaveBeenCalled();
   });
   it('allows administrators to rename and reorder the fixed semantic stages', async () => {

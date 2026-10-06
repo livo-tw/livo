@@ -58,7 +58,15 @@ describe('private QA Slack workspace',()=>{
     await handleQaSlack(payload,'page',d);await flush();
     expect(d.actor).toHaveBeenCalledTimes(2);
     expect(api).toHaveBeenCalledWith(expect.objectContaining({id:'fresh-member'}),{action:'list',input:{offset:10,limit:10,search:'wallet',projectId:'archived-project',mine:'testing'}});
-    const last=JSON.stringify(lastView());expect(last).toContain('Previous');expect(last).toContain('Next');
+    const rendered=lastView(),last=JSON.stringify(rendered);expect(last).toContain('Previous');expect(last).toContain('Next');
+    const actionBlocks=(rendered.blocks as SlackBlock[]).filter(block=>block.type==='actions');
+    for(const block of actionBlocks){
+      const ids=(block.elements as Array<{action_id?:string}>).map(element=>element.action_id).filter(Boolean);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    const pageBlocks=actionBlocks.filter(block=>(block.elements as Array<{action_id?:string}>).some(element=>element.action_id==='livo_qa_workspace_page'));
+    expect(pageBlocks).toHaveLength(2);
+    expect(pageBlocks.map(block=>(block.elements as Array<{value:string}>).find(element=>element.value==='0'||element.value==='20')?.value)).toEqual(['0','20']);
   });
   it('applies modal filters, clears project selection and resets pagination',async()=>{
     const {d,api,flush,lastView}=harness();await handleQaSlack(slash('bug list'),'first',d);await flush();
@@ -104,7 +112,9 @@ describe('private QA Slack workspace',()=>{
     const detail=lastView();const blocks=detail.blocks as SlackBlock[];
     const strings=blocks.map(block=>(block.text as {text?:string})?.text || '');
     expect(strings.join('')).toContain(long.actual);expect(strings).toContain('End of expected');
-    expect(blocks.every(block=>!block.text || (block.text as {type:string}).type==='plain_text')).toBe(true);
+    expect(blocks[0]).toMatchObject({text:{type:'mrkdwn',text:expect.stringContaining('Current state')}});
+    // Only the escaped state heading uses formatting; all user-authored bodies stay plain text.
+    expect(blocks.slice(1).every(block=>!block.text || (block.text as {type:string}).type==='plain_text')).toBe(true);
     expect(JSON.stringify(detail)).toContain('livo_qa_fix');expect(JSON.stringify(detail)).not.toContain('livo_qa_close');
     expect(d.publish).not.toHaveBeenCalled();expect(d.reply).not.toHaveBeenCalled();
     // Existing mutations must escape the read router even when clicked inside its modal.

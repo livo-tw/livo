@@ -14,6 +14,7 @@ export interface QaEventTextContext {
   member: (id: string) => string;
   /** Task key and title for an id; unknown ids come back unchanged. */
   task: (id: string) => string;
+  project?: (id: string) => string;
   stateLabel: (state: string) => string;
   date: (iso: string) => string;
 }
@@ -24,7 +25,7 @@ const RESULTS: Record<string, string> = { PASS: 'pass', FAIL: 'fail', BLOCKED: '
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z/g;
 
 /** Event types the history lists under their own name. */
-export const QA_EVENT_TYPES = ['create', 'created', 'edit', 'triage', 'start_fix', 'submit_fix', 'record_deployment', 'record_verification',
+export const QA_EVENT_TYPES = ['create', 'created', 'edit', 'update_fields', 'triage', 'start_fix', 'submit_fix', 'record_deployment', 'record_verification',
   'set_state', 'close', 'reopen', 'hold', 'link_tasks', 'request_handoff', 'accept_handoff', 'resolve_handoff'] as const;
 
 export function qaEventTitle(event: { type: string; detail: string }, t: TFunction): string {
@@ -59,6 +60,25 @@ export function qaEventText(event: { type: string; detail: string }, ctx: QaEven
   if (event.type === 'set_state') {
     try { const value = JSON.parse(detail); return t('qa.stateHistory', { from: ctx.stateLabel(value.from), to: ctx.stateLabel(value.to) }); }
     catch { return detail; }
+  }
+  if (event.type === 'update_fields') {
+    try {
+      const value = JSON.parse(detail);
+      if (!value || !value.after || typeof value.after !== 'object' || Array.isArray(value.after)) return names(detail, ctx);
+      const before = value.before && typeof value.before === 'object' && !Array.isArray(value.before) ? value.before : null;
+      const display = (key: string, input: unknown): string => {
+        if (input === null || input === undefined || input === '') return key === 'assigneeId' || key === 'qaOwnerId' ? t('qa.unassigned') : '—';
+        if (key === 'projectId') return ctx.project?.(String(input)) ?? String(input);
+        if (key === 'assigneeId' || key === 'qaOwnerId') return ctx.member(String(input));
+        if (key === 'severity' && SEVERITIES.includes(String(input))) return t(`qa.severityNames.${input}`);
+        if (key === 'priority' && Number.isInteger(input) && Number(input) >= 1 && Number(input) <= 5) return t(`priority.${qaPriorities[Number(input) - 1]}`);
+        return String(input);
+      };
+      return [['projectId', 'project'], ['assigneeId', 'assignee'], ['qaOwnerId', 'qaOwner'], ['severity', 'severity'], ['priority', 'priority'], ['dueDate', 'dueDate']]
+        .filter(([key]) => Object.prototype.hasOwnProperty.call(value.after, key) && (!before || before[key] !== value.after[key]))
+        .map(([key, label]) => before ? t('qa.historyFieldChange', { field: t(`qa.${label}`), before: display(key, before[key]), after: display(key, value.after[key]) })
+          : `${t(`qa.${label}`)}：${display(key, value.after[key])}`).join('\n');
+    } catch { return names(detail, ctx); }
   }
   if (event.type === 'triage') {
     const match = /^RD: (\S+) · QA: (\S+)\n(\w+) · P(\d)(?:\n(\S+))?$/.exec(detail);

@@ -149,10 +149,11 @@ const sourceMetadata = (source: Row): Row => Object.fromEntries(['channel', 'thr
   .filter(key => typeof source[key] === 'string').map(key => [key, clip(source[key], 150)]));
 
 export function contextModal(result: TaskContextResult, url: string, source: Row = {}): Row {
+  const label = tr(source, LABELS[result.kind]);
   const blocks: Row[] = [
     section(clip(`${result.task.task_key || ''} · ${result.task.title || ''}`, 500)),
     section(tr(source, '只有你看得到 · 唯讀任務內容，清單勾選不代表 QA 驗證結果。')),
-    section(tr(source, LABELS[result.kind]) + ' · ' + tr(source, '第 {page} 頁', { page: result.page + 1 })),
+    section(tr(source, '目前：{section}', { section: label }) + ' · ' + tr(source, '第 {page} 頁', { page: result.page + 1 })),
   ];
   const addTask = (row: TaskContextRow) => {
     if (row.unavailable) { blocks.push(section(tr(source, '關聯任務不存在或你沒有檢視權限。'))); return; }
@@ -162,11 +163,11 @@ export function contextModal(result: TaskContextResult, url: string, source: Row
   };
   if (result.text !== undefined) {
     if ((result.totalPages || 1) > 1) blocks.push(section(tr(source, '完整文字分為 {pages} 頁，請翻頁閱讀其餘內容。', { pages: result.totalPages! })));
-    blocks.push(section(result.text || tr(source, '此欄位尚無內容。')));
+    blocks.push(section(result.text || tr(source, '{section}尚無內容。', { section: label })));
   } else {
     if (result.parent) { blocks.push(section(tr(source, '父任務'))); addTask(result.parent); }
     if (result.kind === 'children') blocks.push(section(tr(source, '子任務')));
-    if (!result.rows.length) blocks.push(section(tr(source, '目前沒有項目。')));
+    if (!result.rows.length) blocks.push(section(tr(source, '{section}目前沒有項目。', { section: label })));
     for (const row of result.rows) {
       if (result.kind === 'checks' || result.kind === 'todos') {
         const state = row.is_done === true ? '已完成' : row.is_done === false ? '未完成' : '狀態未提供';
@@ -181,7 +182,7 @@ export function contextModal(result: TaskContextResult, url: string, source: Row
   if (result.page > 0) nav.push(button(tr(source, '上一頁'), { ...route, page: result.page - 1 }));
   if (result.hasMore) nav.push(button(tr(source, '下一頁'), { ...route, page: result.page + 1 }));
   for (const element of nav) blocks.push({ type: 'actions', elements: [element] });
-  const fields = TASK_CONTEXT_KINDS.map(kind => button(tr(source, LABELS[kind]), { taskId: result.task.id, kind, page: 0 }));
+  const fields = TASK_CONTEXT_KINDS.filter(kind => kind !== result.kind).map(kind => button(tr(source, LABELS[kind]), { taskId: result.task.id, kind, page: 0 }));
   // Slack requires action_id uniqueness within each block; all routes intentionally use one handler ID.
   for (const element of fields) blocks.push({ type: 'actions', elements: [element] });
   const back = [button(tr(source, '返回卡片'), { taskId: result.task.id }, 'livo_task_open')];

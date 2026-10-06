@@ -7,14 +7,17 @@ const job:Job={id:1,team_id:'TEXAMPLE',task_id:'t1',target_type:'member',target_
   recipientRules:[{role:'assignee',code:'assigned',assignmentRevision:2},{role:'reviewer',code:'reviewer_assigned',assignmentRevision:4}],responsibilities:[{role:'assignee',expectedRevision:2},{role:'reviewer',expectedRevision:4}]}};
 const buttons=(payload:Row)=>notificationMessage(payload,'https://example.com').blocks.flatMap((b:Row)=>b.elements||[]).filter((b:Row)=>b.action_id==='livo_work_ack');
 describe('live responsibility snapshots in Slack delivery',()=>{
- it('offers both roles in separate valid action blocks and escapes titles',()=>{
-  const current=currentPersonalPayload(job,task)!;expect(buttons(current).map((b:Row)=>JSON.parse(b.value))).toEqual([{taskId:'t1',role:'assignee',expectedRevision:2},{taskId:'t1',role:'reviewer',expectedRevision:4}]);
+ it('delivers both responsibility notices without acknowledgement controls and retains task work access',()=>{
+  const current=currentPersonalPayload(job,task)!;expect(buttons(current)).toHaveLength(0);expect(current.recipientRules).toHaveLength(2);
   const message=notificationMessage(current,'https://example.com');expect(message.text).toContain('&lt;@everyone&gt;');
+  expect(message.blocks.flatMap((b:Row)=>b.elements||[]).some((b:Row)=>b.action_id==='livo_task_open')).toBe(true);
+  expect(JSON.stringify(message)).not.toMatch(/確認接手|未確認接手|livo_work_ack/);
   for(const block of message.blocks.filter((b:Row)=>b.type==='actions')){const ids=block.elements.map((e:Row)=>e.action_id).filter(Boolean);expect(new Set(ids).size).toBe(ids.length);}
  });
- it('removes acknowledged buttons without hiding the responsibility notification',()=>{
+ it('keeps the responsibility notice independent of historical acknowledgement receipts',()=>{
   const current=currentPersonalPayload(job,{...task,assignee_acknowledged_at:'now'})!;
-  expect(buttons(current).map((b:Row)=>JSON.parse(b.value).role)).toEqual(['reviewer']);expect(current.recipientRules).toHaveLength(2);
+  expect(buttons(current)).toHaveLength(0);expect(current.recipientRules).toHaveLength(2);
+  expect(notificationMessage(current,'https://example.com')).toEqual(notificationMessage(currentPersonalPayload(job,task)!,'https://example.com'));
  });
  it('does not revive an old A to B to A notification after the member returns',()=>{
   expect(currentPersonalPayload(job,{...task,assignee_revision:4,reviewer_revision:6})).toBeUndefined();

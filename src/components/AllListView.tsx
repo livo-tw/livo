@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, useId } from 'react';
 import type { Task } from '@/types';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -24,6 +24,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
 
 const ROW_HEIGHT = 41;
+const MOBILE_ROW_HEIGHT = 144;
 
 interface SortHeaderProps {
   label: string;
@@ -76,7 +77,9 @@ const ExportDropdown = ({ onCsv, onExcel, onPdf, isMobile }: { onCsv: () => void
       <button
         onClick={() => setOpen(!open)}
         title={t('list.exportCsvTitle')}
-        className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded hover:bg-accent"
+        aria-label={t('common.export')}
+        aria-expanded={open}
+        className="flex min-h-11 min-w-11 items-center justify-center gap-1 text-[13px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded hover:bg-accent md:min-h-0 md:min-w-0"
       >
         <Download size={14} />
         {!isMobile && <span>{t('common.export')}</span>}
@@ -88,7 +91,7 @@ const ExportDropdown = ({ onCsv, onExcel, onPdf, isMobile }: { onCsv: () => void
             <button
               key={item.label}
               onClick={() => { item.action(); setOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
+              className="w-full min-h-11 flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors md:min-h-0"
             >
               {item.icon}
               {item.label}
@@ -119,6 +122,9 @@ const AllListView = () => {
   // The same filter state and chips as the board (useBoardFilters, BoardFilterChips).
   const boardFilters = useBoardFilters();
   const { filterStatuses, filterPriorities, filterAssignees, filterProjects, setFilterProjects, filterDept, filterReviewers, hasFilters, clearFilters } = boardFilters;
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const filtersId = useId();
+  const activeFilterCount = filterStatuses.length + filterPriorities.length + filterAssignees.length + filterProjects.length + filterDept.length + filterReviewers.length;
   useScopedProjectFilter(setFilterProjects);
   const { projectIds: scopeIds } = useProjectScope();
 
@@ -281,9 +287,14 @@ const AllListView = () => {
   const rowVirtualizer = useVirtualizer({
     count: sortedTasks.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    getItemKey: index => sortedTasks[index].id,
+    estimateSize: () => isMobile ? MOBILE_ROW_HEIGHT : ROW_HEIGHT,
     overscan: 10,
   });
+
+  // Card heights vary with their titles. Discard measurements when the layout
+  // switches so desktop rows never reuse the taller mobile card sizes.
+  useEffect(() => { rowVirtualizer.measure(); }, [isMobile, rowVirtualizer]);
 
   const tableMinWidth = useMemo(() => {
     const checkboxCol = isMobile ? 0 : 32;
@@ -295,13 +306,41 @@ const AllListView = () => {
     return isMobile ? `${total}px` : `${Math.max(total, 600)}px`;
   }, [visibleCols, isMobile]);
 
+  const emptyContent = (
+    <div className="flex flex-col items-center justify-center px-4">
+      {hasFilters ? (
+        <>
+          <Search size={48} className="mb-3 text-slate-400" aria-hidden="true" />
+          <p className="text-sm font-semibold text-foreground mb-1">{t('list.noResults')}</p>
+          <p className="text-xs text-muted-foreground mb-3">{t('list.adjustFilters')}</p>
+          <button onClick={clearFilters} className="min-h-11 px-2 text-sm text-primary hover:text-primary/80 font-medium transition-colors md:min-h-0">
+            {t('button.clearAllFilters')}
+          </button>
+        </>
+      ) : (
+        <>
+          <ClipboardList size={48} className="mb-3 text-slate-400" aria-hidden="true" />
+          <p className="text-sm font-semibold text-foreground mb-1">{t('list.noTasks')}</p>
+          <p className="text-xs text-muted-foreground">{t('list.createFirstTask')}</p>
+        </>
+      )}
+    </div>
+  );
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-board">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-board">
       <div className="px-3 md:px-5 pt-3 md:pt-4 pb-2">
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <h1 className="text-base md:text-lg font-bold text-foreground">{t('list.allListTitle')}</h1>
           <div className="flex items-center gap-2">
             {!isMobile && <ColumnConfigDropdown config={columnConfig} fixedKeys={FIXED_KEYS} />}
+            {isMobile && (
+              <button type="button" aria-expanded={mobileFiltersOpen} aria-controls={filtersId} onClick={() => setMobileFiltersOpen(open => !open)} className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-md px-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
+                {t('filter.label')}
+                {activeFilterCount > 0 && <span className="rounded-full bg-primary/10 px-1.5 text-xs text-primary">{activeFilterCount}</span>}
+                {mobileFiltersOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+              </button>
+            )}
             <ExportDropdown
               onCsv={() => exportCsv(sortedTasks)}
               onExcel={() => exportExcel(sortedTasks)}
@@ -311,10 +350,10 @@ const AllListView = () => {
             <span className="text-[13px] text-muted-foreground">{sortedTasks.length} / {scopedTasks.length}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+        {(!isMobile || mobileFiltersOpen) && <div id={filtersId} className="flex items-center gap-1.5 md:gap-2 flex-wrap">
           <BoardFilterChips users={users} statusOptions={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))}
             allProjects={scopeIds ? allProjects.filter(p => scopeIds.has(p.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters} />
-        </div>
+        </div>}
       </div>
 
       {selectedIds.size > 0 && (
@@ -323,8 +362,42 @@ const AllListView = () => {
         </div>
       )}
 
-      <div ref={tableContainerRef} className="flex-1 overflow-auto mx-2 md:mx-5 mb-2 md:mb-4 bg-card rounded-xl border border-border/80 shadow-sm">
-        <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
+      {isMobile && (
+        <div className="mx-2 flex shrink-0 flex-wrap items-center gap-1 rounded-t-xl border border-b-0 border-border/80 bg-card px-3 py-2">
+          <Checkbox aria-label={t('button.selectAll')} checked={isAllSelected ? true : isPartialSelected ? 'indeterminate' : false} onCheckedChange={value => value ? selectAll() : clearSelection()} className="h-11 w-11 shrink-0" />
+          {visibleCols.map(col => (
+            <button key={col.key} type="button" aria-pressed={sortKey === col.key} onClick={() => toggleSort(col.key)} className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-md px-2 text-sm font-semibold text-muted-foreground hover:bg-accent hover:text-foreground">
+              {col.label}{sortKey === col.key && (sortDir === 'asc' ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div ref={tableContainerRef} className={`min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain mx-2 md:mx-5 mb-2 md:mb-4 bg-card border border-border/80 shadow-sm ${isMobile ? 'rounded-b-xl' : 'rounded-xl'}`}>
+        {isMobile ? sortedTasks.length === 0 ? <div className="py-16 text-center">{emptyContent}</div> : (
+          <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+            {rowVirtualizer.getVirtualItems().map(virtualRow => {
+              const task = sortedTasks[virtualRow.index];
+              const isSelected = selectedIds.has(task.id);
+              const isDone = statusMap.get(task.statusId)?.isDone;
+              return (
+                <article key={task.id} data-index={virtualRow.index} ref={rowVirtualizer.measureElement} style={{ transform: `translateY(${virtualRow.start}px)` }} className={`absolute inset-x-0 top-0 flex min-w-0 gap-2 border-b border-border/40 p-3 ${isSelected ? 'bg-primary/5' : ''}`}>
+                  <Checkbox aria-label={t('list.selectTask', { key: task.taskKey })} checked={isSelected} onCheckedChange={() => toggleSelect(task.id)} className="h-11 w-11 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <button type="button" onClick={() => setSelectedTask(task)} className="block min-h-11 w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="mb-1 block break-words text-xs font-medium text-primary [overflow-wrap:anywhere]">{task.taskKey}</span>
+                      <span className={`block break-words text-sm font-medium [overflow-wrap:anywhere] ${isDone ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{task.title}</span>
+                    </button>
+                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                      <div className="min-w-0 max-w-full [&_span]:max-w-full [&_span]:whitespace-normal [&_span]:[overflow-wrap:anywhere]">{renderCell(task, 'status')}</div>
+                      <div className="min-w-0 max-w-full [&_span]:min-w-0 [&_span]:whitespace-normal [&_span]:overflow-visible [&_span]:[overflow-wrap:anywhere]">{renderCell(task, 'assignee')}</div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
           <thead className="sticky top-0 z-[2] bg-card border-b border-border">
             <tr>
               {!isMobile && (
@@ -347,27 +420,7 @@ const AllListView = () => {
             {sortedTasks.length === 0 ? (
               <tr>
                 <td colSpan={visibleCols.length + 2} className="py-16 text-center">
-                  <div className="flex flex-col items-center justify-center px-4">
-                    {hasFilters ? (
-                      <>
-                        <Search size={48} className="mb-3 text-slate-400" aria-hidden="true" />
-                        <p className="text-sm font-semibold text-foreground mb-1">{t('list.noResults')}</p>
-                        <p className="text-xs text-muted-foreground mb-3">{t('list.adjustFilters')}</p>
-                        <button
-                          onClick={clearFilters}
-                          className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
-                        >
-                          {t('button.clearAllFilters')}
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <ClipboardList size={48} className="mb-3 text-slate-400" aria-hidden="true" />
-                        <p className="text-sm font-semibold text-foreground mb-1">{t('list.noTasks')}</p>
-                        <p className="text-xs text-muted-foreground">{t('list.createFirstTask')}</p>
-                      </>
-                    )}
-                  </div>
+                  {emptyContent}
                 </td>
               </tr>
             ) : (() => {
@@ -413,7 +466,7 @@ const AllListView = () => {
               );
             })()}
           </tbody>
-        </table>
+        </table>}
       </div>
 
     </div>

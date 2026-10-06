@@ -265,7 +265,7 @@ const BacklogView = () => {
         <BoardFilterChips users={users} statusOptions={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))}
           allProjects={scopeIds ? allProjects.filter(p => scopeIds.has(p.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters} />
       </div>
-      {(sprintTasks.length > 0 || backlogTasks.length > 0) && <p className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground md:hidden">{t('board.touchHint')}</p>}
+      {(sprintTasks.length > 0 || backlogTasks.length > 0) && <p className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground md:hidden">{t('backlog.touchHint')}</p>}
 
       {/* Batch action bar */}
       {selectedInSprint.length + selectedInBacklog.length > 0 && (

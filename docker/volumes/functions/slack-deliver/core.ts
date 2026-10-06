@@ -67,7 +67,7 @@ export function currentPersonalPayload(job: Job, task: Row | undefined): Row | u
   }
   const rules = job.payload.recipientRules;
   if (!Array.isArray(rules)) {
-    if (job.payload.reason === 'due_soon' && (task.assignee_id !== job.target_id || task.completed_at ||
+    if (job.payload.reason === 'due_soon' && ((task.assignee_id !== job.target_id && task.reviewer_id !== job.target_id) || task.completed_at ||
       task.statuses?.is_done || task.due_date !== job.payload.dueDate)) return undefined;
     if (job.payload.reason === 'comment' && task.assignee_id !== job.target_id && task.reviewer_id !== job.target_id) return undefined;
     return { ...job.payload, responsibilities: [] };
@@ -137,12 +137,7 @@ export function notificationMessage(payload: Row, appBase: string) {
           type: 'button', action_id: `approval_${operation}`, text: { type: 'plain_text', text: label }, value: JSON.stringify({ ...approvalValue, operation }),
         })) : [])] : []),
       ...(!approval && payload.taskKey ? [{ type: 'button', action_id: 'livo_task_open', text: { type: 'plain_text', text: '處理任務' },
-        value: JSON.stringify({ key: payload.taskKey }) }] : [])] },
-      ...(payload.kind === 'personal' && typeof payload.taskId === 'string' && Array.isArray(payload.responsibilities) ?
-        payload.responsibilities.filter((r:Row,i:number,all:Row[]) => ['assignee','reviewer'].includes(r.role) && Number.isSafeInteger(r.expectedRevision) && r.expectedRevision >= 0 && all.findIndex(x=>x.role===r.role)===i).slice(0,2).map((r:Row)=>({
-          type:'actions',block_id:`livo_work_ack_${r.role}`,elements:[{
-            type:'button',action_id:'livo_work_ack',text:{type:'plain_text',text:r.role==='reviewer'?'確認接手驗收':'確認接手任務'},
-            value:JSON.stringify({taskId:payload.taskId,role:r.role,expectedRevision:r.expectedRevision})}]})) : [])],
+        value: JSON.stringify({ key: payload.taskKey }) }] : [])] }],
     unfurl_links: false, unfurl_media: false };
 }
 export function matchingChannels(config: Row | undefined, project: Row | undefined): string[] {
@@ -266,10 +261,6 @@ export async function deliverJob(job: Job, owner: string, store: DeliveryStore, 
         if (!channel) throw new DeliveryError('dm_channel_unavailable');
       }
       const thread = job.target_type === 'channel' ? activeThread(await store.thread(job.task_id, job.team_id, channel), now) : undefined;
-      if (job.target_type==='member' && payload.reason==='due_soon' && (!store.reminderPaused || await store.reminderPaused(job.task_id,job.target_id))) {
-        if (!(await store.finish(job,owner,{status:'skipped',error:'reminder_paused'}))) throw new DeliveryError('delivery_lease_lost',false,true);
-        return 'skipped';
-      }
       if (weekly) { const fresh=await store.weeklyTasks(job.target_id,job.payload.weekStart); const visibleTasks:Row[]=[];
         for(const task of fresh) if(task.taskId && await store.canReadTask(job.target_id,job.team_id,task.taskId)) visibleTasks.push(task);
         tasks=visibleTasks;

@@ -12,8 +12,13 @@ describe('Shared company QA display workflow',()=>{
   });
   it('offers on the Slack card only the steps the stage allows, with readable severity',()=>{
     const base={id:'one',title:'Bug',severity:'untriaged',fixCycle:1,targets:[],runs:[],qaOwnerId:null,assigneeId:null} as unknown as QaIssue;
-    const actions=(issue:QaIssue)=>(qaSlackCard(issue,'https://example.com')[2] as {elements:{action_id?:string;url?:string}[]}).elements.map(e=>e.action_id||`url:${e.url}`);
-    expect(actions({...base,state:'new'} as QaIssue)).toEqual(['url:https://example.com']);
+    const actions=(issue:QaIssue)=>{
+      const block=qaSlackCard(issue,'https://example.com').find(block=>block.type==='actions') as {elements:{action_id?:string;url?:string}[]} | undefined;
+      expect(block).toBeDefined();
+      return block!.elements.map(e=>e.action_id||`url:${e.url}`);
+    };
+    expect(actions({...base,state:'new'} as QaIssue)).toEqual(['livo_qa_triage']);
+    expect(actions({...base,state:'new',assigneeId:'developer',qaOwnerId:'tester'} as QaIssue)).toEqual(['livo_qa_fix']);
     expect(JSON.stringify(qaSlackCard({...base,state:'new'} as QaIssue,'https://example.com'))).toContain('嚴重度：待判定');
     expect(actions({...base,state:'in_progress'} as QaIssue)).toEqual(['livo_qa_fix']);
     const deployed={id:'t',environment:'Stage',build:'1',required:true,deployedAt:'2026-10-01'};

@@ -131,6 +131,38 @@ describe('Private Slack task context reads', () => {
     }
     expect(view.blocks.length).toBeLessThanOrEqual(100);
   });
+  it.each([
+    ['zh-TW', 'background', '背景', '目前：背景', '背景尚無內容。'],
+    ['zh-TW', 'requirement', '需求', '目前：需求', '需求尚無內容。'],
+    ['zh-TW', 'notes', '備註', '目前：備註', '備註尚無內容。'],
+    ['zh-TW', 'checks', '驗收清單', '目前：驗收清單', '驗收清單目前沒有項目。'],
+    ['zh-TW', 'todos', '待辦清單', '目前：待辦清單', '待辦清單目前沒有項目。'],
+    ['zh-CN', 'background', '背景', '当前：背景', '背景暂无内容。'],
+    ['zh-CN', 'requirement', '需求', '当前：需求', '需求暂无内容。'],
+    ['zh-CN', 'notes', '备注', '当前：备注', '备注暂无内容。'],
+    ['zh-CN', 'checks', '验收清单', '当前：验收清单', '验收清单目前没有项目。'],
+    ['zh-CN', 'todos', '待办清单', '当前：待办清单', '待办清单目前没有项目。'],
+    ['en', 'background', 'Background', 'Current: Background', 'Background: no content yet.'],
+    ['en', 'requirement', 'Requirements', 'Current: Requirements', 'Requirements: no content yet.'],
+    ['en', 'notes', 'Notes', 'Current: Notes', 'Notes: no content yet.'],
+    ['en', 'checks', 'Acceptance items', 'Current: Acceptance items', 'Acceptance items: no items yet.'],
+    ['en', 'todos', 'To-do items', 'Current: To-do items', 'To-do items: no items yet.'],
+  ] as const)('marks the active %s %s section and gives its specific empty message', (locale, kind, label, current, empty) => {
+    const view = contextModal({ task, kind, page: 0, hasMore: false, rows: [], ...(['background', 'requirement', 'notes'].includes(kind) ? { text: '' } : {}) }, '', { ...actor, locale });
+    const texts = view.blocks.filter((block: Row) => block.text).map((block: Row) => block.text.text);
+    expect(texts.some((text: string) => text.startsWith(current + ' · '))).toBe(true);
+    expect(texts).toContain(empty);
+    const routes = buttonValues(view);
+    expect(routes).toHaveLength(7);
+    expect(routes.every((route: Row) => route.kind !== kind)).toBe(true);
+    expect(routes).toContainEqual({ taskId: task.id, kind: kind === 'background' ? 'requirement' : 'background', page: 0 });
+    const controls = view.blocks.flatMap((block: Row) => block.elements || []);
+    expect(controls.some((control: Row) => control.action_id === 'livo_task_context' && control.text.text === label)).toBe(false);
+    for (const block of view.blocks) {
+      const ids = (block.elements || []).map((element: Row) => element.action_id).filter(Boolean);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
   it('has all fixed task-context messages in three locales', () => {
     const code = readFileSync(new URL('../../docker/volumes/functions/slack-interact/task-context.ts', import.meta.url), 'utf8');
     const ast = ts.createSourceFile('task-context.ts', code, ts.ScriptTarget.Latest, true);

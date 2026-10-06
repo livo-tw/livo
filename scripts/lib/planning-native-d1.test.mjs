@@ -187,9 +187,14 @@ describe('planning native SQLite contract',()=>{
   db.exec("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,task_id,type) VALUES('a','expired-due','member','other','t','due_soon')");
   expect(rows("SELECT * FROM notifications WHERE id='expired-due'")).toHaveLength(1);
  });
- it('snooze only suppresses due reminders, not responsibility notifications',async()=>{
-  await reminder();
-  for(const type of ['due_soon','assigned','review_requested'])db.prepare('INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,task_id,type,content) VALUES(?,?,?,?,?,?,?)').run('a',type,'member','other','t',type,'Synthetic');
-  expect(rows('SELECT type FROM notifications').map(r=>r.type).sort()).toEqual(['assigned','review_requested']);
+ it('retired pause preserves preferences/history while due and responsibility notices remain deduplicated',async()=>{
+  await setDate();await reminder();
+  const preferences=rows('SELECT * FROM task_reminder_preferences'),history=rows('SELECT * FROM task_deadline_history');
+  expect(preferences).toHaveLength(1);expect(history).toHaveLength(1);expect(preferences[0].snoozed_until).not.toBeNull();
+  const insert=db.prepare('INSERT OR IGNORE INTO notifications(workspace_id,id,recipient_id,sender_id,task_id,type,content) VALUES(?,?,?,?,?,?,?)');
+  for(let attempt=0;attempt<2;attempt++)for(const type of ['due_soon','assigned','review_requested'])insert.run('a',type,'member','other','t',type,'Synthetic');
+  expect(rows('SELECT type FROM notifications').map(r=>r.type).sort()).toEqual(['assigned','due_soon','review_requested']);
+  expect(rows('SELECT * FROM task_reminder_preferences')).toEqual(preferences);
+  expect(rows('SELECT * FROM task_deadline_history')).toEqual(history);
  });
 });

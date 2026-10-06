@@ -53,6 +53,29 @@ function redirectOldAppPath(req, res) {
   return true;
 }
 
+// An explicitly configured HTTPS origin upgrades historical page links.
+// The host setting is deployment data; no customer domain is embedded here.
+const CANONICAL_APP = (() => {
+  try {
+    const value = new URL(process.env.APP_BASE_URL || '');
+    if (value.protocol !== 'https:' || value.username || value.password || value.pathname !== '/' || value.search || value.hash) return null;
+    return value;
+  } catch { return null; }
+})();
+function redirectCanonicalApp(req, res) {
+  if (!APP_AT_ROOT || !CANONICAL_APP || !['GET', 'HEAD'].includes(req.method) || !/text\/html/i.test(req.headers.accept || '')) return false;
+  if ((req.headers.host || '').toLowerCase() === CANONICAL_APP.host.toLowerCase()) return false;
+  let target;
+  try { target = new URL(req.url, 'http://localhost'); } catch {
+    res.writeHead(404); res.end('Not found'); return true;
+  }
+  if (/^\/(?:rest|functions|storage|realtime)\/v1(?:\/|$)|^\/auth\/v1(?:\/|$)|^\/(?:health|healthz|ready)(?:\/|$)/.test(target.pathname)) return false;
+  const appPath = target.pathname.replace(/^\/demo(?=\/|$)/, '').replace(/^\/+/, '');
+  res.writeHead(302, { Location: CANONICAL_APP.origin + '/' + appPath + target.search });
+  res.end();
+  return true;
+}
+
 function serveAppAtRoot(req, res, url) {
   if (redirectOldAppPath(req, res)) return;
   const appDir = path.join(ROOT, "demo");
@@ -82,6 +105,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(404); res.end('Not found'); return;
     }
   }
+  if (redirectCanonicalApp(req, res)) return;
   const url = decodeURIComponent(req.url.split("?")[0]);
   if (APP_AT_ROOT) return serveAppAtRoot(req, res, url);
 

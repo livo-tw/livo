@@ -3,8 +3,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { generateReportContent, type AutoReportType } from '@/lib/reportGenerator';
 import i18n from '@/i18n';
 import type { Task, Status } from '@/types';
-import { listTaskReminderPreferences } from '@/lib/taskPlanning/client';
-import { reminderPaused } from '@/lib/taskPlanning/core';
 
 export function useSideEffects(
   currentMemberId: string,
@@ -31,8 +29,6 @@ export function useSideEffects(
     if (dueSoonTasks.length === 0) return;
 
     (async () => {
-      const preferences=await listTaskReminderPreferences(currentMemberId);
-      const paused=new Set(preferences.filter(p=>reminderPaused(p.snoozed_until)).map(p=>p.task_id));
       const { data } = await supabase
         .from('notifications')
         .select('task_id')
@@ -40,7 +36,7 @@ export function useSideEffects(
         .eq('type', 'due_soon')
         .gte('created_at', todayStart);
       const alreadyNotified = new Set((data || []).map(n => n.task_id));
-      const toNotify = dueSoonTasks.filter(t => !alreadyNotified.has(t.id) && !paused.has(t.id));
+      const toNotify = dueSoonTasks.filter(t => !alreadyNotified.has(t.id));
       if (toNotify.length === 0) return;
       const rows = toNotify.map(t => ({
         recipient_id: currentMemberId,

@@ -46,7 +46,8 @@ function renderDetail(issue: QaIssue, actor: QaActor, extra: Partial<QaDetail> =
 describe('the next step follows what the bug still lacks', () => {
   const lead: QaActor = { id: 'qa', role: 'member' };
   it('asks for owners, a fix, a deployment and a passing verification before closing', () => {
-    expect(getQaNextAction({ ...owned, qaOwnerId: null }, lead)?.command).toBe('triage');
+    expect(getQaNextAction({ ...owned, qaOwnerId: null }, lead)?.command).toBe('update_fields');
+    expect(getQaNextAction({ ...owned, state: 'new' }, { id: 'dev', role: 'member' })?.command).toBe('start_fix');
     // Moved to verification by hand, without a submitted fix.
     expect(getQaNextAction({ ...owned, state: 'verification', targets: [] }, lead)?.command).toBe('submit_fix');
     expect(getQaNextAction({ ...owned, state: 'verification', targets: [target({ deployedAt: null })] }, { id: 'dev', role: 'member' })?.command).toBe('record_deployment');

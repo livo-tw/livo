@@ -138,7 +138,7 @@ const MyTasksView = () => {
   }, [statuses, sortedTasks]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-board">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-board">
       <div className="px-3 md:px-5 pt-3 md:pt-4 pb-2">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
           <div className="flex items-center gap-2">
@@ -178,8 +178,25 @@ const MyTasksView = () => {
               <BulkActionBar selectedIds={selectedIds} onClearSelection={clearSelection} />
             </div>
           )}
-          <div className="flex-1 overflow-auto mx-2 md:mx-5 mb-2 md:mb-4 bg-card rounded-xl border border-border/80 shadow-sm">
-            <table className="w-full" style={{ minWidth: tableMinWidth }}>
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain mx-2 md:mx-5 mb-2 md:mb-4 bg-card rounded-xl border border-border/80 shadow-sm">
+            {isMobile ? <>
+              <div className="sticky top-0 z-[2] flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
+                <Checkbox aria-label={t('button.selectAll')} checked={isAllSelected ? true : isPartialSelected ? 'indeterminate' : false} onCheckedChange={value => value ? selectAll() : clearSelection()} className="h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" />
+                {visibleCols.map(col => <button key={col.key} type="button" aria-pressed={sortKey === col.key} onClick={() => toggleSort(col.key)} className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-md px-2 text-sm font-semibold text-muted-foreground hover:bg-accent hover:text-foreground">{col.label}{sortKey === col.key && (sortDir === 'asc' ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />)}</button>)}
+              </div>
+              {sortedTasks.map(task => {
+                const isDone = statuses.find(status => status.id === task.statusId)?.isDone;
+                const isSelected = selectedIds.has(task.id);
+                return <article key={task.id} className={`flex min-w-0 items-start gap-2 border-b border-border/50 p-3 ${isSelected ? 'bg-primary/5' : ''}`}>
+                  <div className="flex min-h-11 w-11 shrink-0 items-center justify-center"><Checkbox aria-label={t('list.selectTask', { key: task.taskKey })} checked={isSelected} onCheckedChange={() => toggleSelect(task.id)} className="h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" /></div>
+                  <div className="min-w-0 flex-1">
+                    <button type="button" className="min-h-11 w-full text-left" onClick={() => setSelectedTask(task)}><span className="mb-1 block text-xs font-semibold text-muted-foreground">{task.taskKey}</span><span className={`block break-words text-sm font-medium [overflow-wrap:anywhere] ${isDone ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{task.title}</span></button>
+                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs"><div className="min-w-0 max-w-full">{renderCell(task, 'status')}</div><div className="min-w-0 max-w-full">{renderCell(task, 'assignee')}</div></div>
+                  </div>
+                </article>;
+              })}
+              {sortedTasks.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">{t('myTasks.noTasks')}</p>}
+            </> : <table className="w-full" style={{ minWidth: tableMinWidth }}>
               <thead className="sticky top-0 z-[2] bg-card border-b border-border">
                 <tr>
                   {!isMobile && (
@@ -228,7 +245,7 @@ const MyTasksView = () => {
                   <tr><td colSpan={visibleCols.length + 1} className="p-8 text-center text-[13px] text-muted-foreground">{t('myTasks.noTasks')}</td></tr>
                 )}
               </tbody>
-            </table>
+            </table>}
           </div>
         </>
       ) : (

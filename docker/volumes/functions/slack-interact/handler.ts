@@ -32,6 +32,7 @@ export interface Actions {
   approvals?: ApprovalData;
   planning?: PlanningData;
   enabled(): Promise<boolean>;
+  flags?(): Promise<SlackFeatureFlags>;
   heartbeat(connected: boolean): Promise<void>;
   actor(payload: Row): Promise<Row>;
   catalog(actor: Row): Promise<Row>;
@@ -51,7 +52,57 @@ export const sourceOf = (p: Row): Row => p.view ? JSON.parse(p.view.private_meta
   user: p.user_id || p.user?.id || '', team: p.team_id || p.team?.id || '',
   echoExistingMessage: p.type === 'message_action' && p.callback_id === 'livo_comment_task',
 });
-const HELP = '/livo docs 關鍵字：搜尋知識／任務／QA／檔案\n/livo specs 關鍵字：有效規格與決策\n/livo drafts：我的私人草稿\n/livo meeting、weekly：會議／週報預覽後確認儲存\n/livo work ABC-123：子任務、清單、依賴與接手確認\n/livo approvals：私人簽核清單與同意／拒絕／退回／撤回\n/livo bug new 標題：建立 QA Bug\n/livo bug link BUG_ID：綁定 Bug 討論串\n/livo bug fix / deploy / pass / fail / close / reopen BUG_ID：開啟操作表單\n/livo：開啟任務面板\n/livo my、review：我的任務／待我驗收\n/livo today、due、overdue：今天／未來 7 天到期／逾期\n/livo reminders：我的暫停提醒\n/livo pause ABC-123：暫停自己的到期提醒\n/livo deadline ABC-123：修改期限與改期原因\n/livo search 關鍵字：搜尋卡片\n/livo ABC-123 或 /livo edit ABC-123：查看／修改卡片\n/livo new 標題：建立卡片\n/livo comment ABC-123 留言：新增留言（省略文字可開表單）\n訊息選單：建立 LIVO 卡片／留言到 LIVO 卡片／開啟 LIVO 卡片';
+export type SlackFeatureFlags = { approvals: boolean };
+const HELP_COPY = {
+  'zh-TW': [
+    '/livo：開啟任務面板', '/livo my、review：我的任務／待我驗收',
+    '/livo today、due、overdue：今天／未來 7 天到期／逾期',
+    '/livo search 關鍵字：搜尋卡片', '/livo ABC-123 或 /livo edit ABC-123：查看／修改卡片',
+    '/livo context ABC-123：查閱背景、需求、備註、清單與關聯任務',
+    '/livo deadline ABC-123：修改期限與改期原因', '/livo new 標題：建立卡片',
+    '/livo comment ABC-123 留言：新增留言（省略文字可開表單）',
+    '/livo bug new 標題：建立 QA Bug', '/livo bug link BUG_ID：綁定 Bug 討論串',
+    '/livo bug fix / deploy / pass / fail / close / reopen BUG_ID：開啟 QA 操作表單',
+    '/livo docs 關鍵字：搜尋知識／任務／QA／檔案', '/livo specs 關鍵字：有效規格與決策',
+    '/livo drafts：我的私人草稿', '/livo meeting、weekly：會議／週報預覽後確認儲存',
+    '訊息選單：建立 LIVO 卡片／留言到 LIVO 卡片／開啟 LIVO 卡片',
+  ],
+  'zh-CN': [
+    '/livo：打开任务面板', '/livo my、review：我的任务／待我验收',
+    '/livo today、due、overdue：今天／未来 7 天到期／逾期',
+    '/livo search 关键词：搜索卡片', '/livo ABC-123 或 /livo edit ABC-123：查看／修改卡片',
+    '/livo context ABC-123：查看背景、需求、备注、清单与关联任务',
+    '/livo deadline ABC-123：修改期限与改期原因', '/livo new 标题：创建卡片',
+    '/livo comment ABC-123 留言：添加留言（省略文字可打开表单）',
+    '/livo bug new 标题：创建 QA Bug', '/livo bug link BUG_ID：绑定 Bug 讨论串',
+    '/livo bug fix / deploy / pass / fail / close / reopen BUG_ID：打开 QA 操作表单',
+    '/livo docs 关键词：搜索知识／任务／QA／文件', '/livo specs 关键词：有效规格与决策',
+    '/livo drafts：我的私人草稿', '/livo meeting、weekly：会议／周报预览后确认保存',
+    '消息菜单：创建 LIVO 卡片／留言到 LIVO 卡片／打开 LIVO 卡片',
+  ],
+  en: [
+    '/livo: Open the task panel', '/livo my, review: My tasks / tasks to review',
+    '/livo today, due, overdue: Due today / within seven days / overdue',
+    '/livo search keywords: Find cards', '/livo ABC-123 or /livo edit ABC-123: View / edit a card',
+    '/livo context ABC-123: Read background, requirements, notes, lists and related tasks',
+    '/livo deadline ABC-123: Change a deadline with its reason', '/livo new title: Create a card',
+    '/livo comment ABC-123 text: Add a comment (omit text to open a form)',
+    '/livo bug new title: Create a QA bug', '/livo bug link BUG_ID: Link a bug discussion',
+    '/livo bug fix / deploy / pass / fail / close / reopen BUG_ID: Open a QA form',
+    '/livo docs keywords: Search knowledge / tasks / QA / files', '/livo specs keywords: Current specifications and decisions',
+    '/livo drafts: My private drafts', '/livo meeting, weekly: Preview meeting notes / a weekly report before saving',
+    'Message menu: Create a LIVO card / comment on a LIVO card / open a LIVO card',
+  ],
+};
+export function helpText(source: Row = {}, flags: SlackFeatureFlags = { approvals: false }): string {
+  const locale = String(source.locale || 'zh-TW');
+  const key = locale.startsWith('en') ? 'en' : locale === 'zh-CN' ? 'zh-CN' : 'zh-TW';
+  const lines = [...HELP_COPY[key]];
+  if (flags.approvals === true) lines.push(key === 'en' ? '/livo approvals: Private approval list and approve / reject / return / withdraw'
+    : key === 'zh-CN' ? '/livo approvals：私人审批清单与同意／拒绝／退回／撤回' : '/livo approvals：私人簽核清單與同意／拒絕／退回／撤回');
+  return lines.join('\n');
+}
+
 const safeError = (error: unknown) => error instanceof Error && error.name === 'ActionError'
   ? error.message : '操作未完成，請重新開啟表單再試一次；若持續失敗，請洽管理員';
 
@@ -123,7 +174,7 @@ export async function handleInteraction(p: Row, envelopeId: string, d: Actions):
         // A rejected detail view falls back to the plain receipt or error text.
         await replaceLoadingView(d.slack, p.view.id, completedView || messageModal(text, successful), messageModal(text, successful));
       })());
-      return { response_action: 'update', view: messageModal('正在儲存，完成後會收到 LIVO 通知。') };
+      return { response_action: 'update', view: messageModal('正在儲存。關閉視窗不會取消，完成結果會回到原操作位置，僅你可見。') };
     }
     if (p.type === 'block_suggestion') {
       const actor = await d.actor(p);
@@ -131,8 +182,11 @@ export async function handleInteraction(p: Row, envelopeId: string, d: Actions):
       return p.action_id === 'project' && results.length ? { option_groups: results } : { options: results };
     }
     const command = p.command ? parseCommand(String(p.text || '')) : undefined;
-    if (command?.kind === 'help') { await d.reply(p, HELP); return {}; }
-    if (command?.kind === 'comment' && !command.key) { await d.reply(p, HELP); return {}; }
+    if (command?.kind === 'help' || (command?.kind === 'comment' && !command.key)) {
+      const actor = await d.actor(p);
+      const flags = await d.flags?.().catch(() => ({ approvals: false })) ?? { approvals: false };
+      await d.reply(p, helpText({ locale: actor.locale }, flags)); return {};
+    }
     if (!p.command && !['livo_create_task', 'livo_comment_task'].includes(p.callback_id)) return {};
     if (command?.kind === 'comment' && command.text) {
       const actor = await d.actor(p), task = await d.task(actor, command.key, true);

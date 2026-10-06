@@ -17,6 +17,15 @@ const copy = {
 };
 type Copy = typeof copy.en;
 const words = (locale?: string): Copy => /^zh[-_](?:CN|SG|Hans)/i.test(locale || '') ? copy['zh-CN'] : /^zh/i.test(locale || '') || !locale ? copy['zh-TW'] : copy.en;
+const STATE_ICONS: Record<string,string> = {new:'🆕',triaged:'📌',in_progress:'🔧',verification:'🧪',verified:'✅',failed:'❌',closed:'🏁',dismissed:'🚫'};
+/** Always show the aggregate's current state, independently of the notification event. */
+export function qaSlackCurrentState(state: unknown, workflow: QaWorkflow, locale?: string): string {
+  const c=words(locale), zh=c!==copy.en, cn=c===copy['zh-CN'];
+  const heading=zh ? cn ? '当前状态' : '目前狀態' : 'Current state';
+  const known=typeof state==='string' && QA_STATES.includes(state as QaState);
+  const label=known ? getQaStateLabel(workflow,state as QaState,value=>c.states[value]) : zh ? cn ? '未知状态' : '未知狀態' : 'Unknown state';
+  return `${heading}：${known ? STATE_ICONS[state as string] : '❔'} ${label}`;
+}
 const plain = (text: string) => ({ type:'plain_text', text });
 const option = (value: string, label: string) => ({ value, text:plain(label.slice(0,75)) });
 const button = (id: string, label: string, value = ''): SlackBlock => ({ type:'button', action_id:PREFIX + id, text:plain(label), value:value || id });
@@ -58,12 +67,15 @@ function resultView(result: QaListResult, workflow: QaWorkflow, query: Query, c:
   if (query.mode === 'triage') blocks.push(section(c.readOnly));
   if (!result.issues.length) blocks.push(section(c.empty));
   for (const issue of result.issues) blocks.push({ ...section(`${issue.title}\n${getQaStateLabel(workflow,issue.state,state=>c.states[state])} · ${c.severity[issue.severity]}${issue.dueDate ? ` · ${c.due}: ${issue.dueDate}` : ''}\n${issue.id}`), accessory:button('detail',c.detail,issue.id) });
-  blocks.push({type:'actions',elements:[...(query.offset > 0 ? [button('page',c.previous,String(Math.max(0,query.offset-PAGE_SIZE)))] : []),
-    button('refresh',c.refresh),...(result.hasMore && query.offset + PAGE_SIZE <= 100000 ? [button('page',c.next,String(query.offset+PAGE_SIZE))] : [])]});
+  // Retain the historical page action ID while keeping it unique in each block.
+  if (query.offset > 0) blocks.push({type:'actions',elements:[button('page',c.previous,String(Math.max(0,query.offset-PAGE_SIZE)))]});
+  blocks.push({type:'actions',elements:[button('refresh',c.refresh)]});
+  if (result.hasMore && query.offset + PAGE_SIZE <= 100000) blocks.push({type:'actions',elements:[button('page',c.next,String(query.offset+PAGE_SIZE))]});
   return view(c,query,blocks,true);
 }
-function detailView(issue: QaIssue, workflow: QaWorkflow, query: Query, actor: QaSlackActor, d: QaSlackActions, c: Copy, names:Record<string,string>={}): SlackBlock {
-  const blocks: SlackBlock[] = [section(issue.title),section(`${issue.id}\n${getQaStateLabel(workflow,issue.state,state=>c.states[state])} · ${c.severity[issue.severity]}\n${c.env}: ${issue.observedEnvironment}\n${c.build}: ${issue.observedVersion || '—'}`)];
+function detailView(issue: QaIssue, workflow: QaWorkflow, query: Query, actor: QaSlackActor, d: QaSlackActions, c: Copy, names:Record<string,string>={}, notice=''): SlackBlock {
+  const status=qaSlackCurrentState(issue.state,workflow,actor.locale).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const blocks: SlackBlock[] = [{type:'section',text:{type:'mrkdwn',text:`*${status}*`}},...(notice?[section(notice)]:[]),section(issue.title),section(`${issue.id}\n${c.severity[issue.severity]}\n${c.env}: ${issue.observedEnvironment}\n${c.build}: ${issue.observedVersion || '—'}`)];
   for (const [label,body] of [[c.actual,issue.actual],[c.steps,issue.steps],[c.expected,issue.expected],[c.repair,issue.fixSummary],[c.hold,issue.holdReason]]) {
     if (!body) continue;
     blocks.push(section(label));
@@ -71,12 +83,25 @@ function detailView(issue: QaIssue, workflow: QaWorkflow, query: Query, actor: Q
   }
   blocks.push(...qaHandoffBlocks(issue,names,actor.locale));
   const operations: Array<[string,string,Parameters<typeof canQaCommand>[2]]> = [['fix',c.fix,'submit_fix'],['deploy',c.deploy,'record_deployment'],['pass',c.pass,'record_verification'],['fail',c.fail,'record_verification'],['blocked',c.blocked,'record_verification'],['close',c.closeIssue,'close'],['reopen',c.reopen,'reopen']];
-  const buttons = operations.filter(([, ,kind])=>canQaCommand(issue,actor,kind)).map(([intent,label])=>({type:'button',action_id:`livo_qa_${intent}`,text:plain(label),value:issue.id}));
+  const buttons = operations.filter(([, ,kind])=>qaSlackOperationAllowed(issue,actor,kind)).map(([intent,label])=>({type:'button',action_id:`livo_qa_${intent}`,text:plain(label),value:issue.id}));
   buttons.push(...qaCoordinationButtons(issue,actor,actor.locale) as typeof buttons);
   buttons.push({type:'button',action_id:'livo_qa_comment',text:plain(c.comment),value:issue.id});
   for (let start=0;start<buttons.length;start+=5) blocks.push({type:'actions',elements:buttons.slice(start,start+5)});
   blocks.push({type:'actions',elements:[button('back',c.back),{type:'button',text:plain(c.web),url:d.link(issue)}]});
   return view(c,query,blocks);
+}
+
+export function qaSlackOperationAllowed(issue:QaIssue,actor:QaSlackActor,kind:Parameters<typeof canQaCommand>[2]):boolean {
+  if(!canQaCommand(issue,actor,kind))return false;
+  if(kind==='close')return issue.state==='verified';
+  if(kind==='record_verification')return issue.targets.some(target=>!!target.deployedAt);
+  return true;
+}
+
+/** Caller must obtain this detail from the normal authorized QA get action. */
+export function qaLatestDetailView(detail: QaDetail, actor: QaSlackActor, d: QaSlackActions, workflow: QaWorkflow, notice=''): SlackBlock {
+  const scoped={...actor,qaCoordinatorProjectIds:detail.coordination?.coordinatorId===actor.id?[detail.issue.projectId]:[]};
+  return detailView(detail.issue,workflow,initial('list'),scoped,d,words(actor.locale),detail.memberNames,notice);
 }
 
 /** Every page, suggestion and detail lookup resolves the live member again. */

@@ -4,7 +4,7 @@ import { hasQaNavigationGuard, notifyQaNavigationBlocked } from '@/lib/qa/naviga
 import { hasReleaseNavigationGuard, notifyReleaseNavigationBlocked } from '@/components/releases/navigation';
 
 /** Views that follow the sidebar scope (work report covers all of a member's work). */
-export const SCOPED_VIEWS: readonly string[] = ['dashboard', 'gantt', 'board', 'backlog', 'all-list', 'my-tasks', 'knowledge-base', 'qa', 'my-qa'];
+export const SCOPED_VIEWS: readonly string[] = ['dashboard', 'gantt', 'board', 'backlog', 'all-list', 'my-tasks', 'knowledge-base', 'qa', 'my-qa', 'deployment-queue'];
 const TASK_VIEWS: readonly string[] = ['dashboard', 'gantt', 'board', 'backlog', 'all-list', 'my-tasks'];
 
 /**
@@ -23,10 +23,10 @@ export function viewAfterScopeChange<V extends string>(view: V, change: 'scope' 
  * workspace entry (knowledge base, QA, my QA, or "All tasks" for every task view).
  * Other views (team intro, approvals, settings…) highlight their own entry only.
  */
-export function sidebarEntry(view: string, scoped: boolean): 'scope' | 'knowledge-base' | 'qa' | 'my-qa' | 'all-tasks' | null {
+export function sidebarEntry(view: string, scoped: boolean): 'scope' | 'knowledge-base' | 'qa' | 'my-qa' | 'all-tasks' | 'deployment-queue' | null {
   if (!SCOPED_VIEWS.includes(view)) return null;
   if (scoped) return 'scope';
-  return view === 'knowledge-base' || view === 'qa' || view === 'my-qa' ? view : 'all-tasks';
+  return view === 'knowledge-base' || view === 'qa' || view === 'my-qa' || view === 'deployment-queue' ? view : 'all-tasks';
 }
 
 /** A pending QA or release write must finish first; changing the scope would remount it. */
