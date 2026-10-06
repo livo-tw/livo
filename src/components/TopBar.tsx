@@ -15,6 +15,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 
 const navItemDefs = [
@@ -51,6 +52,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const { allTasks, statuses, taskSpecs } = useTaskContext();
   const { hasFeature } = useLicense();
   const isMobile = useIsMobile();
+  const compactToolbar = useMediaQuery('(max-width: 1023px)');
   const [showMenu, setShowMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -58,7 +60,27 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
   const [showPendingApprovals, setShowPendingApprovals] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const searchToggleRef = useRef<HTMLButtonElement>(null);
   const approvalPanelRef = useRef<HTMLDivElement>(null);
+  const navigationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    navigationRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [currentView, compactToolbar]);
+
+  useEffect(() => {
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (menuRef.current?.contains(document.activeElement)) menuRef.current.querySelector('button')?.focus();
+      if (searchRef.current?.contains(document.activeElement)) searchToggleRef.current?.focus();
+      setShowMenu(false);
+      setShowPendingApprovals(false);
+      setMobileSearchOpen(false);
+      setSearchFocused(false);
+    };
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, []);
 
   // The badge counts what this member can act on, like the list it opens; it is
   // re-read when any task's approval state changes and when the list closes.
@@ -166,24 +188,24 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
       background: 'linear-gradient(to bottom, hsl(var(--sidebar-background)), hsl(var(--tab-bar-bg, var(--sidebar-accent))))',
     }}>
       {/* Row 1: Logo + Search + Actions */}
-      <div className="h-14 flex items-center justify-between px-3 md:px-4 gap-2">
+      <div className="h-14 flex min-w-0 items-center justify-between px-2 md:px-4 gap-1 md:gap-2">
         <div className="flex items-center gap-2 flex-shrink-0">
           {isMobile && (
-            <button onClick={onToggleSidebar} aria-label={t('sidebar.navigation')} className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors">
+            <button id="livo-navigation-toggle" onClick={onToggleSidebar} aria-label={t('sidebar.navigation')} className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors">
               <Menu size={20} aria-hidden="true" />
             </button>
           )}
           <img
             src={`${import.meta.env.BASE_URL}livo-logo.png`}
             alt="LIVO"
-            className="h-16 w-auto cursor-pointer hover:opacity-80 transition-opacity select-none"
+            className="hidden lg:block h-16 w-auto cursor-pointer hover:opacity-80 transition-opacity select-none"
             style={{ filter: 'var(--sidebar-logo-filter)' }}
             onClick={() => { setSelectedProjectId(null); setSelectedLineId(null); setSelectedTask(null); setCurrentView('board'); }}
           />
         </div>
 
         {/* Desktop search + create */}
-        {!isMobile && (
+        {!compactToolbar && (
           <div className="flex-1 flex items-center justify-center gap-2 mx-6">
             <div className="relative w-full max-w-sm" ref={searchRef}>
               <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-sidebar-accent/60 text-sidebar-foreground text-sm w-full">
@@ -215,33 +237,34 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
         )}
 
         {/* Right side actions */}
-        <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+        <div className="flex min-w-0 items-center gap-0.5 md:gap-2 flex-shrink-0">
           {/* Mobile search toggle */}
-          {isMobile && (
+          {compactToolbar && (
             <button
+              ref={searchToggleRef}
               onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
               aria-label={t('common.search')}
               aria-expanded={mobileSearchOpen}
-              className="absolute left-3 top-14 flex items-center justify-center min-w-[44px] min-h-[44px] rounded text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors"
             >
               <Search size={18} aria-hidden="true" />
             </button>
           )}
 
           {/* Mobile create button */}
-          {isMobile && (
+          {compactToolbar && (
             <button
               onClick={createItem}
               aria-label={t(qaView ? 'qa.report' : 'button.createAction')}
               title={t(qaView ? 'qa.report' : 'button.createAction')}
-              className="absolute left-14 top-14 flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
               <Plus size={18} aria-hidden="true" />
             </button>
           )}
 
           {/* Pending approvals button */}
-          {approvalsEnabled && <div className={isMobile ? 'absolute left-[100px] top-14' : 'relative'} ref={approvalPanelRef}>
+          {approvalsEnabled && !compactToolbar && <div className="relative" ref={approvalPanelRef}>
             <button
               onClick={() => setShowPendingApprovals(v => !v)}
               aria-label={t('approval.pending')}
@@ -276,7 +299,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
           <NotificationPanel />
 
           {/* Current member selector - only for admin/super_admin, hidden on mobile */}
-          {!isMobile && canSwitch && hasFeature('proxy-login') && (
+          {!compactToolbar && canSwitch && hasFeature('proxy-login') && (
             <SearchableSelect
               value={currentMemberId}
               onChange={e => setCurrentMemberId(e.target.value)}
@@ -290,14 +313,14 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
 
           {/* User avatar with dropdown */}
           <div className="relative" ref={menuRef}>
-            <div className="flex shrink-0 items-center gap-1.5 cursor-pointer" onClick={() => setShowMenu(!showMenu)}>
+            <button type="button" aria-label={t('nav.personalSettings')} aria-expanded={showMenu} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md hover:bg-sidebar-hover" onClick={() => setShowMenu(!showMenu)}>
               <div
                 className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
                 style={{ backgroundColor: currentMember?.color || '#0065FF' }}
               >
                 {currentMember?.avatar || '?'}
               </div>
-              {!isMobile && currentMember && (
+              {!compactToolbar && currentMember && (
                 <span
                   className="shrink-0 whitespace-nowrap text-[10px] leading-4 px-1.5 py-0.5 rounded-full font-medium text-white"
                   style={{ backgroundColor: getRoleColor(currentMember.role as MemberRole) }}
@@ -305,11 +328,11 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                   {getRoleLabel(currentMember.role as MemberRole)}
                 </span>
               )}
-            </div>
+            </button>
             {showMenu && (
-              <div className="absolute right-0 top-10 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[160px]">
+              <div className="absolute right-0 top-12 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[180px] max-w-[calc(100vw-16px)]">
                 {/* Mobile-only: member selector - only for admin/super_admin */}
-                {isMobile && canSwitch && hasFeature('proxy-login') && (
+                {compactToolbar && canSwitch && hasFeature('proxy-login') && (
                   <div className="px-3 py-2 border-b border-border">
                     <label className="text-xs text-muted-foreground block mb-1">{t('auth.switchIdentity')}</label>
                     <SearchableSelect
@@ -325,14 +348,14 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                 )}
                 <button
                   onClick={() => { setShowMenu(false); setCurrentView('my-settings'); }}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-accent transition-colors"
+                  className="w-full min-h-11 flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-accent transition-colors"
                 >
                   <Settings size={14} />
                   {t('nav.personalSettings')}
                 </button>
                 <button
                   onClick={() => { setShowMenu(false); handleLogout(); }}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-destructive hover:bg-accent transition-colors"
+                  className="w-full min-h-11 flex items-center gap-2 px-4 py-2 text-sm text-destructive hover:bg-accent transition-colors"
                 >
                   <LogOut size={14} />
                   {t('auth.logout')}
@@ -344,7 +367,7 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
       </div>
 
       {/* Mobile search bar (expandable) */}
-      {isMobile && mobileSearchOpen && (
+      {compactToolbar && mobileSearchOpen && (
         <div className="px-3 pb-2" ref={searchRef}>
           <div className="relative">
             <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-sidebar-accent/60 text-sidebar-foreground text-sm w-full">
@@ -352,50 +375,38 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
               <input
                 type="text"
                 placeholder={t('search.placeholder')}
+                aria-label={t('search.placeholder')}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 onFocus={() => setSearchFocused(true)}
                 autoFocus
-                className="bg-transparent outline-none text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 w-full"
+                className="min-w-0 bg-transparent outline-none text-base text-sidebar-foreground placeholder:text-sidebar-foreground/50 w-full"
               />
               {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-sidebar-foreground/50 hover:text-sidebar-foreground">
+                <button onClick={() => setSearchQuery('')} aria-label={t('search.clear')} className="flex h-11 w-11 shrink-0 items-center justify-center text-sidebar-foreground/50 hover:text-sidebar-foreground">
                   <X size={14} />
                 </button>
               )}
-              <button onClick={() => setMobileSearchOpen(false)} className="text-sidebar-foreground/50 hover:text-sidebar-foreground">
+              <button onClick={() => setMobileSearchOpen(false)} aria-label={t('common.close')} className="flex h-11 w-11 shrink-0 items-center justify-center text-sidebar-foreground/50 hover:text-sidebar-foreground">
                 <X size={14} />
               </button>
             </div>
-            {searchFocused && searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto z-50">
-                {searchResults.map(task => (
-                  <button
-                    key={task.id}
-                    onClick={() => { setSelectedTask(task); setSearchQuery(''); setSearchFocused(false); setMobileSearchOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors border-b border-border/50 last:border-0"
-                  >
-                    <span className="font-medium text-foreground">{task.taskKey}</span>
-                    <span className="text-muted-foreground ml-2">{task.title}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            {searchDropdown}
           </div>
         </div>
       )}
 
       {/* Row 2: Nav tabs — aligned with search bar center on desktop, horizontal scroll on mobile */}
-      <div className={`flex min-h-[52px] items-center pr-3 md:min-h-0 md:px-4 pb-2 gap-2 ${approvalsEnabled ? 'pl-[150px]' : 'pl-[106px]'}`}>
+      <div className="flex min-w-0 items-center px-2 md:px-4 pb-2 gap-2">
         {/* Spacer matching logo width — desktop only */}
-        <div className="hidden md:block flex-shrink-0 invisible">
+        <div className="hidden lg:block flex-shrink-0 invisible">
           <img className="h-16 w-auto" src="" alt="" />
         </div>
         {/* Tabs scroll when they do not fit. Centred with auto margins, not justify-center,
             so a row wider than the space starts at its first tab instead of clipping it. */}
-        <div className="flex-1 flex items-center justify-start md:mx-6 overflow-x-auto scrollbar-hide">
-          <div className="flex items-center gap-1 min-w-min md:mx-auto">
-            {navItemDefs
+        <div ref={navigationRef} role="navigation" aria-label={t('sidebar.navigation')} className="flex-1 min-w-0 flex items-center justify-start lg:mx-6 overflow-x-auto overscroll-x-contain touch-pan-x scrollbar-hide">
+          <div className="flex items-center gap-1 min-w-min lg:mx-auto">
+            {[...navItemDefs, ...(compactToolbar && approvalsEnabled ? [{ id: 'approvals' as const, labelKey: 'approval.pending', icon: ClipboardCheck }] : [])]
               .filter(item => !(item.id === 'work-report' && !hasFeature('work-report')))
               .filter(item => item.id !== 'qa' || qaEnabled)
               .map(item => {
@@ -404,22 +415,24 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
                 return (
                   <button
                     key={item.id}
-                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); url.searchParams.delete('release'); window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-navigation')); setCurrentView(item.id); }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={() => { if (selectedTask && taskDisplayMode === 'page') setSelectedTask(null); setCurrentView(item.id); }}
+                    className={`flex min-h-11 lg:min-h-0 items-center gap-1.5 px-3 py-2 lg:py-1.5 rounded-md text-sm lg:text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
                       isActive
                         ? 'bg-sidebar-accent text-sidebar-foreground'
                         : 'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
                     }`}
                   >
-                    <Icon size={14} />
+                    <Icon size={compactToolbar ? 17 : 14} aria-hidden="true" />
                     {t(item.labelKey)}
+                    {item.id === 'approvals' && pendingApprovalCount > 0 && <span className="rounded-full bg-purple-600 px-1.5 text-xs text-white">{pendingApprovalCount > 9 ? '9+' : pendingApprovalCount}</span>}
                   </button>
                 );
               })}
           </div>
         </div>
         {/* Spacer matching right actions width — desktop only */}
-        <div className="hidden md:block flex-shrink-0 invisible">
+        <div className="hidden lg:block flex-shrink-0 invisible">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9" />
             <div className="w-9 h-9" />

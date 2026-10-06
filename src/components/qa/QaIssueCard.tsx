@@ -50,7 +50,7 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
   const handoff = open && !!issue.handoff && !issue.handoff.resolvedAt;
   const overdue = open && !!issue.dueDate && issue.dueDate < localDay();
   return <article className="group min-w-0 rounded-lg border border-border/80 bg-card shadow-sm transition hover:border-primary/20 hover:shadow-md">
-    <button type="button" onClick={() => onOpen(issue.id)} className={`block w-full rounded-lg p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary ${list ? 'md:grid md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] md:gap-x-6' : ''}`}>
+    <button type="button" data-drag-surface onClick={() => onOpen(issue.id)} className={`block w-full rounded-lg p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary ${list ? 'md:grid md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] md:gap-x-6' : ''}`}>
       <div className="min-w-0">
         <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
           <ProjectBadge name={project?.name || '—'} color={getProjectColor(project)} size="xs" />
@@ -72,6 +72,6 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
         </div>
       </div>
     </button>
-    {next && canQaCommand(issue, actor, next.command) && <div className="border-t border-border/60 px-3 py-1.5"><button type="button" className="inline-flex w-full items-center justify-between rounded px-1 py-1 text-xs font-medium text-primary outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onOpen(issue.id, next.command)}>{t(`qa.${next.label}`)}<ArrowRight size={13} aria-hidden="true" /></button></div>}
+    {next && canQaCommand(issue, actor, next.command) && <div className="border-t border-border/60 px-3 py-1.5"><button type="button" className="inline-flex min-h-11 w-full items-center justify-between rounded px-1 py-1 text-xs font-medium text-primary outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onOpen(issue.id, next.command)}>{t(`qa.${next.label}`)}<ArrowRight size={13} aria-hidden="true" /></button></div>}
   </article>;
 }

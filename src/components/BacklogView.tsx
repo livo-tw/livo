@@ -16,12 +16,12 @@ import { ChevronDown, ChevronRight, Zap, ArrowUp, ArrowDown, Lightbulb } from 'l
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DndContext, DragOverlay, useDroppable, useDraggable,
-  PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, KeyboardCode,
   type DragStartEvent, type DragEndEvent,
 } from '@dnd-kit/core';
 import type { Task } from '@/types';
 import BoardFilterChips from '@/components/board/BoardFilterChips';
 import { useBoardFilters } from '@/hooks/useBoardFilters';
+import { useBoardSensors } from '@/hooks/useBoardSensors';
 import { taskDepartment, type Department } from '@/lib/department';
 
 /* ── Droppable zone ── */
@@ -39,7 +39,8 @@ function DroppableZone({ id, children, isOver }: { id: string; children: React.R
 function DraggableTaskRow({ task, children }: { task: Task; children: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id });
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} className={isDragging ? 'opacity-30' : ''}>
+    <div ref={setNodeRef} {...listeners} {...attributes} data-drag-surface className={`select-none ${isDragging ? 'opacity-30' : ''}`}
+      style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}>
       {children}
     </div>
   );
@@ -63,18 +64,18 @@ function TaskRow({
 
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 border-b border-border/40 hover:bg-accent/50 transition-colors cursor-pointer group"
+      className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border/40 hover:bg-accent/50 transition-colors cursor-pointer group sm:flex-nowrap"
       onClick={() => onClickTask(task)}
     >
-      <div onClick={e => e.stopPropagation()}>
+      <div data-no-drag className="flex min-h-11 min-w-11 items-center justify-center sm:min-h-0 sm:min-w-0" onClick={e => { e.stopPropagation(); if (e.target === e.currentTarget) onToggleSelect(task.id); }}>
         <Checkbox
           checked={selected}
           onCheckedChange={() => onToggleSelect(task.id)}
-          className="h-3.5 w-3.5"
+          className="h-5 w-5 sm:h-3.5 sm:w-3.5"
         />
       </div>
       <span className="text-xs text-muted-foreground font-mono w-16 flex-shrink-0 truncate">{task.taskKey}</span>
-      <span className="text-sm text-foreground flex-1 truncate">{task.title}</span>
+      <span className="min-w-0 flex-[1_1_calc(100%-8rem)] text-sm text-foreground break-words line-clamp-2 sm:flex-1 sm:truncate">{task.title}</span>
       {status && (
         <span
           className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white flex-shrink-0"
@@ -97,7 +98,7 @@ function TaskRow({
       ) : (
         <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] text-muted-foreground flex-shrink-0">?</div>
       )}
-      {actionButton && <div onClick={e => e.stopPropagation()} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">{actionButton}</div>}
+      {actionButton && <div onClick={e => e.stopPropagation()} className="ml-auto flex-shrink-0 opacity-100 sm:opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity [&_button]:min-h-11 sm:[&_button]:min-h-0">{actionButton}</div>}
     </div>
   );
 }
@@ -197,13 +198,7 @@ const BacklogView = () => {
   }, [setAllTasks, updateTaskInDb]);
 
   /* ── dnd-kit ── */
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, {
-      keyboardCodes: { start: [KeyboardCode.Space], cancel: [KeyboardCode.Esc], end: [KeyboardCode.Space] },
-    }),
-  );
+  const sensors = useBoardSensors();
 
   const activeTask = activeId ? allTasks.find(t => t.id === activeId) ?? null : null;
 
@@ -237,7 +232,7 @@ const BacklogView = () => {
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={handleDragCancel}>
-    <div className="flex-1 overflow-auto bg-board">
+    <div className="min-w-0 flex-1 overflow-auto bg-board">
       {/* Header */}
       <div className="px-3 md:px-5 pt-3 md:pt-4 pb-2">
         <div className="flex items-center justify-between mb-2">
@@ -270,10 +265,11 @@ const BacklogView = () => {
         <BoardFilterChips users={users} statusOptions={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))}
           allProjects={scopeIds ? allProjects.filter(p => scopeIds.has(p.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters} />
       </div>
+      {(sprintTasks.length > 0 || backlogTasks.length > 0) && <p className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground md:hidden">{t('board.touchHint')}</p>}
 
       {/* Batch action bar */}
       {selectedInSprint.length + selectedInBacklog.length > 0 && (
-        <div className="mx-3 md:mx-5 mb-2 flex items-center gap-2 px-3 py-2 bg-muted rounded-lg border border-border">
+        <div className="mx-3 md:mx-5 mb-2 flex flex-wrap items-center gap-2 px-3 py-2 bg-muted rounded-lg border border-border [&_button]:min-h-11 sm:[&_button]:min-h-0">
           <span className="text-xs font-medium text-foreground">{t('backlog.selected', { count: selectedInSprint.length + selectedInBacklog.length })}</span>
           {selectedInBacklog.length > 0 && currentSprint && (
             <button
@@ -307,12 +303,12 @@ const BacklogView = () => {
                 {sprintCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
               </span>
               <Zap size={16} className="text-primary" />
-              <span className="text-sm font-bold text-foreground">
+              <span className="min-w-0 flex-1 break-words text-sm font-bold text-foreground">
                 {currentSprint ? `${t('backlog.currentSprint')}: ${currentSprint.name}` : t('backlog.noActiveSprint')}
               </span>
               {currentSprint && (
                 <>
-                  <span className="text-[13px] text-muted-foreground ml-auto">
+                  <span className="shrink-0 text-[13px] text-muted-foreground ml-auto">
                     {t('backlog.progress', { completed: completedCount, total: sprintTasks.length })}
                   </span>
                   <span className="text-[13px] text-muted-foreground">({sprintTasks.length})</span>

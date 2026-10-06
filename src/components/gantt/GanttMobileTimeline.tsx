@@ -56,15 +56,15 @@ const TaskRow = ({ task, statuses, onSelectTask }: { task: EnrichedTask; statuse
     >
       <div className="flex items-center gap-2 mb-1">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${style.dot}`} />
-        <span className="text-[13px] font-medium truncate flex-1 leading-snug">{task.title}</span>
+        <span className="min-w-0 break-words text-[13px] font-medium flex-1 leading-snug [overflow-wrap:anywhere]">{task.title}</span>
         <span className={`text-[11px] font-semibold flex-shrink-0 ${style.labelClass}`}>{i18n.t(style.labelKey)}</span>
       </div>
-      <div className="flex items-center gap-2 pl-4 mb-1.5">
+      <div className="flex flex-wrap items-center gap-2 pl-4 mb-1.5">
         <span className="text-[11px] text-muted-foreground">
           {fmtDate(startDate)} → {fmtDate(task.dueDate)}
         </span>
         {task.taskKey && (
-          <span className="text-[10px] text-muted-foreground/50">{task.taskKey}</span>
+          <span className="break-all text-[10px] text-muted-foreground/50">{task.taskKey}</span>
         )}
       </div>
       <div className="pl-4 h-1 bg-muted rounded-full overflow-hidden">
@@ -98,13 +98,14 @@ const GanttMobileTimeline = ({ grouped, statuses, onSelectTask }: Props) => {
   }
 
   return (
-    <div className="flex-1 overflow-auto mx-2 mb-2 space-y-2 pb-2">
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain mx-2 mb-2 space-y-2 pb-[max(8px,env(safe-area-inset-bottom))]">
       {grouped.map(group => {
         const isCollapsed = collapsedGroups.has(group.id);
         return (
           <div key={group.id} className="bg-card rounded-lg border border-border overflow-hidden">
             <button
               className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-left hover:bg-muted/40 transition-colors"
+              aria-expanded={!isCollapsed}
               onClick={() => toggleGroup(group.id)}
             >
               {isCollapsed

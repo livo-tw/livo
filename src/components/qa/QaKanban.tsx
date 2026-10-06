@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { toast } from 'sonner';
 import { Inbox } from 'lucide-react';
-import { DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDraggable, useDroppable, closestCenter, pointerWithin, KeyboardCode, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
+import { DndContext, DragOverlay, useDraggable, useDroppable, closestCenter, pointerWithin, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
+import { useBoardSensors } from '@/hooks/useBoardSensors';
 import QaIssueCard from './QaIssueCard';
 import { qaStateColors } from './QaBadges';
 import { isQaTerminal, type QaActor, type QaCommand, type QaIssue, type QaListInput, type QaListResult, type QaState } from '@/lib/qa/domain';
@@ -63,9 +64,7 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
   const columns = getQaWorkflowColumns(workflow, state => t(`qa.state.${state}`))
     .map(column => selectedStates ? { ...column, shown: column.states.filter(state => selectedStates.includes(state)) } : { ...column, shown: column.states })
     .filter(column => column.shown.length > 0);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: columnCoordinates, keyboardCodes: { start: [KeyboardCode.Space], end: [KeyboardCode.Space], cancel: [KeyboardCode.Esc] } }));
+  const sensors = useBoardSensors(columnCoordinates);
   const columnLoaded = useCallback((state: QaState, loadedRevision: number) => {
     const refreshing = refreshRequest.current;
     if (!refreshing || refreshing.revision !== loadedRevision) return;
@@ -150,7 +149,7 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
       request.current = { issue, command, id: qaId(), label }; void send();
     }
   };
-  return <div className="space-y-3">
+  return <div className="min-w-0 space-y-3">
     <p className="text-xs text-muted-foreground">{t('qa.boardHint')}</p>
     {(busy || refreshing) && <p role="status" className="text-sm text-muted-foreground">{t(busy ? 'qa.saving' : 'qa.loading')}</p>}
     {failure && <div className="flex flex-wrap items-center gap-2"><QaFailure error={failure.error} />{failure.uncertain && <button className={qaButton} disabled={busy} onClick={() => void send()}>{t('qa.retry')}</button>}<button className={qaButton} disabled={busy} onClick={refreshBoard}>{t('qa.refresh')}</button>{!failure.uncertain && <button className={qaButton} disabled={busy} onClick={() => openSafely(failure.issue.id)}>{t('qa.openBug')}</button>}</div>}
@@ -160,7 +159,8 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
         onDragOver: ({ over }) => over ? t('qa.dragOver', { status: columns.find(column => `qa-column-${column.id}` === over.id)?.label }) : t('qa.dragOutside'),
         onDragEnd: ({ over }) => over ? t('qa.dragDropped') : t('qa.dragCancelled'), onDragCancel: () => t('qa.dragCancelled'),
       } }}>
-    <div className="flex min-h-[480px] items-stretch gap-3 overflow-x-auto pb-4 snap-x snap-proximity" aria-label={t('qa.board')}>
+    <div className={`flex w-full min-w-0 min-h-[320px] items-stretch gap-3 overflow-x-auto overscroll-x-contain pb-4 ${active ? 'snap-none' : 'snap-x snap-proximity md:snap-none'}`}
+      style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }} aria-label={t('qa.board')}>
       {columns.map(column => <QaColumn key={column.id} client={client} actor={actor} active={active} revision={revision} disabled={!!request.current || busy || refreshing} move={move} onLoaded={columnLoaded}
         state={column.id} states={column.shown} workflow={workflow} grouped={column.states.length > 1}
         label={column.label} filters={filters} onOpen={openSafely} />)}
@@ -228,8 +228,8 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
   const total = Math.max(0, result.total + Number(movedHere) - Number(movedFrom));
   const { setNodeRef, isOver } = useDroppable({ id: `qa-column-${state}` });
   const blockedDrop = !!active && getQaDropIntent(active, actor, states, state).kind === 'blocked';
-  return <section ref={setNodeRef} className={`flex min-h-[320px] w-[min(82vw,280px)] min-w-[250px] flex-1 shrink-0 snap-start flex-col rounded-lg border bg-background transition-colors ${isOver ? blockedDrop ? 'border-destructive bg-destructive/5' : 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-border/80'}`} aria-label={label}>
-    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[calc(100dvh-310px)] flex-1 space-y-3 overflow-y-auto overscroll-contain p-2.5">
+  return <section ref={setNodeRef} className={`flex min-h-[280px] w-[min(82vw,300px)] min-w-0 shrink-0 snap-start flex-col rounded-lg border bg-background transition-colors md:w-[280px] md:flex-1 md:min-w-[250px] ${isOver ? blockedDrop ? 'border-destructive bg-destructive/5' : 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-border/80'}`} aria-label={label}>
+    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[max(240px,calc(100dvh-280px))] flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-2.5">
     {error !== null && <div className="mb-3 space-y-2"><QaFailure error={error} /><button className={qaButton} onClick={() => void load(attemptedOffset.current)}>{t('qa.refresh')}</button></div>}
     <ul className="space-y-2.5">{issues.map(issue => <QaDraggableCard key={issue.id} issue={issue} actor={actor} onOpen={onOpen} disabled={disabled}
       stateLabel={grouped ? getQaStateLabel(workflow,issue.state,state => t(`qa.state.${state}`)) : undefined} />)}</ul>
@@ -243,7 +243,8 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
 function QaDraggableCard({ issue, actor, onOpen, stateLabel, disabled }: { issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void; stateLabel?: string; disabled: boolean }) {
   // Permission is explained visibly on drop; silently disabling drag looks like a broken board.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: issue.id, data: { issue }, disabled });
-  return <li ref={setNodeRef} {...attributes} {...listeners} aria-label={issue.title} className={`rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary ${isDragging ? 'opacity-30' : ''}`}
+  return <li ref={setNodeRef} {...attributes} {...listeners} data-drag-surface aria-label={issue.title} className={`select-none rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary ${isDragging ? 'opacity-30' : ''}`}
+    style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}
     onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter') { event.preventDefault(); onOpen(issue.id); } else listeners?.onKeyDown?.(event); }}>
     <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} />
   </li>;

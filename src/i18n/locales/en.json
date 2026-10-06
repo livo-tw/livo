@@ -597,6 +597,7 @@
     "qaAdminDesc": "Manage the QA workflow and custom bug fields, and delete bugs. Other permissions match a regular member."
   },
   "board": {
+    "touchHint": "Swipe sideways between columns. Hold a card, then drag it to change its status.",
     "titleAll": "All — Board",
     "transitionNotAllowed": "This task has not passed through \"{{missingNames}}\" and cannot be moved to \"{{targetName}}\"",
     "cardSettings": "Card Display Settings",
@@ -618,6 +619,7 @@
     "dropOtherProject": "Cards move only within their own project row. To change the project, edit it in the task details."
   },
   "list": {
+    "selectTask": "Select {{key}}",
     "title": "Task List",
     "taskCount": "tasks",
     "allListTitle": "List",
@@ -3243,7 +3245,7 @@
     "openBug": "Open bug",
     "loadMore": "Load more",
     "boardEmpty": "No bugs in this stage.",
-    "boardHint": "Open a card to view or edit. Drag it to another column to change its status.",
+    "boardHint": "Open a card to view or edit. On phones, swipe between columns or hold a card, then drag it to change its status.",
     "workflowTitle": "QA workflow settings",
     "workflowHint": "One shared company workflow. Change column names and order; each bug keeps its own status, with verification and deployment evidence recorded separately.",
     "workflowLabelHint": "Names are limited to 40 characters and must be distinct. Leave a name blank to use the default translation.",

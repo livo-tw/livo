@@ -83,9 +83,10 @@ function QuickPopover({ anchorRef, onClose, children }: { anchorRef: React.RefOb
   }, [anchorRef, onClose]);
 
   return createPortal(
-    <div ref={ref} className="fixed z-[200] bg-popover border border-border rounded-lg shadow-lg py-1 max-h-48 overflow-y-auto min-w-[120px]"
+    <div ref={ref} data-no-drag className="fixed z-[200] bg-popover border border-border rounded-lg shadow-lg py-1 max-h-48 overflow-y-auto min-w-[120px] max-w-[calc(100vw-1rem)] [&_button]:min-h-11 sm:[&_button]:min-h-0"
       style={style}
       onPointerDown={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
     >
       {children}
     </div>,
@@ -211,7 +212,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
       role={interactive !== false ? 'button' : undefined}
       tabIndex={interactive !== false ? 0 : undefined}
       onClick={() => setSelectedTask(task)}
-      onKeyDown={interactive !== false ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedTask(task); } }) : undefined}
+      onKeyDown={interactive !== false ? (e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelectedTask(task); } }) : undefined}
       aria-label={t('task.ariaLabel', { title: task.title })}
       className={`relative bg-card rounded-lg border border-border/80 p-3 cursor-pointer hover:shadow-md hover:border-primary/20 transition-all group select-none ${isBlocked ? 'border-l-2 border-l-amber-500' : ''}`}
     >
@@ -398,14 +399,14 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
         </div>
       )}
       {/* Quick-edit buttons: on hover or keyboard focus, and always on touch screens (no hover there). */}
-      <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-1 opacity-100 sm:absolute sm:top-1.5 sm:right-1.5 sm:mt-0 sm:gap-0.5 sm:opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:mt-3 [@media(hover:none)]:opacity-100 transition-opacity">
         {(['priority', 'status', 'assignee'] as const).map(type => (
           <div key={type} className="relative">
             <button
               ref={el => { quickBtnRefs.current[type] = el; }}
               onPointerDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); setQuickEdit(quickEdit === type ? null : type); }}
-              className="w-6 h-6 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              className="w-11 h-11 sm:w-6 sm:h-6 [@media(hover:none)]:min-w-11 [@media(hover:none)]:min-h-11 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               title={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-label={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-expanded={quickEdit === type}

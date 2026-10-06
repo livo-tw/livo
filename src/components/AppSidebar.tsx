@@ -122,13 +122,13 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     <>
     <nav
       aria-label={t('sidebar.ariaLabel')}
-      className="w-full md:w-[240px] h-full flex flex-col flex-shrink-0 overflow-y-auto border-r border-sidebar-border"
+      className="livo-sidebar w-full md:w-[240px] h-full min-h-0 flex flex-col flex-shrink-0 overflow-y-auto overscroll-contain border-r border-sidebar-border"
       style={{
         background: 'linear-gradient(to right, hsl(var(--sidebar-background)), hsl(var(--sidebar-gradient-end, var(--sidebar-background))))',
       }}
     >
       {/* ─── 導覽 Section ─── */}
-      <div className="px-2 pt-3 pb-1">
+      <div className="shrink-0 px-2 pt-14 md:pt-3 pb-1">
         <div className="px-3 mb-1.5 flex items-center gap-1.5">
           <div className="w-1 h-3 rounded-full bg-sidebar-primary" />
           <span className="text-[10px] font-bold text-sidebar-foreground/50 uppercase tracking-widest">{t('sidebar.navigation')}</span>
@@ -205,7 +205,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
 
       {/* ─── 專案 Section (main scrollable area) ─── */}
       {/* Keeps room for the projects on a short screen (a phone held sideways); the whole sidebar scrolls then. */}
-      <div className="flex-1 min-h-[7rem] overflow-y-auto px-2 py-1">
+      <div className="flex-1 min-h-[7rem] md:overflow-y-auto px-2 py-1">
         <div className="px-3 mt-2 mb-1.5 flex items-center gap-1.5">
           <div className="w-1 h-3 rounded-full bg-sidebar-foreground/30" />
           <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projects')}</span>
@@ -270,7 +270,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
                         <span className="text-sidebar-foreground/50 text-xs">{getProjectTaskCount(project.id)}</span>
                         {(permissions.canEditProject || permissions.canDeleteProject) && (
                           <span
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-sidebar-hover"
+                            className="inline-flex min-h-11 min-w-11 md:min-h-0 md:min-w-0 items-center justify-center opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-sidebar-hover"
                             onClick={(e) => { e.stopPropagation(); handleContextMenu(e, project.id); }}
                           >
                             <MoreHorizontal size={14} className="text-sidebar-foreground/50" />
@@ -301,7 +301,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
       </div>
 
       {/* ─── 管理 Section (bottom, grouped) ─── */}
-      <div className="px-2 py-2 border-t border-sidebar-border space-y-3">
+      <div className="livo-safe-footer shrink-0 px-2 py-2 border-t border-sidebar-border space-y-3">
 
         {/* 專案管理 group */}
         <div>

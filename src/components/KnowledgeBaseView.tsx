@@ -311,7 +311,7 @@ export default function KnowledgeBaseView() {
     }
   }
 
-  return <section className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-primary/[0.03] to-background">
+  return <section className="min-w-0 flex-1 min-h-0 flex flex-col bg-gradient-to-b from-primary/[0.03] to-background">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 md:px-6 py-4">
       <div className="flex items-center gap-3"><BookOpen className="text-primary" size={22} /><div>
         <h1 className="font-bold text-lg">{t('kb.title')}</h1><p className="text-xs text-muted-foreground">{t('kb.subtitle')}</p>
@@ -323,7 +323,7 @@ export default function KnowledgeBaseView() {
       </div>
     </header>
     {error && <div role="alert" className="px-4 py-2 text-sm text-destructive">{t('kb.errors.kb_load_failed')} <button className="underline" onClick={() => void refresh()}>{t('kb.retry')}</button></div>}
-    <div className="flex flex-1 min-h-0 overflow-hidden">
+    <div className="flex min-w-0 flex-1 min-h-0 overflow-hidden">
       <KnowledgeSidebar selected={!!selectedId} query={query} onQuery={setQuery} scope={scope} onScope={setScope} scopeOptions={filterScopeOptions} scopeLabel={scope === 'all' ? t('kb.allScopes') : scopeName(scope === 'shared' ? null : scope)} category={category} onCategory={setCategory} archived={showArchived} onArchived={setShowArchived}>
         <nav className="flex min-h-0 flex-1 flex-col" aria-label={t('kb.navigation.directory')}>
           {loading ? <p className="p-3 text-sm">{t('kb.loading')}</p> : <KnowledgeNavigation
@@ -333,7 +333,7 @@ export default function KnowledgeBaseView() {
 
         </nav>
       </KnowledgeSidebar>
-      <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-auto p-4 md:p-7`}>
+      <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-col flex-1 min-w-0 overflow-auto overscroll-contain p-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:p-4 md:p-7`}>
         {selectedId && <Button variant="ghost" className="md:hidden self-start mb-3 gap-2" disabled={busy} onClick={() => {
           if (!draft || window.confirm(t('kb.discard'))) {
             void stopEditing(); setSelectedId(null);
@@ -350,7 +350,7 @@ export default function KnowledgeBaseView() {
               <p className="text-xs text-muted-foreground mt-2">{t('kb.updated', { name: users.find(u => u.id === page.updated_by)?.name || t('kb.member'), date: new Date(page.updated_at).toLocaleString() })}</p>
             </div>
             <div className="flex flex-wrap items-center gap-1">
-              {draft ? <><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></> : <>
+              {!draft && <>
                 {/* Icons with hover labels; the one main action keeps its text. */}
                 <KnowledgeShareActions page={page} scope={scopeName(page.project_id)} disabled={busy} onUnavailable={() => { void refresh(); }} />
                 <KnowledgePageActions page={page} navigation={navigation} busy={busy} />
@@ -371,6 +371,7 @@ export default function KnowledgeBaseView() {
               </>}
             </div>
           </div>
+          {draft && <div className="sticky top-0 z-10 flex flex-wrap justify-end gap-2 rounded-lg border border-border bg-card p-2 shadow-sm"><><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{busy ? t('kb.saving') : t('kb.save')}</Button><Button variant="outline" disabled={busy} onClick={() => void stopEditing()}>{t('kb.cancel')}</Button></></div>}
           {lockedBy && <p role="status" className="text-sm rounded-lg bg-amber-500/10 p-3">{t('kb.editing', { name: lockedBy.name })}</p>}
           {page.is_archived && <p className="text-sm text-muted-foreground">{t('kb.archivedHint')}</p>}
           {page.access_policy?.mode === 'custom' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck size={14} />{t('kb.permissions.restricted')}</p>}

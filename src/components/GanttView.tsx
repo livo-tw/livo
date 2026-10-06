@@ -244,7 +244,7 @@ const GanttView = () => {
   // ─── Render ───
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="flex-1 flex flex-col overflow-hidden bg-board">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-board">
       <GanttToolbar
         groupBy={groupBy} setGroupBy={setGroupBy}
         viewMode={viewMode} setViewMode={setViewMode}
@@ -278,7 +278,7 @@ const GanttView = () => {
         />
 
         {/* Right Panel: Timeline */}
-        <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleRightScroll} style={{ cursor: dragInfo ? 'grabbing' : undefined, touchAction: dragInfo ? 'none' : undefined }}>
+        <div ref={scrollRef} className="min-w-0 flex-1 overflow-auto overscroll-contain" onScroll={handleRightScroll} style={{ cursor: dragInfo ? 'grabbing' : undefined, touchAction: dragInfo ? 'none' : undefined }}>
           <GanttTimelineHeader
             viewMode={viewMode}
             columns={columns}

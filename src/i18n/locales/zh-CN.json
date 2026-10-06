@@ -597,6 +597,7 @@
     "qaAdminDesc": "管理 QA 流程与 Bug 自定义字段，可删除 Bug；其他功能与一般成员相同。"
   },
   "board": {
+    "touchHint": "左右滑动切换栏位，长按卡片后拖动即可改变状态。",
     "titleAll": "全部 — 看板",
     "transitionNotAllowed": "此任务尚未经过「{{missingNames}}」，无法移至「{{targetName}}」",
     "cardSettings": "卡片显示设定",
@@ -618,6 +619,7 @@
     "dropOtherProject": "卡片只能在自己的项目行内移动。要换项目，请在任务详情修改。"
   },
   "list": {
+    "selectTask": "选取 {{key}}",
     "title": "待办事项列表",
     "taskCount": "个任务",
     "allListTitle": "列表",
@@ -3243,7 +3245,7 @@
     "openBug": "打开 Bug",
     "loadMore": "加载更多",
     "boardEmpty": "此阶段没有 Bug。",
-    "boardHint": "点卡片查看与编辑；拖到其他栏位即可切换状态。",
+    "boardHint": "点卡片查看与编辑；手机左右滑动切换栏位，长按卡片后拖动可切换状态。",
     "workflowTitle": "QA 流程设置",
     "workflowHint": "公司共用一套流程。可调整栏位名称与顺序；每张 Bug 保留自己的状态，验证与部署记录分开保存。",
     "workflowLabelHint": "名称最多 40 字且不可重复；留空时使用默认翻译。",

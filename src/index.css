@@ -595,3 +595,63 @@ button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]) {
   cursor: pointer;
 }
+
+/* Bound app and overlays to the visible viewport, including a mobile keyboard. */
+.livo-app-shell {
+  height: calc(var(--livo-viewport-height, 100dvh) - var(--livo-app-top-offset, 0px)) !important;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.livo-dialog-content {
+  top: calc(var(--livo-viewport-top, 0px) + var(--livo-overlay-top-offset, 0px) + (var(--livo-viewport-height, 100dvh) - var(--livo-overlay-top-offset, 0px)) / 2);
+  max-height: calc(var(--livo-viewport-height, 100dvh) - var(--livo-overlay-top-offset, 0px) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 1rem;
+}
+
+.livo-sheet-content {
+  max-height: calc(var(--livo-viewport-height, 100dvh) - var(--livo-overlay-top-offset, 0px));
+}
+
+.livo-safe-footer {
+  padding-bottom: max(0.625rem, env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 767px) {
+  .livo-dialog-content {
+    max-width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
+
+  .livo-sidebar button,
+  .livo-mobile-control {
+    min-height: 44px;
+  }
+
+  .livo-sidebar {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .livo-sheet-content > button:last-child {
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+  }
+
+  /* iOS zooms the whole page when focusing an input smaller than 16px. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .livo-dialog-content,
+  .livo-sheet-content {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

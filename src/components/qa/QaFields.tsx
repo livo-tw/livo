@@ -2,7 +2,7 @@ import { useId } from 'react';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 export const qaInput = 'w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-60';
-export const qaButton = 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-not-allowed';
+export const qaButton = 'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-not-allowed md:min-h-0 [@media(pointer:coarse)]:min-h-11';
 export const qaPrimary = `${qaButton} bg-primary text-primary-foreground hover:bg-primary/90`;
 export function QaField({ label, multiline, hint, ...props }: { label: string; multiline?: boolean; hint?: string } & InputHTMLAttributes<HTMLInputElement> & TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const id = useId();

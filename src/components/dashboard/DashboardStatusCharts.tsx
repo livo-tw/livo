@@ -53,7 +53,7 @@ const DashboardStatusCharts = ({ statusData, dwellData, isMobile }: DashboardSta
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-3 mt-3 md:mt-4 text-[13px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3 mt-3 md:mt-4 text-[13px] text-muted-foreground">
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> {t('dashboard.dwellLegendGood')}</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> {t('dashboard.dwellLegendWarn')}</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" /> {t('dashboard.dwellLegendBad')}</span>

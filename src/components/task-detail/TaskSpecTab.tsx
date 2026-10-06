@@ -159,27 +159,27 @@ const TaskSpecTab = ({ detail }: Props) => {
             const isEditingThis = editingTodoId === todo.id;
             return (
               <div key={todo.id} className="flex items-center gap-2 group">
-                <button onClick={() => toggleTodo(todo.id)} className="flex-shrink-0">
+                <button onClick={() => toggleTodo(todo.id)} className="inline-flex shrink-0 items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
                   <div className={`w-4 h-4 rounded flex items-center justify-center transition-colors ${todo.isDone ? 'bg-primary' : 'border-2 border-border'}`}>
                     {todo.isDone && <Check size={10} className="text-white" />}
                   </div>
                 </button>
                 {isEditingThis ? (
-                  <div className="flex-1 flex items-center gap-1">
+                  <div className="min-w-0 flex-1 flex items-center gap-1">
                     <input value={editingTodoText} onChange={e => setEditingTodoText(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') saveEditTodo(); if (e.key === 'Escape') cancelEditTodo(); }}
-                      autoFocus className="flex-1 text-sm border border-primary rounded px-2 py-1 outline-none bg-card text-foreground" />
+                      autoFocus className="min-w-0 flex-1 text-sm border border-primary rounded px-2 py-1 outline-none bg-card text-foreground" />
                     <button onClick={saveEditTodo} className="p-1 text-status-done hover:bg-status-done/10 rounded"><Check size={13} /></button>
                     <button onClick={cancelEditTodo} className="p-1 text-muted-foreground hover:bg-accent rounded"><X size={13} /></button>
                   </div>
                 ) : (
                   <>
-                    <span className={`flex-1 text-sm ${todo.isDone ? 'line-through text-muted-foreground' : 'text-foreground'} ${locker ? 'opacity-60' : ''}`}>
+                    <span className={`min-w-0 flex-1 break-words text-sm ${todo.isDone ? 'line-through text-muted-foreground' : 'text-foreground'} ${locker ? 'opacity-60' : ''}`}>
                       {todo.text}
                     </span>
                     {locker && <span className="text-[11px] text-orange-600 bg-orange-50 px-1 py-0.5 rounded animate-pulse flex-shrink-0 flex items-center gap-0.5"><Lock size={10} /> {locker.name}</span>}
-                    <button onClick={() => startEditTodo(todo)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all flex-shrink-0"><Pencil size={11} /></button>
-                    <button onClick={() => removeTodo(todo.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all flex-shrink-0"><X size={12} /></button>
+                    <button aria-label={`${t('button.edit')}: ${todo.text}`} onClick={() => startEditTodo(todo)} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-primary transition-all flex-shrink-0 inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"><Pencil size={11} /></button>
+                    <button aria-label={`${t('button.delete')}: ${todo.text}`} onClick={() => removeTodo(todo.id)} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-destructive transition-all flex-shrink-0 inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"><X size={12} /></button>
                   </>
                 )}
               </div>
@@ -188,7 +188,7 @@ const TaskSpecTab = ({ detail }: Props) => {
         </div>
         <div className="flex items-center gap-1.5 mt-2">
           <input value={newTodoText} onChange={e => setNewTodoText(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTodo()}
-            placeholder={t('taskDetail.spec.todoPlaceholder')} className="flex-1 text-sm border border-border rounded px-2.5 py-1.5 outline-none focus:border-primary bg-card text-foreground placeholder:text-muted-foreground/50" />
+            placeholder={t('taskDetail.spec.todoPlaceholder')} className="min-w-0 flex-1 text-sm border border-border rounded px-2.5 py-1.5 outline-none focus:border-primary bg-card text-foreground placeholder:text-muted-foreground/50" />
           <button onClick={addTodo} disabled={!newTodoText.trim()} className={`p-1.5 rounded transition-colors ${newTodoText.trim() ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground/30 cursor-not-allowed'}`}>
             <Plus size={14} />
           </button>
@@ -217,27 +217,27 @@ const TaskSpecTab = ({ detail }: Props) => {
             const isEditingThis = editingCheckId === check.id;
             return (
               <div key={check.id} className="flex items-center gap-2 group">
-                <button onClick={() => toggleCheck(check.id)} className="flex-shrink-0">
+                <button onClick={() => toggleCheck(check.id)} className="inline-flex shrink-0 items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
                   <div className={`w-4 h-4 rounded flex items-center justify-center transition-colors ${check.isDone ? 'bg-emerald-500' : 'border-2 border-border'}`}>
                     {check.isDone && <Check size={10} className="text-white" />}
                   </div>
                 </button>
                 {isEditingThis ? (
-                  <div className="flex-1 flex items-center gap-1">
+                  <div className="min-w-0 flex-1 flex items-center gap-1">
                     <input value={editingCheckText} onChange={e => setEditingCheckText(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') saveEditCheck(); if (e.key === 'Escape') cancelEditCheck(); }}
-                      autoFocus className="flex-1 text-sm border border-primary rounded px-2 py-1 outline-none bg-card text-foreground" />
+                      autoFocus className="min-w-0 flex-1 text-sm border border-primary rounded px-2 py-1 outline-none bg-card text-foreground" />
                     <button onClick={saveEditCheck} className="p-1 text-status-done hover:bg-status-done/10 rounded"><Check size={13} /></button>
                     <button onClick={cancelEditCheck} className="p-1 text-muted-foreground hover:bg-accent rounded"><X size={13} /></button>
                   </div>
                 ) : (
                   <>
-                    <span className={`flex-1 text-sm ${check.isDone ? 'line-through text-muted-foreground' : 'text-foreground'} ${locker ? 'opacity-60' : ''}`}>
+                    <span className={`min-w-0 flex-1 break-words text-sm ${check.isDone ? 'line-through text-muted-foreground' : 'text-foreground'} ${locker ? 'opacity-60' : ''}`}>
                       {check.text}
                     </span>
                     {locker && <span className="text-[11px] text-orange-600 bg-orange-50 px-1 py-0.5 rounded animate-pulse flex-shrink-0 flex items-center gap-0.5"><Lock size={10} /> {locker.name}</span>}
-                    <button onClick={() => startEditCheck(check)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all flex-shrink-0"><Pencil size={11} /></button>
-                    <button onClick={() => removeCheck(check.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all flex-shrink-0"><X size={12} /></button>
+                    <button aria-label={`${t('button.edit')}: ${check.text}`} onClick={() => startEditCheck(check)} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-primary transition-all flex-shrink-0 inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"><Pencil size={11} /></button>
+                    <button aria-label={`${t('button.delete')}: ${check.text}`} onClick={() => removeCheck(check.id)} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-destructive transition-all flex-shrink-0 inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"><X size={12} /></button>
                   </>
                 )}
               </div>
@@ -246,7 +246,7 @@ const TaskSpecTab = ({ detail }: Props) => {
         </div>
         <div className="flex items-center gap-1.5 mt-2">
           <input value={newCheckText} onChange={e => setNewCheckText(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCheck()}
-            placeholder={t('taskDetail.spec.checklistPlaceholder')} className="flex-1 text-sm border border-border rounded px-2.5 py-1.5 outline-none focus:border-primary bg-card text-foreground placeholder:text-muted-foreground/50" />
+            placeholder={t('taskDetail.spec.checklistPlaceholder')} className="min-w-0 flex-1 text-sm border border-border rounded px-2.5 py-1.5 outline-none focus:border-primary bg-card text-foreground placeholder:text-muted-foreground/50" />
           <button onClick={addCheck} disabled={!newCheckText.trim()} className={`p-1.5 rounded transition-colors ${newCheckText.trim() ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground/30 cursor-not-allowed'}`}>
             <Plus size={14} />
           </button>
@@ -306,7 +306,7 @@ const TaskSpecTab = ({ detail }: Props) => {
                           <a href={getPublicUrl(att.storage_path)} target="_blank" rel="noopener noreferrer">
                             <img src={getPublicUrl(att.storage_path)} alt={att.file_name} className="w-full h-24 object-cover" loading="lazy" />
                           </a>
-                          <button onClick={() => deleteAttachment(att)} className="absolute top-1 right-1 p-1 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive">
+                          <button aria-label={`${t('button.delete')}: ${att.file_name}`} onClick={() => deleteAttachment(att)} className="absolute top-1 right-1 p-1 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity hover:bg-destructive inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
                             <Trash2 size={12} />
                           </button>
                           <p className="text-[10px] text-muted-foreground truncate px-1 py-0.5">{att.file_name}</p>
@@ -323,7 +323,7 @@ const TaskSpecTab = ({ detail }: Props) => {
                             <a href={getPublicUrl(att.storage_path)} target="_blank" rel="noopener noreferrer" className="text-sm text-foreground hover:text-primary truncate block">{att.file_name}</a>
                             <p className="text-[10px] text-muted-foreground">{att.file_size ? `${(att.file_size / 1024).toFixed(1)} KB` : ''}</p>
                           </div>
-                          <button onClick={() => deleteAttachment(att)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all p-1">
+                          <button aria-label={`${t('button.delete')}: ${att.file_name}`} onClick={() => deleteAttachment(att)} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 text-muted-foreground hover:text-destructive transition-all p-1 inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11">
                             <Trash2 size={12} />
                           </button>
                         </div>

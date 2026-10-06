@@ -99,7 +99,7 @@ const GanttToolbar = React.memo(({
           <SearchableSelect
             value={selectedSprintId}
             onChange={e => setSelectedSprintId(e.target.value)}
-            className="px-2.5 py-1.5 text-[13px] font-medium rounded-md border border-border bg-card text-foreground cursor-pointer"
+            className="min-w-0 max-w-full px-2.5 py-1.5 text-[13px] font-medium rounded-md border border-border bg-card text-foreground cursor-pointer"
           >
             <option value="current">{currentSprint ? `${t('gantt.sprint.current')} (${currentSprint.name})` : t('gantt.sprint.openTasks')}</option>
             <option value="all">{t('gantt.sprint.all')}</option>
@@ -112,7 +112,7 @@ const GanttToolbar = React.memo(({
             }
           </SearchableSelect>
         </div>
-        <div className="flex shrink-0 self-start items-center gap-0.5 bg-muted rounded-md p-0.5 md:self-auto">
+        {!isMobile && <div className="flex shrink-0 self-start items-center gap-0.5 bg-muted rounded-md p-0.5 md:self-auto">
           {viewModeOptions.map(([mode, label]) => (
             <button
               key={mode}
@@ -124,7 +124,7 @@ const GanttToolbar = React.memo(({
               {label}
             </button>
           ))}
-        </div>
+        </div>}
       </div>
       {!isMobile && (
         <div className="flex items-center gap-3 flex-wrap text-[13px]">

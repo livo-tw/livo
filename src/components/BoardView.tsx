@@ -23,6 +23,7 @@ import { BookOpen, ChevronDown, ChevronRight, ClipboardList, Search, Plus } from
 import { taskDepartment, type Department } from '@/lib/department';
 import { useUndoStack } from '@/hooks/useUndoStack';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useBoardSensors } from '@/hooks/useBoardSensors';
 import { useStatusChangeGate } from '@/hooks/useStatusChangeGate';
 import { statusChangeUpdates } from '@/lib/taskStatusChange';
 import { useNotificationToast } from '@/components/notifications/NotificationToastProvider';
@@ -32,20 +33,20 @@ import { useBoardApproval } from '@/components/board/useBoardApproval';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import {
-  DndContext, DragOverlay, closestCenter, useDroppable, useDraggable,
-  PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, KeyboardCode,
-  type DragStartEvent, type DragEndEvent,
+  DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, useDraggable,
+  type CollisionDetection, type DragStartEvent, type DragEndEvent,
 } from '@dnd-kit/core';
 import type { Task } from '@/types';
 
 /* ── dnd-kit helper components (defined outside BoardView to keep stable references) ── */
+const boardCollision: CollisionDetection = args => args.pointerCoordinates ? pointerWithin(args) : closestCenter(args);
 
 function DroppableColumn({ id, children }: { id: string; children: ReactNode }) {
   const { isOver, setNodeRef } = useDroppable({ id });
   return (
     <div
       ref={setNodeRef}
-      className={`snap-start min-w-[140px] flex-1 rounded-xl border flex flex-col max-h-[calc(100vh-240px)] transition-colors ${
+      className={`snap-start w-[min(82vw,300px)] min-w-0 shrink-0 md:w-auto md:min-w-[140px] md:flex-1 rounded-xl border flex flex-col max-h-[max(240px,calc(100dvh-240px))] transition-colors ${
         isOver ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20' : 'bg-card/50 border-border/60'
       }`}
     >
@@ -66,12 +67,15 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      data-drag-surface
       onKeyDown={e => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter') { e.preventDefault(); setSelectedTask(task); return; }
         dndOnKeyDown?.(e);
       }}
       aria-label={t('task.ariaLabel', { title: task.title })}
       className={isDragging ? 'opacity-30' : ''}
+      style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}
     >
       <TaskCard task={task} fields={fields} subtaskMode={subtaskMode} customCardFields={customCardFields} interactive={false} />
     </div>
@@ -256,17 +260,7 @@ const BoardView = () => {
   }, [approvalsEnabled, featureTogglesReady, getRuleForTransition, setApprovalConfirm, t, allTasks, statuses, setAllTasks, updateTaskInDb, allProjects, statusGate, announcements]);
 
   /* ── dnd-kit sensors & handlers ── */
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, {
-      keyboardCodes: {
-        start: [KeyboardCode.Space],
-        cancel: [KeyboardCode.Esc],
-        end: [KeyboardCode.Space],
-      },
-    }),
-  );
+  const sensors = useBoardSensors();
   const activeTask = activeId ? allTasks.find(t => t.id === activeId) ?? null : null;
   const handleDragStart = useCallback((event: DragStartEvent) => { setActiveId(event.active.id as string); }, []);
   const handleDndDragEnd = useCallback((event: DragEndEvent) => {
@@ -338,8 +332,8 @@ const BoardView = () => {
   };
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDragCancel}>
-    <div className="flex-1 overflow-y-auto bg-board">
+    <DndContext sensors={sensors} collisionDetection={boardCollision} onDragStart={handleDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDragCancel}>
+    <div className="min-w-0 flex-1 overflow-y-auto bg-board">
       {/* Header */}
       <BoardSprintHeader
         selectedProjectId={selectedProjectId}
@@ -377,6 +371,7 @@ const BoardView = () => {
         customCardFields={customCardFields} toggleCustomCardField={toggleCustomCardField}
         visibleProjectIds={visibleProjectIds}
       />
+      {filteredTasks.length > 0 && <p className="px-3 pb-2 text-xs leading-relaxed text-muted-foreground md:hidden">{t('board.touchHint')}</p>}
 
       {/* Empty state */}
       {filteredTasks.length === 0 && (
@@ -467,7 +462,7 @@ const BoardView = () => {
               </div>
 
               {!isCollapsed && (
-                <div className="px-2 md:px-3 pb-3 pt-1.5 overflow-x-auto overscroll-x-contain snap-x snap-mandatory md:snap-none scroll-smooth board-columns" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <div className={`px-2 md:px-3 pb-3 pt-1.5 overflow-x-auto overscroll-x-contain board-columns ${activeId ? 'snap-none' : 'snap-x snap-proximity md:snap-none'}`} style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
                   <div className="flex gap-3 md:gap-4 min-w-max md:min-w-0">
                     {statuses.map(status => {
                       const statusTasks = tasksByStatus.get(status.id) || [];
@@ -478,7 +473,7 @@ const BoardView = () => {
                             <span className="text-sm font-semibold text-foreground truncate">{status.name}</span>
                             <span className="text-xs text-muted-foreground ml-auto">{statusTasks.length}</span>
                           </div>
-                          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2 space-y-2">
                             {statusTasks.map(task => (
                               <DraggableCard key={task.id} task={task} fields={cardFields} subtaskMode={subtaskDisplayMode} customCardFields={customCardFields} />
                             ))}

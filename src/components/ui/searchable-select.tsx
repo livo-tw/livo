@@ -61,7 +61,7 @@ export const SearchableSelect = forwardRef<HTMLSelectElement, SelectHTMLAttribut
     };
     return <>
       <select {...props} ref={nativeRef} id={searchable ? `${id}-native` : id}
-        className={searchable ? 'sr-only' : className} aria-hidden={searchable || undefined}
+        className={searchable ? 'sr-only' : `livo-mobile-control ${className || ''}`} aria-hidden={searchable || undefined}
         tabIndex={searchable ? -1 : props.tabIndex}
         onChange={event => { setNativeValue(event.target.value); setInvalid(false); onChange?.(event); }}
         onInvalid={event => { onInvalid?.(event); if (searchable) { event.preventDefault(); setInvalid(true); triggerRef.current?.focus(); } }}>
@@ -74,7 +74,7 @@ export const SearchableSelect = forwardRef<HTMLSelectElement, SelectHTMLAttribut
           aria-expanded={open} aria-haspopup="listbox" aria-invalid={invalid || props['aria-invalid'] || undefined}
           title={props.title || selected?.label} style={props.style}
           onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); changeOpen(true); } }}
-          className={`flex w-full min-w-0 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${className || 'rounded border border-border bg-card px-2 py-1.5 text-sm'}`}>
+          className={`livo-mobile-control flex w-full min-w-0 items-center gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${className || 'rounded border border-border bg-card px-2 py-1.5 text-sm'}`}>
           {selected?.color && <span aria-hidden="true" data-status-dot className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: selected.color }} />}
           <span className="truncate">{selected?.label || options.find(option => option.value === '')?.label || '—'}</span>
           <ChevronDown size={14} className="ml-auto shrink-0" aria-hidden="true" />
@@ -84,12 +84,12 @@ export const SearchableSelect = forwardRef<HTMLSelectElement, SelectHTMLAttribut
           onCloseAutoFocus={event => { event.preventDefault(); if (document.activeElement === document.body || document.activeElement === triggerRef.current) triggerRef.current?.focus(); }}>
           <Command shouldFilter={false} loop label={label ? `${t('common.search')} · ${label}` : t('common.search')}>
             <CommandInput ref={searchRef} value={search} onValueChange={setSearch}
-              aria-label={label ? `${t('common.search')} · ${label}` : t('common.search')} placeholder={`${t('common.search')}...`} />
-            <CommandList label={label || undefined} className="max-h-[min(300px,var(--radix-popover-content-available-height))] p-1">
+              aria-label={label ? `${t('common.search')} · ${label}` : t('common.search')} placeholder={`${t('common.search')}...`} className="text-base md:text-sm" />
+            <CommandList label={label || undefined} className="max-h-[min(300px,calc(var(--radix-popover-content-available-height)-52px))] overscroll-contain p-1">
               {filtered.length === 0 && <div role="status" className="px-3 py-3 text-center text-sm text-muted-foreground">{t('common.noResults')}</div>}
               {filtered.map((option, index) => <div key={`${option.group}:${option.value}:${index}`}>
                 {option.group && (index === 0 || filtered[index - 1].group !== option.group) && <div className="px-2 pb-1 pt-2 text-xs font-semibold text-muted-foreground">{option.group}</div>}
-                <CommandItem value={`choice-${index}`} disabled={option.disabled} onSelect={() => selectOption(option)}>
+                <CommandItem value={`choice-${index}`} disabled={option.disabled} onSelect={() => selectOption(option)} className="min-h-11 md:min-h-0">
                   {option.color && <span aria-hidden="true" data-status-dot className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: option.color }} />}
                   <span className="truncate">{option.label}</span>{selected?.value === option.value && <Check size={14} className="ml-auto shrink-0" aria-hidden="true" />}
                 </CommandItem>

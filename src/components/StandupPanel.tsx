@@ -154,7 +154,7 @@ const StandupPanel = () => {
 
   return (
     <>
-      <div className="relative w-56 h-screen bg-sidebar flex flex-col flex-shrink-0">
+      <div className="relative w-56 h-full min-h-0 bg-sidebar flex flex-col flex-shrink-0">
         {/* Top bar */}
         <div className="px-4 py-2 flex items-center justify-between flex-shrink-0">
           <span className="text-xs font-bold text-sidebar-primary-foreground">{t('standup.mode')}</span>

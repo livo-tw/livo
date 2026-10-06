@@ -232,16 +232,16 @@ const MyTasksView = () => {
           </div>
         </>
       ) : (
-        <div className="flex-1 overflow-x-auto overflow-y-hidden px-5 pb-4 snap-x snap-mandatory md:snap-none">
+        <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain px-3 md:px-5 pb-4 snap-x snap-proximity md:snap-none" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
           <div className="flex gap-4 h-full min-w-0">
             {statusGroups.map(({ status, tasks }) => (
-              <div key={status.id} className="flex flex-col w-72 flex-shrink-0 snap-start">
+              <div key={status.id} className="flex min-w-0 flex-col w-[min(82vw,300px)] md:w-72 flex-shrink-0 snap-start">
                 <div className="flex items-center gap-2 mb-3 px-1">
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: status.color }} />
                   <span className="text-[13px] font-semibold text-foreground uppercase tracking-wide">{status.name}</span>
                   <span className="text-[13px] text-muted-foreground bg-muted rounded-full px-1.5 py-0.5">{tasks.length}</span>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain space-y-2 pr-1">
                   {tasks.map(task => <TaskCard key={task.id} task={task} />)}
                 </div>
               </div>

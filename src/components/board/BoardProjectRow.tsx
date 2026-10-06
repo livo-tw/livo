@@ -4,7 +4,6 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Task, Status, Project, ProductLine } from '@/types';
 import type { CardFieldVisibility } from '@/lib/fieldRegistry';
 import TaskCard from '@/components/TaskCard';
-import { useIsMobile } from '@/hooks/use-mobile';
 
 interface BoardProjectRowProps {
   project: Project;
@@ -23,7 +22,6 @@ const BoardProjectRow = React.memo(({
   project, line, projectTasks, statuses, isCollapsed, onToggle, onDrop,
   cardFields, subtaskMode, customCardFields,
 }: BoardProjectRowProps) => {
-  const isMobile = useIsMobile();
   const getProjectColor = useProjectColor();
   const [dragOverStatusId, setDragOverStatusId] = useState<string | null>(null);
 
@@ -47,10 +45,9 @@ const BoardProjectRow = React.memo(({
       </div>
 
       {!isCollapsed && (
-        <div className="px-2 md:px-3 pb-3 pt-1.5 overflow-x-auto snap-x snap-mandatory md:snap-none border-t border-border/50">
+        <div className="px-2 md:px-3 pb-3 pt-1.5 overflow-x-auto overscroll-x-contain snap-x snap-proximity md:snap-none border-t border-border/50" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
           <div
-            className="flex gap-2 md:gap-3"
-            style={{ minWidth: isMobile ? `${statuses.length * 300}px` : undefined }}
+            className="flex gap-2 md:gap-3 min-w-max md:min-w-0"
           >
             {statuses.map(status => {
               const columnTasks = projectTasks
@@ -60,11 +57,11 @@ const BoardProjectRow = React.memo(({
               return (
                 <div
                   key={status.id}
-                  className={`rounded-lg p-1.5 md:p-2 flex-1 snap-start transition-colors ${
+                  className={`w-[min(82vw,300px)] min-w-0 shrink-0 md:w-auto md:flex-1 rounded-lg p-1.5 md:p-2 snap-start transition-colors ${
                     dragOverStatusId === status.id
                       ? 'bg-primary/8 ring-2 ring-primary/30'
                       : 'bg-muted/40'
-                  } ${isMobile ? 'min-w-[280px]' : 'min-w-0'}`}
+                  }`}
                   onDragOver={e => { e.preventDefault(); setDragOverStatusId(status.id); }}
                   onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverStatusId(null); }}
                   onDrop={e => {

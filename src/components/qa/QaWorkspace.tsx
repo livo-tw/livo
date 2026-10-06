@@ -124,7 +124,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   }, [selectedProjectId, scope.projectIds, owner, search, users, filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, reporters, severities, sort]);
   const filterKey = JSON.stringify(filters);
   useEffect(() => { setOffset(0); }, [filterKey]);
-  const memberOptions = useMemo(() => sortUsersByDept(users.filter(user => user.isActive)).map(user => ({ id: user.id, label: user.name, avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle })), [users]);
+  const memberOptions = useMemo(() => sortUsersByDept(users).map(user => ({ id: user.id, label: user.name, avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle })), [users]);
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) => setter(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
   const clearAll = () => { boardFilters.clearFilters(); setSeverities([]); setReporters([]); setSearch(''); setSearchDraft(''); };
   const createIds = useRef({ id: qaId(), commandId: qaId() });
@@ -211,7 +211,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     wasRecordOpen.current = recordOpen;
   }, [recordOpen]);
   if (settingsOpen && canConfigure && workflow && !creating && !issueId) return <QaSettingsPage client={client} actor={actor} workflow={workflow} onWorkflowSaved={setWorkflow} onCoordinationSaved={() => setRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} />;
-  return <div className="min-w-0 flex-1 overflow-y-auto bg-board p-3 md:p-5">
+  return <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-board p-3 md:p-5">
     <div ref={background} aria-hidden={modalOpen || undefined} className="w-full min-w-0 space-y-4" hidden={!!issueId && !creating && recordMode === 'page'}>
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3"><div className="rounded-xl border border-primary/15 bg-primary/10 p-2.5 text-primary"><Bug size={22} aria-hidden="true" /></div><div><h1 className="text-xl font-bold">{t(mine ? 'qa.myTitle' : 'qa.title')}</h1><p className="mt-0.5 text-xs text-muted-foreground">{t('qa.workspaceIntro')}</p>{USING_MOCK_BACKEND && <p className="mt-1 text-xs text-muted-foreground">{t('qa.demo')}</p>}</div></div>
@@ -230,7 +230,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
         </div>
         <div className="space-y-3 p-3">
           <form className="flex flex-wrap items-center gap-2" role="search" onSubmit={event => { event.preventDefault(); if (busy) return; setSearch(searchDraft.trim()); setOffset(0); }}>
-            <div className="relative min-w-[200px] flex-1 sm:max-w-sm"><Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <div className="relative min-w-0 basis-full flex-1 sm:basis-auto sm:max-w-sm"><Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <input disabled={busy} aria-label={t('qa.search')} placeholder={t('qa.searchPlaceholder')} value={searchDraft} maxLength={100} onChange={event => setSearchDraft(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary" /></div>
             <button disabled={busy} className={qaButton}>{t('qa.searchButton')}</button>
             {mine && <QaSelect disabled={busy} label={t('qa.myTitle')} value={owner} onChange={event => { setOwner(event.target.value as QaListInput['mine'] | ''); setOffset(0); }}>{['involved', 'assigned', 'testing', 'reported'].map(value => <option key={value} value={value}>{t(`qa.${value}`)}</option>)}</QaSelect>}

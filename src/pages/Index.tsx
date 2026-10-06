@@ -30,10 +30,12 @@ import PendingApprovalList from '@/components/approval/PendingApprovalList';
 import { NotificationToastProvider } from '@/components/notifications/NotificationToastProvider';
 import { useTaskHistory } from '@/hooks/useTaskHistory';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import CommandPalette from '@/components/CommandPalette';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { DEMO_BANNER_HEIGHT } from '@/components/DemoModeBanner';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 
 // Lazy-loaded heavy views for route-level code splitting
 const DashboardView = lazy(() => import('@/components/DashboardView'));
@@ -72,6 +74,34 @@ const AppContent = () => {
   const [sidePanelWidth, setSidePanelWidth] = useState(580);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useIsMobile();
+  const compactTaskLayout = useMediaQuery('(max-width: 1023px)');
+
+  useEffect(() => {
+    if (!isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
+  // The visual viewport also shrinks for the on-screen keyboard. Dynamic vh
+  // alone does not do that in every mobile browser.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    document.documentElement.style.setProperty('--livo-overlay-top-offset', `${IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0}px`);
+    const updateViewport = () => {
+      document.documentElement.style.setProperty('--livo-viewport-height', `${viewport?.height ?? window.innerHeight}px`);
+      document.documentElement.style.setProperty('--livo-viewport-top', `${viewport?.offsetTop ?? 0}px`);
+    };
+    updateViewport();
+    viewport?.addEventListener('resize', updateViewport);
+    viewport?.addEventListener('scroll', updateViewport);
+    window.addEventListener('resize', updateViewport);
+    return () => {
+      viewport?.removeEventListener('resize', updateViewport);
+      viewport?.removeEventListener('scroll', updateViewport);
+      window.removeEventListener('resize', updateViewport);
+      document.documentElement.style.removeProperty('--livo-viewport-height');
+      document.documentElement.style.removeProperty('--livo-viewport-top');
+      document.documentElement.style.removeProperty('--livo-overlay-top-offset');
+    };
+  }, []);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('kb')) { setSelectedTask(null); setCurrentView('knowledge-base'); }
@@ -131,40 +161,39 @@ const AppContent = () => {
     window.addEventListener('mouseup', onMouseUp);
   }, [sidePanelWidth]);
 
-  const showSidePanel = selectedTask && taskDisplayMode === 'side' && !isMobile;
+  const showSidePanel = selectedTask && taskDisplayMode === 'side' && !compactTaskLayout;
   const showFullPage = selectedTask && taskDisplayMode === 'page';
 
   // On mobile, don't show standup panel
   const sidebarContent = standupMode && !isMobile && hasFeature('standup') ? <StandupPanel /> : <AppSidebar onNavigate={() => setSidebarOpen(false)} />;
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="livo-app-shell flex h-screen min-h-0 overflow-hidden" style={{ '--livo-app-top-offset': `${IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0}px` } as React.CSSProperties}>
       {/* Desktop sidebar */}
       {!isMobile && sidebarContent}
 
       {/* Mobile sidebar overlay */}
-      {isMobile && sidebarOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/50"
-            onClick={() => setSidebarOpen(false)}
-          />
-          {/* Below the demo banner, which sits above everything else. */}
-          <div className="fixed bottom-0 left-0 z-50 w-[280px] shadow-2xl" style={{ top: IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0 }}>
+      {isMobile && (
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" aria-describedby={undefined} className="w-[min(320px,calc(100vw-32px))] max-w-none p-0" style={{ top: IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0 }} onCloseAutoFocus={event => {
+            event.preventDefault();
+            if (!document.activeElement?.closest('[role="dialog"]')) document.getElementById('livo-navigation-toggle')?.focus();
+          }}>
+            <SheetTitle className="sr-only">{t('sidebar.navigation')}</SheetTitle>
             {sidebarContent}
-          </div>
-        </>
+          </SheetContent>
+        </Sheet>
       )}
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <TopBar onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         {showFullPage ? (
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 min-h-0 overflow-auto overscroll-contain">
             <TaskDetailContent onClose={() => setSelectedTask(null)} />
           </div>
         ) : (
-          <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1 overflow-hidden flex flex-col min-w-0">
+          <div className="flex-1 min-h-0 flex overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col min-w-0">
               {SCOPED_VIEWS.includes(currentView) && <ProjectScopeBar />}
               {currentView === 'board' && <BoardView />}
               {currentView === 'backlog' && <Suspense fallback={<ViewFallback />}><BacklogView /></Suspense>}
@@ -184,7 +213,7 @@ const AppContent = () => {
               {qaEnabled && (currentView === 'qa' || currentView === 'my-qa') && <Suspense fallback={<ViewFallback />}><QaWorkspace mine={currentView === 'my-qa'} /></Suspense>}
               {currentView === 'work-report' && (hasFeature('work-report') ? <Suspense fallback={<ViewFallback />}><WorkReportView /></Suspense> : <UpgradePrompt feature="work-report" />)}
               {currentView === 'approvals' && (
-                <div className="flex-1 overflow-auto p-6">
+                <div className="flex-1 min-h-0 overflow-auto p-3 md:p-6">
                   <h2 className="text-xl font-bold text-foreground mb-4">{i18n.t('approval.pending')}</h2>
                   <PendingApprovalList />
                 </div>

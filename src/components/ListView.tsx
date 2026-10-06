@@ -153,9 +153,9 @@ const ListView = () => {
   );
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-board">
-      <div className="px-5 pt-4 pb-2">
-        <div className="flex items-center justify-between mb-2">
+    <div className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden bg-board">
+      <div className="shrink-0 px-3 md:px-5 pt-4 pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <h1 className="text-base md:text-lg font-bold text-foreground">{t('list.title')}</h1>
           <div className="flex items-center gap-2">
             {!isMobile && <ColumnConfigDropdown config={columnConfig} fixedKeys={FIXED_KEYS} />}
@@ -164,10 +164,10 @@ const ListView = () => {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <DepartmentFilter value={filterDept} onChange={setFilterDept} />
-          <MultiSelectDropdown label={t('filter.assignee')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
+          <MultiSelectDropdown label={t('filter.assignee')} options={sortUsersByDept(users).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterAssignees} onToggle={toggleArr(setFilterAssignees)} />
           <MultiSelectDropdown label={t('filter.status')} options={statuses.map(s => ({ id: s.id, label: s.name, color: s.color }))} selected={filterStatuses} onToggle={toggleArr(setFilterStatuses)} />
           <MultiSelectDropdown label={t('filter.priority')} options={Object.entries(priorityConfig).map(([id, p]) => ({ id, label: t(`priority.${id}`), icon: p.icon as React.ReactElement }))} selected={filterPriorities} onToggle={toggleArr(setFilterPriorities)} />
-          <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users.filter(u => u.isActive)).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
+          <MultiSelectDropdown label={t('filter.reviewer')} options={sortUsersByDept(users).map(u => ({ id: u.id, label: u.name, avatar: u.avatar, avatarColor: u.color, subtitle: u.jobTitle }))} selected={filterReviewers} onToggle={toggleArr(setFilterReviewers)} />
           {!selectedProjectId && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filterProjects} onToggle={toggleArr(setFilterProjects)} />}
           <MultiSelectDropdown label={t('filter.tags')} options={tags.map(tg => ({ id: tg.id, label: tg.name, color: tg.color }))} selected={filterTags} onToggle={toggleArr(setFilterTags)} />
           {(filterDept.length > 0 || filterAssignees.length > 0 || filterStatuses.length > 0 || filterPriorities.length > 0 || filterReviewers.length > 0 || filterProjects.length > 0 || filterTags.length > 0) && (
@@ -182,22 +182,23 @@ const ListView = () => {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto mx-2 md:mx-5 mb-2 md:mb-4 bg-card rounded-xl border border-border/80 shadow-sm">
-        <div style={{ minWidth: tableMinWidth }}>
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain mx-2 md:mx-5 mb-2 md:mb-4 bg-card rounded-xl border border-border/80 shadow-sm">
+        <div style={isMobile ? undefined : { minWidth: tableMinWidth }}>
           {/* Header */}
           <div className="sticky top-0 z-[2] bg-card border-b border-border">
-            <div className={`grid items-center ${isMobile ? 'px-3 py-2.5 gap-x-2' : 'px-4 py-2.5 gap-x-3'}`} style={{ gridTemplateColumns: gridTemplate }}>
-              {!isMobile && (
+            <div className={isMobile ? 'flex flex-wrap items-center gap-2 px-3 py-2' : 'grid items-center px-4 py-2.5 gap-x-3'} style={isMobile ? undefined : { gridTemplateColumns: gridTemplate }}>
+              {(
                 <div className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
                   <Checkbox
+                    aria-label={t('button.selectAll')}
                     checked={isAllSelected ? true : isPartialSelected ? 'indeterminate' : false}
                     onCheckedChange={v => v ? selectAll() : clearSelection()}
-                    className="h-3.5 w-3.5"
+                    className={isMobile ? 'h-5 w-5' : 'h-3.5 w-3.5'}
                   />
                 </div>
               )}
               {!isMobile && <span />}
-              {visibleCols.map(col => (
+              {(isMobile ? visibleCols.filter(col => col.key !== 'assignee') : visibleCols).map(col => (
                 <SortHeader key={col.key} label={col.label} field={col.key} className="min-w-0 overflow-hidden truncate" />
               ))}
             </div>
@@ -210,11 +211,11 @@ const ListView = () => {
               return (
                 <div key={project?.id || 'unknown'}>
                   {!selectedProjectId && project && (
-                    <button onClick={() => toggleCollapse(project.id)} className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-foreground hover:bg-accent/50 transition-colors bg-muted/50">
+                    <button onClick={() => toggleCollapse(project.id)} aria-expanded={!isCollapsed} className="min-h-11 w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-foreground hover:bg-accent/50 transition-colors bg-muted/50">
                       {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                       {line && <span className="text-xs">{line.icon}</span>}
                       <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getProjectColor(project) }} />
-                      <span>{project.name}</span>
+                      <span className="min-w-0 flex-1 break-words text-left">{project.name}</span>
                       <span className="text-muted-foreground font-normal">({tasks.length})</span>
                     </button>
                   )}
@@ -233,6 +234,24 @@ const ListView = () => {
                       const status = statuses.find(s => s.id === task.statusId);
                       const isDone = status?.isDone;
                       const isSelected = selectedIds.has(task.id);
+                      if (isMobile) return (
+                        <article key={task.id} className={`flex min-w-0 items-start gap-2 border-b border-border/50 p-3 ${isSubtask ? 'ml-4 border-l-2 border-l-primary/20' : ''} ${isSelected ? 'bg-primary/5' : ''}`}>
+                          <div className="flex min-h-11 w-11 shrink-0 items-center justify-center">
+                            <Checkbox aria-label={t('list.selectTask', { key: task.taskKey })} checked={isSelected} onCheckedChange={() => toggleSelect(task.id)} className="h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <button type="button" className="min-h-11 w-full text-left" onClick={() => setSelectedTask(task)}>
+                              <span className="mb-1 block text-xs font-semibold text-muted-foreground">{task.taskKey}</span>
+                              <span className={`block break-words text-sm font-medium [overflow-wrap:anywhere] ${isDone ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{task.title}</span>
+                            </button>
+                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                              <div className="min-w-0 max-w-full">{renderCell(task, 'status')}</div>
+                              <div className="min-w-0 max-w-full">{renderCell(task, 'assignee')}</div>
+                            </div>
+                          </div>
+                          {hasSubtasks && <button type="button" aria-label={`${t(collapsedSubtaskParents.has(task.id) ? 'sidebar.expand' : 'sidebar.collapse')} · ${task.taskKey}`} aria-expanded={!collapsedSubtaskParents.has(task.id)} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded hover:bg-accent" onClick={() => setCollapsedSubtaskParents(prev => { const next = new Set(prev); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); return next; })}>{collapsedSubtaskParents.has(task.id) ? <ChevronRight size={18} /> : <ChevronDown size={18} />}</button>}
+                        </article>
+                      );
                       return (
                         <div
                           key={task.id}

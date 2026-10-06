@@ -12,6 +12,7 @@ import { QaVersionField } from './QaVersionField';
 import QaEnvironmentField from './QaEnvironmentField';
 import { QaField, QaSelect, qaButton, qaPrimary } from './QaFields';
 import { useQaFieldConfiguration } from '@/hooks/useQaFieldConfiguration';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { QaCustomFieldInputs } from './QaCustomFieldInputs';
 
 export default function QaReportForm({ initial, projectId, projects, productLines, client, busy, onSubmit, onCancel, children, submitLabel, cancelLabel, readOnly = false, cancelDisabled = false, fixedFooter = false }: {
@@ -20,6 +21,7 @@ export default function QaReportForm({ initial, projectId, projects, productLine
   children?: ReactNode; submitLabel?: string; cancelLabel?: string; readOnly?: boolean; cancelDisabled?: boolean; fixedFooter?: boolean;
 }) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
   const environments = useDeploymentEnvironments();
   const [form, setForm] = useState<QaCreateInput>(() => ({ projectId: initial?.projectId || projectId || '', title: initial?.title || '', actual: initial?.actual || '', steps: initial?.steps || '', expected: initial?.expected || '', observedEnvironment: initial?.observedEnvironment || '', observedVersion: initial?.observedVersion || '', component: initial?.component || '', severity: initial?.severity || 'untriaged', customFields: { ...initial?.customFields } }));
   const fields = useQaFieldConfiguration(client);
@@ -27,11 +29,11 @@ export default function QaReportForm({ initial, projectId, projects, productLine
   const change = (key: keyof QaCreateInput, value: string) => setForm(previous => ({ ...previous, [key]: value,
     ...(key === 'projectId' && value !== previous.projectId && !initial ? { observedVersion: '' } : {}) }));
   return <form onSubmit={event => { event.preventDefault(); if (!busy && (readOnly || (environments.ready && fields.configuration))) onSubmit(form); }} className={fixedFooter ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'min-w-0 space-y-5'} aria-busy={busy}>
-    <div className={fixedFooter ? 'min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto pb-5' : 'min-w-0 space-y-5'}>
+    <div className={fixedFooter ? 'min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pb-5' : 'min-w-0 space-y-5'}>
     {fields.error !== null && <div role="alert" className="flex flex-wrap items-center gap-3 rounded border border-destructive/30 p-3 text-sm text-destructive"><span>{t('qa.failed')}</span><button type="button" className={qaButton} onClick={fields.retry}>{t('qa.refresh')}</button></div>}
     <fieldset disabled={busy || readOnly} className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="min-w-0 space-y-5">
-        <QaField label={t('qa.titleField')} required autoFocus maxLength={200} value={form.title} onChange={e => change('title', e.target.value)} />
+        <QaField label={t('qa.titleField')} required autoFocus={!isMobile} maxLength={200} value={form.title} onChange={e => change('title', e.target.value)} />
         <QaField label={t('qa.actual')} multiline rows={5} required maxLength={20000} value={form.actual} onChange={e => change('actual', e.target.value)} />
         <QaField label={t('qa.expected')} multiline maxLength={20000} value={form.expected} onChange={e => change('expected', e.target.value)} />
         <QaField label={t('qa.steps')} multiline maxLength={20000} value={form.steps} onChange={e => change('steps', e.target.value)} />
@@ -47,7 +49,7 @@ export default function QaReportForm({ initial, projectId, projects, productLine
     </fieldset>
     {children && <div className="min-w-0 border-t border-border pt-5">{children}</div>}
     </div>
-    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-card pt-4 pb-[env(safe-area-inset-bottom)]">
       <button type="button" className={qaButton} disabled={busy || cancelDisabled} onClick={onCancel}>{cancelLabel || t('qa.cancel')}</button>
       <button type="submit" className={qaPrimary} disabled={busy || (!readOnly && (!environments.ready || !fields.configuration))}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}{busy ? t('qa.saving') : submitLabel || t('qa.save')}</button>
     </div>

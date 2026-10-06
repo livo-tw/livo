@@ -43,7 +43,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
   if (!task) return null;
 
   return (
-    <div className="bg-card flex flex-col h-full min-h-0">
+    <div className="bg-card flex min-w-0 flex-col h-full min-h-0">
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-3 md:px-5 py-2 md:py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-1.5 md:gap-2 min-w-0 overflow-x-auto scrollbar-hide">
@@ -88,7 +88,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
               <Copy size={15} />
             </button>
             {showSaveTemplate && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-lg p-3 w-64">
+              <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-lg p-3 w-[min(256px,calc(100vw-24px))]">
                 <p className="text-xs font-semibold text-foreground mb-2">{t('task.saveTemplate')}</p>
                 <input type="text" value={templateName} onChange={e => setTemplateName(e.target.value)}
                   placeholder={t('task.templateName')} autoFocus
@@ -176,7 +176,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
         {/* Left: Tabs */}
         <div className={`flex-1 flex flex-col ${isMobile ? '' : 'border-r border-border'} overflow-hidden min-w-0`}>
           {/* Tab bar */}
-          <div className="flex px-3 md:px-5 flex-shrink-0 overflow-x-auto scrollbar-hide border-b border-border">
+          <div className="flex px-3 md:px-5 flex-shrink-0 overflow-x-auto overscroll-x-contain border-b border-border">
             {([
               { id: 'spec' as const,     label: t('task.tabs.spec'), icon: FileText,       count: 0 },
               { id: 'comments' as const, label: t('task.tabs.comments'),     icon: MessageSquare,  count: taskComments.length },
@@ -197,7 +197,7 @@ const TaskDetailContent = ({ onClose }: Props) => {
           </div>
 
           {/* Tab content */}
-          <div className="flex-1 overflow-y-auto p-3 md:p-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[max(12px,env(safe-area-inset-bottom))] md:p-5">
             {activeTab === 'spec'      && <><TaskSpecTab detail={detail} /><RelatedKnowledge targetKind="task" targetId={task.id} /></>}
             {activeTab === 'comments'  && <TaskCommentsTab detail={detail} />}
             {activeTab === 'metrics'   && <TaskMetricsTab  detail={detail} />}

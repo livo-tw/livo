@@ -30,6 +30,7 @@ import QaReportForm from './QaReportForm';
 import QaAttachments from './QaAttachments';
 import QaLegacyAttachments from './QaLegacyAttachments';
 import QaHandoffPanel from './QaHandoffPanel';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useQaVersions } from '@/hooks/useQaVersions';
 import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
@@ -53,6 +54,7 @@ export function QaFailure({ error }: { error: unknown }) {
 export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onDeleted, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onDeleted?: () => void; onBusyChange?: (busy: boolean) => void }) {
   const { t } = useTranslation();
   const environments = useDeploymentEnvironments();
+  const isMobile = useIsMobile();
   const getProjectColor = useProjectColor();
   const { users } = useMemberContext();
   const { allProjects, productLines } = useProjectContext();
@@ -212,6 +214,15 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     catch (failure) { const status = (failure as { status?: number })?.status; if (pendingComment.current) { const unknown = !status || status >= 500; setUnknownCommand(unknown); if (!unknown) pendingComment.current = undefined; } setError(failure); toast.error(t('qa.failed')); }
     finally { setBusy(false); }
   };
+  const stateControl = <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
+            options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
+            onValueChange={state => void changeState(state)} /></div>;
+  const actionSection = <QaSection title={t('qa.actions')}>
+          {isMobile && stateControl}
+          {primaryAction ? <div className="space-y-2"><p className="text-sm text-muted-foreground">{t('qa.yourNextStep')}</p>{tab === 'verification' && ['record_deployment', 'record_verification'].includes(primaryAction.command) ? <p className="text-sm leading-relaxed">{t('qa.completeInPanel')}</p> : <button type="button" className={`${qaPrimary} w-full`} disabled={busy} onClick={() => openAction(primaryAction.command)}>{t(`qa.${primaryAction.label}`)}</button>}</div> : nextAction && <p className="text-sm leading-relaxed text-muted-foreground">{t('qa.waitingForAction', { name: nextOwner ? member(nextOwner) : t('qa.triageTeam'), action: t(`qa.${nextAction.label}`) })}</p>}
+          {(moreActions.length > 0 || canDelete) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
+          {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
+        </QaSection>;
   return <div className="w-full min-w-0 space-y-4 p-3 md:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2"><button className={qaButton} onClick={onBack} disabled={busy}><ArrowLeft size={15} aria-hidden="true" />{t('qa.back')}</button><button className={qaButton} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} aria-hidden="true" />{t('qa.refresh')}</button></div>
     <header className="rounded-xl border border-border/80 bg-card p-4 shadow-sm md:p-5">
@@ -223,6 +234,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     {unknownCommand && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div>}
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     {busy && <p role="status" className="text-sm">{t('qa.saving')}</p>}
+    {isMobile && actionSection}
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-4">
         <div role="tablist" aria-label={t('qa.details')} className="grid grid-cols-4 gap-1 rounded-xl border border-border/80 bg-card p-1.5 sm:flex">{([{ id: 'details', label: 'details', Icon: FileText, count: undefined }, { id: 'verification', label: 'verificationTab', Icon: ClipboardCheck, count: issue.targets.length }, { id: 'comments', label: 'comments', Icon: MessageSquare, count: detail.comments.length }, { id: 'history', label: 'history', Icon: History, count: visibleEvents.length }] as const).map(({ id, label, Icon, count }) => <button key={id} role="tab" disabled={busy} tabIndex={tab === id ? 0 : -1} onKeyDown={event => {
@@ -270,16 +282,10 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       </div>
       </div>
       <div className="min-w-0 space-y-4">
-        <QaSection title={t('qa.actions')}>
-          {primaryAction ? <div className="space-y-2"><p className="text-sm text-muted-foreground">{t('qa.yourNextStep')}</p>{tab === 'verification' && ['record_deployment', 'record_verification'].includes(primaryAction.command) ? <p className="text-sm leading-relaxed">{t('qa.completeInPanel')}</p> : <button type="button" className={`${qaPrimary} w-full`} disabled={busy} onClick={() => openAction(primaryAction.command)}>{t(`qa.${primaryAction.label}`)}</button>}</div> : nextAction && <p className="text-sm leading-relaxed text-muted-foreground">{t('qa.waitingForAction', { name: nextOwner ? member(nextOwner) : t('qa.triageTeam'), action: t(`qa.${nextAction.label}`) })}</p>}
-          {(moreActions.length > 0 || canDelete) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
-          {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
-        </QaSection>
+        {!isMobile && actionSection}
         <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
         <QaSection title={t('qa.properties')}>
-          <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
-            options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
-            onValueChange={state => void changeState(state)} /></div>
+          {!isMobile && stateControl}
           <dl className="grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)], ['assignee', member(issue.assigneeId)], ['qaOwner', member(issue.qaOwnerId)], ['dueDate', issue.dueDate || '—']].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
@@ -290,11 +296,11 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       </div>
     </div>
     <Dialog open={!!action} onOpenChange={open => { if (!open && !busy) setAction(null); }}>
-      <DialogContent aria-describedby={undefined} className="max-h-[90vh] w-[calc(100%-24px)] max-w-4xl overflow-y-auto p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
+      <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-4xl flex-col overflow-hidden p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
         <DialogHeader><DialogTitle>{action ? t(`qa.${actionLabels[action]}`) : ''}</DialogTitle></DialogHeader>
         {error !== null && <div className="space-y-2"><QaFailure error={error} /><button className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
-          {action === 'edit' && can('edit') && <div className="mt-4"><QaReportForm initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '', customFields: input.customFields })} /></div>}
-          {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 space-y-3" onSubmit={submitAction}><fieldset disabled={busy} className="space-y-3">
+          {action === 'edit' && can('edit') && <div className="mt-4 flex min-h-0 flex-1 overflow-hidden"><QaReportForm fixedFooter initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '', customFields: input.customFields })} /></div>}
+          {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 min-h-0 space-y-3 overflow-y-auto overscroll-contain" onSubmit={submitAction}><fieldset disabled={busy} className="space-y-3">
             {action === 'triage' && <>
               <UserSelect label={t('qa.assignee')} name="assigneeId" required activeOnly disabled={busy} preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} defaultValue={issue.assigneeId || ''} emptyLabel={t('qa.choose')} size="md" />
               <UserSelect label={t('qa.qaOwner')} name="qaOwnerId" required activeOnly disabled={busy} preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} defaultValue={issue.qaOwnerId || ''} emptyLabel={t('qa.choose')} size="md" />
@@ -312,7 +318,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
               {unavailableLinks.length > 0 && <div className="space-y-2 rounded-lg border border-amber-500/30 p-3"><p className="text-sm text-muted-foreground">{t('qa.linkedTaskUnavailable')}</p>{unavailableLinks.map(id => { const task = allTasks.find(row => row.id === id); return <label key={id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked onChange={() => setLinks(previous => previous.filter(link => link !== id))} /><span>{task ? `${task.taskKey} · ${task.title}` : id}</span></label>; })}</div>}
               <div className="max-h-60 space-y-2 overflow-y-auto">{projectTasks.filter(task => `${task.taskKey} ${task.title}`.toLowerCase().includes(taskSearch.toLowerCase())).slice(0, 100).map(task => <label key={task.id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={links.includes(task.id)} onChange={event => setLinks(previous => event.target.checked ? [...previous, task.id] : previous.filter(id => id !== task.id))} /><span>{task.taskKey} · {task.title}</span></label>)}</div></>}
             <p className="text-xs text-muted-foreground">{t('qa.unsent')}</p>
-            <div className="flex gap-2"><button className={qaPrimary} type="submit" disabled={(action === 'submit_fix' && !environments.ready) || (action === 'link_tasks' && unavailableLinks.length > 0)}>{t('qa.save')}</button><button className={qaButton} type="button" onClick={() => setAction(null)}>{t('qa.cancel')}</button></div>
+            <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-border bg-card py-3 pb-[max(12px,env(safe-area-inset-bottom))]"><button className={qaPrimary} type="submit" disabled={(action === 'submit_fix' && !environments.ready) || (action === 'link_tasks' && unavailableLinks.length > 0)}>{t('qa.save')}</button><button className={qaButton} type="button" onClick={() => setAction(null)}>{t('qa.cancel')}</button></div>
           </fieldset></form>}
       </DialogContent>
     </Dialog>

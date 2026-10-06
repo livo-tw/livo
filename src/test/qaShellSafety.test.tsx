@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
-const mocks=vi.hoisted(()=>({mode:'side' as 'side'|'page'|'modal',command:vi.fn(),get:vi.fn(),getWorkflow:vi.fn(),getFieldConfiguration:vi.fn(),versions:vi.fn(),list:vi.fn()}));
+const mocks=vi.hoisted(()=>({mobile:false,mode:'side' as 'side'|'page'|'modal',command:vi.fn(),get:vi.fn(),getWorkflow:vi.fn(),getFieldConfiguration:vi.fn(),versions:vi.fn(),list:vi.fn()}));
+vi.mock('@/hooks/use-mobile',()=>({useIsMobile:()=>mocks.mobile}));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -24,7 +25,7 @@ import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 
 const issue={...createQaIssue({projectId:'p1',title:'Protected issue',actual:'Unexpected result',observedEnvironment:'Stage'},'existing-bug',{actor:{id:'admin',role:'admin'},workspaceId:'default',now:'2026-10-03T00:00:00Z',newId:()=> 'event',memberIds:new Set(['admin']),projectIds:new Set(['p1']),taskIds:new Set()}),state:'verified' as const};
 beforeEach(()=>{
-  vi.clearAllMocks();mocks.mode='side';window.history.replaceState({},'','/?qa=existing-bug');
+  vi.clearAllMocks();mocks.mobile=false;mocks.mode='side';window.history.replaceState({},'','/?qa=existing-bug');
   vi.stubGlobal('ResizeObserver',class{observe(){} unobserve(){} disconnect(){}});
   Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:vi.fn()});
   mocks.get.mockImplementation(async(id:string)=>({issue:{...issue,id,title:id==='existing-bug'?'Protected issue':'Other issue'},attachments:[],comments:[],events:[]}));
@@ -33,6 +34,17 @@ beforeEach(()=>{
 afterEach(()=>{cleanup();vi.unstubAllGlobals();Reflect.deleteProperty(HTMLElement.prototype,'scrollIntoView');expect(hasQaNavigationGuard()).toBe(false);});
 
 describe('QA record shell preserves stateful work',()=>{
+  it('puts the single mobile state control before the content tabs without weakening the command contract',async()=>{
+    mocks.mobile=true;
+    mocks.command.mockResolvedValueOnce({...issue,state:'failed',version:2});
+    render(<QaWorkspace/>);await screen.findByRole('heading',{name:'Protected issue',level:1});
+    const control=screen.getByRole('combobox',{name:'qa.changeState'});
+    expect(control.compareDocumentPosition(screen.getByRole('tablist',{name:'qa.details'})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(control);fireEvent.click(await screen.findByRole('option',{name:'qa.state.failed'}));
+    await waitFor(()=>expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0][1]).toMatchObject({type:'set_state',state:'failed'});
+    expect(screen.getAllByRole('combobox',{name:'qa.changeState'})).toHaveLength(1);
+  });
   it.each(['back','other-card'])('retains an unknown state command when the side panel background requests %s',async(target)=>{
     mocks.command.mockRejectedValueOnce({status:503,code:'temporarily_unavailable'}).mockResolvedValueOnce({...issue,state:'failed',version:2});
     render(<QaWorkspace/>);await screen.findByRole('heading',{name:'Protected issue',level:1});

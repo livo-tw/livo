@@ -30,7 +30,7 @@ const DashboardSprintHistory = ({ currentSprint, completedSprints, isMobile }: D
 
       {currentSprint && (
         <div className="mb-4 p-3 rounded-lg border border-primary/20 bg-primary/5">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
             <Zap size={14} className="text-primary" />
             <span className="text-[13px] font-semibold text-foreground">{currentSprint.name}</span>
             <span className="text-[13px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">{t('dashboard.inProgress')}</span>
@@ -51,7 +51,7 @@ const DashboardSprintHistory = ({ currentSprint, completedSprints, isMobile }: D
                   <div className="text-[13px] text-muted-foreground mb-2">
                     {formatDate(sprint.startedAt)} → {formatDate(sprint.completedAt)}
                   </div>
-                  <div className="flex items-center gap-3 text-[13px]">
+                  <div className="flex flex-wrap items-center gap-3 text-[13px]">
                     <span>{t('dashboard.completedCount', { count: sprint.completedCount })}</span>
                     <span>{t('dashboard.pendingCount', { count: sprint.pendingCount })}</span>
                     <div className="flex items-center gap-1 ml-auto">

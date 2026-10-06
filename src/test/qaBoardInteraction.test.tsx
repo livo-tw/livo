@@ -14,7 +14,7 @@ vi.mock('sonner', () => ({ toast: notices }));
 vi.mock('@dnd-kit/core', () => ({
   DndContext: ({ onDragEnd, children }: { onDragEnd: (event: DragEndEvent) => void; children: ReactNode }) => { dnd.end = onDragEnd; return <>{children}</>; },
   DragOverlay: ({ children }: { children: ReactNode }) => <>{children}</>,
-  useSensor: vi.fn(), useSensors: vi.fn(), PointerSensor: {}, TouchSensor: {}, KeyboardSensor: {},
+  useSensor: vi.fn(), useSensors: vi.fn(), MouseSensor: class { static activators: never[] = []; }, TouchSensor: class { static activators: never[] = []; }, KeyboardSensor: {},
   KeyboardCode: { Space: 'Space', Esc: 'Escape' }, closestCenter: vi.fn(), pointerWithin: vi.fn(),
   useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
   useDraggable: (options: unknown) => { dnd.draggable(options); return { attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }; },

@@ -37,7 +37,7 @@ const DashboardTeamWorkload = ({ teamData, statuses, isMobile }: DashboardTeamWo
             <div key={member.id} className="bg-muted rounded-lg p-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0" style={{ backgroundColor: member.color, color: '#fff' }}>{member.avatar}</div>
-                <div>
+                <div className="min-w-0 flex-1 break-words">
                   <div className="text-[13px] font-semibold text-foreground">{member.name}</div>
                   <div className="text-[13px] text-muted-foreground">{member.jobTitle}</div>
                 </div>
@@ -61,7 +61,7 @@ const DashboardTeamWorkload = ({ teamData, statuses, isMobile }: DashboardTeamWo
                 </div>
                 <span className="text-[13px]" style={{ color: getLoadColor(member.inProgress) }}>{member.inProgress}</span>
               </div>
-              <div className="flex gap-3 text-[13px]">
+              <div className="flex flex-wrap gap-3 text-[13px]">
                 <span>{t('dashboard.createdToCompletedLabel')}{member.avgCreateToComplete !== null ? <span style={{ color: getEffColor(member.avgCreateToComplete, 'create') }}>{t('dashboard.dwellDays', { days: member.avgCreateToComplete })}</span> : '-'}</span>
                 <span>{t('dashboard.startedToCompletedLabel')}{member.avgStartToComplete !== null ? <span style={{ color: getEffColor(member.avgStartToComplete, 'start') }}>{t('dashboard.dwellDays', { days: member.avgStartToComplete })}</span> : '-'}</span>
               </div>
