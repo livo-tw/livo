@@ -587,7 +587,8 @@
     "qaAdminDesc": "Manage the QA workflow and custom bug fields, and delete bugs. Other permissions match a regular member."
   },
   "board": {
-    "touchHint": "Swipe sideways between columns. Hold a card, then drag it to change its status.",
+    "touchHint": "Swipe sideways between columns. Hold the drag button below a card, then move it to change its status.",
+    "dragCard": "Hold to drag task: {{title}}",
     "titleAll": "All — Board",
     "transitionNotAllowed": "This task has not passed through \"{{missingNames}}\" and cannot be moved to \"{{targetName}}\"",
     "cardSettings": "Card Display Settings",

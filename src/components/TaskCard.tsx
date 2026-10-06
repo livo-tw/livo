@@ -94,7 +94,7 @@ function QuickPopover({ anchorRef, onClose, children }: { anchorRef: React.RefOb
   );
 }
 
-const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactive }: { task: Task; fields?: CardFieldVisibility; subtaskMode?: 'independent' | 'nested'; customCardFields?: Record<string, boolean>; interactive?: boolean }) => {
+const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactive, dragHandle }: { task: Task; fields?: CardFieldVisibility; subtaskMode?: 'independent' | 'nested'; customCardFields?: Record<string, boolean>; interactive?: boolean; dragHandle?: React.ReactNode }) => {
   const { t } = useTranslation();
   const { approvalsEnabled, featureTogglesReady, setSelectedTask } = useUIContext();
   const { users } = useMemberContext();
@@ -398,15 +398,16 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
             })}
         </div>
       )}
-      {/* Quick-edit buttons: on hover or keyboard focus, and always on touch screens (no hover there). */}
-      <div className="mt-3 flex flex-wrap items-center justify-end gap-1 opacity-100 sm:absolute sm:top-1.5 sm:right-1.5 sm:mt-0 sm:gap-0.5 sm:opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:mt-3 [@media(hover:none)]:opacity-100 transition-opacity">
+      {/* Keep quick edits in their own row: a hybrid pointer or desktop-size mobile viewport must never cover the title. */}
+      <div data-task-quick-actions className="mt-3 flex flex-wrap items-center justify-end gap-1 sm:gap-0.5">
+        {dragHandle && <div className="mr-auto shrink-0">{dragHandle}</div>}
         {(['priority', 'status', 'assignee'] as const).map(type => (
           <div key={type} className="relative">
             <button
               ref={el => { quickBtnRefs.current[type] = el; }}
               onPointerDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); setQuickEdit(quickEdit === type ? null : type); }}
-              className="w-11 h-11 sm:w-6 sm:h-6 [@media(hover:none)]:min-w-11 [@media(hover:none)]:min-h-11 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              className="w-11 h-11 sm:w-6 sm:h-6 [@media(any-pointer:coarse)]:min-w-11 [@media(any-pointer:coarse)]:min-h-11 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               title={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-label={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-expanded={quickEdit === type}

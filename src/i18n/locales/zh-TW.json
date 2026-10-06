@@ -587,7 +587,8 @@
     "qaAdminDesc": "管理 QA 流程與 Bug 自訂欄位，可刪除 Bug；其他功能與一般成員相同。"
   },
   "board": {
-    "touchHint": "左右滑動切換欄位，長按卡片後拖動即可改變狀態。",
+    "touchHint": "左右滑動切換欄位，長按卡片下方的拖曳按鈕後移動，即可改變狀態。",
+    "dragCard": "長按拖曳任務：{{title}}",
     "titleAll": "全部 — 看板",
     "transitionNotAllowed": "此任務尚未經過「{{missingNames}}」，無法移至「{{targetName}}」",
     "cardSettings": "卡片顯示設定",

@@ -19,7 +19,7 @@ import { type CardFieldVisibility } from '@/lib/fieldRegistry';
 import { readBoardDisplay, writeBoardDisplay } from '@/lib/boardDisplay';
 import { useLicense } from '@/context/LicenseContext';
 import { useSprintFlow } from '@/hooks/useSprintFlow';
-import { BookOpen, ChevronDown, ChevronRight, ClipboardList, Search, Plus } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, ClipboardList, GripVertical, Search, Plus } from 'lucide-react';
 import { taskDepartment, type Department } from '@/lib/department';
 import { useUndoStack } from '@/hooks/useUndoStack';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -77,7 +77,22 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
       className={isDragging ? 'opacity-30' : ''}
       style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}
     >
-      <TaskCard task={task} fields={fields} subtaskMode={subtaskMode} customCardFields={customCardFields} interactive={false} />
+      <TaskCard task={task} fields={fields} subtaskMode={subtaskMode} customCardFields={customCardFields} interactive={false}
+        dragHandle={(
+          <button
+            {...attributes}
+            {...listeners}
+            type="button"
+            data-drag-surface
+            aria-label={t('board.dragCard', { title: task.title })}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground cursor-grab active:cursor-grabbing md:hidden [@media(any-pointer:coarse)]:inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            style={{ touchAction: 'none', WebkitTouchCallout: 'none' }}
+            onClick={event => { event.preventDefault(); event.stopPropagation(); }}
+          >
+            <GripVertical size={18} aria-hidden="true" />
+          </button>
+        )}
+      />
     </div>
   );
 }
