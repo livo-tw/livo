@@ -29,6 +29,7 @@ import UpgradePrompt from '@/components/UpgradePrompt';
 import { Field, inputCls } from './shared';
 import SlackActionsSection from './SlackActionsSection';
 import SlackDeliveryChannels from './SlackDeliveryChannels';
+import SlackPersonalMessages from './SlackPersonalMessages';
 
 // The 7 Bot Token Scopes needed for channel posts, DMs and user lookup.
 // These are literal Slack scope identifiers — not translated.
@@ -356,8 +357,11 @@ const SlackCard = () => {
               )}
 
               {/* Each backend uses its real notification settings. */}
-              {!USE_CF_BACKEND ? <SlackDeliveryChannels configured={configured} isDemoMode={isDemoMode}
-                channels={channels} channelsError={channelsError} /> : <Field label={t('integrations.slack.channelPickerLabel')}>
+              {!USE_CF_BACKEND ? <>
+                <SlackDeliveryChannels configured={configured} isDemoMode={isDemoMode}
+                  channels={channels} channelsError={channelsError} />
+                <SlackPersonalMessages configured={configured} isDemoMode={isDemoMode} />
+              </> : <Field label={t('integrations.slack.channelPickerLabel')}>
                 <SearchableSelect
                   className={inputCls}
                   value={channelValue}

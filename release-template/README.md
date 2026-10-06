@@ -134,6 +134,11 @@ docker compose logs -f
 `docker/` 執行 `docker compose up -d` 重新載入。還是 `localhost` 時，邀請信會
 改用管理員當下開著 LIVO 的網址。
 
+**管理員設定的密碼只用一次**：超級管理員新增成員時輸入的密碼、`docker/.env` 的
+`MEMBER_DEFAULT_PASSWORD`，以及「重設密碼」或「啟用帳號」給的臨時密碼，都只用來
+第一次登入：成員登入後要先改成自己的密碼才能使用 LIVO（超級管理員重設自己的密碼
+不受影響）。成員透過邀請信設定的密碼不需要再改。
+
 ### 知識庫文件匯入（選用，預設關閉）
 
 知識庫的「匯入文件」（Word `.docx`、Markdown `.md`、PDF，含掃描檔 OCR）需要另一個私有解析服務
@@ -583,7 +588,7 @@ ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
 
 同一條產線之後新增的專案會沿用該產線的設定；同一卡片與頻道只排入一次。發送前再次檢查專案、工作區與頻道，停用或移出範圍的卡片會略過。`backup_settings.task_notify_types` 控制 `task_created`、`status_changed`、`assignee_changed`、`priority_changed`、`comment_added`；標題、到期日及驗收人的變更需加入 `task_updated`。
 
-在 `docker/.env` 的 `COMPOSE_PROFILES` 加入 `slack-delivery`（保留其他已使用的 profile），確認已有 `SLACK_INTERNAL_SECRET`，再執行上述 Compose 啟動指令。`livo-slack-delivery` 每五秒呼叫內部發送服務，無須開放新的對外連接埠。若只用通知，不必啟用 Socket Mode；建卡及留言才需要 App Token 與 relay。
+在 `docker/.env` 的 `COMPOSE_PROFILES` 加入 `slack-delivery`（保留其他已使用的 profile），確認已有 `SLACK_INTERNAL_SECRET`，再執行上述 Compose 啟動指令。啟用知識庫處理器時，安裝程式會把 `knowledge-processor` 加進這個清單，不會蓋掉 `slack-delivery`。個人私訊的開關與收件名單在「服務整合 → Slack → 個人 Slack 私訊」設定；這份通知設定（`system_settings.slack_delivery`）只有超級管理員能改。`livo-slack-delivery` 每五秒呼叫內部發送服務，無須開放新的對外連接埠。若只用通知，不必啟用 Socket Mode；建卡及留言才需要 App Token 與 relay。
 
 每張卡在每個頻道使用 **60 分鐘固定時間窗**：從該串第一則訊息起算，未滿 60 分鐘回覆同串，滿 60 分鐘開新訊息；中間的回覆不延長時間。通知以多行顯示卡號、標題、操作者、變更或留言內容，附 LIVO 連結且不展開網頁預覽。啟用後，舊版前端的任務通知請求會由資料庫佇列接手；Slack 來源留言不回送到來源頻道。
 

@@ -551,9 +551,19 @@ function Remove-KnowledgeProcessor { # 停掉先前留下的處理器容器，�
   $env:COMPOSE_PROFILES = 'knowledge-processor'
   try { Invoke-Compose rm -s -f knowledge-processor *> $null } finally { $env:COMPOSE_PROFILES = $previousProfiles }
 }
+# 加入一個 profile，保留 docker\.env 已設定的 COMPOSE_PROFILES（例如 slack-delivery）。
+# 直接設定會蓋掉 .env 的值，docker compose up 就不會啟動那些服務。（與 install.sh 相同）
+function Get-ComposeProfilesWith([string]$Name) {
+  $current = $env:COMPOSE_PROFILES
+  if (-not $current) { $current = Get-DotenvValue 'COMPOSE_PROFILES' }
+  $list = @()
+  if ($current) { $list = @($current.Trim().Trim('"', "'") -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+  if ($list -notcontains $Name) { $list += $Name }
+  return ($list -join ',')
+}
 if (Test-KnowledgeProcessorEnabled) {
   Say '  建置知識庫文件匯入處理器（選用，KNOWLEDGE_PROCESSOR_ENABLED=1）...'
-  $env:COMPOSE_PROFILES = 'knowledge-processor'
+  $env:COMPOSE_PROFILES = Get-ComposeProfilesWith 'knowledge-processor'
   Invoke-Compose build knowledge-processor
   if ($LASTEXITCODE -eq 0) {
     Ok '知識庫文件匯入處理器已建置'
@@ -1014,7 +1024,7 @@ Say '  常用指令（在 docker\ 目錄執行）：'
 Say '  停止：docker compose -f docker-compose.yml -f compose.frontend.yml down'
 Say '  啟動：docker compose -f docker-compose.yml -f compose.frontend.yml up -d'
 Say '  記錄：docker compose logs -f'
-if ($env:COMPOSE_PROFILES -eq 'knowledge-processor') {
+if (@(($env:COMPOSE_PROFILES + '') -split ',') -contains 'knowledge-processor') {
   Say '  （已啟用知識庫文件匯入處理器：手動啟動／停止時在 docker compose 後加 --profile knowledge-processor）'
 }
 Say ''

@@ -6,7 +6,8 @@ import { changeOwnPassword } from '@/lib/changePassword';
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary';
 
-const ChangePasswordForm = () => {
+/** onChanged runs after a successful change (the forced first-sign-in page uses it). */
+const ChangePasswordForm = ({ onChanged }: { onChanged?: () => void } = {}) => {
   const { t } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -42,6 +43,7 @@ const ChangePasswordForm = () => {
     // On the Cloudflare backend the returned fresh session already replaced
     // the stored one (all other devices are signed out).
     toast.success(t('settings.passwordChanged'));
+    onChanged?.();
   };
 
   return (

@@ -3,6 +3,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { appDeepLinkSearch } from '@/lib/appDeepLink';
+import { passwordChangeRequired } from '@/lib/passwordChangeRequired';
+import RequiredPasswordChange from '@/components/RequiredPasswordChange';
 import { useState, useEffect, lazy, Suspense } from "react";
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from "@/integrations/supabase/client";
@@ -46,6 +48,8 @@ const IS_LOCAL = import.meta.env.VITE_LOCAL_MODE === 'true';
 const ProtectedRoute = ({ session, children }: { session: Session | null; children: React.ReactNode }) => {
   const location = useLocation();
   if (!session) return <Navigate to={`/auth${appDeepLinkSearch(location.search)}`} replace />;
+  // An admin-set password is replaced before the app opens (self-host).
+  if (passwordChangeRequired(session)) return <RequiredPasswordChange />;
   return <>{children}</>;
 };
 

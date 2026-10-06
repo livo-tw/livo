@@ -485,10 +485,22 @@ fi
 remove_knowledge_processor() { # 停掉先前留下的處理器容器，釋放記憶體
   (export COMPOSE_PROFILES=knowledge-processor; dc rm -s -f knowledge-processor) </dev/null >/dev/null 2>&1 || :
 }
+# 加入一個 profile，保留 docker/.env 已設定的 COMPOSE_PROFILES（例如 slack-delivery）。
+# 直接 export 會蓋掉 .env 的值，docker compose up 就不會啟動那些服務。
+with_profile() { # $1=profile → 印出合併後的清單
+  _profiles=${COMPOSE_PROFILES-}
+  [ -n "$_profiles" ] || _profiles=$(env_var COMPOSE_PROFILES | tr -d "\"'")
+  case ",$_profiles," in
+    *",$1,"*) printf '%s' "$_profiles" ;;
+    ,,) printf '%s' "$1" ;;
+    *) printf '%s,%s' "$_profiles" "$1" ;;
+  esac
+}
 if knowledge_processor_enabled; then
   say "  建置知識庫文件匯入處理器（選用，KNOWLEDGE_PROCESSOR_ENABLED=1）..."
   if (export COMPOSE_PROFILES=knowledge-processor; dc build knowledge-processor) </dev/null; then
-    export COMPOSE_PROFILES=knowledge-processor
+    COMPOSE_PROFILES=$(with_profile knowledge-processor)
+    export COMPOSE_PROFILES
     say "  [OK] 知識庫文件匯入處理器已建置"
   else
     clear_knowledge_processor_url
@@ -966,7 +978,7 @@ say "  常用指令（在 docker/ 目錄執行）："
 say "  停止：docker compose -f docker-compose.yml -f compose.frontend.yml down"
 say "  啟動：docker compose -f docker-compose.yml -f compose.frontend.yml up -d"
 say "  記錄：docker compose logs -f"
-if [ "${COMPOSE_PROFILES:-}" = "knowledge-processor" ]; then
+if case ",${COMPOSE_PROFILES:-}," in *,knowledge-processor,*) true ;; *) false ;; esac; then
   say "  （已啟用知識庫文件匯入處理器：手動啟動／停止時在 docker compose 後加 --profile knowledge-processor）"
 fi
 say ""

@@ -133,6 +133,16 @@ export class LoginError extends Error {
 
 export type AuthUserIndex = Map<string, { id: string; email: string }>;
 
+/** GoTrue user_metadata key: an admin chose or was shown this login's password, so
+ *  the app asks for a new one at the next sign-in. The member's own password
+ *  change (or an invitation link) clears it. src/lib/passwordChangeRequired.ts reads it. */
+export const PASSWORD_CHANGE_FLAG = 'livo_password_change_required';
+
+/** GoTrue attributes for a password an admin typed, configured or was shown. */
+export function adminSetPassword(password: string): { password: string; user_metadata: Record<string, boolean> } {
+  return { password, user_metadata: { [PASSWORD_CHANGE_FLAG]: true } };
+}
+
 /** Optional self-host initial password, restricted to an interactive super_admin. */
 export function configuredInitialPassword(callerRole: string, token: string): string | null {
   if (callerRole !== 'super_admin' || isApiKeyToken(token)) return null;
@@ -189,7 +199,7 @@ export async function prepareLogin(
     const { data: linked } = await admin.from('members').select('id').eq('auth_id', existing.id).limit(1);
     if (linked && linked.length > 0) throw new LoginError('email_taken', '此 Email 已有登入帳號');
     const { error } = await admin.auth.admin.updateUserById(existing.id, {
-      password: tempPassword || unusablePassword(),
+      ...(tempPassword ? adminSetPassword(tempPassword) : { password: unusablePassword() }),
       email_confirm: true,
       ban_duration: 'none',
     });
@@ -200,7 +210,7 @@ export async function prepareLogin(
     email,
     password: tempPassword || unusablePassword(),
     email_confirm: true,
-    user_metadata: { full_name: to.name },
+    user_metadata: { full_name: to.name, ...(tempPassword ? { [PASSWORD_CHANGE_FLAG]: true } : {}) },
   });
   if (error) {
     if (/already|registered|exists/i.test(error.message || '')) throw new LoginError('email_taken', '此 Email 已有登入帳號');
@@ -288,7 +298,7 @@ export async function deliverLogin(
   }
   // Could not send: issue a temporary password so the person is not locked out.
   const tempPassword = generateTempPassword();
-  const { error } = await admin.auth.admin.updateUserById(login.authUserId, { password: tempPassword });
+  const { error } = await admin.auth.admin.updateUserById(login.authUserId, adminSetPassword(tempPassword));
   if (error) throw error;
   return { method: 'temp_password', tempPassword, inviteFailed: true };
 }

@@ -15,6 +15,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { USE_CF_BACKEND } from './apiBase';
 import { IS_DEMO_PRO } from './demoMode';
+import { PASSWORD_CHANGE_FLAG } from './passwordChangeRequired';
 import i18n from '@/i18n';
 
 export interface ChangePasswordError {
@@ -31,6 +32,10 @@ export async function changeOwnPassword(
   // Mock client active — no backend to change a password on.
   if (IS_DEMO_PRO || (!USE_CF_BACKEND && !SUPABASE_URL)) {
     return { error: { message: i18n.t('settings.passwordDemoBlocked'), code: 'demo_blocked' } };
+  }
+
+  if (newPassword === currentPassword) {
+    return { error: { message: i18n.t('settings.passwordSameAsCurrent'), code: 'same_password' } };
   }
 
   if (USE_CF_BACKEND) {
@@ -61,7 +66,8 @@ export async function changeOwnPassword(
       },
     };
   }
-  const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+  // One call: the new password and clearing an admin-set password's flag.
+  const { error: updateError } = await supabase.auth.updateUser({ password: newPassword, data: { [PASSWORD_CHANGE_FLAG]: false } });
   if (updateError) return { error: { message: updateError.message } };
   return { error: null };
 }

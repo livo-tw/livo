@@ -13,6 +13,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.98.0";
 import { isPlaceholderEmail, isValidEmail, normalizeEmail } from "./jiraCsv.ts";
 import {
   API_KEY_FORBIDDEN,
+  adminSetPassword,
   configuredInitialPassword,
   deliverLogin,
   discardLogin,
@@ -21,6 +22,7 @@ import {
   LoginError,
   prepareLogin,
   resolveLoginChannel,
+  PASSWORD_CHANGE_FLAG,
   unusablePassword,
 } from "./memberAccounts.ts";
 
@@ -161,10 +163,11 @@ Deno.serve(async (req) => {
 
       // Use the admin-supplied password when given; otherwise a random one
       // nobody knows (the member signs in after a reset or an invitation).
-      const newPassword =
-        typeof password === "string" && password.length > 0
-          ? password
-          : (configuredInitialPassword(callerRole, token) || unusablePassword());
+      const typedPassword = typeof password === "string" && password.length > 0 ? password : null;
+      const configuredPassword = typedPassword ? null : configuredInitialPassword(callerRole, token);
+      const newPassword = typedPassword || configuredPassword || unusablePassword();
+      // A password the admin knows must be replaced at the member's first sign-in.
+      const adminKnowsPassword = !!(typedPassword || configuredPassword);
 
       // Find-or-create the auth user (scan ALL pages, not just the first).
       let authUserId: string;
@@ -185,7 +188,7 @@ Deno.serve(async (req) => {
           return json({ error: "email_taken", message: "這個 Email 的登入帳號屬於另一位成員" }, 409);
         }
         const { error: adoptErr } = await supabaseAdmin.auth.admin.updateUserById(existingAuth.id, {
-          password: newPassword,
+          ...(adminKnowsPassword ? adminSetPassword(newPassword) : { password: newPassword }),
           email_confirm: true,
           ban_duration: "none",
         });
@@ -199,7 +202,7 @@ Deno.serve(async (req) => {
             email: emailStr,
             password: newPassword,
             email_confirm: true,
-            user_metadata: { full_name: nameStr },
+            user_metadata: { full_name: nameStr, ...(adminKnowsPassword ? { [PASSWORD_CHANGE_FLAG]: true } : {}) },
           });
 
         if (authCreateErr) {
@@ -384,10 +387,11 @@ Deno.serve(async (req) => {
           }
         }
         // GoTrue invalidates the user's refresh tokens on password update, so
-        // whoever held the old credentials is locked out.
-        const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
-          password: newPasswordStr,
-        });
+        // whoever held the old credentials is locked out. A password set for
+        // someone else is temporary: they choose their own at the next sign-in.
+        const ownLogin = authUser.id === callerAuth.id;
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id,
+          ownLogin ? { password: newPasswordStr } : adminSetPassword(newPasswordStr));
         if (error) {
           return json({ error: error.message }, 400);
         }
@@ -408,6 +412,7 @@ Deno.serve(async (req) => {
             email: member.email,
             password: newPasswordStr,
             email_confirm: true,
+            user_metadata: { [PASSWORD_CHANGE_FLAG]: true },
           });
         if (createErr) {
           return json({ error: createErr.message }, 400);

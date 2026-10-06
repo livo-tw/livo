@@ -464,7 +464,9 @@
     "unknownAccountNotify": "Unknown account login attempt: {{email}}. Please verify if this member should be added.",
     "orTryDemo": "or just explore",
     "oneClickDemo": "One-click demo (no signup)",
-    "demoRealtimeHint": "Shared demo · try multi-user live collaboration · resets hourly"
+    "demoRealtimeHint": "Shared demo · try multi-user live collaboration · resets hourly",
+    "passwordChangeRequiredTitle": "Choose your own password",
+    "passwordChangeRequiredBody": "An admin set the password for this account. Enter it, then choose a new password only you know. LIVO opens once it is changed."
   },
   "activity": {
     "login": "Signed in",
@@ -1613,7 +1615,8 @@
       "noActions": "No actions from Slack yet.",
       "actionsLoadFailed": "Could not load the actions taken from Slack."
     },
-    "selfHostScheduledPending": "The self-hosted server does not send the Slack daily digest or automatic reports yet. Your settings are saved and will apply once it does."
+    "selfHostScheduledPending": "The self-hosted server does not send the Slack daily digest or automatic reports yet. Your settings are saved and will apply once it does.",
+    "passwordSameAsCurrent": "The new password must differ from the current one"
   },
   "teamManage": {
     "title": "Team Management",
@@ -1813,7 +1816,25 @@
       "guideStep4": "In the channel that should receive notifications, type /invite @your-bot to add the bot.",
       "guideOpenApps": "Open Slack Apps dashboard",
       "disconnectTitle": "Disconnect Slack?",
-      "disconnectConfirm": "Task notices, daily digests, automatic reports and using LIVO from Slack stop. Members' Slack mappings are kept, and you can connect again later."
+      "disconnectConfirm": "Task notices, daily digests, automatic reports and using LIVO from Slack stop. Members' Slack mappings are kept, and you can connect again later.",
+      "dm": {
+        "title": "Personal Slack messages",
+        "enable": "Send personal messages (assigned, made reviewer, your turn, bug owner and similar)",
+        "scope": "Recipients",
+        "scopeAll": "Every member linked to Slack",
+        "scopeListed": "Only the members selected below",
+        "search": "Search members",
+        "noMatch": "No matching member",
+        "selectedCount": "{{count}} selected",
+        "emptyList": "No member selected. Select at least one, switch back to every linked member, or turn personal messages off.",
+        "hint": "Only members linked to Slack who can see the task or bug in LIVO receive them.",
+        "deliveryDisabled": "Slack notifications are off. These settings apply once notifications are on.",
+        "missingSettings": "Slack notifications are not set up yet. Set them up first.",
+        "loadError": "Could not read the current personal message settings. Reload and try again.",
+        "save": "Save personal message settings",
+        "saving": "Saving…",
+        "saved": "Personal message settings saved"
+      }
     },
     "emailNotify": {
       "title": "Email Notifications (Resend)",

@@ -7,6 +7,7 @@ vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: ()
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: vi.fn(), ConfirmDialog: null as null }) }));
 vi.mock('@/components/UpgradePrompt', () => ({ default: (): null => null }));
 vi.mock('@/components/integrations/SlackActionsSection', () => ({ default: (): null => null }));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as unknown[], refreshUsers: async () => {} }) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {
   auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: 'example-token' } } })) },
@@ -41,7 +42,7 @@ describe('Slack integration channel pickers across backends', () => {
     await waitFor(() => expect(qa.disabled).toBe(false));
     expect(qa.value).toBe('CQA');
     expect((screen.getByLabelText('integrations.slack.channelPickerLabel') as HTMLSelectElement).value).toBe('CTASK');
-    expect(state.tables).toEqual(['system_settings']);
+    expect([...new Set(state.tables)]).toEqual(['system_settings']); // the channel pickers and the personal message settings
     expect(screen.queryByRole('option', { name: '#old-notify' })).toBeNull();
   });
   it('keeps the existing Cloudflare channel setting and does not offer a Docker-only QA setting', async () => {

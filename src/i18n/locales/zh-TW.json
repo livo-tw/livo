@@ -464,7 +464,9 @@
     "unknownAccountNotify": "未知帳號嘗試登入：{{email}}，請確認是否需要新增此成員。",
     "orTryDemo": "或直接體驗",
     "oneClickDemo": "一鍵進入體驗環境（免輸入）",
-    "demoRealtimeHint": "共用示範環境・可多人同時操作看即時協作・每小時自動重置"
+    "demoRealtimeHint": "共用示範環境・可多人同時操作看即時協作・每小時自動重置",
+    "passwordChangeRequiredTitle": "請先設定你自己的密碼",
+    "passwordChangeRequiredBody": "這個帳號的密碼是管理員設定的。請輸入目前的密碼，再設定一組只有你知道的新密碼，設定完成後就會進入 LIVO。"
   },
   "activity": {
     "login": "登入系統",
@@ -1551,7 +1553,8 @@
       "noActions": "還沒有從 Slack 進行的操作。",
       "actionsLoadFailed": "無法讀取從 Slack 進行的操作。"
     },
-    "selfHostScheduledPending": "自架版目前還不會發送 Slack 每日摘要與自動報告；設定會先保存，支援後就會依設定發送。"
+    "selfHostScheduledPending": "自架版目前還不會發送 Slack 每日摘要與自動報告；設定會先保存，支援後就會依設定發送。",
+    "passwordSameAsCurrent": "新密碼不能和目前的密碼相同"
   },
   "teamManage": {
     "title": "團隊管理",
@@ -1751,7 +1754,25 @@
       "guideStep4": "在要接收通知的頻道輸入 /invite @你的bot，把 bot 邀請進頻道。",
       "guideOpenApps": "開啟 Slack Apps 管理頁",
       "disconnectTitle": "中斷 Slack 連線？",
-      "disconnectConfirm": "中斷後，任務通知、每日摘要、自動報告與在 Slack 操作 LIVO 都會停止，成員的 Slack 對應會保留。之後可以重新連線。"
+      "disconnectConfirm": "中斷後，任務通知、每日摘要、自動報告與在 Slack 操作 LIVO 都會停止，成員的 Slack 對應會保留。之後可以重新連線。",
+      "dm": {
+        "title": "個人 Slack 私訊",
+        "enable": "傳送個人私訊（被指派、成為驗收人、輪到自己處理、Bug 負責人等）",
+        "scope": "收件對象",
+        "scopeAll": "所有已連結 Slack 的成員",
+        "scopeListed": "只傳給指定的成員",
+        "search": "搜尋成員",
+        "noMatch": "找不到符合的成員",
+        "selectedCount": "已選 {{count}} 人",
+        "emptyList": "還沒有選任何成員；請至少選一人，或改回「所有已連結 Slack 的成員」，或關閉個人私訊。",
+        "hint": "只有已連結 Slack、而且在 LIVO 看得到該任務或 Bug 的成員會收到。",
+        "deliveryDisabled": "Slack 通知目前整體停用；這裡的設定要等通知啟用後才會生效。",
+        "missingSettings": "尚未設定 Slack 通知，請先完成 Slack 通知的設定。",
+        "loadError": "無法讀取目前的私訊設定，請重新載入後再試。",
+        "save": "儲存私訊設定",
+        "saving": "儲存中…",
+        "saved": "已儲存私訊設定"
+      }
     },
     "emailNotify": {
       "title": "Email 通知（Resend）",

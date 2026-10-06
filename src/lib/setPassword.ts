@@ -12,6 +12,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { USE_CF_BACKEND } from './apiBase';
 import { IS_DEMO_PRO } from './demoMode';
+import { PASSWORD_CHANGE_FLAG } from './passwordChangeRequired';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || '';
 
@@ -86,6 +87,7 @@ export async function setPasswordFromLink(
     if (error) return { code: 'invalid_token' };
     state.verified = true;
   }
-  const { error } = await supabase.auth.updateUser({ password });
+  // The member chose this password, so an admin-set password's flag no longer applies.
+  const { error } = await supabase.auth.updateUser({ password, data: { [PASSWORD_CHANGE_FLAG]: false } });
   return error ? { code: 'unknown', message: error.message } : null;
 }

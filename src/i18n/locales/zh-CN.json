@@ -464,7 +464,9 @@
     "unknownAccountNotify": "未知账号尝试登录：{{email}}，请确认是否需要新增此成员。",
     "orTryDemo": "或直接体验",
     "oneClickDemo": "一键进入体验环境（免输入）",
-    "demoRealtimeHint": "共用示范环境・可多人同时操作看实时协作・每小时自动重置"
+    "demoRealtimeHint": "共用示范环境・可多人同时操作看实时协作・每小时自动重置",
+    "passwordChangeRequiredTitle": "请先设置你自己的密码",
+    "passwordChangeRequiredBody": "这个账号的密码是管理员设置的。请输入当前密码，再设置一组只有你知道的新密码，设置完成后就会进入 LIVO。"
   },
   "activity": {
     "login": "登入系统",
@@ -1551,7 +1553,8 @@
       "noActions": "还没有从 Slack 进行的操作。",
       "actionsLoadFailed": "无法读取从 Slack 进行的操作。"
     },
-    "selfHostScheduledPending": "自架版目前还不会发送 Slack 每日摘要与自动报告；设置会先保存，支持后就会依设置发送。"
+    "selfHostScheduledPending": "自架版目前还不会发送 Slack 每日摘要与自动报告；设置会先保存，支持后就会依设置发送。",
+    "passwordSameAsCurrent": "新密码不能与当前密码相同"
   },
   "teamManage": {
     "title": "团队管理",
@@ -1751,7 +1754,25 @@
       "guideStep4": "在要接收通知的频道输入 /invite @你的bot，把 bot 邀请进频道。",
       "guideOpenApps": "开启 Slack Apps 管理页",
       "disconnectTitle": "断开 Slack 连接？",
-      "disconnectConfirm": "断开后，任务通知、每日摘要、自动报告与在 Slack 操作 LIVO 都会停止，成员的 Slack 对应会保留。之后可以重新连接。"
+      "disconnectConfirm": "断开后，任务通知、每日摘要、自动报告与在 Slack 操作 LIVO 都会停止，成员的 Slack 对应会保留。之后可以重新连接。",
+      "dm": {
+        "title": "个人 Slack 私信",
+        "enable": "发送个人私信（被指派、成为验收人、轮到自己处理、Bug 负责人等）",
+        "scope": "收件对象",
+        "scopeAll": "所有已连接 Slack 的成员",
+        "scopeListed": "只发给指定的成员",
+        "search": "搜索成员",
+        "noMatch": "找不到符合的成员",
+        "selectedCount": "已选 {{count}} 人",
+        "emptyList": "还没有选择任何成员；请至少选一人，或改回「所有已连接 Slack 的成员」，或关闭个人私信。",
+        "hint": "只有已连接 Slack、并且在 LIVO 看得到该任务或 Bug 的成员会收到。",
+        "deliveryDisabled": "Slack 通知当前整体停用；这里的设置要等通知启用后才会生效。",
+        "missingSettings": "尚未设置 Slack 通知，请先完成 Slack 通知的设置。",
+        "loadError": "无法读取当前的私信设置，请重新加载后重试。",
+        "save": "保存私信设置",
+        "saving": "保存中…",
+        "saved": "已保存私信设置"
+      }
     },
     "emailNotify": {
       "title": "Email 通知（Resend）",
