@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => true }));
+vi.mock('@/hooks/useSidebarOrder', () => ({ useSidebarOrder: () => ({ lineOrder: [] as string[], projectOrder: [] as string[], loading: false, saving: false, error: null as string | null, save: async () => true }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => state.ui }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: 'example-member', currentMember: { role: 'admin' } as User,
   permissions: { canEditProject: true, canDeleteProject: true, canViewMemberList: false, canManageMembers: false } }) }));
@@ -99,4 +100,19 @@ describe('mobile project dialogs', () => {
     expect(state.navigated).not.toHaveBeenCalled();
     expect(state.deleted).not.toHaveBeenCalled();
   });
+});
+
+it('keeps the mobile navigation usable after cancelling its nested personal ordering dialog', async () => {
+  render(<ProjectNavigation />);
+  fireEvent.click(screen.getByRole('button', { name: 'sidebar.orderAction' }));
+  const ordering = await screen.findByRole('dialog', { name: 'sidebar.orderTitle' });
+  expect(state.navigated).not.toHaveBeenCalled();
+  const down = within(ordering).getAllByRole('button', { name: 'sidebar.orderMoveDown' });
+  expect(down.every(button => button.hasAttribute('disabled'))).toBe(true);
+  fireEvent.click(within(ordering).getByRole('button', { name: 'common.cancel' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'sidebar.orderTitle' })).not.toBeInTheDocument());
+  const sidebar = screen.getByRole('dialog', { name: 'Example sidebar' });
+  const project = within(sidebar).getByRole('button', { name: /Example project/ });
+  expect(getComputedStyle(project).pointerEvents).not.toBe('none');
+  expect(state.navigated).not.toHaveBeenCalled();
 });

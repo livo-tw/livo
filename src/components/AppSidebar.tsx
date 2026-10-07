@@ -1,7 +1,7 @@
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug, Package, LayoutDashboard } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderOpen, Settings, MoreHorizontal, Pencil, Trash2, Users, Wrench, History, MessageCircle, ClipboardCheck, Bug, Package, LayoutDashboard, ArrowUpDown } from 'lucide-react';
 import { useAuthContext } from '@/context/AuthContext';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -14,6 +14,9 @@ import { useConfirmDialog } from '@/components/ConfirmDialog';
 import StandupLaunchDialog from '@/components/StandupLaunchDialog';
 import UpgradePrompt from '@/components/UpgradePrompt';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useSidebarOrder } from '@/hooks/useSidebarOrder';
+import { sortSidebarItems } from '@/lib/sidebarOrder';
+import SidebarOrderDialog from '@/components/project/SidebarOrderDialog';
 
 interface AppSidebarProps {
   onNavigate?: () => void;
@@ -21,20 +24,25 @@ interface AppSidebarProps {
 
 const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const isMobile = useIsMobile();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const getProjectColor = useProjectColor();
   const { permissions, currentMember, currentMemberId } = useAuthContext();
   const { approvalsEnabled, featureToggles, featureTogglesReady, setCurrentView, currentView, setShowCreateProject, setEditingProject, setSelectedTask, setStandupMode } = useUIContext();
   const { selectedProjectId, setSelectedProjectId, selectedLineId, setSelectedLineId, allProjects, productLines, deleteProjectInDb } = useProjectContext();
   const { allTasks } = useTaskContext();
+  const sidebarOrder = useSidebarOrder(currentMemberId ?? '');
+  const orderedProductLines = useMemo(() => sortSidebarItems(productLines, sidebarOrder.lineOrder, i18n?.language), [productLines, sidebarOrder.lineOrder, i18n?.language]);
   const { hasFeature } = useLicense();
   const [expandedLines, setExpandedLines] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
 
   const [showStandupLaunch, setShowStandupLaunch] = useState(false);
+  const [showSidebarOrder, setShowSidebarOrder] = useState(false);
   const [showStandupUpgrade, setShowStandupUpgrade] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { confirm, ConfirmDialog } = useConfirmDialog();
+
+  useEffect(() => { setShowSidebarOrder(false); }, [currentMemberId]);
 
   useEffect(() => {
     if (productLines.length > 0 && expandedLines.length === 0) {
@@ -212,11 +220,16 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
       <div className="flex-1 min-h-[7rem] md:overflow-y-auto px-2 py-1">
         <div className="px-3 mt-2 mb-1.5 flex items-center gap-1.5">
           <div className="w-1 h-3 rounded-full bg-sidebar-foreground/30" />
-          <span className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projects')}</span>
+          <span className="flex-1 text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projects')}</span>
+          {currentMemberId && <button type="button" onClick={() => { setContextMenu(null); setShowSidebarOrder(true); }} disabled={sidebarOrder.loading}
+            className="inline-flex min-h-11 items-center justify-center gap-1 rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 hover:bg-sidebar-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            aria-label={t('sidebar.orderAction')} title={t('sidebar.orderAction')}>
+            <ArrowUpDown size={14} aria-hidden="true" />{t('sidebar.orderAction')}
+          </button>}
         </div>
 
-        {productLines.map(line => {
-          const lineProjects = allProjects.filter(p => p.lineId === line.id && !p.isArchived);
+        {orderedProductLines.map(line => {
+          const lineProjects = sortSidebarItems(allProjects.filter(p => p.lineId === line.id && !p.isArchived), sidebarOrder.projectOrder, i18n?.language);
           const isExpanded = expandedLines.includes(line.id);
 
           return (
@@ -409,6 +422,10 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     </nav>
 
     {/* Modals */}
+    {currentMemberId && <SidebarOrderDialog key={currentMemberId} open={showSidebarOrder} onOpenChange={setShowSidebarOrder}
+      lines={productLines} projects={allProjects.filter(project => !project.isArchived)}
+      lineOrder={sidebarOrder.lineOrder} projectOrder={sidebarOrder.projectOrder} loading={sidebarOrder.loading} saving={sidebarOrder.saving}
+      error={sidebarOrder.error} onSave={sidebarOrder.save} />}
     <StandupLaunchDialog
       open={showStandupLaunch}
       onOpenChange={setShowStandupLaunch}
