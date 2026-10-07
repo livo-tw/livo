@@ -198,7 +198,7 @@ const BacklogView = () => {
   }, [setAllTasks, updateTaskInDb]);
 
   /* ── dnd-kit ── */
-  const sensors = useBoardSensors();
+  const sensors = useBoardSensors(undefined, { touchDrag: 'card' });
 
   const activeTask = activeId ? allTasks.find(t => t.id === activeId) ?? null : null;
 

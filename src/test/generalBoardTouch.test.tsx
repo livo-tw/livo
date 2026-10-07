@@ -113,11 +113,14 @@ describe('general task board touch interaction', () => {
     expect(state.open).not.toHaveBeenCalled(); expect(overlayVisible()).toBe(false);
   });
 
-  it('keeps whole-card long press working outside the edit controls', async () => {
-    mount(); const text = title(); start(text); hold();
-    expect(overlayVisible()).toBe(true);
-    await act(async () => { fireEvent.touchCancel(text, { touches: [], changedTouches: [point()] }); });
+  it.each([1, 4, 7])('never captures a slow vertical card swipe of %s px after the handle activation delay', (distance) => {
+    mount(); const text = title(); start(text);
+    expect(move(text, 70, 100 + distance)).toBe(true);
+    act(() => { vi.advanceTimersByTime(700); });
+    expect(move(text, 70, 100 + distance)).toBe(true);
+    end(text, 70, 100 + distance);
     expect(state.update).not.toHaveBeenCalled(); expect(overlayVisible()).toBe(false);
+    fireEvent.click(text); expect(state.open).toHaveBeenCalledExactlyOnceWith(task);
   });
 
   it('keeps quick edits separate from a drag, including holding an icon nested in the action button', () => {

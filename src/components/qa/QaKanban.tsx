@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { toast } from 'sonner';
-import { Inbox } from 'lucide-react';
+import { GripVertical, Inbox } from 'lucide-react';
 import { DndContext, DragOverlay, useDraggable, useDroppable, closestCenter, pointerWithin, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
 import { useBoardSensors } from '@/hooks/useBoardSensors';
 import QaIssueCard from './QaIssueCard';
@@ -229,7 +229,7 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
   const { setNodeRef, isOver } = useDroppable({ id: `qa-column-${state}` });
   const blockedDrop = !!active && getQaDropIntent(active, actor, states, state).kind === 'blocked';
   return <section ref={setNodeRef} className={`flex min-h-[280px] w-[min(82vw,300px)] min-w-0 shrink-0 snap-start flex-col rounded-lg border bg-background transition-colors md:w-[280px] md:flex-1 md:min-w-[250px] ${isOver ? blockedDrop ? 'border-destructive bg-destructive/5' : 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-border/80'}`} aria-label={label}>
-    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[max(240px,calc(100dvh-280px))] flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-2.5">
+    <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[max(240px,calc(100dvh-280px))] flex-1 space-y-3 overflow-y-auto overscroll-y-auto md:overscroll-y-contain p-2.5">
     {error !== null && <div className="mb-3 space-y-2"><QaFailure error={error} /><button className={qaButton} onClick={() => void load(attemptedOffset.current)}>{t('qa.refresh')}</button></div>}
     <ul className="space-y-2.5">{issues.map(issue => <QaDraggableCard key={issue.id} issue={issue} actor={actor} onOpen={onOpen} disabled={disabled}
       stateLabel={grouped ? getQaStateLabel(workflow,issue.state,state => t(`qa.state.${state}`)) : undefined} />)}</ul>
@@ -241,11 +241,21 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
 }
 
 function QaDraggableCard({ issue, actor, onOpen, stateLabel, disabled }: { issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void; stateLabel?: string; disabled: boolean }) {
+  const { t } = useTranslation();
   // Permission is explained visibly on drop; silently disabling drag looks like a broken board.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: issue.id, data: { issue }, disabled });
   return <li ref={setNodeRef} {...attributes} {...listeners} data-drag-surface aria-label={issue.title} className={`select-none rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary ${isDragging ? 'opacity-30' : ''}`}
     style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}
     onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter') { event.preventDefault(); onOpen(issue.id); } else listeners?.onKeyDown?.(event); }}>
-    <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} />
+    <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} dragHandle={(
+      <button {...attributes} {...listeners} type="button" data-drag-surface data-board-drag-handle
+        aria-label={t('board.dragCard', { title: issue.title })}
+        disabled={disabled}
+        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground cursor-grab active:cursor-grabbing md:hidden [@media(any-pointer:coarse)]:inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
+        style={{ touchAction: 'none', WebkitTouchCallout: 'none' }}
+        onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
+        <GripVertical size={18} aria-hidden="true" />
+      </button>
+    )} />
   </li>;
 }

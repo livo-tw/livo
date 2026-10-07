@@ -588,7 +588,7 @@
   },
   "board": {
     "touchHint": "左右滑動切換欄位，長按卡片下方的拖曳按鈕後移動，即可改變狀態。",
-    "dragCard": "長按拖曳任務：{{title}}",
+    "dragCard": "長按拖曳卡片：{{title}}",
     "titleAll": "全部 — 看板",
     "transitionNotAllowed": "此任務尚未經過「{{missingNames}}」，無法移至「{{targetName}}」",
     "cardSettings": "卡片顯示設定",
@@ -3237,7 +3237,7 @@
     "openBug": "開啟 Bug",
     "loadMore": "載入更多",
     "boardEmpty": "此階段沒有 Bug。",
-    "boardHint": "點卡片查看與編輯；手機左右滑動切換欄位，長按卡片後拖動可切換狀態。",
+    "boardHint": "點卡片開啟查看與編輯；上下滑動捲動、左右滑動切換欄位。長按右上角的拖曳按鈕再移動卡片，即可切換狀態。",
     "workflowTitle": "QA 流程設定",
     "workflowHint": "公司共用一套流程。可調整欄位名稱與順序；每張 Bug 保留自己的狀態，驗證與部署紀錄分開保存。",
     "workflowLabelHint": "名稱最多 40 字且不可重複；留白時使用預設翻譯。",

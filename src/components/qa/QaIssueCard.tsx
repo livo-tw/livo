@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { ArrowRight, CalendarDays, Hand, PauseCircle, Server, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -34,9 +35,9 @@ export function getQaNextAction(issue: QaIssue, actor: QaActor): { command: QaCo
 
 const localDay = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 
-export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = false }: {
+export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = false, dragHandle }: {
   issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void;
-  stateLabel?: string; list?: boolean;
+  stateLabel?: string; list?: boolean; dragHandle?: ReactNode;
 }) {
   const { t } = useTranslation();
   const getProjectColor = useProjectColor();
@@ -50,10 +51,11 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
   const blocked = open && !!issue.holdReason;
   const handoff = open && !!issue.handoff && !issue.handoff.resolvedAt;
   const overdue = open && !!issue.dueDate && issue.dueDate < localDay();
-  return <article className="group min-w-0 rounded-lg border border-border/80 bg-card shadow-sm transition hover:border-primary/20 hover:shadow-md">
+  return <article className="group relative min-w-0 rounded-lg border border-border/80 bg-card shadow-sm transition hover:border-primary/20 hover:shadow-md">
+    {dragHandle && <div className="absolute right-2 top-2">{dragHandle}</div>}
     <button type="button" data-drag-surface onClick={() => onOpen(issue.id)} className={`block w-full rounded-lg p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary ${list ? 'md:grid md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] md:gap-x-6' : ''}`}>
       <div className="min-w-0">
-        <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+        <div className={`mb-2 flex min-w-0 items-center justify-between gap-2 ${dragHandle ? 'max-md:min-h-11 max-md:pr-12 [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:pr-12' : ''}`}>
           <ProjectBadge name={project?.name || '—'} color={getProjectColor(project)} size="xs" />
         </div>
         <h3 className="line-clamp-3 break-words text-sm font-semibold leading-relaxed group-hover:text-primary">{issue.title}</h3>

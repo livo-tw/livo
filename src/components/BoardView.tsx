@@ -84,6 +84,7 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
             {...listeners}
             type="button"
             data-drag-surface
+            data-board-drag-handle
             aria-label={t('board.dragCard', { title: task.title })}
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground cursor-grab active:cursor-grabbing md:hidden [@media(any-pointer:coarse)]:inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             style={{ touchAction: 'none', WebkitTouchCallout: 'none' }}
@@ -488,7 +489,7 @@ const BoardView = () => {
                             <span className="text-sm font-semibold text-foreground truncate">{status.name}</span>
                             <span className="text-xs text-muted-foreground ml-auto">{statusTasks.length}</span>
                           </div>
-                          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2 space-y-2">
+                          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-auto md:overscroll-y-contain p-2 space-y-2">
                             {statusTasks.map(task => (
                               <DraggableCard key={task.id} task={task} fields={cardFields} subtaskMode={subtaskDisplayMode} customCardFields={customCardFields} />
                             ))}
