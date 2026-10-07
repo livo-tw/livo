@@ -23,10 +23,11 @@ describe('QA report catalog and history preservation',()=>{
   it('keeps disabled, unknown and retired custom values when editing only the report title',async()=>{
     const customFields={reason:'Observed',disabled:'Old evidence',retired:'Old choice',unknown:'Imported value'},submit=vi.fn();
     const client={versions:vi.fn().mockResolvedValue([]),getFieldConfiguration:vi.fn().mockResolvedValue(configuration)};
-    render(<QaReportForm initial={{...issue,customFields}} projects={[project]} productLines={[]} client={client} busy={false} onSubmit={submit} onCancel={()=>{}}/>);
+    render(<QaReportForm initial={{...issue,component:'Historical area',customFields}} projects={[project]} productLines={[]} client={client} busy={false} onSubmit={submit} onCancel={()=>{}}/>);
     await screen.findByLabelText(/^Reason/);fireEvent.change(screen.getByLabelText(/qa.titleField/),{target:{value:'Revised report'}});
     fireEvent.click(screen.getByRole('button',{name:'qa.save'}));
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({title:'Revised report',customFields}));
+    expect(screen.getByLabelText(/qa.problemArea/)).toHaveValue('Historical area');
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({title:'Revised report',component:'Historical area',customFields}));
   });
   it('blocks report submission while catalog retrieval fails and recovers only after a successful retry',async()=>{
     const submit=vi.fn(),client={versions:vi.fn().mockResolvedValue([]),getFieldConfiguration:vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(configuration)};

@@ -35,6 +35,8 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useQaVersions } from '@/hooks/useQaVersions';
 import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
+import { getQaManualStateChoices } from '@/lib/qa/manualStateVisibility';
+import { useQaManualStateVisibility } from '@/hooks/useQaManualStateVisibility';
 import { useQaFieldConfiguration } from '@/hooks/useQaFieldConfiguration';
 import { QaCustomFieldDisplay } from './QaCustomFieldInputs';
 import { qaErrorText } from './qaErrorText';
@@ -66,6 +68,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
   const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), detail.issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
+  const manualStates = useQaManualStateVisibility(client);
   const [action, setAction] = useState<ActionType | null>(() => initialAction && !['update_fields', 'start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
   const [commandBusy, setBusy] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
@@ -228,9 +231,15 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     finally { setBusy(false); }
   };
   const commandRetryNotice = unknownCommand ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div> : null;
-  const stateControl = <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state} disabled={busy || !can('set_state')}
-            options={(workflow || DEFAULT_QA_WORKFLOW).order.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
-            onValueChange={state => void changeState(state)} /></div>;
+  const manualStateChoices = manualStates.configuration ? getQaManualStateChoices(workflow || DEFAULT_QA_WORKFLOW, manualStates.configuration) : [];
+  const stateControl = <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state}
+            disabled={busy || !can('set_state') || !manualStates.configuration || !manualStateChoices.length}
+            displayCurrentOption={{ value: issue.state, label: workflow?.labels[issue.state] || t(`qa.state.${issue.state}`), color: qaStateColors[issue.state] }}
+            options={manualStateChoices.map(state => ({ value: state, label: workflow?.labels[state] || t(`qa.state.${state}`), color: qaStateColors[state] }))}
+            onValueChange={state => void changeState(state)} />
+            {manualStates.error !== null ? <div role="alert" className="mt-2 text-sm"><p>{t('qa.manualStates.loadFailed')}</p><button type="button" className={qaButton} onClick={manualStates.retry}>{t('qa.retry')}</button></div>
+              : !manualStates.configuration ? <p role="status" className="mt-2 text-xs text-muted-foreground">{t('qa.manualStates.loading')}</p>
+                : !manualStateChoices.length && <p className="mt-2 text-xs text-muted-foreground">{t('qa.manualStates.empty')}</p>}</div>;
   const actionSection = <QaSection title={t('qa.actions')}>
           {!isQaTerminal(issue.state) && (!issue.assigneeId || !issue.qaOwnerId) && <p className="mb-3 text-sm text-muted-foreground">{t('qa.assignOwnersHint')}</p>}
           {isMobile && stateControl}

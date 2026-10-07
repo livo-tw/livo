@@ -17,7 +17,8 @@ const env = { get: (name: string) => settings[name] };
 const context = { actor: { id: 'member-1', role: 'member' }, workspaceId: 'default', now: '2026-10-02T00:00:00.000Z',
   newId: () => 'new-id', memberIds: new Set(['member-1', 'member-2']), projectIds: new Set(['project-1']), taskIds: new Set<string>() };
 const input = { projectId: 'project-1', title: 'Wallet mismatch', actual: 'Wrong amount', observedEnvironment: 'Stage' };
-const fixture = () => createQaIssue(input, 'issue-1', context);
+// Historical authorization fixtures intentionally have no QA owner; newly created reports default separately.
+const fixture = () => createQaIssue({ ...input, qaOwnerId: null }, 'issue-1', context);
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(data), { status, headers });
 let issue: QaIssue, enabled: unknown, active: boolean, role: string;
 let receipt: Record<string, unknown> | undefined;
@@ -61,6 +62,23 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const service = () => createQaService(env, 'actual-session');
+
+describe('Docker QA create basic settings',()=>{
+  it('includes selected owners in the active-member read and persists all settings in a single create commit',async()=>{
+    const created=await service().handle({action:'create',id:'new-settings-issue',commandId:'new-settings-command',input:{...input,assigneeId:'member-2',qaOwnerId:'member-2',priority:2,dueDate:'2026-11-09'}});
+    expect(created).toMatchObject({reporterId:'member-1',assigneeId:'member-2',qaOwnerId:'member-2',priority:2,dueDate:'2026-11-09',state:'new',version:1});
+    const memberRead=calls.find(call=>call.url.pathname==='/rest/v1/members'&&call.url.searchParams.has('id'));
+    expect(memberRead?.url.searchParams.get('id')).toBe('in.(member-1,member-2)');
+    expect(memberRead?.url.searchParams.get('is_active')).toBe('eq.true');
+    const commits=calls.filter(call=>call.url.pathname==='/rest/v1/rpc/livo_qa_commit');
+    expect(commits).toHaveLength(1);
+    expect(commits[0].body.p_event.recipients).toEqual(['member-2']);
+  });
+  it('rejects an unavailable selected owner before any create commit',async()=>{
+    await expect(service().handle({action:'create',id:'new-settings-issue',commandId:'new-settings-command',input:{...input,qaOwnerId:'inactive-example'}})).rejects.toMatchObject({code:'qa_member_unavailable'});
+    expect(calls.some(call=>call.url.pathname==='/rest/v1/rpc/livo_qa_commit')).toBe(false);
+  });
+});
 
 describe('Docker QA field configuration',()=>{
   const configuration={version:1,fields:[{id:'reason',fieldName:'Reason',fieldType:'text',isRequired:true,isEnabled:true,sortOrder:0}]};
@@ -265,10 +283,18 @@ describe('Docker QA session and feature boundary', () => {
   it('derives reporter and commit identity from the verified session, ignoring forged caller identity', async () => {
     const created = await service().handle({ action: 'create', id: 'issue-2', commandId: 'command-1', input, actorId: 'super-admin' });
     expect(created.reporterId).toBe('member-1');
+    expect(created.qaOwnerId).toBe('member-1');
     const commit = calls.find(c => c.url.pathname.endsWith('/livo_qa_commit'))!;
     expect(commit.body.p_auth_id).toBe(AUTH);
     expect(commit.body.p_data.workspaceId).toBe('default');
     expect(commit.headers.get('Authorization')).toBe('Bearer server-secret');
+  });
+  it('requires current PASS evidence when the reporter is the default QA owner', async () => {
+    issue = createQaIssue(input, 'issue-1', context);
+    expect(issue.qaOwnerId).toBe('member-1');
+    await expect(service().handle({ action: 'command', id: issue.id, commandId: 'default-owner-close', expectedVersion: 1,
+      command: { type: 'close', resolution: 'fixed', reason: '' } })).rejects.toMatchObject({ code: 'qa_verification_required' });
+    expect(calls.some(c => c.url.pathname.endsWith('/livo_qa_commit'))).toBe(false);
   });
   it('refuses a reporter closing a bug even if a forged role is supplied', async () => {
     await expect(service().handle({ action: 'command', id: issue.id, commandId: 'command-2', expectedVersion: 1,

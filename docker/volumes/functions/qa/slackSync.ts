@@ -26,10 +26,11 @@ export async function syncQaSlackIssue(env: Environment, issue: QaIssue): Promis
       const workflowSetting = await db.setting('qa_workflow');
       let message = { text: `${qaSlackCurrentState(current.state,parseQaWorkflow(workflowSetting))}\nBug · ${current.title}`, blocks: qaSlackCard(current, qaSlackLink(env, current), parseQaWorkflow(workflowSetting)) };
       if (String(link.id).startsWith('delivery-qa:')) {
-        const state = await loadQaDeliveryState(db, current.id);
         const job = (await db.rows('slack_delivery_outbox', { select: 'id,team_id,task_id,target_type,target_id,payload,attempts',
           team_id: `eq.${link.team_id}`, target_type: 'eq.channel', target_id: `eq.${link.channel_id}`, slack_message_ts: `eq.${link.card_ts}`, limit: '1' }))[0] as Job | undefined;
-        if (!state || !job || !qaRouteAllowed(await db.setting('slack_delivery'), state, job)) return;
+        if (!job) return;
+        const state = await loadQaDeliveryState(db, current.id, job.payload.eventType, job.payload.detail);
+        if (!state || !qaRouteAllowed(await db.setting('slack_delivery'), state, job)) return;
         current = state.issue;
         message = qaNotificationMessage(state, job, env.get('APP_BASE_URL') || '', workflowSetting) as typeof message;
       }

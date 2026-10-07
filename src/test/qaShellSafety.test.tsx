@@ -1,7 +1,9 @@
+import type { QaState } from '@/lib/qa/domain';
+import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
-const mocks=vi.hoisted(()=>({mobile:false,mode:'side' as 'side'|'page'|'modal',command:vi.fn(),get:vi.fn(),getWorkflow:vi.fn(),getFieldConfiguration:vi.fn(),versions:vi.fn(),list:vi.fn()}));
+const mocks=vi.hoisted(()=>({mobile:false,mode:'side' as 'side'|'page'|'modal',command:vi.fn(),get:vi.fn(),getWorkflow:vi.fn(),getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration:vi.fn(),versions:vi.fn(),list:vi.fn()}));
 vi.mock('@/hooks/use-mobile',()=>({useIsMobile:()=>mocks.mobile}));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
@@ -16,7 +18,7 @@ vi.mock('@/context/ProjectContext',()=>({useProjectContext:()=>({allProjects:[{i
 vi.mock('@/context/TaskContext',()=>({useTaskContext:()=>({allTasks:[] as Task[]})}));
 vi.mock('@/context/UIContext',()=>({useUIContext:()=>({taskDisplayMode:mocks.mode,setTaskDisplayMode:vi.fn(),setSelectedTask:vi.fn(),featureToggles:{qa:true},featureTogglesReady:true})}));
 vi.mock('@/context/DeploymentEnvironmentContext',()=>({useDeploymentEnvironments:()=>({values:['Stage'],ready:true,loadError:false})}));
-vi.mock('@/hooks/useQa',()=>{const client={command:mocks.command,get:mocks.get,getWorkflow:mocks.getWorkflow,getFieldConfiguration:mocks.getFieldConfiguration,versions:mocks.versions,list:mocks.list};return {useQa:()=>({client,actor:{id:'admin',role:'admin'},enabled:true})};});
+vi.mock('@/hooks/useQa',()=>{const client={command:mocks.command,get:mocks.get,getWorkflow:mocks.getWorkflow,getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration:mocks.getFieldConfiguration,versions:mocks.versions,list:mocks.list};return {useQa:()=>({client,actor:{id:'admin',role:'admin'},enabled:true})};});
 vi.mock('@/components/qa/QaKanban',()=>({default:({onOpen}:{onOpen:(id:string)=>void})=><button onClick={()=>onOpen('other-bug')}>Open background card</button>}));
 import QaWorkspace from '@/components/qa/QaWorkspace';
 import { createQaIssue } from '@/lib/qa/domain';

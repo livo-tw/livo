@@ -5,6 +5,7 @@ import { DEMO_BLOCKED_MESSAGE, isDemoMember } from './env';
 import { notifyChanges } from './notify';
 import { syncQaSlackIssue } from './qaSlackSync';
 import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
+import { parseQaManualStateVisibility, validateQaManualStateVisibility } from './qa/manualStateVisibility';
 import { isDeploymentQueueOperator } from './deploymentQueue';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
@@ -368,6 +369,21 @@ export async function handleQa(c:C):Promise<Response> {
         c.env.DB.prepare('INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET coordinator_id=excluded.coordinator_id,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(ws,projectId,coordinatorId,result.version,auth.member.id,now)
       ]);}catch(error){const retry=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();if(retry&&retry.actor_id===auth.member.id&&retry.payload_hash===hash)return c.json(JSON.parse(retry.response));throw sqlError(error);}
       return c.json(result);
+    }
+    if(action==='get_manual_state_visibility') {
+      const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_manual_state_visibility'").bind(ws).first<{value:string}>();
+      return c.json(parseQaManualStateVisibility(row?.value));
+    }
+    if(action==='save_manual_state_visibility') {
+      if(!canManageQaConfiguration({role:auth.member.role,qaAdmin:active.is_qa_admin===1}))throw new QaError('qa_forbidden',403);
+      const configuration=validateQaManualStateVisibility(body.configuration);
+      const result=await c.env.DB.prepare(`INSERT INTO system_settings(workspace_id,key,value,updated_at)
+        SELECT ?,'qa_manual_state_visibility',?,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1 AND (role IN ('admin','super_admin') OR is_qa_admin=1))
+        AND EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=? AND key='feature_toggles' AND json_extract(value,'$.qa')=1)
+        ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+        .bind(ws,JSON.stringify(configuration),new Date().toISOString(),ws,auth.member.id,ws).run();
+      if(result.meta.changes!==1)throw new QaError('qa_forbidden',403);
+      return c.json(configuration);
     }
     if(action==='get_workflow') {
       const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_workflow'").bind(ws).first<{value:string}>();

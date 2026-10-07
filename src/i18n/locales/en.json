@@ -3208,6 +3208,16 @@
     "adminOnlyOption": "Only admins can edit this page (others still read it by its permissions)"
   },
   "qa": {
+    "qaOwnerReporterDefaultHint": "The reporter is the default QA owner. You can choose another member.",
+    "manualStates": {
+      "title": "Manual state choices",
+      "hint": "Choose the states available in Change state. Current values, history, boards and formal verification or closing stay available.",
+      "loading": "Loading state choices…",
+      "loadFailed": "State choices could not be loaded. Retry before changing the state.",
+      "saved": "State choices saved.",
+      "empty": "All manual state choices are hidden. Formal workflow actions remain available.",
+      "restoreAll": "Show all states"
+    },
     "sortDefault": "Recently updated",
     "completeInPanel": "Complete this step in the version panel.",
     "verificationNote": "Add a test note (optional)",
@@ -3426,6 +3436,7 @@
       "failed": "Upload failed"
     },
     "error": {
+      "qa_invalid_manual_state_visibility": "State choices are invalid. Choose only existing QA states.",
       "qa_invalid_environment": "Deployment environments changed. Select an available environment.",
       "qa_historical_pass_unavailable": "The original PASS evidence is unavailable. Complete verification first.",
       "qa_forbidden": "You do not have permission for this. Check that you are the bug's reporter, fixer or verifying QA.",

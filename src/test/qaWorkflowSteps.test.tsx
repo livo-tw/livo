@@ -35,9 +35,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function renderDetail(issue: QaIssue, actor: QaActor, extra: Partial<QaDetail> = {}, list = vi.fn()) {
+function renderDetail(issue: QaIssue, actor: QaActor, extra: Partial<QaDetail> = {}, list = vi.fn(), getManualStateVisibility = vi.fn().mockResolvedValue({ version: 1, hiddenStates: [] })) {
   const command = vi.fn().mockImplementation(async (_issue: QaIssue, next: { type: string }) => ({ ...issue, version: issue.version + 1, ...(next.type === 'set_state' ? { state: (next as unknown as { state: QaIssue['state'] }).state } : {}) }));
-  const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, list, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const client = { getManualStateVisibility, getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, list, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const detail: QaDetail = { issue, comments: [], events: [], attachments: [], ...extra };
   const props = { detail, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
   return { ...render(<QaIssueDetail {...props} />), command, list };
@@ -81,7 +81,7 @@ describe('blockers and reopen reasons', () => {
 describe('moving a bug to a final status by hand', () => {
   it('asks first, because no verification or closing reason is recorded', async () => {
     const { command } = renderDetail(owned, { id: 'reporter', role: 'member' });
-    const pick = async () => { fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' })); fireEvent.click(await screen.findByRole('option', { name: 'qa.state.closed' })); };
+    const pick = async () => { await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' })); fireEvent.click(await screen.findByRole('option', { name: 'qa.state.closed' })); };
     await pick();
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('qa.terminalConfirmDesc')).toBeTruthy();
@@ -142,7 +142,7 @@ describe('readable history', () => {
 describe('shared rules', () => {
   it('sends notifications to the same people on every server', () => {
     const issue = { ...owned, reporterId: 'reporter' };
-    expect(qaNotificationRecipients(issue, 'create', 'reporter', ['coordinator'])).toEqual(['coordinator']);
+    expect(qaNotificationRecipients(issue, 'create', 'reporter', ['coordinator'])).toEqual(['coordinator', 'dev', 'qa']);
     expect(qaNotificationRecipients(issue, 'comment', 'qa')).toEqual(['reporter', 'dev']);
     expect(qaNotificationRecipients(issue, 'close', 'qa')).toEqual(['reporter', 'dev']);
     expect(qaNotificationRecipients(issue, 'start_fix', 'dev')).toEqual([]);
@@ -162,5 +162,31 @@ describe('shared rules', () => {
     const waiting = { ...owned, assigneeId: 'dev', qaOwnerId: 'qa', handoff };
     expect(buildMyAssignments([], [], [waiting], 'me')[0]?.roles).toEqual(['handoff']);
     expect(buildMyAssignments([], [], [{ ...waiting, handoff: { ...waiting.handoff, resolvedBy: 'me', resolvedAt: '2026-10-03T03:00:00.000Z', resolutionEvidence: 'Done' } }], 'me')).toEqual([]);
+  });
+});
+
+describe('manual state visibility read guards in the actual issue detail', () => {
+  it('keeps manual changes disabled on a read failure and enables only fresh visible choices after retry', async () => {
+    const read = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce({ version: 1, hiddenStates: ['triaged', 'closed'] });
+    renderDetail(owned, { id: 'dev', role: 'member' }, {}, vi.fn(), read);
+    const trigger = screen.getByRole('combobox', { name: 'qa.changeState' });
+    expect(trigger).toBeDisabled();
+    expect(await screen.findByText('qa.manualStates.loadFailed')).toBeInTheDocument();
+    expect(trigger).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.retry' }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
+    expect(screen.queryByRole('option', { name: 'qa.state.triaged' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'qa.state.closed' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'qa.state.verified' })).toBeInTheDocument();
+  });
+  it('displays the hidden current state but never adds it to the choices', async () => {
+    const read = vi.fn().mockResolvedValue({ version: 1, hiddenStates: ['triaged', 'closed'] });
+    renderDetail({ ...owned, state: 'triaged' }, { id: 'dev', role: 'member' }, {}, vi.fn(), read);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
+    const trigger = screen.getByRole('combobox', { name: 'qa.changeState' });
+    expect(within(trigger).getByText('qa.state.triaged')).toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('option', { name: 'qa.state.triaged' })).not.toBeInTheDocument();
   });
 });

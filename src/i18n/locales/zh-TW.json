@@ -3208,6 +3208,16 @@
     "adminOnlyOption": "只有管理員可以編輯此頁（其他人仍依權限閱讀）"
   },
   "qa": {
+    "qaOwnerReporterDefaultHint": "QA 負責人預設為回報人，可自行改選。",
+    "manualStates": {
+      "title": "變更狀態選項",
+      "hint": "只調整「變更狀態」的選項；目前狀態、歷史紀錄、看板與正式驗證／結案流程都會保留。",
+      "loading": "正在載入狀態選項…",
+      "loadFailed": "無法載入狀態選項。請重試後再變更狀態。",
+      "saved": "狀態選項已儲存。",
+      "empty": "已隱藏所有手動狀態選項；仍可使用正式流程操作。",
+      "restoreAll": "顯示全部狀態"
+    },
     "sortDefault": "最近更新",
     "completeInPanel": "請在修復版本區確認資料，完成這一步。",
     "verificationNote": "補充驗證備註（選填）",
@@ -3428,6 +3438,7 @@
       "failed": "上傳失敗"
     },
     "error": {
+      "qa_invalid_manual_state_visibility": "狀態選項設定無效。請只選擇既有的 QA 狀態。",
       "qa_invalid_environment": "部署環境清單已更新，請重新選擇可用環境。",
       "qa_historical_pass_unavailable": "原單的 PASS 證據不足，請先完成驗證。",
       "qa_forbidden": "你沒有這個操作的權限，請確認你是這張 Bug 的回報人、修復者或驗證 QA。",

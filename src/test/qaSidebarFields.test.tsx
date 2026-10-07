@@ -1,3 +1,5 @@
+import type { QaState } from '@/lib/qa/domain';
+import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Project, ProductLine, User, Task } from '@/types';
@@ -36,7 +38,7 @@ function renderDetail(initial: QaIssue, actorId = 'dev', initialAction?: QaComma
     const { type, ...patch } = next;
     return { ...current, ...(type === 'update_fields' ? patch : {}), version: current.version + 1 } as QaIssue;
   });
-  const client = { command, versions: vi.fn().mockResolvedValue([]), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }) } as unknown as QaClient;
+  const client = { command, versions: vi.fn().mockResolvedValue([]), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }) } as unknown as QaClient;
   render(<QaIssueDetail detail={{ issue: initial, comments: [], events: [], attachments: [] }} client={client} actor={{ id: actorId, role: 'member' }} initialAction={initialAction} onRefresh={vi.fn().mockResolvedValue(undefined)} onBack={vi.fn()} />);
   return command;
 }

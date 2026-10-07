@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { fnUrl } from '@/lib/apiBase';
 import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
+import { parseQaManualStateVisibility, validateQaManualStateVisibility, type QaManualStateVisibility } from './manualStateVisibility';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
@@ -22,6 +23,7 @@ const demoCommandPayloads = new Map<string,string>();
 const demoCoordination = new Map<string, QaCoordination>();
 const demoCoordinationReceipts = new Map<string, {hash:string; result:QaCoordination}>();
 const demoWorkflows = new Map<string, QaWorkflow>();
+const demoManualStateVisibility = new Map<string, QaManualStateVisibility>();
 const demoFieldConfigurations = new Map<string, QaFieldConfiguration>();
 const clone = <T,>(value: T): T => structuredClone(value);
 export const qaId = randomUUID;
@@ -122,6 +124,18 @@ export function createQaClient(options: QaClientOptions) {
       const ctx = options.context();
       if (!ctx.projectIds.has(projectId)) throw new QaClientError('qa_project_unavailable', 403);
       return qaVersionSuggestions([...demoIssues.values()].map(value => value.issue), ctx.workspaceId, projectId);
+    },
+    async getManualStateVisibility(signal?: AbortSignal): Promise<QaManualStateVisibility> {
+      ensureEnabled();
+      return mock ? parseQaManualStateVisibility(demoManualStateVisibility.get(options.context().workspaceId))
+        : request('get_manual_state_visibility', {}, signal);
+    },
+    async saveManualStateVisibility(input: QaManualStateVisibility): Promise<QaManualStateVisibility> {
+      ensureEnabled(); const ctx = options.context();
+      if (!canManageQaConfiguration(ctx.actor)) throw new QaClientError('qa_forbidden', 403);
+      const configuration = validateQaManualStateVisibility(input);
+      if (!mock) return request('save_manual_state_visibility', { configuration });
+      demoManualStateVisibility.set(ctx.workspaceId, clone(configuration)); return clone(configuration);
     },
     async getWorkflow(signal?: AbortSignal): Promise<QaWorkflow> {
       ensureEnabled();

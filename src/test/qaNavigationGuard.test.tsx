@@ -1,9 +1,11 @@
+import type { QaState } from '@/lib/qa/domain';
+import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
+const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -13,12 +15,16 @@ import '@/i18n';
 vi.mock('sonner', () => ({ toast: { info: mocks.toast, success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/lib/featureToggleQueries', () => ({ loadFeatureToggles: mocks.loadFeatures, persistFeatureToggle: mocks.saveFeature }));
+vi.mock('@/context/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('@/context/AuthContext')>(),
+  useAuthContext: () => ({ currentMemberId: 'admin' }),
+}));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Example admin', jobTitle: '', role: 'admin', isActive: true }] }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Example project', isArchived: false }], productLines: [] as ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration };
+  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration };
   return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: (): null => null }));

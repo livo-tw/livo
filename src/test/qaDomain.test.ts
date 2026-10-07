@@ -90,7 +90,7 @@ describe('QA lifecycle and authorization', () => {
     expect(applyQaCommand(closed, { type: 'reopen', reason: 'Different cause' }, context('reporter', 'member'))).toMatchObject({ state: 'in_progress', fixCycle: 0, resolution: null });
   });
   it('preserves historical PASS without inventing runs and requires a separate explicit close acknowledgement', () => {
-    const historical: QaIssue = { ...report(), state:'verified', legacySource:{ system:'slack_list', originalStatus:'PASS', recordId:'RecHISTORY123', snapshotSha256:'a'.repeat(64) } };
+    const historical: QaIssue = { ...report(), qaOwnerId:null, state:'verified', legacySource:{ system:'slack_list', originalStatus:'PASS', recordId:'RecHISTORY123', snapshotSha256:'a'.repeat(64) } };
     expect(isHistoricalQaPass(historical)).toBe(true);
     expect(() => applyQaCommand(historical,{type:'close',resolution:'fixed',reason:'checked'},context())).toThrow('qa_verification_required');
     expect(() => applyQaCommand(historical,{type:'close',resolution:'fixed',reason:'',acknowledgeHistoricalPass:true},context())).toThrow('qa_required');
@@ -99,6 +99,20 @@ describe('QA lifecycle and authorization', () => {
     expect(closed).toMatchObject({state:'closed',fixCycle:0,targets:[],runs:[],resolutionReason:'Reviewed the original PASS evidence'});
     for (const invalid of [{...historical,fixCycle:1},{...historical,legacySource:undefined},{...historical,legacySource:{...historical.legacySource!,originalStatus:'FAIL'}}])
       expect(() => applyQaCommand(invalid,{type:'close',resolution:'fixed',reason:'checked',acknowledgeHistoricalPass:true},context())).toThrow('qa_historical_pass_unavailable');
+  });
+  it('keeps real PASS and explicit historical acknowledgement mandatory for the default reporter QA owner', () => {
+    const own = report();
+    expect(own.qaOwnerId).toBe('reporter');
+    const reporter = context('reporter','member');
+    expect(canQaCommand(own,reporter.actor,'close')).toBe(true);
+    expect(() => applyQaCommand(own,{type:'close',resolution:'fixed',reason:''},reporter)).toThrow('qa_verification_required');
+    expect(() => applyQaCommand({...own,state:'verified'},{type:'close',resolution:'fixed',reason:'checked'},reporter)).toThrow('qa_verification_required');
+    expect(() => applyQaCommand(own,{type:'close',resolution:'fixed',reason:'checked',acknowledgeHistoricalPass:true},reporter)).toThrow('qa_historical_pass_unavailable');
+    const historical: QaIssue = {...own,state:'verified',legacySource:{system:'slack_list',originalStatus:'PASS',recordId:'RecHISTORY456',snapshotSha256:'b'.repeat(64)}};
+    expect(() => applyQaCommand(historical,{type:'close',resolution:'fixed',reason:'checked'},reporter)).toThrow('qa_verification_required');
+    expect(() => applyQaCommand(historical,{type:'close',resolution:'fixed',reason:'',acknowledgeHistoricalPass:true},reporter)).toThrow('qa_required');
+    const closed = applyQaCommand(historical,{type:'close',resolution:'fixed',reason:'Reviewed historical evidence',acknowledgeHistoricalPass:true},reporter);
+    expect(closed).toMatchObject({state:'closed',fixCycle:0,targets:[],runs:[],qaOwnerId:'reporter'});
   });
   it('cannot inject historical authority through a report or an edit', () => {
     expect(() => createQaIssue({projectId:'p1',title:'x',actual:'x',observedEnvironment:'Stage',legacySource:{system:'slack_list'}} as never,'one',context())).toThrow('qa_invalid_request');

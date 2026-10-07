@@ -3,6 +3,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { name?: string }) => values?.name ? `${key} ${values.name}` : key }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
+vi.mock('@/context/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('@/context/AuthContext')>(),
+  useAuthContext: () => ({ currentMemberId: 'reporter' }),
+}));
+vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [
+  { id: 'reporter', name: 'Example Reporter', isActive: true, color: '#123456', avatar: 'ER' },
+  { id: 'developer', name: 'Example Developer', isActive: true, color: '#123456', avatar: 'ED' },
+  { id: 'tester', name: 'Example Tester', isActive: true, color: '#123456', avatar: 'ET' },
+  { id: 'inactive', name: 'Inactive Example', isActive: false, color: '#123456', avatar: 'IE' },
+] }) }));
 import QaCreatePanel from '@/components/qa/QaCreatePanel';
 import QaAttachments from '@/components/qa/QaAttachments';
 import type { QaClient } from '@/lib/qa/client';
@@ -23,6 +33,32 @@ beforeEach(() => { vi.clearAllMocks(); getFieldConfiguration.mockResolvedValue({
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('QA create with evidence', () => {
+  it('defaults QA ownership to the signed-in reporter and sends all basic settings in the initial create', async () => {
+    render(<QaCreatePanel {...props} />); fill();
+    expect(screen.queryByLabelText(/qa.problemArea/)).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Example Reporter');
+    fireEvent.change(screen.getByLabelText('qa.priority'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('qa.dueDate'), { target: { value: '2026-11-09' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toMatchObject({ projectId: 'project1', assigneeId: null, qaOwnerId: 'reporter', severity: 'untriaged', priority: 2, dueDate: '2026-11-09', component: '' });
+  });
+  it('allows an explicit different QA owner and RD owner while excluding inactive members', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+    render(<QaCreatePanel {...props} />); fill();
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
+    expect(screen.queryByText('Inactive Example')).toBeNull();
+    fireEvent.click(await screen.findByText('Example Tester'));
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.assignee' }));
+    fireEvent.click(await screen.findByText('Example Developer'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create.mock.calls[0][0]).toMatchObject({ assigneeId: 'developer', qaOwnerId: 'tester' });
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
   it('keeps fixed action buttons in the native form so required inputs, autofocus and submission still work', async () => {
     render(<QaCreatePanel {...props} />);
     const title = screen.getByLabelText(/qa.titleField/) as HTMLInputElement;

@@ -1,6 +1,7 @@
 /** Private QA coordination forms. Actor and authorization never come from metadata. */
 import { canQaCommand, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
 import type { QaSlackActions, QaSlackPayload, SlackBlock } from './slack.ts';
+import { qaPriorityText } from './notificationText.ts';
 const messages={
  'zh-TW':{triage:'分流 Bug',start_fix:'開始修復',hold:'記錄卡關',request_handoff:'建立交接',accept_handoff:'接收交接',resolve_handoff:'解除交接',
  loading:'正在載入 QA…',saving:'正在儲存 QA…',saved:'QA 已儲存',failed:'操作未完成。請重新開啟表單確認最新資料與權限。',conflict:'Bug 已更新；請重新開啟表單確認，不會覆蓋其他人的變更。',
@@ -90,7 +91,7 @@ export async function handleQaCoordinationSlack(p:QaSlackPayload,d:QaSlackAction
    const blocks:SlackBlock[]=[{type:'section',text:text(issue.title)},{type:'section',text:text(t.confirm)}];
    const person=(key:string,label:string)=>field(key,label,{type:'external_select',min_query_length:0});
    const note=(key:string,label:string,max=3000,optional=false)=>field(key,label,{type:'plain_text_input',multiline:true,max_length:max},optional);
-   if(kind==='triage')blocks.push(person('rd',t.rd),person('qa',t.qa),field('severity',t.severity,{type:'static_select',options:['low','medium','high'].map(s=>option(s,t[s as 'low']))}),field('priority',t.priority,{type:'static_select',options:[1,2,3,4,5].map(n=>option(String(n),`P${n}`)),initial_option:option(String(issue.priority),`P${issue.priority}`)}),field('due',t.due,{type:'datepicker',...(issue.dueDate?{initial_date:issue.dueDate}:{})},true));
+   if(kind==='triage')blocks.push(person('rd',t.rd),person('qa',t.qa),field('severity',t.severity,{type:'static_select',options:['low','medium','high'].map(s=>option(s,t[s as 'low']))}),field('priority',t.priority,{type:'static_select',options:[1,2,3,4,5].map(n=>option(String(n),qaPriorityText(n,actor.locale))),initial_option:option(String(issue.priority),qaPriorityText(issue.priority,actor.locale))}),field('due',t.due,{type:'datepicker',...(issue.dueDate?{initial_date:issue.dueDate}:{})},true));
    else if(kind==='hold')blocks.push(note('reason',t.reason));
    else if(kind==='request_handoff')blocks.push(note('reason',t.reason),person('owner',t.owner),field('reply',t.reply,{type:'datetimepicker'},true),note('external',t.external,2000,true));
    else if(kind==='resolve_handoff')blocks.push(note('evidence',t.evidence));

@@ -2,12 +2,13 @@ import { qaNotificationRecipients, type QaCommand, type QaIssue } from '../qa/do
 import { qaSlackCard } from '../qa/slack.ts';
 import { qaSlackCurrentState } from '../qa/slackWorkspace.ts';
 import { parseQaWorkflow } from '../qa/workflow.ts';
+import { qaNotificationDetailText, qaPriorityText, qaDueDateText } from '../qa/notificationText.ts';
 import { activeThread, DeliveryError, escapeSlack, failureResult, matchingChannels, memberAllowed, plainText, slackTransport, type DeliveryStore, type Job, type Row } from './core.ts';
 
-export interface QaDeliveryState { issue: QaIssue; project: Row; triagers: string[]; members: Row[] }
+export interface QaDeliveryState { issue: QaIssue; project: Row; triagers: string[]; members: Row[]; memberNames?: Record<string, string>; projectNames?: Record<string, string> }
 export interface QaDeliveryStore extends Pick<DeliveryStore, 'config' | 'token' | 'binding' | 'canSend' | 'finish'> {
   enabled(): Promise<boolean>;
-  state(issueId: string): Promise<QaDeliveryState | undefined>;
+  state(issueId: string, eventType?: string, eventDetail?: unknown): Promise<QaDeliveryState | undefined>;
   canRead(memberId: string, teamId: string, issueId: string): Promise<boolean>;
   thread(issueId: string, teamId: string, channelId: string): Promise<string | undefined>;
   workflow(): Promise<Row | undefined>;
@@ -30,24 +31,30 @@ const events: Record<string, string> = { created: '新增 Bug', comment: '新增
   hold: '記錄卡關', start_fix: '開始修復', link_tasks: '連結任務', request_handoff: '建立交接', accept_handoff: '接收交接', resolve_handoff: '解除交接' };
 export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase: string, workflow?: Row): Row {
   const issue = state.issue, url = `${appBase.replace(/\/$/, '')}/?qa=${encodeURIComponent(issue.id)}`;
-  const name = (id: string | null) => String(state.members.find(m => m.id === id)?.name || '未指定').slice(0, 50);
+  const memberName = (id: string) => {
+    const label = state.memberNames && Object.prototype.hasOwnProperty.call(state.memberNames, id) ? state.memberNames[id] : state.members.find(member => member.id === id)?.name;
+    return typeof label === 'string' && label.trim() && label !== id ? label : undefined;
+  };
+  const name = (id: string | null) => String(id ? memberName(id) || '未知成員' : '未指定').slice(0, 50);
   const title = `${job.target_type === 'member' ? '[個人通知] ' : ''}${events[job.payload.eventType] || 'Bug 更新'}`;
   const currentState=qaSlackCurrentState(issue.state,parseQaWorkflow(workflow));
   const summary = `*${escapeSlack(currentState)}*\n*通知原因：${title}*\n<${url}|Bug - ${escapeSlack(issue.title.slice(0, 120))}>\n` +
     `👤 修復：${escapeSlack(name(issue.assigneeId))}｜驗證：${escapeSlack(name(issue.qaOwnerId))}\n` +
-    `⚡ P${issue.priority}｜📅 ${escapeSlack(issue.dueDate || '未設定')}\n` +
+    `⚡ 優先級：${qaPriorityText(issue.priority)}｜📅 ${qaDueDateText(issue.dueDate)}\n` +
     `專案：${escapeSlack(String(state.project.name).slice(0, 80))}｜操作人：${escapeSlack(name(job.payload.actorId))}`;
-  const detail = escapeSlack(plainText(job.payload.detail).slice(0, 1500)).slice(0, 2800);
+  const readable = qaNotificationDetailText(job.payload.eventType, job.payload.detail, { memberName,
+    projectName: id => state.projectNames?.[id] || (state.project.id === id ? state.project.name : undefined) }) ?? plainText(job.payload.detail);
+  const detail = escapeSlack(readable.slice(0, 1500)).slice(0, 2800);
   const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: summary } },
     ...(detail ? [{ type: 'section', text: { type: 'mrkdwn', text: detail } }] : []),
-    ...qaSlackCard(issue, url, parseQaWorkflow(workflow)).slice(1)];
+    ...qaSlackCard(issue, url, parseQaWorkflow(workflow)).slice(2)];
   return { text: summary + (detail ? '\n' + detail : ''), blocks, unfurl_links: false, unfurl_media: false };
 }
 /** QA shares the durable queue and receipt rules; ordinary task routes are never used. */
 export async function deliverQaJob(job: Job, owner: string, store: QaDeliveryStore, appBase: string, fetcher: typeof fetch = fetch, now = Date.now()): Promise<string> {
   let result: Row;
   try {
-    let state = await store.state(job.payload.issueId);
+    let state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail);
     if (!await store.enabled() || !qaRouteAllowed(await store.config(), state, job)) result = { status: 'skipped', error: 'route_no_longer_allowed' };
     else if (job.target_type === 'member' && !qaRecipientResponsible(state!, job)) result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
     else {
@@ -68,7 +75,7 @@ export async function deliverQaJob(job: Job, owner: string, store: QaDeliverySto
       const thread = job.target_type === 'channel' ? activeThread(await store.thread(job.payload.issueId, job.team_id, channel), now) : undefined;
       const workflow = await store.workflow();
       if (!await store.canSend(job, owner)) throw new DeliveryError('delivery_lease_lost', false, true);
-      state = await store.state(job.payload.issueId);
+      state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail);
       if (!await store.enabled() || !qaRouteAllowed(await store.config(), state, job)) result = { status: 'skipped', error: 'route_no_longer_allowed' };
       else if (job.target_type === 'member' && !qaRecipientResponsible(state!, job)) result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
       else {

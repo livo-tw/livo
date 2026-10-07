@@ -1,12 +1,13 @@
 import type { TFunction } from 'i18next';
 import { qaShortId } from '@/lib/qa/shortId';
 import { qaPriorities } from './QaBadges';
+import { qaFieldChanges, qaDueDateText } from '@/lib/qa/notificationText';
 
 /**
  * Readable history entries. The servers store each event as an audit snapshot
  * (qaEventDetail in lib/qa/domain.ts) with member ids, codes and JSON; stored
  * events are never rewritten, so the history page translates them here.
- * Anything unrecognised is shown as stored, with member ids replaced by names.
+ * Unknown field snapshots use a safe summary; other descriptions resolve known member names.
  */
 export interface QaEventTextContext {
   t: TFunction;
@@ -62,23 +63,22 @@ export function qaEventText(event: { type: string; detail: string }, ctx: QaEven
     catch { return detail; }
   }
   if (event.type === 'update_fields') {
-    try {
-      const value = JSON.parse(detail);
-      if (!value || !value.after || typeof value.after !== 'object' || Array.isArray(value.after)) return names(detail, ctx);
-      const before = value.before && typeof value.before === 'object' && !Array.isArray(value.before) ? value.before : null;
-      const display = (key: string, input: unknown): string => {
-        if (input === null || input === undefined || input === '') return key === 'assigneeId' || key === 'qaOwnerId' ? t('qa.unassigned') : '—';
-        if (key === 'projectId') return ctx.project?.(String(input)) ?? String(input);
-        if (key === 'assigneeId' || key === 'qaOwnerId') return ctx.member(String(input));
-        if (key === 'severity' && SEVERITIES.includes(String(input))) return t(`qa.severityNames.${input}`);
-        if (key === 'priority' && Number.isInteger(input) && Number(input) >= 1 && Number(input) <= 5) return t(`priority.${qaPriorities[Number(input) - 1]}`);
-        return String(input);
-      };
-      return [['projectId', 'project'], ['assigneeId', 'assignee'], ['qaOwnerId', 'qaOwner'], ['severity', 'severity'], ['priority', 'priority'], ['dueDate', 'dueDate']]
-        .filter(([key]) => Object.prototype.hasOwnProperty.call(value.after, key) && (!before || before[key] !== value.after[key]))
-        .map(([key, label]) => before ? t('qa.historyFieldChange', { field: t(`qa.${label}`), before: display(key, before[key]), after: display(key, value.after[key]) })
-          : `${t(`qa.${label}`)}：${display(key, value.after[key])}`).join('\n');
-    } catch { return names(detail, ctx); }
+    const changes = qaFieldChanges(detail);
+    if (changes === null) return t('qa.historyEvent.update_fields');
+    const display = (key: string, input: unknown): string => {
+      if (input === null || input === undefined || input === '') return key === 'assigneeId' || key === 'qaOwnerId' ? t('qa.unassigned') : t('common.notSet');
+      if (typeof input === 'string' && ['projectId', 'assigneeId', 'qaOwnerId'].includes(key)) {
+        const label = key === 'projectId' ? ctx.project?.(input) : ctx.member(input);
+        return label && label !== input ? label : t('common.unknown');
+      }
+      if (key === 'severity' && SEVERITIES.includes(String(input))) return t(`qa.severityNames.${input}`);
+      if (key === 'priority' && Number.isInteger(input) && Number(input) >= 1 && Number(input) <= 5) return t(`priority.${qaPriorities[Number(input) - 1]}`);
+      if (key === 'dueDate') return typeof input === 'string' && qaDueDateText(input) === input ? input : t('common.notSet');
+      return t('common.unknown');
+    };
+    const labels: Record<string, string> = { projectId: 'project', assigneeId: 'assignee', qaOwnerId: 'qaOwner', severity: 'severity', priority: 'priority', dueDate: 'dueDate' };
+    return changes.map(change => change.hasBefore ? t('qa.historyFieldChange', { field: t(`qa.${labels[change.field]}`), before: display(change.field, change.before), after: display(change.field, change.after) })
+      : `${t(`qa.${labels[change.field]}`)}：${display(change.field, change.after)}`).join('\n');
   }
   if (event.type === 'triage') {
     const match = /^RD: (\S+) · QA: (\S+)\n(\w+) · P(\d)(?:\n(\S+))?$/.exec(detail);

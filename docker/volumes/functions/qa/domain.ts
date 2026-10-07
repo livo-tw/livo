@@ -43,6 +43,7 @@ export interface QaCreateInput {
   projectId: string; title: string; actual: string; observedEnvironment: string;
   customFields?: QaCustomFieldValues;
   observedVersion?: string; steps?: string; expected?: string; component?: string; severity?: QaSeverity;
+  assigneeId?: string | null; qaOwnerId?: string | null; priority?: number; dueDate?: string | null;
 }
 export type QaCommand =
   | { type: 'set_state'; state: QaState }
@@ -286,18 +287,24 @@ export function canQaComment(_issue: QaIssue, actor: QaActor): boolean {
 export function createQaIssue(input: QaCreateInput, issueId: string, ctx: QaContext): QaIssue {
   validContext(ctx);
   record(input);
-  keys(input, ['projectId', 'title', 'actual', 'observedEnvironment', 'observedVersion', 'steps', 'expected', 'component', 'severity', 'customFields']);
+  keys(input, ['projectId', 'title', 'actual', 'observedEnvironment', 'observedVersion', 'steps', 'expected', 'component', 'severity', 'customFields', 'assigneeId', 'qaOwnerId', 'priority', 'dueDate']);
   const projectId = id(input.projectId);
   if (!ctx.projectIds.has(projectId)) return fail('qa_project_unavailable');
+  const assigneeId = input.assigneeId === undefined || input.assigneeId === null ? null : member(input.assigneeId, ctx);
+  const qaOwnerId = input.qaOwnerId === undefined ? ctx.actor.id : input.qaOwnerId === null ? null : member(input.qaOwnerId, ctx);
+  const priority = input.priority === undefined ? 3 : input.priority;
+  if (!Number.isInteger(priority) || priority < 1 || priority > 5) return fail('qa_invalid_priority');
+  const dueDate = input.dueDate === undefined ? null : input.dueDate;
+  if (dueDate !== null && (typeof dueDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || !Number.isFinite(Date.parse(dueDate)) || new Date(dueDate).toISOString().slice(0, 10) !== dueDate)) return fail('qa_invalid_date');
   return {
     id: id(issueId), workspaceId: ctx.workspaceId, projectId,
     title: str(input.title, 200, true), actual: str(input.actual, 20000, true),
     steps: str(input.steps ?? ''), expected: str(input.expected ?? ''),
     observedEnvironment: activeEnvironment(str(input.observedEnvironment, 120, true), ctx), observedVersion: str(input.observedVersion ?? '', 200),
-    component: str(input.component ?? '', 120), reporterId: ctx.actor.id, assigneeId: null, qaOwnerId: null,
+    component: str(input.component ?? '', 120), reporterId: ctx.actor.id, assigneeId, qaOwnerId,
     severity: enumValue(input.severity ?? 'untriaged', ['untriaged', 'low', 'medium', 'high']),
     customFields: customFields(input.customFields, ctx),
-    priority: 3, dueDate: null, state: 'new', resolution: null, resolutionReason: '', duplicateOfId: null,
+    priority, dueDate, state: 'new', resolution: null, resolutionReason: '', duplicateOfId: null,
     fixCycle: 0, version: 1, fixSummary: '', holdReason: '', targets: [], runs: [], taskIds: [],
     createdAt: ctx.now, updatedAt: ctx.now, closedAt: null, reopenedAt: null,
   };
@@ -514,12 +521,12 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
 /**
  * Who hears about a committed change, on both servers. Notifications come from
  * committed transitions, never from UI guesses, and never go to the actor.
- * A new bug goes to `triagers`, which only the server knows: the project's QA
- * coordinator, or the workspace admins when the project has none.
+ * A new bug informs its assigned owners and trusted `triagers`: the project's
+ * QA coordinator, or the workspace admins when the project has none.
  */
 export function qaNotificationRecipients(issue: QaIssue, type: QaCommand['type'] | 'create' | 'comment', actorId: string, triagers: readonly string[] = []): string[] {
   const everyone = [issue.reporterId, issue.assigneeId, issue.qaOwnerId];
-  const ids = type === 'create' ? [...triagers]
+  const ids = type === 'create' ? [...triagers, issue.assigneeId, issue.qaOwnerId]
     : type === 'request_handoff' ? [issue.handoff?.nextOwnerId]
     : type === 'accept_handoff' || type === 'resolve_handoff' ? [issue.handoff?.requestedBy, issue.assigneeId, issue.qaOwnerId]
     : type === 'set_state' || type === 'comment' || type === 'close' ? everyone

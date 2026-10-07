@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {applyQaCommand,canQaCommand,createQaIssue,qaEventDetail,qaNotificationRecipients,type QaContext,type QaCommand} from '../lib/qa/domain';
 let seq=0;const ctx=(who='coordinator',role='member'):QaContext=>({actor:{id:who,role,qaCoordinatorProjectIds:who==='coordinator'?['p']:[]},workspaceId:'a',now:'2026-10-03T10:00:00.000Z',newId:()=>`h-${++seq}`,memberIds:new Set(['coordinator','rd','qa','reporter','next','admin']),projectIds:new Set(['p']),taskIds:new Set()});
-const issue=()=>createQaIssue({projectId:'p',title:'Synthetic issue',actual:'Example',observedEnvironment:'Stage'},'q',ctx('reporter'));
+const issue=()=>createQaIssue({projectId:'p',title:'Synthetic issue',actual:'Example',observedEnvironment:'Stage',qaOwnerId:null},'q',ctx('reporter')); // Historical unassigned issue: handoff must not appoint a QA owner.
 const request:QaCommand={type:'request_handoff',reason:'Need an API decision',nextOwnerId:'next',replyBy:'2026-10-04T10:00:00.000Z',externalDependency:'External ticket ABC'};
 const handoff=()=>applyQaCommand(issue(),request,ctx());
 describe('QA coordination and handoff domain',()=>{

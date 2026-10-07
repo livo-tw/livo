@@ -3208,6 +3208,16 @@
     "adminOnlyOption": "只有管理员可以编辑此页（其他人仍按权限阅读）"
   },
   "qa": {
+    "qaOwnerReporterDefaultHint": "QA 负责人默认为回报人，可自行改选。",
+    "manualStates": {
+      "title": "变更状态选项",
+      "hint": "只调整“变更状态”的选项；当前状态、历史记录、看板与正式验证／结案流程都会保留。",
+      "loading": "正在加载状态选项…",
+      "loadFailed": "无法加载状态选项。请重试后再变更状态。",
+      "saved": "状态选项已保存。",
+      "empty": "已隐藏所有手动状态选项；仍可使用正式流程操作。",
+      "restoreAll": "显示全部状态"
+    },
     "sortDefault": "最近更新",
     "completeInPanel": "请在修复版本区确认资料，完成这一步。",
     "verificationNote": "补充验证备注（选填）",
@@ -3428,6 +3438,7 @@
       "failed": "上传失败"
     },
     "error": {
+      "qa_invalid_manual_state_visibility": "状态选项设置无效。请只选择已有的 QA 状态。",
       "qa_invalid_environment": "部署环境列表已更新，请重新选择可用环境。",
       "qa_historical_pass_unavailable": "原单的 PASS 证据不足，请先完成验证。",
       "qa_forbidden": "你没有这个操作的权限，请确认你是这张 Bug 的回报人、修复者或验证 QA。",

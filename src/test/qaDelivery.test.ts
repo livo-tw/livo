@@ -42,7 +42,7 @@ describe('QA notification channel routing and personal permissions', () => {
   it('posts a Bug card and JJ-style project, people, priority and deadline fields', async () => {
     const t = setup(); expect(await deliverQaJob(job, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
     expect(t.posts[0]).toMatchObject({ channel: 'CBUG', unfurl_links: false, unfurl_media: false });
-    expect(t.posts[0].text).toContain('Example project'); expect(t.posts[0].text).toContain('P2'); expect(t.posts[0].text).toContain('2026-10-10');
+    expect(t.posts[0].text).toContain('Example project'); expect(t.posts[0].text).toContain('優先級：高'); expect(t.posts[0].text).not.toContain('P2'); expect(t.posts[0].text).toContain('2026-10-10');
     expect(t.posts[0].text).toContain('Example member'); expect(t.posts[0].text).toContain('&lt;!channel&gt;');
     expect(t.posts[0].blocks.some((b: Row) => b.elements?.some((e: Row) => e.action_id === 'livo_qa_comment'))).toBe(true);
   });
@@ -56,6 +56,36 @@ describe('QA notification channel routing and personal permissions', () => {
     expect(await deliverQaJob({ ...personal, payload: { ...personal.payload, eventType: 'created' } },
       'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
     expect(t.posts).toHaveLength(1); expect(t.posts[0].channel).toBe('DEXAMPLE'); expect(t.store.canRead).toHaveBeenCalledTimes(2);
+  });
+  it.each(['member', 'qa'] as const)('notifies an assigned %s about a newly created Bug through verified personal delivery', async target => {
+    const t = setup(); t.reroute();
+    t.store.state = async () => ({ ...state, issue: { ...issue, state: 'new' }, triagers: ['admin'] });
+    const created = { ...personal, target_id: target, payload: { ...personal.payload, eventType: 'created' } };
+    expect(await deliverQaJob(created, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
+    expect(t.posts).toHaveLength(1); expect(t.posts[0].channel).toBe('DEXAMPLE'); expect(t.store.canRead).toHaveBeenCalledTimes(2);
+  });
+  it.each(['member', 'qa'] as const)('rechecks the created Bug recipient %s after permission, binding or assignment changes', async target => {
+    for (const reason of ['permission', 'binding', 'assignment'] as const) {
+      const t = setup();
+      const live = { ...state, issue: { ...issue, state: 'new' as const }, triagers: ['admin'] };
+      t.store.state = async () => live;
+      t.store.canSend = async () => {
+        if (reason === 'permission') t.deny();
+        if (reason === 'binding') t.unbind();
+        if (reason === 'assignment') { if (target === 'member') live.issue.assigneeId = 'other'; else live.issue.qaOwnerId = 'other'; }
+        return true;
+      };
+      const created = { ...personal, target_id: target, payload: { ...personal.payload, eventType: 'created' } };
+      expect(await deliverQaJob(created, 'owner', t.store, 'https://example.com', t.fetcher)).not.toBe('sent');
+      expect(t.posts).toHaveLength(0);
+    }
+  });
+  it('does not send the reporter a self-notice when the default QA owner is the actor', async () => {
+    const t = setup();
+    t.store.state = async () => ({ ...state, issue: { ...issue, state: 'new', qaOwnerId: 'reporter' }, triagers: ['admin'] });
+    const created = { ...personal, target_id: 'reporter', payload: { ...personal.payload, eventType: 'created', actorId: 'reporter' } };
+    expect(await deliverQaJob(created, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('skipped');
+    expect(t.posts).toHaveLength(0); expect(t.store.canRead).not.toHaveBeenCalled();
   });
   it.each(['permission', 'binding', 'responsibility', 'deleted', 'route'] as const)('does not leak a queued notice after %s changes', async reason => {
     const t = setup();

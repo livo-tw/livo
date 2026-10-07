@@ -24,7 +24,7 @@ describe('QA direct fields and optional workflow details', () => {
     const original = report(); const next = applyQaCommand(original, fields(original, { qaOwnerId: 'tester' }), ctx('observer'));
     expect(next).toMatchObject({ state: 'new', assigneeId: null, qaOwnerId: 'tester', version: original.version + 1, fixCycle: 0, targets: [], runs: [] });
     expect(qaEventDetail(next, 'update_fields', original)).toContain('"before"');
-    expect(original.qaOwnerId).toBeNull();
+    expect(original.qaOwnerId).toBe('reporter');
   });
   it('starts work after direct assignment without asking the developer to repeat triage', () => {
     expect(canQaCommand(assigned(), ctx('developer').actor, 'start_fix')).toBe(true);

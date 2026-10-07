@@ -5,6 +5,7 @@ import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaLi
 import { validateQaBackup } from './restore.ts';
 import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
+import { parseQaManualStateVisibility, validateQaManualStateVisibility } from './manualStateVisibility.ts';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './fields.ts';
 import { qaVersionSuggestions } from './versions.ts';
 import { isDeploymentQueueOperator } from './deploymentQueue.ts';
@@ -126,8 +127,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const row=(await db.qaRows('qa_project_coordination',{select:'coordinator_id,version',id:`eq.${projectId}`,limit:1}))[0];
     return {projectId,coordinatorId:row?.coordinator_id??null,version:row?.version??0};
   }
-  async function context(actor: Row, projectId: string, issue?: QaIssue, command?: QaCommand): Promise<QaContext> {
+  async function context(actor: Row, projectId: string, issue?: QaIssue, command?: QaCommand, createInput?: QaCreateInput): Promise<QaContext> {
     const candidateIds = new Set([actor.id, issue?.assigneeId, issue?.qaOwnerId]);
+    for (const owner of [createInput?.assigneeId, createInput?.qaOwnerId]) {
+      if (owner !== undefined && owner !== null) candidateIds.add(id(owner));
+    }
     if (command?.type === 'request_handoff') candidateIds.add(id(command.nextOwnerId));
     if (command?.type === 'triage') { candidateIds.add(id(command.assigneeId)); candidateIds.add(id(command.qaOwnerId)); }
     if (command?.type === 'update_fields') {
@@ -215,6 +219,15 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return db.rpc('livo_qa_save_coordination',{p_auth_id:actor.authId,p_project_id:projectId,p_coordinator_id:coordinatorId,
           p_expected_version:request.expectedVersion,p_command_id:commandId(request.commandId),p_payload_hash:await qaPayloadHash(request),p_slack_identity:actor.slackIdentity});
       }
+      case 'get_manual_state_visibility': {
+        const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_manual_state_visibility', limit: 1 }))[0];
+        return parseQaManualStateVisibility(row?.value);
+      }
+      case 'save_manual_state_visibility': {
+        if (!canManageQaConfiguration({role:actor.role,qaAdmin:actor.qaAdmin})) fail('qa_forbidden', 403);
+        const configuration = validateQaManualStateVisibility(request.configuration);
+        return db.rpc('livo_qa_save_manual_state_visibility', { p_auth_id: actor.authId, p_configuration: configuration });
+      }
       case 'get_workflow': {
         const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_workflow', limit: 1 }))[0];
         return parseQaWorkflow(row?.value);
@@ -298,7 +311,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         if (previous !== undefined) return previous;
         if (request.action === 'create') {
           const input = object(request.input) as QaCreateInput;
-          const issue = createQaIssue(input, request.id, await context(actor, input.projectId));
+          const issue = createQaIssue(input, request.id, await context(actor, input.projectId, undefined, undefined, input));
           return commit(actor, request, hash, issue, 'create', 'created');
         }
         const issue = await getIssue(request.id);

@@ -5,10 +5,12 @@ import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { Command, CommandInput, CommandItem, CommandList } from './command';
 
 type Option = { value: string; label: string; group: string; disabled: boolean; color?: string };
+export interface SearchableSelectDisplayOption { value: string; label: string; color?: string; }
+type SearchableSelectProps = SelectHTMLAttributes<HTMLSelectElement> & { displayCurrentOption?: SearchableSelectDisplayOption };
 
 /** Native values and validation, with searchable choices when there are more than five. */
-export const SearchableSelect = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
-  function SearchableSelect({ children, className, id: suppliedId, onChange, onInvalid, ...props }, forwardedRef) {
+export const SearchableSelect = forwardRef<HTMLSelectElement, SearchableSelectProps>(
+  function SearchableSelect({ children, className, id: suppliedId, onChange, onInvalid, displayCurrentOption, ...props }, forwardedRef) {
     const { t } = useTranslation();
     const generatedId = useId();
     const id = suppliedId || generatedId;
@@ -48,7 +50,9 @@ export const SearchableSelect = forwardRef<HTMLSelectElement, SelectHTMLAttribut
     }, [children, props.value, props.defaultValue, props['aria-label']]);
     useLayoutEffect(() => { if (props.disabled || !searchable) { setOpen(false); setSearch(''); } }, [props.disabled, searchable]);
     const changeOpen = (next: boolean) => { setOpen(next && !props.disabled); if (!next) setSearch(''); };
-    const selected = options.find(option => option.value === (props.value === undefined ? nativeValue : String(props.value)));
+    const currentValue = props.value === undefined ? nativeValue : String(props.value);
+    const selected = options.find(option => option.value === currentValue)
+      || (displayCurrentOption?.value === currentValue ? displayCurrentOption : undefined);
     const query = search.trim().toLocaleLowerCase();
     const filtered = options.filter(option => !query || `${option.label} ${option.group}`.toLocaleLowerCase().includes(query));
     const selectOption = (option: Option) => {

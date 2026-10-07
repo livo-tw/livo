@@ -7,7 +7,7 @@ const {assertQaCoordinationImportSafe}=await import('../../worker/migrate/qa-coo
 let db,env,dir,file,serial=0,beforeBatch;const actor=(id='admin',ws='a')=>({userId:id,email:id+'@example.test',member:{id,name:id,role:id==='super'?'super_admin':id==='admin'?'admin':'member',email:id+'@example.test',workspaceId:ws}});
 const api=(body,id='admin',ws='a')=>executeQaAction(env,actor(id,ws),body,{waitUntil:p=>p.catch(()=>{})});
 const config=(coordinatorId='coordinator',expectedVersion=0,id='admin',commandId='config-'+(++serial))=>api({action:'save_coordination',projectId:'p',coordinatorId,expectedVersion,commandId},id);
-const create=async()=>api({action:'create',id:'issue',commandId:'create-'+(++serial),input:{projectId:'p',title:'Synthetic issue',actual:'Example',observedEnvironment:'Stage'}},'reporter');
+const create=async()=>api({action:'create',id:'issue',commandId:'create-'+(++serial),input:{projectId:'p',title:'Synthetic issue',actual:'Example',observedEnvironment:'Stage',qaOwnerId:null}},'reporter'); // Historical unassigned issue; creation defaults are covered separately.
 const command=(issue,value,id='coordinator',cid='command-'+(++serial))=>api({action:'command',id:issue.id,expectedVersion:issue.version,commandId:cid,command:value},id);
 const request={type:'request_handoff',reason:'Need a decision',nextOwnerId:'next',replyBy:'2026-10-05T10:00:00.000Z',externalDependency:'External dependency'};
 const rows=sql=>db.prepare(sql).all();

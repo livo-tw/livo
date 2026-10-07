@@ -14,16 +14,19 @@ import { QaField, QaSelect, qaButton, qaPrimary } from './QaFields';
 import { useQaFieldConfiguration } from '@/hooks/useQaFieldConfiguration';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { QaCustomFieldInputs } from './QaCustomFieldInputs';
+import UserSelect from '@/components/UserSelect';
+import { qaPriorities } from './QaBadges';
 
-export default function QaReportForm({ initial, projectId, projects, productLines, client, busy, onSubmit, onCancel, children, submitLabel, cancelLabel, readOnly = false, cancelDisabled = false, fixedFooter = false }: {
-  initial?: QaIssue; projectId?: string; projects: Project[]; productLines: ProductLine[]; client: Pick<QaClient, 'versions' | 'getFieldConfiguration'>; busy: boolean;
+export default function QaReportForm({ initial, projectId, defaultQaOwnerId, projects, productLines, client, busy, onSubmit, onCancel, children, submitLabel, cancelLabel, readOnly = false, cancelDisabled = false, fixedFooter = false }: {
+  initial?: QaIssue; projectId?: string; defaultQaOwnerId?: string; projects: Project[]; productLines: ProductLine[]; client: Pick<QaClient, 'versions' | 'getFieldConfiguration'>; busy: boolean;
   onSubmit: (input: QaCreateInput) => void; onCancel: () => void;
   children?: ReactNode; submitLabel?: string; cancelLabel?: string; readOnly?: boolean; cancelDisabled?: boolean; fixedFooter?: boolean;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const environments = useDeploymentEnvironments();
-  const [form, setForm] = useState<QaCreateInput>(() => ({ projectId: initial?.projectId || projectId || '', title: initial?.title || '', actual: initial?.actual || '', steps: initial?.steps || '', expected: initial?.expected || '', observedEnvironment: initial?.observedEnvironment || '', observedVersion: initial?.observedVersion || '', component: initial?.component || '', severity: initial?.severity || 'untriaged', customFields: { ...initial?.customFields } }));
+  const [form, setForm] = useState<QaCreateInput>(() => ({ projectId: initial?.projectId || projectId || '', title: initial?.title || '', actual: initial?.actual || '', steps: initial?.steps || '', expected: initial?.expected || '', observedEnvironment: initial?.observedEnvironment || '', observedVersion: initial?.observedVersion || '', component: initial?.component || '', severity: initial?.severity || 'untriaged', customFields: { ...initial?.customFields },
+    ...(!initial ? { assigneeId: null, qaOwnerId: defaultQaOwnerId || undefined, priority: 3, dueDate: null } : {}) }));
   const fields = useQaFieldConfiguration(client);
   const versions = useQaVersions(client, form.projectId);
   const change = (key: keyof QaCreateInput, value: string) => setForm(previous => ({ ...previous, [key]: value,
@@ -44,7 +47,16 @@ export default function QaReportForm({ initial, projectId, projects, productLine
         <QaEnvironmentField label={t('qa.environment')} required value={form.observedEnvironment} onChange={value => change('observedEnvironment', value)} />
         <QaVersionField label={t('qa.observedVersion')} value={form.observedVersion || ''} onChange={value => change('observedVersion', value)} suggestions={versions} />
         {!initial && <QaSelect label={t('qa.severity')} value={form.severity} onChange={e => change('severity', e.target.value as QaSeverity)}>{['untriaged', 'low', 'medium', 'high'].map(s => <option key={s} value={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
-        <QaField label={t('qa.problemArea')} hint={t('qa.problemAreaHint')} maxLength={100} value={form.component} onChange={e => change('component', e.target.value)} />
+        {!initial && <>
+          <UserSelect label={t('qa.assignee')} activeOnly allowEmpty disabled={busy || readOnly} value={form.assigneeId || ''} onChange={value => setForm(previous => ({ ...previous, assigneeId: value || null }))} />
+          <UserSelect label={t('qa.qaOwner')} activeOnly allowEmpty disabled={busy || readOnly} value={form.qaOwnerId || ''} onChange={value => setForm(previous => ({ ...previous, qaOwnerId: value || null }))} />
+          <p className="text-xs text-muted-foreground">{t('qa.qaOwnerReporterDefaultHint')}</p>
+          <QaSelect label={t('qa.priority')} value={form.priority} onChange={event => setForm(previous => ({ ...previous, priority: Number(event.target.value) }))}>
+            {qaPriorities.map((value, index) => <option key={value} value={index + 1}>{t(`priority.${value}`)}</option>)}
+          </QaSelect>
+          <QaField label={t('qa.dueDate')} type="date" value={form.dueDate || ''} onChange={event => setForm(previous => ({ ...previous, dueDate: event.target.value || null }))} />
+        </>}
+        {initial && <QaField label={t('qa.problemArea')} hint={t('qa.problemAreaHint')} maxLength={100} value={form.component} onChange={e => change('component', e.target.value)} />}
       </div>
     </fieldset>
     {children && <div className="min-w-0 border-t border-border pt-5">{children}</div>}

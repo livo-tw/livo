@@ -87,7 +87,7 @@ describe('QA client capability and isolated demo', () => {
     const ctx: QaContext = { ...context(), projectIds: new Set(['p1', 'p2']) };
     const client = createQaClient({ enabled: () => true, context: () => ctx, mock: true });
     const add = async (suffix: string, title: string, projectId = 'p1', owner: string | null = 'admin') => {
-      let issue = await client.create({ ...input, title, projectId }, `${ctx.workspaceId}-${suffix}`);
+      let issue = await client.create({ ...input, title, projectId, qaOwnerId: null }, `${ctx.workspaceId}-${suffix}`);
       if (owner) issue = await client.command(issue, { type: 'triage', assigneeId: 'dev', qaOwnerId: owner, priority: 3, severity: 'high', dueDate: null });
       return issue;
     };

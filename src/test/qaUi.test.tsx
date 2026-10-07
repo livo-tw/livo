@@ -1,6 +1,8 @@
+import type { QaState } from '@/lib/qa/domain';
+import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getFieldConfiguration: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
+const mocks = vi.hoisted(() => ({ enabled: false, ready: true, role: 'admin', list: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), saveWorkflow: vi.fn(), command: vi.fn(), comment: vi.fn(), useQa: vi.fn(), selected: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -8,11 +10,15 @@ vi.mock('react-i18next', async (importOriginal) => ({
 }));
 import '@/i18n';
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: { qa: mocks.enabled }, featureTogglesReady: mocks.ready, taskDisplayMode: 'modal', setTaskDisplayMode: vi.fn(), setSelectedTask: mocks.selected }) }));
+vi.mock('@/context/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('@/context/AuthContext')>(),
+  useAuthContext: () => ({ currentMemberId: 'admin' }),
+}));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [{ id: 'admin', name: 'Admin', role: 'admin', isActive: true, jobTitle: '' }] }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [{ id: 'p1', name: 'Project', isArchived: false }], productLines: [] as import('@/types').ProductLine[], selectedProjectId: null as string | null, setSelectedProjectId: vi.fn() }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as import('@/types').Task[] }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { list: mocks.list, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getFieldConfiguration: mocks.getFieldConfiguration, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
+  const client = { list: mocks.list, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, saveWorkflow: mocks.saveWorkflow, command: mocks.command, comment: mocks.comment };
   return { useQa: () => { mocks.useQa(); return { client, actor: { id: 'admin', role: mocks.role }, enabled: mocks.enabled }; } };
 });
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
@@ -31,7 +37,7 @@ beforeEach(() => { mocks.versions.mockResolvedValue([]); });
 describe('QA feature gate and conflict recovery', () => {
   it('shares project build suggestions across repair targets and keeps component optional', async () => {
     mocks.versions.mockResolvedValue(['known-build']);
-    const client = { getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
+    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const repairing = { ...issue, state: 'in_progress' as const, assigneeId: 'admin', qaOwnerId: 'admin', component: 'Wallet screen' };
     render(<QaIssueDetail detail={{ ...detail, issue: repairing }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={vi.fn()} onBack={vi.fn()} />);
     const build = screen.getByLabelText(/qa.build/) as HTMLInputElement;
@@ -129,7 +135,7 @@ describe('QA feature gate and conflict recovery', () => {
   });
   it('keeps an unsent report after a conflict and after refreshing the record', async () => {
     mocks.command.mockRejectedValue({ status: 409, code: 'qa_version_conflict' }); const refresh = vi.fn().mockResolvedValue(undefined);
-    const client = { getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
+    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command, comment: mocks.comment } as unknown as QaClient;
     const props = { detail, client, actor: { id: 'admin', role: 'admin' }, onRefresh: refresh, onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));

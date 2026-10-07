@@ -9,17 +9,17 @@ const actor={id:'creator',role:'member' as const,team:'TEXAMPLE',slack_user:'UEX
 const context=()=>({actor,workspaceId:'default',now:'2026-10-06T00:00:00Z',newId:()=> 'target-example',environmentValues:['Staging','Production'],memberIds:new Set(['creator','developer','tester']),projectIds:new Set(['p','p2']),taskIds:new Set<string>()});
 const makeIssue=():QaIssue=>createQaIssue({projectId:'p',title:'Example bug',actual:'Example result',observedEnvironment:'Staging'},'issue-example',context());
 function harness(initial=makeIssue()) {
-  const jobs:Promise<unknown>[]=[],receipts=new Map<string,QaIssue>();let current=initial,failAssignment=false;
+  const jobs:Promise<unknown>[]=[],receipts=new Map<string,QaIssue>();let current=initial,loseCreateResponse=false;
   const api=vi.fn(async(_actor:typeof actor,body:Row):Promise<any>=>{
     if(body.action==='get_workflow')return DEFAULT_QA_WORKFLOW;
     if(body.action==='get')return {issue:current,comments:[],events:[],attachments:[],memberNames:{developer:'Example Developer',tester:'Example Tester'}};
     if(body.action==='members')return {members:[{id:'developer',name:'Example Developer'},{id:'tester',name:'Example Tester'}],hasMore:false};
     if(body.action==='create'){
       if(receipts.has(body.commandId))return receipts.get(body.commandId);
-      current=createQaIssue(body.input,body.id,context());receipts.set(body.commandId,current);return current;
+      current=createQaIssue(body.input,body.id,context());receipts.set(body.commandId,current);
+      if(loseCreateResponse){loseCreateResponse=false;throw new Error('qa_unavailable');}return current;
     }
     if(body.action==='command'){
-      if(failAssignment){failAssignment=false;throw new Error('qa_unavailable');}
       current=applyQaCommand(current,body.command,context());return current;
     }
     return current;
@@ -29,7 +29,7 @@ function harness(initial=makeIssue()) {
     environments:async()=>['Staging','Production'],mapped:async()=>undefined,publish:vi.fn(async()=>{}),sync:vi.fn(async()=>{}),
     claimNotice:async()=>true,enqueueEvent:async()=> 'event-example',completeEvent:async()=>{},pendingEvents:async()=>[],
     slack:vi.fn(async()=>({view:{id:'VEXAMPLE'}})),reply:vi.fn(async()=>{}),background:job=>jobs.push(job),link:issue=>`https://example.com/?qa=${issue.id}`};
-  return {d,api,flush:async()=>{await Promise.all(jobs);},current:()=>current,failNextAssignment:()=>{failAssignment=true;}};
+  return {d,api,flush:async()=>{await Promise.all(jobs);},current:()=>current,loseNextCreateResponse:()=>{loseCreateResponse=true;}};
 }
 const selected=(value:string)=>({selected_option:{value}});
 const submit=(id:string,intent:string,values:Row,extra:Row={}):QaSlackPayload=>({type:'view_submission',team_id:'TEXAMPLE',user_id:'UEXAMPLE',view:{id,callback_id:'livo_qa_submit',private_metadata:JSON.stringify({intent,channel:'CEXAMPLE',issueId:'issue-example',version:1,...extra}),state:{values:Object.fromEntries(Object.entries(values).map(([key,value])=>[key,{[key]:typeof value==='string'?{value}:value}]))}}});
@@ -42,6 +42,10 @@ describe('Slack QA assignment, current state and stale action experience',()=>{
     const view=lastView(h.d);
     for(const id of ['assigneeId','qaOwnerId'])expect(view.blocks.find((block:Row)=>block.block_id===id)).toMatchObject({optional:true,element:{type:'external_select'}});
     expect(view.blocks.find((block:Row)=>block.block_id==='severity').element.initial_option.value).toBe('medium');
+    expect(view.blocks.find((block:Row)=>block.block_id==='qaOwnerId').element.initial_option.value).toBe(actor.id);
+    expect(view.blocks.find((block:Row)=>block.block_id==='priority').element.initial_option.value).toBe('3');
+    expect(view.blocks.find((block:Row)=>block.block_id==='dueDate').element.type).toBe('datepicker');
+    expect(view.blocks.some((block:Row)=>block.block_id==='component')).toBe(false);
   });
   it.each(['assigneeId','qaOwnerId'])('looks up %s via the authorized members action for the current selected project',async action_id=>{
     const h=harness();const result=await handleQaSlack({type:'block_suggestion',action_id,value:'Example',view:{id:'VEXAMPLE',callback_id:'livo_qa_submit',private_metadata:JSON.stringify({projectId:'p'}),state:{values:{project:{project:selected('p2')}}}}},'suggestion',h.d);
@@ -50,25 +54,30 @@ describe('Slack QA assignment, current state and stale action experience',()=>{
     h.api.mockRejectedValueOnce(new Error('qa_forbidden'));
     expect(await handleQaSlack({type:'block_suggestion',action_id,view:{id:'VEXAMPLE',callback_id:'livo_qa_submit',private_metadata:JSON.stringify({projectId:'unreadable'})}},'denied',h.d)).toEqual({options:[]});
   });
-  it.each([{assigneeId:selected('developer')},{qaOwnerId:selected('tester')},{assigneeId:selected('developer'),qaOwnerId:selected('tester')}])('sets only selected owners with a normal CAS command and no fabricated triage',async owners=>{
+  it.each([{assigneeId:selected('developer')},{qaOwnerId:selected('tester')},{assigneeId:selected('developer'),qaOwnerId:selected('tester')}])('creates owners atomically without fabricated triage or a second assignment write',async owners=>{
     const h=harness();await handleQaSlack(submit('VOWNER','new',createValues(owners)),'owners',h.d);await h.flush();
     const creation=h.api.mock.calls.find(([,body])=>body.action==='create')![1];
-    const command=h.api.mock.calls.find(([,body])=>body.action==='command')![1];
-    expect(command).toMatchObject({action:'command',expectedVersion:1,id:creation.id,command:{type:'update_fields',projectId:'p',assigneeId:owners.assigneeId?.selected_option.value||null,qaOwnerId:owners.qaOwnerId?.selected_option.value||null,severity:'medium',priority:3,dueDate:null}});
-    expect(command.commandId).not.toBe(creation.commandId);expect(h.current().state).toBe('new');expect(h.current().runs).toEqual([]);expect(h.d.publish).toHaveBeenCalledWith(actor,h.current(),expect.anything());
+    expect(creation.input).toMatchObject({assigneeId:owners.assigneeId?.selected_option.value||null,qaOwnerId:owners.qaOwnerId?.selected_option.value||actor.id,severity:'medium',priority:3,dueDate:null});
+    expect(h.api.mock.calls.filter(([,body])=>body.action==='command')).toHaveLength(0);
+    expect(h.current()).toMatchObject({state:'new',version:1,runs:[]});expect(h.d.publish).toHaveBeenCalledWith(actor,h.current(),expect.anything());
   });
-  it('leaves an unassigned new bug pending while making no assignment command',async()=>{
-    const h=harness();await handleQaSlack(submit('VUNASSIGNED','new',createValues()),'unassigned',h.d);await h.flush();
-    expect(h.api.mock.calls.filter(([,body])=>body.action==='command')).toHaveLength(0);expect(h.current()).toMatchObject({state:'new',assigneeId:null,qaOwnerId:null});
-    const card=qaSlackCard(h.current(),'https://example.com');expect(JSON.stringify(card)).toContain('livo_qa_triage');expect(JSON.stringify(card)).not.toContain('到 LIVO 設定');
+  it('defaults a legacy new form to the reporter while allowing an explicitly cleared QA owner',async()=>{
+    const h=harness();await handleQaSlack(submit('VDEFAULT','new',createValues()),'default',h.d);await h.flush();
+    expect(h.current()).toMatchObject({state:'new',assigneeId:null,qaOwnerId:actor.id});
+    const cleared=harness();await handleQaSlack(submit('VCLEAR','new',createValues({qaOwnerId:{selected_option:null}})),'clear',cleared.d);await cleared.flush();
+    expect(cleared.current().qaOwnerId).toBeNull();
   });
-  it('reports a committed creation honestly and resumes owner setup with stable IDs',async()=>{
-    const h=harness(),payload=submit('VRESUME','new',createValues({assigneeId:selected('developer')}));h.failNextAssignment();
-    await handleQaSlack(payload,'attempt-1',h.d);await h.flush();expect(JSON.stringify(lastView(h.d))).toContain('Bug 已建立');expect(h.d.publish).not.toHaveBeenCalled();
+  it('submits selected priority and the Slack datepicker value in the create payload',async()=>{
+    const h=harness();await handleQaSlack(submit('VSETTINGS','new',createValues({priority:selected('2'),dueDate:{selected_date:'2026-11-09'}})),'settings',h.d);await h.flush();
+    expect(h.current()).toMatchObject({priority:2,dueDate:'2026-11-09',qaOwnerId:actor.id,state:'new',version:1});
+  });
+  it('recovers a lost create response through the existing receipt without creating or assigning twice',async()=>{
+    const h=harness(),payload=submit('VRESUME','new',createValues({assigneeId:selected('developer')}));h.loseNextCreateResponse();
+    await handleQaSlack(payload,'attempt-1',h.d);await h.flush();expect(h.current()).toMatchObject({assigneeId:'developer',qaOwnerId:actor.id,version:1});expect(h.d.publish).not.toHaveBeenCalled();
     await handleQaSlack(payload,'attempt-2',h.d);await h.flush();
     const creations=h.api.mock.calls.filter(([,body])=>body.action==='create').map(([,body])=>body);
-    const assignments=h.api.mock.calls.filter(([,body])=>body.action==='command').map(([,body])=>body);
-    expect(creations[0]).toEqual(creations[1]);expect(assignments[0]).toEqual(assignments[1]);expect(h.current().assigneeId).toBe('developer');expect(h.d.publish).toHaveBeenCalledTimes(1);
+    expect(creations).toHaveLength(2);expect(creations[0]).toEqual(creations[1]);
+    expect(h.api.mock.calls.filter(([,body])=>body.action==='command')).toHaveLength(0);expect(h.current().version).toBe(1);expect(h.d.publish).toHaveBeenCalledTimes(1);
   });
   it('creates distinct bugs when a new form reuses the same Slack modal with a new hash',async()=>{
     const h=harness(),first=submit('VREUSED','new',createValues()),second=submit('VREUSED','new',createValues({title:'Second example bug'}));

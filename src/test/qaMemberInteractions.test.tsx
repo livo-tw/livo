@@ -1,3 +1,5 @@
+import type { QaState } from '@/lib/qa/domain';
+import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -19,7 +21,7 @@ import type { QaClient } from '@/lib/qa/client';
 import { qaStateColors } from '@/components/qa/QaBadges';
 
 const person = (id: string, name: string, isActive = true, jobTitle = 'Engineer'): User => ({ id, name, isActive, jobTitle, role: 'member', avatar: name[0], color: '#123456', email: `${id}@example.com`, sortOrder: 1 });
-const issue = createQaIssue({ projectId: 'p1', title: 'Checkout error', actual: 'Cannot save a valid entry', expected: 'A valid entry is saved', observedEnvironment: 'Stage' }, 'bug1', { actor: { id: 'reporter', role: 'member' }, workspaceId: 'default', now: '2026-10-03T00:00:00Z', newId: () => 'example-id', memberIds: new Set(['reporter']), projectIds: new Set(['p1']), taskIds: new Set() });
+const issue = createQaIssue({ projectId: 'p1', title: 'Checkout error', actual: 'Cannot save a valid entry', expected: 'A valid entry is saved', observedEnvironment: 'Stage', qaOwnerId: null }, 'bug1', { actor: { id: 'reporter', role: 'member' }, workspaceId: 'default', now: '2026-10-03T00:00:00Z', newId: () => 'example-id', memberIds: new Set(['reporter']), projectIds: new Set(['p1']), taskIds: new Set() });
 const detail: QaDetail = { issue, comments: [], events: [], attachments: [] };
 beforeEach(() => {
   state.users = [person('dev', 'Alex', true, 'Engineer'), person('qa', 'Blair', true, 'QA'), person('inactive', 'Casey', false)];
@@ -37,7 +39,7 @@ async function choose(label: string, name: RegExp) {
 }
 function renderDetail(overrides: Partial<QaDetail> = {}, actor: QaActor = { id: 'admin', role: 'admin' }) {
   const command = vi.fn().mockResolvedValue(issue), upload = vi.fn().mockResolvedValue({ id: 'file1' });
-  const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const props = { detail: { ...detail, ...overrides }, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
   return { ...render(<QaIssueDetail {...props} />), command, upload, props };
 }
@@ -48,6 +50,7 @@ describe('QA direct state selection', () => {
     const { command, props, rerender } = renderDetail({ issue: historical }, { id: 'reporter', role: 'member' });
     const failed = { ...historical, state: 'failed' as const, version: historical.version + 1 };
     command.mockResolvedValue(failed);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
     const picker = screen.getByRole('combobox', { name: 'qa.changeState' });
     expect(picker).not.toBeDisabled();
     fireEvent.click(picker);
@@ -75,6 +78,7 @@ describe('QA direct state selection', () => {
     const failed = { ...historical, state: 'failed' as const, version: historical.version + 1 };
     command.mockResolvedValue(failed);
     props.onRefresh.mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.changeState' }));
     fireEvent.click(await screen.findByRole('option', { name: 'qa.state.failed' }));
     await screen.findByText('qaHandoff.savedRefreshFailed');
@@ -213,7 +217,7 @@ describe('QA detail uses shared controls with a focused next action', () => {
   it('starts the repair from the card button in one click too, and only once', async () => {
     const assigned = { ...issue, state: 'triaged' as const, assigneeId: 'admin', qaOwnerId: 'qa' };
     const command = vi.fn().mockResolvedValue({ ...assigned, state: 'in_progress', version: assigned.version + 1 });
-    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload: vi.fn(), versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload: vi.fn(), versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const view = render(<QaIssueDetail detail={{ ...detail, issue: assigned }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="start_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
     await waitFor(() => expect(command).toHaveBeenCalledWith(assigned, { type: 'start_fix' }, expect.any(String)));
@@ -271,7 +275,7 @@ describe('QA detail uses shared controls with a focused next action', () => {
 
   it('deletes a bug after one confirmation and leaves the record', async () => {
     const remove = vi.fn().mockResolvedValue(undefined), onDeleted = vi.fn();
-    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn().mockResolvedValue([]), delete: remove } as unknown as QaClient;
+    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn().mockResolvedValue([]), delete: remove } as unknown as QaClient;
     render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={vi.fn()} onBack={vi.fn()} onDeleted={onDeleted} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.delete' }));
