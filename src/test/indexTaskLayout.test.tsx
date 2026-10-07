@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Task } from '@/types';
 import { useUIState } from '@/context/hooks/useUIState';
 
@@ -28,7 +28,7 @@ vi.mock('@/components/notifications/NotificationToastProvider', () => ({ Notific
 vi.mock('@/context/MyAssignmentsContext', () => ({ MyAssignmentsProvider: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/components/ErrorBoundary', () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/components/AppSidebar', () => ({ default: () => <nav aria-label="Example sidebar" /> }));
-vi.mock('@/components/TopBar', () => ({ default: () => <header>Example header</header> }));
+vi.mock('@/components/TopBar', () => ({ default: ({ onToggleSidebar, sidebarExpanded }: { onToggleSidebar: () => void; sidebarExpanded: boolean }) => <header>Example header<button aria-expanded={sidebarExpanded} onClick={onToggleSidebar}>Example sidebar toggle</button></header> }));
 vi.mock('@/components/BoardView', () => ({ default: () => <main>Example board</main> }));
 vi.mock('@/components/TaskDetailContent', () => ({ default: () => <button>Example task content</button> }));
 vi.mock('@/components/project/ProjectScopeBar', () => ({ default: (): null => null }));
@@ -79,4 +79,18 @@ describe('Index task detail across device widths', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(localStorage.getItem('livo.taskDisplayMode')).toBe('side');
   });
+});
+
+it('starts with the desktop sidebar expanded and restores the same mounted navigation after collapse', () => {
+  width(1280);
+  render(<Index />);
+  const sidebar = screen.getByRole('navigation', { name: 'Example sidebar' });
+  const toggle = screen.getByRole('button', { name: 'Example sidebar toggle' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  fireEvent.click(toggle);
+  expect(screen.queryByRole('navigation', { name: 'Example sidebar' })).not.toBeInTheDocument();
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(sidebar.isConnected).toBe(true);
+  fireEvent.click(toggle);
+  expect(screen.getByRole('navigation', { name: 'Example sidebar' })).toBe(sidebar);
 });

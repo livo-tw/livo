@@ -57,6 +57,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('mobile navigation and tools', () => {
+  it('offers a desktop sidebar toggle with the current expanded state and a localized action', () => {
+    state.mobile = false;
+    const toggle = vi.fn();
+    const { rerender } = render(<TopBar onToggleSidebar={toggle} sidebarExpanded />);
+    const collapse = screen.getByRole('button', { name: 'sidebar.collapseNavigation' });
+    expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(collapse);
+    expect(toggle).toHaveBeenCalledOnce();
+    rerender(<TopBar onToggleSidebar={toggle} sidebarExpanded={false} />);
+    expect(screen.getByRole('button', { name: 'sidebar.expandNavigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('keeps the record URL until the guarded view transition accepts navigation', () => {
     state.currentView = 'qa';
     window.history.replaceState({}, '', '/?qa=example-issue');

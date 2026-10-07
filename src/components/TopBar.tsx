@@ -33,9 +33,10 @@ const navItemDefs = [
 
 interface TopBarProps {
   onToggleSidebar?: () => void;
+  sidebarExpanded?: boolean;
 }
 
-const TopBar = ({ onToggleSidebar }: TopBarProps) => {
+const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
   const { t } = useTranslation();
   const { currentMember, currentMemberId, setCurrentMemberId, realMember } = useAuthContext();
   const { users } = useMemberContext();
@@ -193,8 +194,8 @@ const TopBar = ({ onToggleSidebar }: TopBarProps) => {
       {/* Row 1: Logo + Search + Actions */}
       <div className="h-14 flex min-w-0 items-center justify-between px-2 md:px-4 gap-1 md:gap-2">
         <div className="flex items-center gap-2 flex-shrink-0">
-          {isMobile && (
-            <button id="livo-navigation-toggle" onClick={onToggleSidebar} aria-label={t('sidebar.navigation')} className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors">
+          {(isMobile || onToggleSidebar) && (
+            <button id="livo-navigation-toggle" onClick={onToggleSidebar} aria-expanded={sidebarExpanded} aria-controls="livo-primary-navigation" aria-label={t(sidebarExpanded ? 'sidebar.collapseNavigation' : 'sidebar.expandNavigation')} className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-sidebar-foreground hover:bg-sidebar-hover transition-colors">
               <Menu size={20} aria-hidden="true" />
             </button>
           )}

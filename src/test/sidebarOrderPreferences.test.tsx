@@ -43,6 +43,19 @@ async function loaded(memberId = 'workspace-one:member-one') {
 }
 
 describe('account-scoped sidebar preference persistence', () => {
+  it('saves the selected name direction and retains custom IDs through exact readback', async () => {
+    const { result } = await loaded();
+    const descending: SidebarOrder = { ...original, sortMode: 'name_desc' };
+    mock.read.mockResolvedValueOnce(row(original)).mockResolvedValueOnce(row(descending));
+    let ok = false;
+    await act(async () => { ok = await result.current.save(descending); });
+    expect(ok).toBe(true);
+    expect(result.current.sortMode).toBe('name_desc');
+    expect(result.current.lineOrder).toEqual(original.lineOrder);
+    expect(result.current.projectOrder).toEqual(original.projectOrder);
+    expect(mock.write.mock.calls[0][0].visible_keys).toEqual(descending);
+  });
+
   it('loads a single versioned preference from the shared account store on another device', async () => {
     const { result } = await loaded();
     expect(result.current.lineOrder).toEqual(original.lineOrder);

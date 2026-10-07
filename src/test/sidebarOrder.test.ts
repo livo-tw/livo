@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptySidebarOrder, moveSidebarItem, normalizeSidebarOrder, parseSidebarOrder, sortSidebarItems } from '@/lib/sidebarOrder';
+import { emptySidebarOrder, moveSidebarItem, normalizeSidebarOrder, parseSidebarOrder, sidebarSortMode, sortSidebarItems } from '@/lib/sidebarOrder';
 
 const ids = (items: { id: string }[]) => items.map(item => item.id);
 
@@ -69,5 +69,27 @@ describe('personal sidebar display order', () => {
   ])('falls back safely for malformed or unbounded preference data', value => {
     expect(parseSidebarOrder(value)).toBeNull();
     expect(normalizeSidebarOrder(value)).toEqual(emptySidebarOrder());
+  });
+});
+
+describe('sidebar name directions and legacy preferences', () => {
+  const rows = [
+    { id: 'han', name: '📁 [中文專案]' }, { id: '10', name: '🚀 Project 10' },
+    { id: '2', name: '[Project 2]' }, { id: 'alpha-b', name: 'Alpha' }, { id: 'alpha-a', name: 'alpha' },
+  ];
+  it('keeps English names first in both directions, ignoring emoji and bracket prefixes', () => {
+    expect(ids(sortSidebarItems(rows, ['han'], 'en', 'name_asc'))).toEqual(['alpha-a', 'alpha-b', '2', '10', 'han']);
+    expect(ids(sortSidebarItems(rows, ['han'], 'en', 'name_desc'))).toEqual(['10', '2', 'alpha-a', 'alpha-b', 'han']);
+  });
+  it('keeps old custom rows and empty name-order rows valid without migration', () => {
+    expect(sidebarSortMode(parseSidebarOrder({ version: 1, lineOrder: ['legacy'], projectOrder: [] })!)).toBe('custom');
+    expect(sidebarSortMode(emptySidebarOrder())).toBe('name_asc');
+    const value = { version: 1, lineOrder: ['han'], projectOrder: ['saved'], sortMode: 'name_desc' as const };
+    expect(parseSidebarOrder(value)).toEqual(value);
+    expect(ids(sortSidebarItems(rows, value.lineOrder, 'en', 'custom'))[0]).toBe('han');
+    expect(value.lineOrder).toEqual(['han']);
+  });
+  it.each(['unknown', null, 2])('rejects an invalid new mode %s without overwriting it', sortMode => {
+    expect(parseSidebarOrder({ version: 1, lineOrder: [], projectOrder: [], sortMode })).toBeNull();
   });
 });

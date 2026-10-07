@@ -75,6 +75,7 @@ const AppContent = () => {
   const { hasFeature } = useLicense();
   const [sidePanelWidth, setSidePanelWidth] = useState(580);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const isMobile = useIsMobile();
   const compactTaskLayout = useMediaQuery('(max-width: 1023px)');
 
@@ -172,12 +173,14 @@ const AppContent = () => {
   return (
     <div className="livo-app-shell flex h-screen min-h-0 overflow-hidden" style={{ '--livo-app-top-offset': `${IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0}px` } as React.CSSProperties}>
       {/* Desktop sidebar */}
-      {!isMobile && sidebarContent}
+      {!isMobile && <div hidden={sidebarCollapsed} className={`${sidebarCollapsed ? 'hidden' : 'flex'} h-full min-h-0 shrink-0 flex-col`}>{sidebarContent}</div>}
 
       {/* Mobile sidebar overlay */}
       {isMobile && (
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" aria-describedby={undefined} className="w-[min(320px,calc(100vw-32px))] max-w-none p-0" style={{ top: IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0 }} onCloseAutoFocus={event => {
+          <SheetContent side="left" aria-describedby={undefined} className="w-[min(320px,calc(100vw-32px))] max-w-none overflow-hidden p-0"
+            closeLabel={t('sidebar.closeNavigation')}
+            closeButtonClassName="z-10 border border-sidebar-border bg-sidebar-accent text-sidebar-foreground opacity-100 shadow-sm data-[state=open]:bg-sidebar-accent hover:bg-sidebar-hover [&>svg]:h-5 [&>svg]:w-5" style={{ top: IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0 }} onCloseAutoFocus={event => {
             event.preventDefault();
             if (!document.activeElement?.closest('[role="dialog"]')) document.getElementById('livo-navigation-toggle')?.focus();
           }}>
@@ -188,7 +191,10 @@ const AppContent = () => {
       )}
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <TopBar onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        <TopBar sidebarExpanded={isMobile ? sidebarOpen : !sidebarCollapsed} onToggleSidebar={() => {
+          if (isMobile) setSidebarOpen(open => !open);
+          else setSidebarCollapsed(collapsed => !collapsed);
+        }} />
         {showFullPage ? (
           <div className="flex-1 min-h-0 overflow-auto overscroll-contain">
             <TaskDetailContent onClose={() => setSelectedTask(null)} />

@@ -31,7 +31,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const { selectedProjectId, setSelectedProjectId, selectedLineId, setSelectedLineId, allProjects, productLines, deleteProjectInDb } = useProjectContext();
   const { allTasks } = useTaskContext();
   const sidebarOrder = useSidebarOrder(currentMemberId ?? '');
-  const orderedProductLines = useMemo(() => sortSidebarItems(productLines, sidebarOrder.lineOrder, i18n?.language), [productLines, sidebarOrder.lineOrder, i18n?.language]);
+  const orderedProductLines = useMemo(() => sortSidebarItems(productLines, sidebarOrder.lineOrder, i18n?.language, sidebarOrder.sortMode), [productLines, sidebarOrder.lineOrder, i18n?.language, sidebarOrder.sortMode]);
   const { hasFeature } = useLicense();
   const [expandedLines, setExpandedLines] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
@@ -132,6 +132,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   return (
     <>
     <nav
+      id="livo-primary-navigation"
       aria-label={t('sidebar.ariaLabel')}
       className="livo-sidebar w-full md:w-[240px] h-full min-h-0 flex flex-col flex-shrink-0 overflow-y-auto overscroll-contain border-r border-sidebar-border"
       style={{
@@ -217,7 +218,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
 
       {/* ─── 專案 Section (main scrollable area) ─── */}
       {/* Keeps room for the projects on a short screen (a phone held sideways); the whole sidebar scrolls then. */}
-      <div className="flex-1 min-h-[7rem] md:overflow-y-auto px-2 py-1">
+      <div className="livo-sidebar-projects flex-none md:flex-1 md:min-h-[7rem] md:overflow-y-auto px-2 py-1">
         <div className="px-3 mt-2 mb-1.5 flex items-center gap-1.5">
           <div className="w-1 h-3 rounded-full bg-sidebar-foreground/30" />
           <span className="flex-1 text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-widest">{t('sidebar.projects')}</span>
@@ -229,7 +230,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
         </div>
 
         {orderedProductLines.map(line => {
-          const lineProjects = sortSidebarItems(allProjects.filter(p => p.lineId === line.id && !p.isArchived), sidebarOrder.projectOrder, i18n?.language);
+          const lineProjects = sortSidebarItems(allProjects.filter(p => p.lineId === line.id && !p.isArchived), sidebarOrder.projectOrder, i18n?.language, sidebarOrder.sortMode);
           const isExpanded = expandedLines.includes(line.id);
 
           return (
@@ -424,7 +425,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
     {/* Modals */}
     {currentMemberId && <SidebarOrderDialog key={currentMemberId} open={showSidebarOrder} onOpenChange={setShowSidebarOrder}
       lines={productLines} projects={allProjects.filter(project => !project.isArchived)}
-      lineOrder={sidebarOrder.lineOrder} projectOrder={sidebarOrder.projectOrder} loading={sidebarOrder.loading} saving={sidebarOrder.saving}
+      sortMode={sidebarOrder.sortMode} lineOrder={sidebarOrder.lineOrder} projectOrder={sidebarOrder.projectOrder} loading={sidebarOrder.loading} saving={sidebarOrder.saving}
       error={sidebarOrder.error} onSave={sidebarOrder.save} />}
     <StandupLaunchDialog
       open={showStandupLaunch}

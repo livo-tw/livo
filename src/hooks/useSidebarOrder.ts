@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
-import { emptySidebarOrder, parseSidebarOrder, type SidebarOrder } from '@/lib/sidebarOrder';
+import { emptySidebarOrder, parseSidebarOrder, sidebarSortMode, type SidebarOrder } from '@/lib/sidebarOrder';
 
 const VIEW_KEY = 'sidebar-personal-order:v1';
 type Snapshot = { identity: string; order: SidebarOrder; loading: boolean; saving: boolean; error: string | null; loaded: boolean };
@@ -38,7 +38,7 @@ export function useSidebarOrder(memberId: string) {
     return cleanup;
   }, [memberId, reloadEpoch]);
 
-  const save = useCallback(async (value: Pick<SidebarOrder, 'lineOrder' | 'projectOrder'>): Promise<boolean> => {
+  const save = useCallback(async (value: Pick<SidebarOrder, 'lineOrder' | 'projectOrder' | 'sortMode'>): Promise<boolean> => {
     const owner = memberId, serial = generation.current;
     const order = parseSidebarOrder({ ...value, version: 1 });
     if (!owner || !order || inFlight.current.has(owner) || identity.current !== owner || !currentRef.current.loaded || currentRef.current.loading) return false;
@@ -82,5 +82,5 @@ export function useSidebarOrder(memberId: string) {
     }
   }, [memberId]);
 
-  return { lineOrder: current.order.lineOrder, projectOrder: current.order.projectOrder, loading: current.loading, saving: current.saving || inFlight.current.has(memberId), error: current.error, save };
+  return { sortMode: sidebarSortMode(current.order), lineOrder: current.order.lineOrder, projectOrder: current.order.projectOrder, loading: current.loading, saving: current.saving || inFlight.current.has(memberId), error: current.error, save };
 }

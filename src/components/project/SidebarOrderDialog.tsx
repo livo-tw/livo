@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { moveSidebarItem, normalizeSidebarOrder, sortSidebarItems, type SidebarOrder } from '@/lib/sidebarOrder';
+import { moveSidebarItem, normalizeSidebarOrder, sidebarSortMode, sortSidebarItems, type SidebarOrder, type SidebarSortMode } from '@/lib/sidebarOrder';
 import type { ProductLineOption, ProjectOption } from '@/lib/projectGroups';
 
 interface SidebarOrderDialogProps {
@@ -11,12 +11,13 @@ interface SidebarOrderDialogProps {
   onOpenChange: (open: boolean) => void;
   lines: readonly ProductLineOption[];
   projects: readonly ProjectOption[];
+  sortMode?: SidebarSortMode;
   lineOrder: string[];
   projectOrder: string[];
   loading: boolean;
   saving: boolean;
   error: string | null;
-  onSave: (value: { lineOrder: string[]; projectOrder: string[] }) => Promise<boolean>;
+  onSave: (value: Pick<SidebarOrder, 'lineOrder' | 'projectOrder' | 'sortMode'>) => Promise<boolean>;
 }
 
 /** Keep preferences for items the caller currently cannot see in their own slots. */
@@ -27,9 +28,9 @@ function replaceVisibleOrder(current: readonly string[], visible: readonly strin
   return complete.map(id => visibleIds.has(id) ? visible[cursor++] : id);
 }
 
-const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, lineOrder, projectOrder, loading, saving, error, onSave }: SidebarOrderDialogProps) => {
+const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, sortMode, lineOrder, projectOrder, loading, saving, error, onSave }: SidebarOrderDialogProps) => {
   const { t, i18n } = useTranslation();
-  const [draft, setDraft] = useState<SidebarOrder>(() => normalizeSidebarOrder({ version: 1, lineOrder, projectOrder }));
+  const [draft, setDraft] = useState<SidebarOrder>(() => normalizeSidebarOrder({ version: 1, lineOrder, projectOrder, sortMode }));
   const [saveFailed, setSaveFailed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [announcement, setAnnouncement] = useState('');
@@ -39,34 +40,50 @@ const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, lineOrder, pr
 
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setDraft(normalizeSidebarOrder({ version: 1, lineOrder, projectOrder }));
+      setDraft(normalizeSidebarOrder({ version: 1, lineOrder, projectOrder, sortMode }));
       setSaveFailed(false);
       setAnnouncement('');
     }
     wasOpen.current = open;
-  }, [open, lineOrder, projectOrder]);
+  }, [open, lineOrder, projectOrder, sortMode]);
 
   // A failed initial read must never become a write of an unknown preference.
   // A failed save keeps the draft available for an explicit retry.
   const readUnavailable = loading || error === 'load';
   const isSaving = saving || submitting;
   const controlsDisabled = readUnavailable || isSaving;
-  const saved = normalizeSidebarOrder({ version: 1, lineOrder, projectOrder });
+  const saved = normalizeSidebarOrder({ version: 1, lineOrder, projectOrder, sortMode });
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
-  const orderedLines = useMemo(() => sortSidebarItems(lines, draft.lineOrder, locale), [lines, draft.lineOrder, locale]);
+  const draftMode = sidebarSortMode(draft);
+  const orderedLines = useMemo(() => sortSidebarItems(lines, draft.lineOrder, locale, draftMode), [lines, draft.lineOrder, locale, draftMode]);
   const groups = useMemo(() => orderedLines.map(line => ({
     line,
-    projects: sortSidebarItems(projects.filter(project => project.lineId === line.id && !project.isArchived), draft.projectOrder, locale),
-  })), [orderedLines, projects, draft.projectOrder, locale]);
+    projects: sortSidebarItems(projects.filter(project => project.lineId === line.id && !project.isArchived), draft.projectOrder, locale, draftMode),
+  })), [orderedLines, projects, draft.projectOrder, locale, draftMode]);
+
+  // Moving from a name mode fixes every visible group in its displayed order first.
+  const displayedCustomOrder = (previous: SidebarOrder): SidebarOrder => sidebarSortMode(previous) === 'custom' ? previous : {
+    ...previous, sortMode: 'custom',
+    lineOrder: replaceVisibleOrder(previous.lineOrder, orderedLines.map(line => line.id)),
+    projectOrder: replaceVisibleOrder(previous.projectOrder, groups.flatMap(group => group.projects.map(project => project.id))),
+  };
+  const changeMode = (mode: SidebarSortMode) => setDraft(previous => mode === 'custom' && !(previous.lineOrder.length || previous.projectOrder.length)
+    ? displayedCustomOrder(previous) : { ...previous, sortMode: mode });
 
   const moveLine = (index: number, direction: number) => {
     const ids = moveSidebarItem(orderedLines.map(line => line.id), index, index + direction);
-    setDraft(previous => ({ ...previous, lineOrder: replaceVisibleOrder(previous.lineOrder, ids) }));
+    setDraft(previous => {
+      const custom = displayedCustomOrder(previous);
+      return { ...custom, sortMode: 'custom', lineOrder: replaceVisibleOrder(custom.lineOrder, ids) };
+    });
     setAnnouncement(t('sidebar.orderMoved', { name: orderedLines[index].name, position: index + direction + 1 }));
   };
   const moveProject = (ids: string[], index: number, direction: number, name: string) => {
     const next = moveSidebarItem(ids, index, index + direction);
-    setDraft(previous => ({ ...previous, projectOrder: replaceVisibleOrder(previous.projectOrder, next) }));
+    setDraft(previous => {
+      const custom = displayedCustomOrder(previous);
+      return { ...custom, sortMode: 'custom', projectOrder: replaceVisibleOrder(custom.projectOrder, next) };
+    });
     setAnnouncement(t('sidebar.orderMoved', { name, position: index + direction + 1 }));
   };
   const requestOpenChange = (next: boolean) => {
@@ -78,7 +95,7 @@ const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, lineOrder, pr
     setSubmitting(true);
     try {
       const next = normalizeSidebarOrder(draft);
-      if (await onSave({ lineOrder: next.lineOrder, projectOrder: next.projectOrder })) {
+      if (await onSave({ lineOrder: next.lineOrder, projectOrder: next.projectOrder, sortMode: sidebarSortMode(next) })) {
         onOpenChange(false);
       } else {
         setSaveFailed(true);
@@ -113,6 +130,16 @@ const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, lineOrder, pr
         {loading && <p role="status" className="text-sm text-muted-foreground">{t('sidebar.orderLoading')}</p>}
         {error === 'load' && <p role="alert" className="text-sm text-destructive">{t('sidebar.orderLoadFailed')}</p>}
         {(saveFailed || error === 'save') && <p role="alert" className="text-sm text-destructive">{t('sidebar.orderSaveFailed')}</p>}
+        <div className="space-y-2">
+          <label htmlFor="sidebar-order-mode" className="block text-sm font-semibold">{t('sidebar.orderMode')}</label>
+          <select id="sidebar-order-mode" className="h-11 w-full rounded-md border bg-background px-3 text-sm" disabled={controlsDisabled}
+            value={draftMode} onChange={event => changeMode(event.target.value as SidebarSortMode)}>
+            <option value="name_asc">{t('sidebar.orderNameAscending')}</option>
+            <option value="name_desc">{t('sidebar.orderNameDescending')}</option>
+            <option value="custom">{t('sidebar.orderCustom')}</option>
+          </select>
+          <p className="text-xs text-muted-foreground">{t('sidebar.orderNameGrouping')}</p>
+        </div>
         <section aria-label={t('sidebar.orderLines')}>
           <h3 className="mb-2 text-sm font-semibold">{t('sidebar.orderLines')}</h3>
           {orderedLines.length === 0 ? <p className="text-sm text-muted-foreground">{t('sidebar.orderEmptyLines')}</p> : <ol className="space-y-2">
@@ -137,8 +164,8 @@ const SidebarOrderDialog = ({ open, onOpenChange, lines, projects, lineOrder, pr
       </div>
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
       <DialogFooter className="flex-wrap sm:justify-between">
-        <Button type="button" variant="outline" className="min-h-11" disabled={controlsDisabled || !(draft.lineOrder.length || draft.projectOrder.length)} onClick={() => {
-          setDraft(normalizeSidebarOrder({ version: 1, lineOrder: [], projectOrder: [] }));
+        <Button type="button" variant="outline" className="min-h-11" disabled={controlsDisabled || (draftMode === 'name_asc' && !(draft.lineOrder.length || draft.projectOrder.length))} onClick={() => {
+          setDraft(normalizeSidebarOrder({ version: 1, lineOrder: [], projectOrder: [], sortMode: 'name_asc' }));
           setAnnouncement(t('sidebar.orderResetDone'));
         }}><RotateCcw aria-hidden="true" />{t('sidebar.orderReset')}</Button>
         <div className="flex flex-wrap justify-end gap-2">
