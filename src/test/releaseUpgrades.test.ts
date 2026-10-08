@@ -50,6 +50,74 @@ describe('which migrations become upgrades', () => {
   });
 });
 
+describe('release member seed safety', () => {
+  const marker = '-- [release] demo-member-seed';
+  const seed = "INSERT INTO public.members (id, email) VALUES ('demo-seed', 'seed@example.com') ON CONFLICT (id) DO NOTHING;";
+
+  it.each(['\n', '\r\n'])('removes only an explicitly marked top-level seed (%j)', (newline) => {
+    const before = `-- keep this comment${newline}${marker}${newline}`;
+    const after = `${newline}INSERT INTO public.statuses(id) VALUES ('open') ON CONFLICT DO NOTHING;${newline}`;
+    const result = stripDemoSeeds(before + seed + after);
+    expect(result.startsWith(before)).toBe(true);
+    expect(result.endsWith(after)).toBe(true);
+    expect(result).not.toContain('seed@example.com');
+    expect(result).toContain('已移除示範成員種子');
+  });
+
+  it('preserves unmarked runtime VALUES, SELECT and DEFAULT VALUES byte for byte', () => {
+    const sql = [
+      seed,
+      "INSERT INTO members (id) SELECT id FROM pending_members ON CONFLICT DO NOTHING;",
+      'INSERT INTO "public"."members" DEFAULT VALUES;',
+      `${marker}\nINSERT INTO public.members (id) SELECT id FROM pending_members ON CONFLICT DO NOTHING;`,
+      `${marker}\nINSERT INTO archive.members (id) VALUES ('runtime');`,
+      `${marker}\nINSERT INTO "public"."Members" (id) VALUES ('other-table');`,
+    ].join('\r\n');
+    expect(stripDemoSeeds(sql)).toBe(sql);
+  });
+
+  it('preserves procedural bodies, quoted strings and comments byte for byte', () => {
+    const sql = [
+      `DO $$ BEGIN ${marker}\n${seed} END $$;`,
+      `CREATE OR REPLACE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $body_42$ BEGIN ${marker}\n${seed} END $body_42$;`,
+      `CREATE OR REPLACE PROCEDURE p() LANGUAGE sql AS '${marker}\nINSERT INTO members VALUES (''quoted;value'');';`,
+      `SELECT '${marker}\nINSERT INTO members VALUES (''string;value'');';`,
+      String.raw`SELECT E'escaped\'; INSERT INTO members VALUES (1);';`,
+      `-- ${seed}`,
+      `/* nested /* ${marker}\n${seed} */ still comment */`,
+      `SELECT "INSERT INTO members VALUES ('identifier');";`,
+    ].join('\r\n');
+    expect(stripDemoSeeds(sql)).toBe(sql);
+  });
+
+  it('uses real statement boundaries rather than semicolons inside seed values', () => {
+    const marked = `${marker}\nINSERT-- keyword gap\nINTO "public"."members"(id,email) VALUES ('semi;colon', 'seed@example.com') ON CONFLICT DO NOTHING;`;
+    const runtime = " INSERT INTO public.members(id) VALUES ('keep-after-seed');";
+    const result = stripDemoSeeds(marked + runtime);
+    expect(result).not.toContain('seed@example.com');
+    expect(result.endsWith(runtime)).toBe(true);
+    expect(stripDemoSeeds(`${marker}\nINSERT INTO public.members(id) VALUES ('unterminated;`)).toBe(`${marker}\nINSERT INTO public.members(id) VALUES ('unterminated;`);
+  });
+
+  it.each([
+    ['20261103_member_invitations.sql', 'livo_member_invitation_accept', 'confirmation.name'],
+    ['20261104_member_invitation_direct_join.sql', 'livo_member_invitation_accept_direct', 'joined_name'],
+  ])('preserves the complete %s member-creation function in generated release SQL', (file, functionName, nameValue) => {
+    const original = fs.readFileSync(path.join(MIGRATIONS, file), 'utf8');
+    expect(stripDemoSeeds(original)).toBe(original);
+    const expression = new RegExp(`CREATE OR REPLACE FUNCTION public\\.${functionName}\\([\\s\\S]*?END \\$\\$;`);
+    const definition = original.match(expression)?.[0];
+    expect(definition).toBeDefined();
+    expect(definition).toContain('INSERT INTO public.members(');
+    expect(definition).toContain(`VALUES(p_member_id,${nameValue}`);
+    const mergedSchemaMigration = makeIdempotent(stripDemoSeeds(original));
+    const upgrade = buildUpgradeFile(file, mergedSchemaMigration);
+    expect(mergedSchemaMigration).toContain(definition);
+    expect(upgrade).toContain(definition);
+    expect(upgrade).not.toContain('已移除示範成員種子');
+  });
+});
+
 describe('splitTopLevelStatements', () => {
   it('ignores comments, strings and dollar-quoted bodies', () => {
     const sql = `

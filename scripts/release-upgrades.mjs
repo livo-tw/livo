@@ -26,16 +26,25 @@
 
 // ─── 合併 schema 共用的轉換（全新安裝與資料庫更新都會套用）──────────────
 
-// 移除 migration 內的「示範成員種子」INSERT。客戶全新安裝不該預載 20 名
-// 虛構成員；第一個管理員改由 install.sh / install.bat 互動式建立。
-// 只移除 members 的 seed INSERT（migration 內唯一的虛構業務資料列），
-// 保留所有表格/enum/function DDL、RLS、以及 statuses 狀態種子。
-// members 的 INSERT 內沒有內嵌分號，故「到下一個分號」即為整句。
+// 示範成員種子必須明確以「-- [release] demo-member-seed」標記其後的
+// 頂層 members INSERT … VALUES。未標記的 INSERT 可能是正式資料修補，
+// 函式 / DO / 字串 / 註解中的 INSERT 則是程式內容，皆原樣保留。
+// 未標記的假資料仍由 build-release 的 FAKE_MARKERS 檢查阻擋。
 export function stripDemoSeeds(sql) {
-  return sql.replace(
-    /INSERT\s+INTO\s+(?:public\.)?members\b[\s\S]*?;[ \t]*\r?\n?/gi,
-    '-- [release] 已移除示範成員種子（管理員由 install.sh / install.bat 建立）\n'
-  );
+  const ident = '("(?:[^\"]|\"\")+"|[A-Za-z_][A-Za-z0-9_$]*)';
+  const memberValues = new RegExp(`^INSERT\\s+INTO\\s+(?:${ident}\\s*\\.\\s*)?${ident}\\s*(?:\\([^)]*\\)\\s*)?VALUES\\b`, 'i');
+  const name = (value) => value?.startsWith('"') ? value.slice(1, -1).replace(/""/g, '"') : value?.toLowerCase();
+  const removals = scanTopLevelStatements(sql).filter((statement) => {
+    if (!statement.demoSeed || !statement.terminated) return false;
+    const match = memberValues.exec(statement.text);
+    return match && (!match[1] || name(match[1]) === 'public') && name(match[2]) === 'members';
+  });
+  const newline = sql.includes('\r\n') ? '\r\n' : '\n';
+  let result = sql;
+  for (const { start, end } of removals.reverse()) {
+    result = result.slice(0, start) + '-- [release] 已移除示範成員種子（管理員由 install.sh / install.bat 建立）' + newline + result.slice(end);
+  }
+  return result;
 }
 
 // 合併 schema 的冪等化：多個 migration 定義過同名 policy（歷史開發時各檔
@@ -233,16 +242,25 @@ export function buildUpgradeFile(name, sql) {
  * 空白佔位，讓檢查只看得到語句骨架。回傳 [{ text, line }]（line 從 1 起算）。
  */
 export function splitTopLevelStatements(sql) {
+  return scanTopLevelStatements(sql).map(({ text, line }) => ({ text, line }));
+}
+
+// 原始 byte ranges 僅供 seed 轉換使用；公開 lint API 保持 { text, line }。
+function scanTopLevelStatements(sql) {
   const out = [];
   let cur = '';
   let line = 1;
   let startLine = 1;
+  let statementStart = null;
+  let demoSeed = false;
   let i = 0;
   const n = sql.length;
-  const push = () => {
+  const push = (terminated = false) => {
     const text = cur.replace(/\s+/g, ' ').trim();
-    if (text) out.push({ text, line: startLine });
+    if (text) out.push({ text, line: startLine, start: statementStart, end: i, demoSeed, terminated });
     cur = '';
+    statementStart = null;
+    demoSeed = false;
   };
   const advance = (k) => {
     for (let j = 0; j < k; j++) if (sql[i + j] === '\n') line++;
@@ -251,9 +269,11 @@ export function splitTopLevelStatements(sql) {
   while (i < n) {
     const c = sql[i];
     const c2 = sql.slice(i, i + 2);
-    if (!cur.trim()) startLine = line;
     if (c2 === '--') {
+      const commentStart = i;
       while (i < n && sql[i] !== '\n') i++;
+      if (statementStart === null && sql.slice(commentStart, i).trim() === '-- [release] demo-member-seed') demoSeed = true;
+      cur += ' ';
       continue;
     }
     if (c2 === '/*') {
@@ -266,6 +286,7 @@ export function splitTopLevelStatements(sql) {
       cur += ' ';
       continue;
     }
+    if (statementStart === null && !/\s/.test(c)) { statementStart = i; startLine = line; }
     if (c === "'") {
       const escaped = /[eE]$/.test(cur) && !/[A-Za-z0-9_][eE]$/.test(cur);
       advance(1);
@@ -303,7 +324,7 @@ export function splitTopLevelStatements(sql) {
     }
     if (c === ';') {
       advance(1);
-      push();
+      push(true);
       continue;
     }
     cur += c;
