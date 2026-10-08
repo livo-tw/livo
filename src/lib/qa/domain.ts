@@ -373,7 +373,7 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
     case 'triage': {
       keys(command, ['type', 'assigneeId', 'qaOwnerId', 'severity', 'priority', 'dueDate']);
       next.assigneeId = member(command.assigneeId, ctx); next.qaOwnerId = member(command.qaOwnerId, ctx);
-      next.severity = enumValue(command.severity, ['low', 'medium', 'high']);
+      next.severity = command.severity === 'untriaged' && issue.severity === 'untriaged' ? 'untriaged' : enumValue(command.severity, ['low', 'medium', 'high']);
       if (!Number.isInteger(command.priority) || command.priority < 1 || command.priority > 5) return fail('qa_invalid_priority');
       next.priority = command.priority;
       if (next.legacySource?.priorityMeaning === 'LIVO default 3; source has severity only')
@@ -425,7 +425,12 @@ export function applyQaCommand(issue: QaIssue, command: QaCommand, ctx: QaContex
         fixCycle: issue.fixCycle, targetId: target.id, environment: target.environment, component: target.component,
         build: target.build, result, note, testerId: ctx.actor.id, createdAt: ctx.now });
       if (result === 'fail') { next.state = 'failed'; next.reopenedAt = ctx.now; }
-      else next.state = requiredTargetsPassed(next) ? 'verified' : 'verification';
+      else if (result === 'pass' && requiredTargetsPassed(next)) {
+        // The final real PASS closes this same aggregate and command receipt.
+        // Manual state editing never reaches this evidence-backed transition.
+        next.state = 'closed'; next.resolution = 'fixed'; next.resolutionReason = '';
+        next.duplicateOfId = null; next.closedAt = ctx.now; next.closedBy = ctx.actor.id;
+      } else next.state = requiredTargetsPassed(next) ? 'verified' : 'verification';
       break;
     }
     case 'close': {
@@ -498,7 +503,7 @@ export function qaEventDetail(issue: QaIssue, type: string, before?: QaIssue | n
     `${target(item)}\n${item.deployedAt} · ${item.deployedBy}\n${item.deploymentEvidence}`).join('\n\n');
   if (type === 'record_verification') {
     const run = issue.runs[issue.runs.length - 1];
-    return run ? `第 ${run.fixCycle} 輪 · 第 ${run.sequence} 次驗證\n${run.environment} · ${run.component || '-'} · ${run.build}\n${run.result.toUpperCase()}\n${run.note}` : '';
+    return run ? `第 ${run.fixCycle} 輪 · 第 ${run.sequence} 次驗證\n${run.environment} · ${run.component || '-'} · ${run.build}\n${run.result.toUpperCase()}\n${run.note}${issue.state === 'closed' && issue.resolution === 'fixed' ? '\n所有必要環境已部署並驗證通過，已自動結案。' : ''}` : '';
   }
   if (type === 'close') return `${issue.resolution}\n${issue.resolution === 'fixed' && issue.fixCycle === 0 && issue.legacySource?.originalStatus === 'PASS' ? '依既有歷史 PASS 證據明確結案；未新增 LIVO 驗證紀錄。\n' : ''}${issue.resolutionReason}${issue.duplicateOfId ? '\n' + issue.duplicateOfId : ''}`;
   if (['request_handoff','accept_handoff','resolve_handoff'].includes(type) && issue.handoff) {

@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -15,7 +16,7 @@ const deferred = () => { let resolve!: (values: string[]) => void; const promise
 
 describe('QA free-text version suggestions', () => {
   it('preserves an existing custom version when suggestions arrive and allows blank or arbitrary edits', async () => {
-    const result = deferred(), client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(() => result.promise) }, save = vi.fn();
+    const result = deferred(), client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(() => result.promise) }, save = vi.fn();
     render(<QaReportForm initial={issue} projects={projects} productLines={[]} client={client} busy={false} onSubmit={save} onCancel={vi.fn()} />);
     const input = screen.getByLabelText(/qa.observedVersion/) as HTMLInputElement;
     expect(input.value).toBe('old-custom');
@@ -35,7 +36,7 @@ describe('QA free-text version suggestions', () => {
   });
   it('clears the old version on a new report project change and ignores a late previous-project response', async () => {
     const a = deferred(), b = deferred();
-    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn((project: string, _signal?: AbortSignal) => project === 'a' ? a.promise : b.promise) };
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn((project: string, _signal?: AbortSignal) => project === 'a' ? a.promise : b.promise) };
     const view = render(<QaReportForm projectId="a" projects={projects} productLines={[]} client={client} busy={false} onSubmit={vi.fn()} onCancel={vi.fn()} />);
     await waitFor(() => expect(client.versions).toHaveBeenCalledTimes(1));
     const input = screen.getByLabelText(/qa.observedVersion/) as HTMLInputElement;
@@ -50,7 +51,7 @@ describe('QA free-text version suggestions', () => {
     expect(document.getElementById(input.getAttribute('list')!)?.querySelector('option[value="build-a"]')).toBeNull();
   });
   it('keeps manual input available after a failed suggestion request', async () => {
-    const client = { getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(async () => { throw new Error('offline'); }) }, save = vi.fn();
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn(async () => { throw new Error('offline'); }) }, save = vi.fn();
     render(<QaReportForm initial={issue} projects={projects} productLines={[]} client={client} busy={false} onSubmit={save} onCancel={vi.fn()} />);
     await screen.findByText('qa.versionLoadFailed');
     fireEvent.change(screen.getByLabelText(/qa.observedVersion/), { target: { value: 'manual-build' } });

@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import type { QaState } from '@/lib/qa/domain';
 import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,7 +39,7 @@ function renderDetail(initial: QaIssue, actorId = 'dev', initialAction?: QaComma
     const { type, ...patch } = next;
     return { ...current, ...(type === 'update_fields' ? patch : {}), version: current.version + 1 } as QaIssue;
   });
-  const client = { command, versions: vi.fn().mockResolvedValue([]), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }) } as unknown as QaClient;
+  const client = { command, versions: vi.fn().mockResolvedValue([]), getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }) } as unknown as QaClient;
   render(<QaIssueDetail detail={{ issue: initial, comments: [], events: [], attachments: [] }} client={client} actor={{ id: actorId, role: 'member' }} initialAction={initialAction} onRefresh={vi.fn().mockResolvedValue(undefined)} onBack={vi.fn()} />);
   return command;
 }
@@ -62,6 +63,7 @@ describe('optional QA target labels', () => {
 describe('direct QA sidebar editing', () => {
   it('sends a complete snapshot and uses the saved revision for the next field edit', async () => {
     const command = renderDetail(issue);
+    await waitFor(() => expect(screen.getByLabelText('qa.priority')).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText('qa.priority'), { target: { value: '1' } });
     await waitFor(() => expect(command).toHaveBeenCalledTimes(1));
     expect(command.mock.calls[0][0].version).toBe(4);
@@ -75,10 +77,10 @@ describe('direct QA sidebar editing', () => {
     expect(command.mock.calls[1][1]).toMatchObject({ type: 'update_fields', priority: 1, dueDate: null });
   });
 
-  it('lets a scoped team member edit completed metadata without granting status or evidence actions', () => {
+  it('lets a scoped team member edit completed metadata without granting status or evidence actions', async () => {
     renderDetail({ ...issue, state: 'closed', closedAt: '2026-10-06T00:00:00Z' }, 'other');
     expect(screen.getByLabelText('qa.project')).toBeEnabled();
-    expect(screen.getByLabelText('qa.priority')).toBeEnabled();
+    await waitFor(() => expect(screen.getByLabelText('qa.priority')).toBeEnabled());
     expect(screen.getByRole('combobox', { name: 'qa.assignee' })).toBeEnabled();
     expect(screen.getByRole('combobox', { name: 'qa.changeState' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'qa.verification' })).toBeNull();
@@ -121,6 +123,7 @@ describe('direct QA sidebar editing', () => {
 
   it('keeps the current metadata and displays a conflict instead of pretending a save succeeded', async () => {
     const command = renderDetail(issue, 'dev', undefined, { status: 409, code: 'qa_conflict' });
+    await waitFor(() => expect(screen.getByLabelText('qa.priority')).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText('qa.priority'), { target: { value: '1' } });
     await waitFor(() => expect(command).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('alert')).toBeTruthy();

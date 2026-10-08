@@ -51,6 +51,18 @@ describe('my assignments acquisition state', () => {
     expect(screen.getByTestId('cards')).not.toHaveTextContent('example-task');
     expect(mocks.remove).toHaveBeenCalled();
   });
+  it('removes an acknowledged closed Bug immediately when the QA page announces its write', async () => {
+    mocks.client.list.mockResolvedValue({ issues: [bug], total: 1, hasMore: false });
+    render(app());
+    await waitFor(() => { expect(screen.getByTestId('cards')).toHaveTextContent('ready:'); expect(screen.getByTestId('cards')).toHaveTextContent('example-bug'); });
+    const readsBefore = mocks.client.list.mock.calls.length;
+    // The live query excludes terminal cards; no thirty-second poll is required.
+    mocks.client.list.mockResolvedValue(empty);
+    await act(async () => window.dispatchEvent(new Event('livo:qa-changed')));
+    await waitFor(() => expect(screen.getByTestId('cards')).toHaveTextContent('ready:example-task'));
+    expect(screen.getByTestId('cards')).not.toHaveTextContent('example-bug');
+    expect(mocks.client.list.mock.calls.length).toBeGreaterThan(readsBefore);
+  });
   it('exposes a failed QA read as incomplete and lets a retry recover', async () => {
     mocks.client.list.mockRejectedValue(new Error('network unavailable'));
     render(app());

@@ -3241,6 +3241,19 @@
   },
   "qa": {
     "qaOwnerReporterDefaultHint": "QA 負責人預設為回報人，可自行改選。",
+    "addVerificationEvidence": "補驗證紀錄",
+    "displaySettings": {
+      "title": "QA 顯示設定",
+      "hint": "只調整這個工作區的顯示方式，保留歷史資料、所有狀態與正式驗證及結案規則。明確篩選歷史狀態時仍可顯示隱藏欄位。",
+      "showSeverity": "顯示嚴重程度",
+      "priorityChoices": "可選擇的優先級（至少保留一項）",
+      "boardStates": "預設看板欄位（至少保留一項）",
+      "restore": "恢復預設顯示",
+      "loading": "正在讀取 QA 顯示設定…",
+      "loadFailed": "無法讀取 QA 顯示設定，請重試後再編輯相關欄位。",
+      "saved": "QA 顯示設定已儲存並確認",
+      "forbidden": "只有超級管理員能調整 QA 顯示設定。"
+    },
     "manualStates": {
       "title": "變更狀態選項",
       "hint": "只調整「變更狀態」的選項；目前狀態、歷史紀錄、看板與正式驗證／結案流程都會保留。",
@@ -3470,6 +3483,7 @@
       "failed": "上傳失敗"
     },
     "error": {
+      "qa_invalid_display_settings": "QA 顯示設定無效。請保留至少一個優先級選項與看板欄位。",
       "qa_invalid_manual_state_visibility": "狀態選項設定無效。請只選擇既有的 QA 狀態。",
       "qa_invalid_environment": "部署環境清單已更新，請重新選擇可用環境。",
       "qa_historical_pass_unavailable": "原單的 PASS 證據不足，請先完成驗證。",
@@ -3507,6 +3521,9 @@
     "verificationTab": "修復與驗證",
     "changeState": "變更狀態",
     "stateChanged": "狀態已更新",
+    "verificationAutoClosed": "驗證通過並結案",
+    "autoCloseAfterVerificationHint": "本輪所有必要環境完成部署且驗證 PASS 後，Bug 會自動結案，並從未完成的「我的任務」移除。",
+    "verificationAutoCloseHistory": "所有必要環境已部署並驗證通過，已自動結案。",
     "retryCommand": "重試送出",
     "commandRetryHint": "尚未確認送出結果，請重試以確認；重試不會重複提交。",
     "copyLinkSuccess": "已複製連結",

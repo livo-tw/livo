@@ -3,12 +3,17 @@ import { resolveSlackToken } from './functions/slack';
 import { qaSlackCard } from './qa/slack';
 import type { QaIssue } from './qa/domain';
 import { parseQaWorkflow } from './qa/workflow';
+import { parseQaDisplaySettings } from './qa/displaySettings';
 import { slackErrorCode } from './slackNotifyCore';
 
 export const qaSlackLink = (env: Env, issue: QaIssue) => `${appBaseUrl(env).replace(/\/$/, '')}/demo/?qa=${encodeURIComponent(issue.id)}`;
 export async function getQaSlackWorkflow(env: Env, ws: string) {
   const row=await env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_workflow'").bind(ws).first<{value:string}>();
   return parseQaWorkflow(row?.value);
+}
+export async function getQaSlackDisplaySettings(env: Env, ws: string) {
+  const row=await env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_display_settings'").bind(ws).first<{value:string}>();
+  return parseQaDisplaySettings(row?.value);
 }
 export async function qaSlackEnabled(env: Env, ws: string): Promise<boolean> {
   const row = await env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='feature_toggles'").bind(ws).first<{value:string}>();
@@ -46,8 +51,8 @@ export async function syncQaSlackIssue(env: Env, ws: string, issue: QaIssue): Pr
     if(!await qaSlackEnabled(env,ws))return;
     const row=await env.DB.prepare('SELECT data FROM qa_issues WHERE workspace_id=? AND id=?').bind(ws,issue.id).first<{data:string}>();
     if(!row)return;const current=JSON.parse(row.data) as QaIssue;
-    const workflow=await getQaSlackWorkflow(env,ws);
-    await Promise.all(cards.map(link=>slack('chat.update',{channel:link.channel_id,ts:link.card_ts,text:`Bug · ${current.title}`,blocks:qaSlackCard(current,qaSlackLink(env,current),workflow)})));
+    const workflow=await getQaSlackWorkflow(env,ws), display=await getQaSlackDisplaySettings(env,ws);
+    await Promise.all(cards.map(link=>slack('chat.update',{channel:link.channel_id,ts:link.card_ts,text:`Bug · ${current.title}`,blocks:qaSlackCard(current,qaSlackLink(env,current),workflow,display)})));
     const latest=await env.DB.prepare('SELECT version FROM qa_issues WHERE workspace_id=? AND id=?').bind(ws,issue.id).first<{version:number}>();
     if(!latest||latest.version===current.version)return;
   }

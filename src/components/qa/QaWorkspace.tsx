@@ -30,6 +30,10 @@ import QaSettingsPage from './QaSettingsPage';
 import { canManageQaConfiguration } from '@/lib/qa/fields';
 import { qaPriorities, qaStateColors } from './QaBadges';
 import { toast } from 'sonner';
+import { useQaDisplaySettings } from '@/hooks/useQaDisplaySettings';
+import { QaDisplaySettingsContext } from '@/context/QaDisplaySettingsContext';
+import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
+import QaDisplaySettingsNotice from './QaDisplaySettingsNotice';
 
 export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
   const { t } = useTranslation();
@@ -42,6 +46,7 @@ export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
 function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { t } = useTranslation();
   const { client, actor: baseActor } = useQa();
+  const display = useQaDisplaySettings(client, baseActor.id);
   const { taskDisplayMode = 'modal', selectedTask } = useUIContext();
   const isMobile = useIsMobile();
   const { allProjects, productLines, selectedProjectId } = useProjectContext();
@@ -117,11 +122,11 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       ...(reporters.length ? { reporterIds: reporters } : {}),
       ...(projectIds?.length ? { projectIds } : {}),
       ...(filterPriorities.length ? { priorities: filterPriorities.map(name => qaPriorities.indexOf(name as Priority) + 1) } : {}),
-      ...(severities.length ? { severities: severities as QaSeverity[] } : {}),
+      ...(display.configuration?.showSeverity && severities.length ? { severities: severities as QaSeverity[] } : {}),
       ...qaBoardSort(sort),
     };
     return { filters: input, noMatch: (assigneeIds !== undefined && !assigneeIds.length) || (projectIds !== undefined && !projectIds.length) };
-  }, [selectedProjectId, scope.projectIds, owner, search, users, filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, reporters, severities, sort]);
+  }, [selectedProjectId, scope.projectIds, owner, search, users, filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, reporters, severities, sort, display.configuration?.showSeverity]);
   const filterKey = JSON.stringify(filters);
   useEffect(() => { setOffset(0); }, [filterKey]);
   const memberOptions = useMemo(() => sortUsersByDept(users).map(user => ({ id: user.id, label: user.name, avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle })), [users]);
@@ -210,8 +215,8 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     if (wasRecordOpen.current && !recordOpen) setBoardRevision(value => value + 1);
     wasRecordOpen.current = recordOpen;
   }, [recordOpen]);
-  if (settingsOpen && canConfigure && workflow && !creating && !issueId) return <QaSettingsPage client={client} actor={actor} workflow={workflow} onWorkflowSaved={setWorkflow} onCoordinationSaved={() => setRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} />;
-  return <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-board p-3 md:p-5">
+  if (settingsOpen && canConfigure && workflow && !creating && !issueId) return <QaSettingsPage client={client} actor={actor} workflow={workflow} onWorkflowSaved={setWorkflow} onCoordinationSaved={() => setRevision(value => value + 1)} onClose={() => { setSettingsOpen(false); display.retry(); }} />;
+  return <QaDisplaySettingsContext.Provider value={display.configuration}><div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-board p-3 md:p-5">
     <div ref={background} aria-hidden={modalOpen || undefined} className="w-full min-w-0 space-y-4" hidden={!!issueId && !creating && recordMode === 'page'}>
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3"><div className="rounded-xl border border-primary/15 bg-primary/10 p-2.5 text-primary"><Bug size={22} aria-hidden="true" /></div><div><h1 className="text-xl font-bold">{t(mine ? 'qa.myTitle' : 'qa.title')}</h1><p className="mt-0.5 text-xs text-muted-foreground">{t('qa.workspaceIntro')}</p>{USING_MOCK_BACKEND && <p className="mt-1 text-xs text-muted-foreground">{t('qa.demo')}</p>}</div></div>
@@ -222,6 +227,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       {error !== null && <><QaFailure error={error} />{!creating && <button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button>}</>}
       {workflowError !== null && <><QaFailure error={workflowError} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></>}
       {coordinationError && <p role="alert" className="text-sm text-destructive">{t('qaHandoff.loadFailed')}</p>}
+      <QaDisplaySettingsNotice {...display} />
       {!workflow ? !workflowError && <p role="status">{t('qa.loading')}</p> : <>
         <div className="rounded-xl border border-border/80 bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5">
@@ -237,9 +243,10 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
           </form>
           <BoardFilterChips users={users} allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters}
             statusOptions={workflow.order.map(value => ({ id: value, label: workflow.labels[value] || t(`qa.state.${value}`), color: qaStateColors[value] }))}
+            priorityChoices={display.configuration ? [...new Set([...getQaPriorityChoices(display.configuration).map(priority => qaPriorities[priority - 1]), ...filterPriorities])] : []}
             assigneeLabel={t('qa.assignee')} reviewerLabel={t('qa.qaOwner')}
             extra={<>
-              <MultiSelectDropdown label={t('qa.severity')} options={QA_SEVERITIES.map(value => ({ id: value, label: t(`qa.severityNames.${value}`) }))} selected={severities} onToggle={toggleIn(setSeverities)} />
+              {display.configuration?.showSeverity && <MultiSelectDropdown label={t('qa.severity')} options={QA_SEVERITIES.map(value => ({ id: value, label: t(`qa.severityNames.${value}`) }))} selected={severities} onToggle={toggleIn(setSeverities)} />}
               <MultiSelectDropdown label={t('qa.reporter')} options={memberOptions} selected={reporters} onToggle={toggleIn(setReporters)} />
             </>}
             extraActive={severities.length > 0 || reporters.length > 0 || !!search} onClear={clearAll}
@@ -259,5 +266,5 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     {(creating || !!issueId) && <QaRecordView title={creating ? t('qa.reportTitle') : detail?.issue.title || t('qa.details')} creating={creating} busy={busy} suspended={recordSuspended} onClose={() => { if (recordBusy || hasQaNavigationGuard()) return; creatingRef.current = false; setCreating(false); openIssue(''); }}>
       {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} onDeleted={() => { setBoardRevision(value => value + 1); window.dispatchEvent(new Event('livo:qa-changed')); openIssue('', undefined, undefined, true); }} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
     </QaRecordView>}
-  </div>;
+  </div></QaDisplaySettingsContext.Provider>;
 }

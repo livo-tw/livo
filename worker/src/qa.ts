@@ -6,6 +6,7 @@ import { notifyChanges } from './notify';
 import { syncQaSlackIssue } from './qaSlackSync';
 import { parseQaWorkflow, validateQaWorkflow } from './qa/workflow';
 import { parseQaManualStateVisibility, validateQaManualStateVisibility } from './qa/manualStateVisibility';
+import { parseQaDisplaySettings, validateQaDisplaySettings } from './qa/displaySettings';
 import { isDeploymentQueueOperator } from './deploymentQueue';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
@@ -15,7 +16,7 @@ import {
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
 import { handleQaStorage, qaAttachmentWire, qaFileInput } from './qaStorage';
-import { commandAuthId } from './liveMember';
+import { commandAuthId, liveMemberSql } from './liveMember';
 
 type C = Context<AppContext>;
 type Body = Record<string, unknown>;
@@ -322,7 +323,7 @@ export async function handleQa(c:C):Promise<Response> {
     let body:Body;try{body=JSON.parse(new TextDecoder().decode(await qaReadBody(c,10*1024*1024)));}catch(e){if(e instanceof QaError)throw e;throw new QaError('qa_invalid_json');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new QaError('qa_invalid_request');
     const action=String(body.action??'');
-    if(!['list','get','download','get_workflow','get_field_configuration','versions','get_coordination','my_coordination'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(!['list','get','download','get_workflow','get_field_configuration','get_display_settings','versions','get_coordination','my_coordination'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
     if(action==='versions') {
       const projectId=qaId(body.projectId);
       const project=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=?').bind(ws,projectId).first();
@@ -369,6 +370,27 @@ export async function handleQa(c:C):Promise<Response> {
         c.env.DB.prepare('INSERT INTO qa_project_coordination(workspace_id,id,coordinator_id,version,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET coordinator_id=excluded.coordinator_id,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at').bind(ws,projectId,coordinatorId,result.version,auth.member.id,now)
       ]);}catch(error){const retry=await c.env.DB.prepare('SELECT actor_id,payload_hash,response FROM qa_coordination_commands WHERE workspace_id=? AND id=?').bind(ws,cid).first<{actor_id:string;payload_hash:string;response:string}>();if(retry&&retry.actor_id===auth.member.id&&retry.payload_hash===hash)return c.json(JSON.parse(retry.response));throw sqlError(error);}
       return c.json(result);
+    }
+    if(action==='get_display_settings') {
+      const live=liveMemberSql(auth,'display_actor',{strict:true});
+      const actor=await c.env.DB.prepare(`SELECT display_actor.id FROM members display_actor WHERE ${live.sql}`).bind(...live.params).first();
+      if(!actor)throw new QaError('qa_forbidden',403);
+      const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_display_settings'").bind(ws).first<{value:string}>();
+      return c.json(parseQaDisplaySettings(row?.value));
+    }
+    if(action==='save_display_settings') {
+      if(auth.member.role!=='super_admin')throw new QaError('qa_forbidden',403);
+      const configuration=validateQaDisplaySettings(body.configuration);
+      const previous=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_display_settings'").bind(ws).first<{value:string}>();
+      const live=liveMemberSql(auth,'display_actor',{strict:true});
+      const result=await c.env.DB.prepare(`INSERT INTO system_settings(workspace_id,key,value,updated_at)
+        SELECT ?,'qa_display_settings',?,? WHERE EXISTS(SELECT 1 FROM members display_actor WHERE ${live.sql} AND display_actor.role='super_admin')
+        AND EXISTS(SELECT 1 FROM system_settings WHERE workspace_id=? AND key='feature_toggles' AND json_extract(value,'$.qa')=1)
+        AND (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_display_settings') IS ?
+        ON CONFLICT(workspace_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+        .bind(ws,JSON.stringify(configuration),new Date().toISOString(),...live.params,ws,ws,previous?.value??null).run();
+      if(result.meta.changes!==1)throw new QaError('qa_configuration_conflict',409);
+      return c.json(configuration);
     }
     if(action==='get_manual_state_visibility') {
       const row=await c.env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_manual_state_visibility'").bind(ws).first<{value:string}>();

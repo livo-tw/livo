@@ -30,6 +30,11 @@ describe('QA lifecycle and authorization', () => {
     expect(canQaCommand(triaged(), { id: 'someone-else', role: 'member' }, 'triage')).toBe(true);
     expect(() => createQaIssue({ ...report(), projectId: 'p1' } as never, 'id1', context())).toThrow('qa_invalid_request');
   });
+  it('preserves an untriaged severity when assigning owners without inventing a judgment', () => {
+    const command: Extract<QaCommand, { type: 'triage' }> = { type: 'triage', assigneeId: 'rd', qaOwnerId: 'qa', severity: 'untriaged', priority: 3, dueDate: null };
+    expect(applyQaCommand(report(), command, context())).toMatchObject({ severity: 'untriaged', state: 'triaged' });
+    expect(() => applyQaCommand(triaged(), command, context())).toThrow('qa_invalid_value');
+  });
   it('allows a designated QA lead without granting workspace admin', () => {
     expect(canQaCommand(triaged(), { id: 'qa', role: 'member' }, 'triage')).toBe(true);
     expect(canQaCommand(candidate(), { id: 'rd', role: 'member' }, 'record_verification')).toBe(false);
@@ -49,10 +54,22 @@ describe('QA lifecycle and authorization', () => {
     expect(issue.state).toBe('verification');
     expect(() => applyQaCommand(issue, { type: 'close', resolution: 'fixed', reason: '' }, context('qa', 'member'))).toThrow('qa_verification_required');
   });
-  it('requires explicit QA close after every required target passes', () => {
+  it('automatically closes on the last real required PASS with closure metadata and an explicit audit', () => {
     const issue = verify(deploy(verify(deploy(candidate())), 1), 1);
-    expect(issue.state).toBe('verified');
-    expect(applyQaCommand(issue, { type: 'close', resolution: 'fixed', reason: '' }, context('qa', 'member')).state).toBe('closed');
+    expect(issue).toMatchObject({state:'closed',resolution:'fixed',resolutionReason:'',duplicateOfId:null,closedAt:context().now,closedBy:'qa'});
+    expect(qaEventDetail(issue,'record_verification')).toContain('已自動結案');
+    expect(() => applyQaCommand(issue,{type:'close',resolution:'fixed',reason:''},context('qa','member'))).toThrow('qa_forbidden');
+  });
+  it('does not close manual PASS, optional blocked, or incomplete current proof', () => {
+    const manual=applyQaCommand(deploy(candidate()),{type:'set_state',state:'verified'},context('reporter','member'));
+    expect(manual).toMatchObject({state:'verified',closedAt:null,closedBy:null,resolution:null,runs:[]});
+    expect(() => applyQaCommand(manual,{type:'close',resolution:'fixed',reason:''},context('qa','member'))).toThrow('qa_verification_required');
+    const complete=verify(deploy(verify(deploy(candidate())),1),1);
+    const optional={id:'optional',environment:'Stage',component:'optional',build:'build-A',required:false,deployedAt:context().now,deployedBy:'rd',deploymentEvidence:''};
+    const legacy:QaIssue={...complete,state:'verified' as const,resolution:null,closedAt:null,closedBy:null,targets:[...complete.targets,optional]};
+    expect(verify(legacy,2,'blocked')).toMatchObject({state:'verified',closedAt:null,closedBy:null,resolution:null});
+    const stale={...legacy,targets:legacy.targets.slice(0,2),runs:legacy.runs.map(run=>({...run,fixCycle:0}))};
+    expect(verify(stale,1)).toMatchObject({state:'verification',closedAt:null});
   });
   it('retains FAIL history; only the next fix submission increments the cycle', () => {
     const original = deploy(candidate());
@@ -125,12 +142,14 @@ describe('QA lifecycle and authorization', () => {
   });
   it('a new fix invalidates a previous PASS and only real required-target results restore it', () => {
     const passed = verify(deploy(verify(deploy(candidate())),1),1);
-    expect(passed.state).toBe('verified');
-    const replacement=applyQaCommand(passed,{type:'submit_fix',summary:'new build',targets:[{environment:'Stage',component:'',build:'B',required:true}]},context('rd','member'));
+    expect(passed.state).toBe('closed');
+    const reopened=applyQaCommand(passed,{type:'reopen',reason:'New reproduction'},context('reporter','member'));
+    const replacement=applyQaCommand(reopened,{type:'submit_fix',summary:'new build',targets:[{environment:'Stage',component:'',build:'B',required:true}]},context('rd','member'));
     expect(replacement.state).toBe('verification');
     expect(() => applyQaCommand(replacement,{type:'close',resolution:'fixed',reason:''},context())).toThrow('qa_verification_required');
-    expect(verify(passed,0,'blocked').state).toBe('verification');
-    expect(verify(passed,0,'fail').state).toBe('failed');
+    const legacy:QaIssue={...passed,state:'verified' as const,resolution:null,closedAt:null,closedBy:null};
+    expect(verify(legacy,0,'blocked').state).toBe('verification');
+    expect(verify(legacy,0,'fail').state).toBe('failed');
   });
   it('keeps exact catalog environment identity and replaces the imported unknown priority marker only on triage', () => {
     const custom = applyQaCommand(triaged(),{type:'submit_fix',summary:'fix',targets:[{environment:'Prod',component:'API',build:'one',required:true},{environment:'prod',component:'API',build:'two',required:true}]},{...context(),environmentValues:['Prod','prod']});

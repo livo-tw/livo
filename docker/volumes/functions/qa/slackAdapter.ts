@@ -6,6 +6,7 @@ import { createQaService } from './service.ts';
 import { qaRequestId, qaSlackCard, type QaSlackActions, type QaSlackActor } from './slack.ts';
 import { qaSlackLink, syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow } from './workflow.ts';
+import { parseQaDisplaySettings } from './displaySettings.ts';
 
 export function createQaSlackActions(env: Environment, actions: Actions): QaSlackActions {
   const db = new Database(env);
@@ -21,6 +22,7 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
       if (!await adapter.enabled()) throw new Error('qa_disabled');
       return await createQaService(env, (actor as QaSlackActor & { jwt: string }).jwt).handle(body) as T;
     },
+    displaySettings: async () => parseQaDisplaySettings(await db.setting('qa_display_settings')),
     environments: async actor => {
       const member = new Database(env, (actor as QaSlackActor & { jwt: string }).jwt);
       const rows = await member.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: '1' });
@@ -53,7 +55,7 @@ export function createQaSlackActions(env: Environment, actions: Actions): QaSlac
       const hex = hash.slice(9, 41), clientId = `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-8${hex.slice(17,20)}-${hex.slice(20,32)}`;
       const workflow = parseQaWorkflow(await db.setting('qa_workflow'));
       const card = await actions.slack('chat.postMessage', { channel, ...(source.thread ? { thread_ts: source.thread } : {}),
-        client_msg_id: clientId, text: `Bug · ${issue.title}`, blocks: qaSlackCard(issue, qaSlackLink(env, issue), workflow) });
+        client_msg_id: clientId, text: `Bug · ${issue.title}`, blocks: qaSlackCard(issue, qaSlackLink(env, issue), workflow, await adapter.displaySettings!(actor)) });
       // No merge-upsert: a concurrent link may never silently replace another issue.
       await db.request('/rest/v1/qa_slack_links', 'POST', { id: hash, issue_id: issue.id, team_id: actor.team, channel_id: channel,
         thread_ts: source.thread || card.ts, card_ts: card.ts, created_at: new Date().toISOString() }, {}, 'return=representation');

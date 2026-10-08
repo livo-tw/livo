@@ -430,3 +430,20 @@ describe('Docker QA workflow settings migration', () => {
     expect(sql).not.toMatch(/UPDATE public\.qa_issues|INSERT INTO public\.qa_issues/);
   });
 });
+
+describe('Docker formal PASS auto closure',()=>{
+  it('commits the final PASS and closure metadata in one RPC, preserving its replay receipt',async()=>{
+    issue={...issue,state:'verification',qaOwnerId:'member-1',assigneeId:'member-1',fixCycle:1,
+      targets:[{id:'stage-target',environment:'Stage',component:'app',build:'build-A',required:true,deployedAt:context.now,deployedBy:'member-1',deploymentEvidence:''}]};
+    const body={action:'command',id:issue.id,commandId:'formal-final-pass',expectedVersion:issue.version,command:{type:'record_verification',targetId:'stage-target',build:'build-A',result:'pass',note:''}};
+    const first=await service().handle(body);
+    expect(first).toMatchObject({state:'closed',resolution:'fixed',closedBy:'member-1',resolutionReason:''});
+    expect(first.closedAt).toBe(first.updatedAt);
+    const commits=calls.filter(item=>item.url.pathname.endsWith('/rpc/livo_qa_commit'));
+    expect(commits).toHaveLength(1);expect(commits[0].body.p_event).toMatchObject({type:'record_verification'});
+    expect(commits[0].body.p_event.detail).toContain('已自動結案');
+    receipt={response:first,payload_hash:await qaPayloadHash(body),actor_id:'member-1',issue_id:issue.id};
+    expect(await service().handle(body)).toEqual(first);
+    expect(calls.filter(item=>item.url.pathname.endsWith('/rpc/livo_qa_commit'))).toHaveLength(1);
+  });
+});

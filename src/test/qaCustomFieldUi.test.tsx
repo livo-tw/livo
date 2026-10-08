@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +64,7 @@ describe('Controlled QA custom fields use shared choices and preserve historical
 
 describe('QA field configuration has a scoped, compact settings flow', () => {
   const getFieldConfiguration = vi.fn(), saveFieldConfiguration = vi.fn(), saveWorkflow = vi.fn();
-  const client = { getFieldConfiguration, saveFieldConfiguration, saveWorkflow } as unknown as QaClient;
+  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration, saveFieldConfiguration, saveWorkflow } as unknown as QaClient;
   let configuration: QaFieldConfiguration;
   beforeEach(() => {
     configuration = { version: 1, fields: [] };

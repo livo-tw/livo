@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { useState } from 'react';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -7,7 +8,7 @@ import { QA_STATES, type QaListInput } from '@/lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { ProductLine, Project } from '@/types';
 
-const mocks = vi.hoisted(() => ({ getWorkflow: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -19,7 +20,7 @@ vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProj
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as never[] }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { getWorkflow: mocks.getWorkflow };
+  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: mocks.getWorkflow };
   return { useQa: () => ({ client, actor: { id: 'example-admin', role: 'admin' } }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <output aria-label="Filtered canonical state">{filters.states?.join(',') || 'all'}</output> }));

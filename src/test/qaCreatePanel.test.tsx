@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { name?: string }) => values?.name ? `${key} ${values.name}` : key }) }));
@@ -19,7 +20,7 @@ import type { QaClient } from '@/lib/qa/client';
 import type { ProductLine, Project } from '@/types';
 
 const create = vi.fn(), upload = vi.fn(), versions = vi.fn(), getFieldConfiguration = vi.fn(), onCreated = vi.fn(), onCancel = vi.fn(), onBusyChange = vi.fn();
-const client = { create, upload, versions, getFieldConfiguration } as unknown as QaClient;
+const client = { create, upload, versions, getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration } as unknown as QaClient;
 const project = { id: 'project1', name: 'Example project', isArchived: false } as Project;
 const props = { client, projects: [project], productLines: [] as ProductLine[], projectId: project.id, issueId: 'fixed-issue', commandId: 'fixed-command', onCreated, onCancel, onBusyChange, fixedFooter: true };
 const proof = (name = 'proof.mp4') => new File(['video'], name, { type: 'video/mp4' });
@@ -37,6 +38,7 @@ describe('QA create with evidence', () => {
     render(<QaCreatePanel {...props} />); fill();
     expect(screen.queryByLabelText(/qa.problemArea/)).toBeNull();
     expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Example Reporter');
+    await waitFor(() => expect(screen.getByLabelText('qa.priority')).not.toBeDisabled());
     fireEvent.change(screen.getByLabelText('qa.priority'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('qa.dueDate'), { target: { value: '2026-11-09' } });
     await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled());
@@ -48,6 +50,7 @@ describe('QA create with evidence', () => {
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
     render(<QaCreatePanel {...props} />); fill();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
     expect(screen.queryByText('Inactive Example')).toBeNull();
     fireEvent.click(await screen.findByText('Example Tester'));
@@ -64,6 +67,7 @@ describe('QA create with evidence', () => {
     const title = screen.getByLabelText(/qa.titleField/) as HTMLInputElement;
     const createButton = screen.getByRole('button', { name: 'qa.createBug' }) as HTMLButtonElement;
     const cancelButton = screen.getByRole('button', { name: 'qa.cancel' }) as HTMLButtonElement;
+    await waitFor(() => expect(title).not.toBeDisabled());
     expect(title).toHaveFocus();
     expect(createButton.form).toBe(title.form); expect(cancelButton.form).toBe(title.form);
     expect(createButton.type).toBe('submit'); expect(cancelButton.type).toBe('button');
@@ -73,6 +77,31 @@ describe('QA create with evidence', () => {
     fill(); fireEvent.click(createButton);
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(create.mock.calls[0][0]).toEqual(expect.objectContaining({ title: 'Example issue', actual: 'Unexpected result', observedEnvironment: 'Stage' }));
+  });
+  it('focuses the desktop title only after the asynchronous display read enables the form', async () => {
+    let resolve!: (configuration: QaDisplaySettings) => void;
+    const spy = vi.spyOn(client, 'getDisplaySettings').mockImplementationOnce(() => new Promise<QaDisplaySettings>(done => { resolve = done; }));
+    try {
+      render(<QaCreatePanel {...props} />);
+      const title = screen.getByLabelText(/qa.titleField/);
+      expect(title).toBeDisabled(); expect(title).not.toHaveFocus();
+      await waitFor(() => expect(spy).toHaveBeenCalled());
+      await act(async () => resolve({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }));
+      expect(title).not.toBeDisabled(); expect(title).toHaveFocus();
+      screen.getByLabelText(/qa.actual/).focus();
+      fireEvent.change(title, { target: { value: 'Keep user focus' } });
+      expect(screen.getByLabelText(/qa.actual/)).toHaveFocus();
+    } finally { spy.mockRestore(); }
+  });
+  it('does not open the phone keyboard by focusing the title after a display read', async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      render(<QaCreatePanel {...props} />);
+      const title = screen.getByLabelText(/qa.titleField/);
+      await waitFor(() => expect(title).not.toBeDisabled());
+      expect(title).not.toHaveFocus();
+    } finally { Object.defineProperty(window, 'innerWidth', { configurable: true, value: width }); }
   });
   it('blocks creation while custom field definitions cannot be loaded and enables retry without losing the draft', async () => {
     getFieldConfiguration.mockRejectedValueOnce(new Error('catalog unavailable')).mockResolvedValueOnce({ version: 1, fields: [] });

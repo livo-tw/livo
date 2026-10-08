@@ -38,7 +38,7 @@ describe('refreshing automatically delivered QA cards', () => {
     const updates = setup(); await syncQaSlackIssue({ get: key => values[key] }, issue);
     expect(updates).toHaveLength(1);
     expect(updates[0].text).toContain('Example project'); expect(updates[0].text).toContain('Example member');
-    expect(updates[0].text).toContain('⚡ 優先級：高｜📅 2026-10-10'); expect(updates[0].text).not.toContain('P2');
+    expect(updates[0].text).toContain('⚡ 優先級：高｜嚴重度：高'); expect(updates[0].text).toContain('截止日：2026-10-10'); expect(updates[0].text).not.toContain('P2');
   });
   it('does not refresh a delivery card after its subscribed channel is removed', async () => {
     const updates = setup(false); await syncQaSlackIssue({ get: key => values[key] }, issue); expect(updates).toHaveLength(0);

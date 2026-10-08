@@ -46,6 +46,7 @@ const SHARED = [
   { source: 'src/lib/knowledgeSlack.ts', copies: ['worker/src/knowledgeSlackCore.ts', 'docker/volumes/functions/slack-interact/knowledge.ts', 'supabase/functions/slack-interact/knowledge.ts'] },
   { source: 'src/lib/deploymentEnvironments.ts', copies: ['src/lib/qa/environments.ts', 'worker/src/qa/environments.ts', 'docker/volumes/functions/qa/environments.ts', 'supabase/functions/qa/environments.ts'] },
   { source: 'src/lib/projectGroups.ts', copies: ['src/lib/qa/projectGroups.ts', 'worker/src/qa/projectGroups.ts', 'docker/volumes/functions/qa/projectGroups.ts', 'supabase/functions/qa/projectGroups.ts', 'docker/volumes/functions/slack-interact/projectGroups.ts', 'supabase/functions/slack-interact/projectGroups.ts'] },
+  { source: 'src/lib/qa/displaySettings.ts', copies: ['worker/src/qa/displaySettings.ts', 'docker/volumes/functions/qa/displaySettings.ts', 'supabase/functions/qa/displaySettings.ts'] },
   { source: 'src/lib/qa/manualStateVisibility.ts', copies: ['worker/src/qa/manualStateVisibility.ts', 'docker/volumes/functions/qa/manualStateVisibility.ts', 'supabase/functions/qa/manualStateVisibility.ts'] },
   { source: 'src/lib/qa/workflow.ts', copies: ['worker/src/qa/workflow.ts', 'docker/volumes/functions/qa/workflow.ts', 'supabase/functions/qa/workflow.ts'] },
   { source: 'src/lib/qa/versions.ts', copies: ['worker/src/qa/versions.ts', 'docker/volumes/functions/qa/versions.ts', 'supabase/functions/qa/versions.ts'] },

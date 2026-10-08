@@ -100,6 +100,8 @@ describe('Slack QA assignment, current state and stale action experience',()=>{
     const response=await handleQaSlack(submit(`V${intent}`,intent,{target:selected('target-example')}),`submit-${intent}`,h.d);expect(response.response_action).toBe('update');await h.flush();
     expect(h.api.mock.calls.some(([,body])=>body.action==='command')).toBe(true);
     if(intent!=='deploy')expect(h.current().runs[0]).toMatchObject({result:intent,note:'',testerId:'creator',createdAt:'2026-10-06T00:00:00Z'});
+    if(intent==='pass'){expect(h.current()).toMatchObject({state:'closed',resolution:'fixed',closedBy:'creator'});expect(h.d.reply).toHaveBeenCalledWith(expect.anything(),expect.stringContaining('驗證通過並結案。'));}
+    else if(intent!=='deploy')expect(h.current().state).not.toBe('closed');
   });
   it.each(['closed','reassigned','changed-stage'])('explains a stale %s fix action using the latest permitted panel',async kind=>{
     const current={...makeIssue(),assigneeId:kind==='reassigned'?'developer':'creator',qaOwnerId:'tester',state:kind==='closed'?'closed':kind==='changed-stage'?'new':'in_progress'} as QaIssue;

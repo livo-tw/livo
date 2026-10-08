@@ -3,6 +3,7 @@ import { qaSlackCard } from './slack.ts';
 import { qaSlackCurrentState } from './slackWorkspace.ts';
 import type { QaIssue } from './domain.ts';
 import { parseQaWorkflow } from './workflow.ts';
+import { parseQaDisplaySettings } from './displaySettings.ts';
 import { loadQaDeliveryState } from '../slack-deliver/qa-backend.ts';
 import { qaNotificationMessage, qaRouteAllowed } from '../slack-deliver/qa-core.ts';
 import type { Job } from '../slack-deliver/core.ts';
@@ -23,8 +24,8 @@ export async function syncQaSlackIssue(env: Environment, issue: QaIssue): Promis
     for (let attempt = 0; attempt < 3; attempt++) {
       let current = await load();
       if (!current) return;
-      const workflowSetting = await db.setting('qa_workflow');
-      let message = { text: `${qaSlackCurrentState(current.state,parseQaWorkflow(workflowSetting))}\nBug · ${current.title}`, blocks: qaSlackCard(current, qaSlackLink(env, current), parseQaWorkflow(workflowSetting)) };
+      const workflowSetting = await db.setting('qa_workflow'), display = parseQaDisplaySettings(await db.setting('qa_display_settings'));
+      let message = { text: `${qaSlackCurrentState(current.state,parseQaWorkflow(workflowSetting))}\nBug · ${current.title}`, blocks: qaSlackCard(current, qaSlackLink(env, current), parseQaWorkflow(workflowSetting), display) };
       if (String(link.id).startsWith('delivery-qa:')) {
         const job = (await db.rows('slack_delivery_outbox', { select: 'id,team_id,task_id,target_type,target_id,payload,attempts',
           team_id: `eq.${link.team_id}`, target_type: 'eq.channel', target_id: `eq.${link.channel_id}`, slack_message_ts: `eq.${link.card_ts}`, limit: '1' }))[0] as Job | undefined;

@@ -360,11 +360,48 @@ describe('QA D1 transaction invariants (real SQLite triggers)',()=>{
     await command({type:'record_verification',targetId:stage.id,build:'build-A',result:'pass',note:'Verified'});
     await expect(command({type:'close',resolution:'fixed',reason:''})).rejects.toThrow('qa_verification_required');
     await command({type:'record_deployment',targetId:prod.id,build:'build-A',evidence:'manual release'});
-    await command({type:'record_verification',targetId:prod.id,build:'build-A',result:'pass',note:'Verified'});
-    const close={action:'command',id:'new-issue',commandId:'close-once',expectedVersion:current.version,command:{type:'close',resolution:'fixed',reason:''}};
-    const first=await executeQaAction(env,auth,close),again=await executeQaAction(env,auth,close);expect(again).toEqual(first);
-    expect(db.prepare("SELECT COUNT(*) AS n FROM qa_events WHERE workspace_id='ws-a' AND type='close'").get()?.n).toBe(1);
-    await expect(executeQaAction(env,auth,{...close,command:{type:'reopen',reason:'Again'}})).rejects.toThrow('qa_idempotency_conflict');
+    const pass={action:'command',id:'new-issue',commandId:'final-pass-once',expectedVersion:current.version,command:{type:'record_verification',targetId:prod.id,build:'build-A',result:'pass',note:'Verified'}};
+    const first=await executeQaAction(env,auth,pass) as QaIssue,again=await executeQaAction(env,auth,pass);expect(again).toEqual(first);
+    expect(first).toMatchObject({state:'closed',resolution:'fixed',closedBy:'member-a',resolutionReason:''});
+    expect(first.closedAt).toBe(first.updatedAt);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM qa_events WHERE workspace_id='ws-a' AND type='record_verification'").get()?.n).toBe(2);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM qa_events WHERE workspace_id='ws-a' AND type='close'").get()?.n).toBe(0);
+    expect(db.prepare("SELECT detail FROM qa_events WHERE workspace_id='ws-a' AND version=? AND type='record_verification'").get(first.version)?.detail).toContain('已自動結案');
+    expect(db.prepare("SELECT state FROM qa_issues WHERE workspace_id='ws-a' AND id='new-issue'").get()?.state).toBe('closed');
+    await expect(executeQaAction(env,auth,{action:'command',id:'new-issue',commandId:'obsolete-close',expectedVersion:first.version,command:{type:'close',resolution:'fixed',reason:''}})).rejects.toThrow('qa_forbidden');
+    await expect(executeQaAction(env,auth,{...pass,command:{type:'reopen',reason:'Again'}})).rejects.toThrow('qa_idempotency_conflict');
+  });
+  it.each(['member','admin','super_admin'])('closes only the final required PASS for a live %s actor',async role=>{
+    db.prepare("UPDATE members SET role=? WHERE workspace_id='ws-a' AND id='member-a'").run(role);
+    const actor={...auth,member:{...auth.member,role}},env=environment();
+    let current=await executeQaAction(env,actor,{...create,input:{...create.input,assigneeId:'member-a'}}) as QaIssue;
+    const command=async(cmd:Record<string,unknown>)=>current=await executeQaAction(env,actor,{action:'command',id:current.id,commandId:crypto.randomUUID(),expectedVersion:current.version,command:cmd}) as QaIssue;
+    await command({type:'submit_fix',summary:'',targets:[{environment:'Stage',component:'',build:'one',required:true},{environment:'Prod',component:'',build:'one',required:true}]});
+    for(const [i,target] of current.targets.entries()){
+      await command({type:'record_deployment',targetId:target.id,build:'one',evidence:''});
+      await command({type:'record_verification',targetId:target.id,build:'one',result:'pass',note:''});
+      expect(current.state).toBe(i===0?'verification':'closed');
+    }
+    expect(current).toMatchObject({resolution:'fixed',closedBy:'member-a'});
+  });
+  it('rejects malformed formal closure claims before a receipt or issue mutation',async()=>{
+    const env=environment();let current=await executeQaAction(env,auth,{...create,input:{...create.input,assigneeId:'member-a'}}) as QaIssue;
+    const command=async(cmd:Record<string,unknown>)=>current=await executeQaAction(env,auth,{action:'command',id:current.id,commandId:crypto.randomUUID(),expectedVersion:current.version,command:cmd}) as QaIssue;
+    await command({type:'submit_fix',summary:'',targets:[{environment:'Stage',component:'',build:'one',required:true},{environment:'Prod',component:'',build:'one',required:true}]});
+    const [stage,prod]=current.targets;
+    await command({type:'record_deployment',targetId:stage.id,build:'one',evidence:''});
+    await command({type:'record_verification',targetId:stage.id,build:'one',result:'pass',note:''});
+    await command({type:'record_deployment',targetId:prod.id,build:'one',evidence:''});
+    const after:QaIssue={...current,version:current.version+1,updatedAt:'2026-11-02T01:01:00.000Z',state:'closed',resolution:'fixed',resolutionReason:'',duplicateOfId:null,closedBy:'member-a',closedAt:'2026-11-02T01:01:00.000Z',
+      runs:[...current.runs,{id:'formal-final-run',sequence:2,fixCycle:current.fixCycle,targetId:prod.id,environment:prod.environment,component:prod.component,build:prod.build,result:'pass',note:'',testerId:'member-a',createdAt:'2026-11-02T01:01:00.000Z'}]};
+    const mutations:Array<(issue:QaIssue)=>void>=[issue=>{issue.closedBy='other';},issue=>{issue.closedAt='old';},issue=>{issue.runs.at(-1)!.build='old';},issue=>{issue.runs.at(-1)!.fixCycle=0;},issue=>{issue.runs[0].note='rewritten';},issue=>{issue.runs.at(-1)!.id=null as never;},issue=>{issue.runs.at(-1)!.id=123 as never;},issue=>{issue.runs[0].result='fail';}];
+    const count=Number(db.prepare("SELECT count(*) AS n FROM qa_commands WHERE workspace_id='ws-a'").get()?.n);
+    for(const mutate of mutations){const invalid=structuredClone(after);mutate(invalid);
+      expect(()=>db.prepare('INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,actor_auth_id,expected_version,operation,request_hash,issue_data,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run('ws-a',crypto.randomUUID(),current.id,'member-a','admin','auth-a',current.version,'record_verification','hash',JSON.stringify(invalid),JSON.stringify(invalid),'now')).toThrow('qa_invalid_request');
+    }
+    expect(db.prepare("SELECT count(*) AS n FROM qa_commands WHERE workspace_id='ws-a'").get()?.n).toBe(count);
+    expect(JSON.parse(String(db.prepare("SELECT data FROM qa_issues WHERE workspace_id='ws-a' AND id=?").get(current.id)?.data))).toEqual(current);
   });
   it('keeps concurrent edits atomic and rejects cross-tenant reads and disabled feature access',async()=>{
     const env=environment();await executeQaAction(env,auth,create);

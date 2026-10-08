@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import { isDemoMember, type AppContext, type AuthCtx, type Ctx, type Env } from './env';
 import { executeQaAction, deploymentQueueOperator } from './qa';
 import { drainQaSlackInbox, handleQaSlack, isQaSlackPayload, qaRequestId, qaSlackCard, type QaSlackActions, type QaSlackActor, type QaSlackPayload } from './qa/slack';
-import { qaSlackClient, qaSlackEnabled, qaSlackLink, syncQaSlackIssue, getQaSlackWorkflow } from './qaSlackSync';
+import { qaSlackClient, qaSlackEnabled, qaSlackLink, syncQaSlackIssue, getQaSlackWorkflow, getQaSlackDisplaySettings } from './qaSlackSync';
 import { cleanupQaExpiredUploads } from './qaStorage';
 import { handleKnowledgeSlack, isKnowledgeSlackPayload } from './knowledgeSlackCore';
 import { slackLinkDisabled } from './slackLink';
@@ -54,6 +54,7 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       if (!await qaSlackEnabled(env, ws)) throw new Error('qa_disabled');
       return await executeQaAction(env, (actor as Actor).auth, body, ctx) as T;
     },
+    displaySettings: async () => getQaSlackDisplaySettings(env, ws),
     environments: async () => {
       const row = await env.DB.prepare("SELECT value FROM system_settings WHERE workspace_id=? AND key='deployment_environments'").bind(ws).first<{value:string}>();
       const parsed = parseDeploymentEnvironments(row ? JSON.parse(row.value) : undefined);
@@ -80,7 +81,7 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       const id = await qaRequestId(`${ws}:${actor.team}:${channel}:${source.thread || issue.id}:${issue.id}`);
       const hex = id.slice(9,41), clientId = `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-8${hex.slice(17,20)}-${hex.slice(20,32)}`;
       const card = await slack('chat.postMessage', { channel, ...(source.thread ? {thread_ts:source.thread} : {}), client_msg_id: clientId,
-        text: `Bug · ${issue.title}`, blocks: qaSlackCard(issue, qaSlackLink(env, issue), await getQaSlackWorkflow(env,ws)) });
+        text: `Bug · ${issue.title}`, blocks: qaSlackCard(issue, qaSlackLink(env, issue), await getQaSlackWorkflow(env,ws), await getQaSlackDisplaySettings(env,ws)) });
       await env.DB.prepare('INSERT INTO qa_slack_links(id,workspace_id,issue_id,team_id,channel_id,thread_ts,card_ts,created_at) VALUES(?,?,?,?,?,?,?,?)')
         .bind(id, ws, issue.id, actor.team, channel, source.thread || card.ts, card.ts, new Date().toISOString()).run();
     },

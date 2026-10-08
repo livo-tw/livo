@@ -33,7 +33,8 @@ describe('QA direct fields and optional workflow details', () => {
     expect(canQaCommand(assigned(), ctx('observer').actor, 'submit_fix')).toBe(false);
   });
   it('preserves all real evidence and closed state when changing completed metadata', () => {
-    const issue = verified(); const closed = applyQaCommand(issue, { type: 'close', resolution: 'fixed', reason: '' }, ctx('tester'));
+    const closed = verified();
+    expect(closed).toMatchObject({state:'closed',resolution:'fixed',closedAt:ctx().now,closedBy:'tester'});
     const next = applyQaCommand(closed, fields(closed, { projectId: 'project-b', assigneeId: null, qaOwnerId: null, priority: 2 }), ctx('observer'));
     const omit = ({ projectId, assigneeId, qaOwnerId, priority, version, updatedAt, ...rest }: QaIssue) => rest;
     expect(omit(next)).toEqual(omit(closed));
@@ -62,7 +63,7 @@ describe('QA direct fields and optional workflow details', () => {
     expect(() => applyQaCommand(issue, { type: 'close', resolution: 'fixed', reason: '' }, ctx('tester'))).toThrow('qa_verification_required');
     expect(() => applyQaCommand(issue, { type: 'record_verification', targetId: issue.targets[0].id, build: '', result: 'pass', note: '' }, ctx('tester'))).toThrow('qa_not_deployed');
     expect(deployed().targets[0]).toMatchObject({ deployedBy: 'developer', deployedAt: ctx().now, deploymentEvidence: '' });
-    expect(verified().state).toBe('verified');
+    expect(verified()).toMatchObject({state:'closed',resolution:'fixed',closedBy:'tester',closedAt:ctx().now,runs:[{result:'pass',note:'',build:''}]});
   });
   it('accepts empty failed-result notes without passing the bug or accepting a mismatched build', () => {
     const issue = deployed();

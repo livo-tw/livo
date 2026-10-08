@@ -4,6 +4,7 @@ import { fnUrl } from '@/lib/apiBase';
 import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
 import { parseQaManualStateVisibility, validateQaManualStateVisibility, type QaManualStateVisibility } from './manualStateVisibility';
+import { defaultQaDisplaySettings, validateQaDisplaySettings, type QaDisplaySettings } from './displaySettings';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
@@ -23,6 +24,7 @@ const demoCommandPayloads = new Map<string,string>();
 const demoCoordination = new Map<string, QaCoordination>();
 const demoCoordinationReceipts = new Map<string, {hash:string; result:QaCoordination}>();
 const demoWorkflows = new Map<string, QaWorkflow>();
+const demoDisplaySettings = new Map<string, QaDisplaySettings>();
 const demoManualStateVisibility = new Map<string, QaManualStateVisibility>();
 const demoFieldConfigurations = new Map<string, QaFieldConfiguration>();
 const clone = <T,>(value: T): T => structuredClone(value);
@@ -124,6 +126,18 @@ export function createQaClient(options: QaClientOptions) {
       const ctx = options.context();
       if (!ctx.projectIds.has(projectId)) throw new QaClientError('qa_project_unavailable', 403);
       return qaVersionSuggestions([...demoIssues.values()].map(value => value.issue), ctx.workspaceId, projectId);
+    },
+    async getDisplaySettings(signal?: AbortSignal): Promise<QaDisplaySettings> {
+      ensureEnabled();
+      return mock ? clone(demoDisplaySettings.get(options.context().workspaceId) || defaultQaDisplaySettings())
+        : validateQaDisplaySettings(await request('get_display_settings', {}, signal));
+    },
+    async saveDisplaySettings(input: QaDisplaySettings): Promise<QaDisplaySettings> {
+      ensureEnabled(); const ctx = options.context();
+      if (ctx.actor.role !== 'super_admin') throw new QaClientError('qa_forbidden', 403);
+      const configuration = validateQaDisplaySettings(input);
+      if (!mock) return validateQaDisplaySettings(await request('save_display_settings', { configuration }));
+      demoDisplaySettings.set(ctx.workspaceId, clone(configuration)); return clone(configuration);
     },
     async getManualStateVisibility(signal?: AbortSignal): Promise<QaManualStateVisibility> {
       ensureEnabled();

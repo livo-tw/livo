@@ -3,7 +3,8 @@ import { qaCoordinationButtons, qaHandoffBlocks } from './slackHandoff.ts';
 import { canQaCommand, QA_STATES, type QaDetail, type QaIssue, type QaListInput, type QaListResult, type QaState } from './domain.ts';
 import { getQaStateLabel, parseQaWorkflow, type QaWorkflow } from './workflow.ts';
 import { slackProjectOptionGroups } from './projectGroups.ts';
-import type { QaSlackActions, QaSlackActor, QaSlackPayload, SlackBlock } from './slack.ts';
+import { getQaSlackDisplaySettings, type QaSlackActions, type QaSlackActor, type QaSlackPayload, type SlackBlock } from './slack.ts';
+import { defaultQaDisplaySettings, type QaDisplaySettings } from './displaySettings.ts';
 
 type Mode = 'list' | 'search' | 'my' | 'triage';
 interface Query { mode: Mode; search: string; state: QaState | 'active' | 'all'; mine: NonNullable<QaListInput['mine']> | 'all'; projectId: string; projectLabel: string; offset: number; }
@@ -53,7 +54,7 @@ function listInput(query: Query): QaListInput {
 function view(c: Copy, query: Query, blocks: SlackBlock[], filters = false): SlackBlock {
   return { type:'modal', callback_id:CALLBACK, title:plain(c.title), close:plain(c.close), ...(filters ? {submit:plain(c.apply)} : {}), private_metadata:JSON.stringify(query), blocks };
 }
-function resultView(result: QaListResult, workflow: QaWorkflow, query: Query, c: Copy): SlackBlock {
+function resultView(result: QaListResult, workflow: QaWorkflow, query: Query, c: Copy, display: QaDisplaySettings): SlackBlock {
   const states = [option('active',c.active),option('all',c.all),...workflow.order.map(state => option(state,getQaStateLabel(workflow,state,value=>c.states[value])))];
   const mine = [option('all',c.all),option('assigned',c.assigned),option('testing',c.testing),option('reported',c.reported)];
   const blocks: SlackBlock[] = [
@@ -66,16 +67,16 @@ function resultView(result: QaListResult, workflow: QaWorkflow, query: Query, c:
   ];
   if (query.mode === 'triage') blocks.push(section(c.readOnly));
   if (!result.issues.length) blocks.push(section(c.empty));
-  for (const issue of result.issues) blocks.push({ ...section(`${issue.title}\n${getQaStateLabel(workflow,issue.state,state=>c.states[state])} · ${c.severity[issue.severity]}${issue.dueDate ? ` · ${c.due}: ${issue.dueDate}` : ''}\n${issue.id}`), accessory:button('detail',c.detail,issue.id) });
+  for (const issue of result.issues) blocks.push({ ...section(`${issue.title}\n${getQaStateLabel(workflow,issue.state,state=>c.states[state])}${display.showSeverity ? ` · ${c.severity[issue.severity]}` : ''}${issue.dueDate ? ` · ${c.due}: ${issue.dueDate}` : ''}\n${issue.id}`), accessory:button('detail',c.detail,issue.id) });
   // Retain the historical page action ID while keeping it unique in each block.
   if (query.offset > 0) blocks.push({type:'actions',elements:[button('page',c.previous,String(Math.max(0,query.offset-PAGE_SIZE)))]});
   blocks.push({type:'actions',elements:[button('refresh',c.refresh)]});
   if (result.hasMore && query.offset + PAGE_SIZE <= 100000) blocks.push({type:'actions',elements:[button('page',c.next,String(query.offset+PAGE_SIZE))]});
   return view(c,query,blocks,true);
 }
-function detailView(issue: QaIssue, workflow: QaWorkflow, query: Query, actor: QaSlackActor, d: QaSlackActions, c: Copy, names:Record<string,string>={}, notice=''): SlackBlock {
+function detailView(issue: QaIssue, workflow: QaWorkflow, query: Query, actor: QaSlackActor, d: QaSlackActions, c: Copy, names:Record<string,string>={}, notice='', display: QaDisplaySettings = defaultQaDisplaySettings()): SlackBlock {
   const status=qaSlackCurrentState(issue.state,workflow,actor.locale).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const blocks: SlackBlock[] = [{type:'section',text:{type:'mrkdwn',text:`*${status}*`}},...(notice?[section(notice)]:[]),section(issue.title),section(`${issue.id}\n${c.severity[issue.severity]}\n${c.env}: ${issue.observedEnvironment}\n${c.build}: ${issue.observedVersion || '—'}`)];
+  const blocks: SlackBlock[] = [{type:'section',text:{type:'mrkdwn',text:`*${status}*`}},...(notice?[section(notice)]:[]),section(issue.title),section(`${issue.id}${display.showSeverity ? `\n${c.severity[issue.severity]}` : ''}\n${c.env}: ${issue.observedEnvironment}\n${c.build}: ${issue.observedVersion || '—'}`)];
   for (const [label,body] of [[c.actual,issue.actual],[c.steps,issue.steps],[c.expected,issue.expected],[c.repair,issue.fixSummary],[c.hold,issue.holdReason]]) {
     if (!body) continue;
     blocks.push(section(label));
@@ -99,9 +100,9 @@ export function qaSlackOperationAllowed(issue:QaIssue,actor:QaSlackActor,kind:Pa
 }
 
 /** Caller must obtain this detail from the normal authorized QA get action. */
-export function qaLatestDetailView(detail: QaDetail, actor: QaSlackActor, d: QaSlackActions, workflow: QaWorkflow, notice=''): SlackBlock {
+export function qaLatestDetailView(detail: QaDetail, actor: QaSlackActor, d: QaSlackActions, workflow: QaWorkflow, notice='', display: QaDisplaySettings = defaultQaDisplaySettings()): SlackBlock {
   const scoped={...actor,qaCoordinatorProjectIds:detail.coordination?.coordinatorId===actor.id?[detail.issue.projectId]:[]};
-  return detailView(detail.issue,workflow,initial('list'),scoped,d,words(actor.locale),detail.memberNames,notice);
+  return detailView(detail.issue,workflow,initial('list'),scoped,d,words(actor.locale),detail.memberNames,notice,display);
 }
 
 /** Every page, suggestion and detail lookup resolves the live member again. */
@@ -153,13 +154,14 @@ export async function handleQaWorkspace(p: QaSlackPayload, d: QaSlackActions): P
         query={...query,offset};
       }
       const workflowPromise=d.api<QaWorkflow>(actor,{action:'get_workflow'}).then(parseQaWorkflow);
+      const displayPromise=getQaSlackDisplaySettings(d,actor);
       let next:SlackBlock;
       if (intent === 'detail') {
-        const [detail,workflow]=await Promise.all([d.api<QaDetail>(actor,{action:'get',id:action?.value}),workflowPromise]);
-        next=detailView(detail.issue,workflow,query,{...actor,qaCoordinatorProjectIds:detail.coordination?.coordinatorId===actor.id?[detail.issue.projectId]:[]},d,c,detail.memberNames);
+        const [detail,workflow,display]=await Promise.all([d.api<QaDetail>(actor,{action:'get',id:action?.value}),workflowPromise,displayPromise]);
+        next=detailView(detail.issue,workflow,query,{...actor,qaCoordinatorProjectIds:detail.coordination?.coordinatorId===actor.id?[detail.issue.projectId]:[]},d,c,detail.memberNames,'',display);
       } else {
-        const [result,workflow]=await Promise.all([d.api<QaListResult>(actor,{action:'list',input:listInput(query)}),workflowPromise]);
-        next=resultView(result,workflow,query,c);
+        const [result,workflow,display]=await Promise.all([d.api<QaListResult>(actor,{action:'list',input:listInput(query)}),workflowPromise,displayPromise]);
+        next=resultView(result,workflow,query,c,display);
       }
       await d.slack('views.update',{view_id:viewId,view:next});
     } catch (error) {

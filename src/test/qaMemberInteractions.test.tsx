@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import type { QaState } from '@/lib/qa/domain';
 import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { useState } from 'react';
@@ -39,7 +40,7 @@ async function choose(label: string, name: RegExp) {
 }
 function renderDetail(overrides: Partial<QaDetail> = {}, actor: QaActor = { id: 'admin', role: 'admin' }) {
   const command = vi.fn().mockResolvedValue(issue), upload = vi.fn().mockResolvedValue({ id: 'file1' });
-  const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const props = { detail: { ...detail, ...overrides }, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
   return { ...render(<QaIssueDetail {...props} />), command, upload, props };
 }
@@ -217,7 +218,7 @@ describe('QA detail uses shared controls with a focused next action', () => {
   it('starts the repair from the card button in one click too, and only once', async () => {
     const assigned = { ...issue, state: 'triaged' as const, assigneeId: 'admin', qaOwnerId: 'qa' };
     const command = vi.fn().mockResolvedValue({ ...assigned, state: 'in_progress', version: assigned.version + 1 });
-    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload: vi.fn(), versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload: vi.fn(), versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const view = render(<QaIssueDetail detail={{ ...detail, issue: assigned }} client={client} actor={{ id: 'admin', role: 'admin' }} initialAction="start_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
     await waitFor(() => expect(command).toHaveBeenCalledWith(assigned, { type: 'start_fix' }, expect.any(String)));
@@ -275,7 +276,7 @@ describe('QA detail uses shared controls with a focused next action', () => {
 
   it('deletes a bug after one confirmation and leaves the record', async () => {
     const remove = vi.fn().mockResolvedValue(undefined), onDeleted = vi.fn();
-    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn().mockResolvedValue([]), delete: remove } as unknown as QaClient;
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), versions: vi.fn().mockResolvedValue([]), delete: remove } as unknown as QaClient;
     render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={vi.fn()} onBack={vi.fn()} onDeleted={onDeleted} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.delete' }));

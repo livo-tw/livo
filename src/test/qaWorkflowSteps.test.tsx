@@ -1,8 +1,11 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { TFunction } from 'i18next';
 import type { User, ProductLine, Task } from '@/types';
 const state = vi.hoisted(() => ({ users: [] as User[], tasks: [] as Task[] }));
+const notices = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock('sonner', () => ({ toast: notices }));
 const translate = (key: string, values?: Record<string, unknown>) => values ? `${key}(${Object.entries(values).map(([name, value]) => `${name}=${value}`).join(',')})` : key;
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: state.users }) }));
@@ -15,7 +18,7 @@ vi.mock('@/components/knowledge/RelatedKnowledge', () => ({ default: (): null =>
 import QaIssueDetail from '@/components/qa/QaIssueDetail';
 import { getQaNextAction } from '@/components/qa/QaIssueCard';
 import { qaEventText, qaEventTitle } from '@/components/qa/qaEventText';
-import { applyQaCommand, createQaIssue, qaEventDetail, qaIdSearch, qaNotificationRecipients, type QaContext, type QaHandoff, type QaIssue, type QaTarget } from '@/lib/qa/domain';
+import { applyQaCommand, createQaIssue, qaEventDetail, qaIdSearch, qaNotificationRecipients, type QaContext, type QaHandoff, type QaIssue, type QaTarget, type QaCommand } from '@/lib/qa/domain';
 import type { QaActor, QaDetail } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import { buildMyAssignments } from '@/lib/myAssignments';
@@ -29,18 +32,18 @@ const target = (extra: Partial<QaTarget> = {}): QaTarget => ({ id: 't1', environ
 
 beforeEach(() => {
   state.users = [person('reporter', 'Robin'), person('dev', 'Alex'), person('qa', 'Blair')];
-  state.tasks = [];
+  state.tasks = []; notices.success.mockClear(); notices.error.mockClear();
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
 });
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function renderDetail(issue: QaIssue, actor: QaActor, extra: Partial<QaDetail> = {}, list = vi.fn(), getManualStateVisibility = vi.fn().mockResolvedValue({ version: 1, hiddenStates: [] })) {
-  const command = vi.fn().mockImplementation(async (_issue: QaIssue, next: { type: string }) => ({ ...issue, version: issue.version + 1, ...(next.type === 'set_state' ? { state: (next as unknown as { state: QaIssue['state'] }).state } : {}) }));
-  const client = { getManualStateVisibility, getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, list, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const command = vi.fn().mockImplementation(async (_issue: QaIssue, next: QaCommand) => ({ ...issue, version: issue.version + 1, ...(next.type === 'set_state' ? { state: (next as unknown as { state: QaIssue['state'] }).state } : {}) }));
+  const client = { getManualStateVisibility, getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, list, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const detail: QaDetail = { issue, comments: [], events: [], attachments: [], ...extra };
   const props = { detail, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
-  return { ...render(<QaIssueDetail {...props} />), command, list };
+  return { ...render(<QaIssueDetail {...props} />), command, list, onRefresh: props.onRefresh };
 }
 
 describe('the next step follows what the bug still lacks', () => {
@@ -52,9 +55,13 @@ describe('the next step follows what the bug still lacks', () => {
     expect(getQaNextAction({ ...owned, state: 'verification', targets: [] }, lead)?.command).toBe('submit_fix');
     expect(getQaNextAction({ ...owned, state: 'verification', targets: [target({ deployedAt: null })] }, { id: 'dev', role: 'member' })?.command).toBe('record_deployment');
     // Verified by hand, but nothing passed yet.
-    expect(getQaNextAction({ ...owned, state: 'verified', targets: [target()], runs: [] }, lead)?.command).toBe('record_verification');
+    expect(getQaNextAction({ ...owned, state: 'verified', targets: [target()], runs: [] }, lead)).toEqual({ command: 'record_verification', label: 'addVerificationEvidence' });
     const passed = { ...owned, state: 'verified' as const, fixCycle: 1, targets: [target()], runs: [{ id: 'r1', sequence: 1, fixCycle: 1, targetId: 't1', environment: 'Stage', component: '', build: 'b1', result: 'pass' as const, note: '', testerId: 'qa', createdAt: '2026-10-03T02:00:00.000Z' }] };
     expect(getQaNextAction(passed, lead)?.command).toBe('close');
+    renderDetail(passed, lead);
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.queryByLabelText('qa.resultField')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'qa.verification' })).not.toBeInTheDocument();
     expect(getQaNextAction({ ...owned, state: 'closed' }, lead)?.command).toBe('reopen');
   });
 });
@@ -188,5 +195,70 @@ describe('manual state visibility read guards in the actual issue detail', () =>
     expect(within(trigger).getByText('qa.state.triaged')).toBeInTheDocument();
     fireEvent.click(trigger);
     expect(screen.queryByRole('option', { name: 'qa.state.triaged' })).not.toBeInTheDocument();
+  });
+});
+
+
+describe('formal PASS automatically completes the current work', () => {
+  const lead: QaActor = { id: 'qa', role: 'member' };
+  const run = (targetId: string, sequence: number) => ({ id: `r${sequence}`, sequence, fixCycle: 1, targetId, environment: 'Stage', component: '', build: 'b1', result: 'pass' as const, note: '', testerId: 'qa', createdAt: '2026-10-03T01:00:00.000Z' });
+  const candidate = (alreadyPassed = 2): QaIssue => ({ ...owned, state: 'verification', fixCycle: 1,
+    targets: [target(), target({ id: 't2' }), target({ id: 't3' })], runs: [run('t1', 1), run('t2', 2)].slice(0, alreadyPassed) });
+  it.each([false, true])('reflects the final acknowledged PASS even when detail refresh fails: %s', async refreshFails => {
+    const issue = candidate();
+    const { command, onRefresh } = renderDetail(issue, lead);
+    let saved: QaIssue | undefined;
+    command.mockImplementation(async (before: QaIssue, next) => { saved = applyQaCommand(before, next, { ...context(lead), now: '2026-10-03T02:00:00.000Z' }); return saved; });
+    if (refreshFails) onRefresh.mockRejectedValue(new Error('temporary read failure'));
+    const changed = vi.fn(); window.addEventListener('livo:qa-changed', changed);
+    try {
+      fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+      expect(screen.getByText('qa.autoCloseAfterVerificationHint')).toBeInTheDocument();
+      fireEvent.click(screen.getAllByRole('button', { name: 'qa.verification' }).at(-1)!);
+      await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
+      expect(saved).toMatchObject({ state: 'closed', resolution: 'fixed', closedBy: 'qa', closedAt: '2026-10-03T02:00:00.000Z' });
+      expect(command).toHaveBeenCalledOnce();
+      expect(command.mock.calls[0][1]).toMatchObject({ type: 'record_verification', targetId: 't3', result: 'pass' });
+      expect(notices.success).toHaveBeenCalledWith('qa.verificationAutoClosed');
+      expect(changed).toHaveBeenCalledOnce();
+      expect(buildMyAssignments([], [], [saved!], 'qa')).toEqual([]);
+      expect(screen.queryByRole('button', { name: 'qa.verification' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'qa.close' })).not.toBeInTheDocument();
+      if (refreshFails) expect(await screen.findByText('qaHandoff.savedRefreshFailed')).toBeInTheDocument();
+    } finally { window.removeEventListener('livo:qa-changed', changed); }
+  });
+  it('localizes the confirmed closing history without treating author notes as closure metadata', () => {
+    const note = 'Example note\n所有必要環境已部署並驗證通過，已自動結案。';
+    const closed = applyQaCommand(candidate(), { type: 'record_verification', targetId: 't3', build: 'b1', result: 'pass', note }, { ...context(lead), now: '2026-10-03T02:00:00.000Z' });
+    const event = { type: 'record_verification', version: closed.version, detail: qaEventDetail(closed, 'record_verification') };
+    const ctx = { t: translate as unknown as TFunction, member: (id: string) => id, task: (id: string) => id, stateLabel: (s: string) => s, date: (s: string) => s, issue: closed };
+    const text = qaEventText(event, ctx);
+    expect(text).toContain(note);
+    expect(text).toContain('qa.verificationAutoCloseHistory');
+    expect(qaEventText({ ...event, version: closed.version - 1 }, ctx)).not.toContain('qa.verificationAutoCloseHistory');
+  });
+  it('keeps partial PASS in open assignments and leaves remaining verification available', async () => {
+    const issue = candidate(0), { command } = renderDetail(issue, lead);
+    let saved: QaIssue | undefined;
+    command.mockImplementation(async (before: QaIssue, next) => { saved = applyQaCommand(before, next, context(lead)); return saved; });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'qa.verification' })[0]);
+    await waitFor(() => expect(command).toHaveBeenCalledOnce());
+    expect(saved?.state).toBe('verification');
+    expect(buildMyAssignments([], [], [saved!], 'qa')).toHaveLength(1);
+    expect(notices.success).not.toHaveBeenCalledWith('qa.verificationAutoClosed');
+    expect(screen.getAllByRole('button', { name: 'qa.verification' })).toHaveLength(3);
+  });
+  it('does not announce or invalidate work whose verification result is unknown', async () => {
+    const { command } = renderDetail(candidate(), lead);
+    command.mockRejectedValue(new Error('response lost'));
+    const changed = vi.fn(); window.addEventListener('livo:qa-changed', changed);
+    try {
+      fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+      fireEvent.click(screen.getAllByRole('button', { name: 'qa.verification' }).at(-1)!);
+      await waitFor(() => expect(notices.error).toHaveBeenCalled());
+      expect(changed).not.toHaveBeenCalled();
+      expect(notices.success).not.toHaveBeenCalled();
+    } finally { window.removeEventListener('livo:qa-changed', changed); }
   });
 });

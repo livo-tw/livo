@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
@@ -5,7 +6,7 @@ import type { ProductLine, Project } from '@/types';
 
 const mocks = vi.hoisted(() => ({
   client: {
-    getWorkflow: vi.fn(), get: vi.fn(), list: vi.fn(), getCoordination: vi.fn(),
+    getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), get: vi.fn(), list: vi.fn(), getCoordination: vi.fn(),
   },
 }));
 vi.mock('react-i18next', async (importOriginal) => ({

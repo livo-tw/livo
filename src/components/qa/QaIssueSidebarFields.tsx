@@ -1,3 +1,5 @@
+import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
+import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import UserSelect from '@/components/UserSelect';
@@ -17,13 +19,14 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand }: {
   issue: QaIssue; disabled: boolean; onCommand: (command: QaCommand) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
+  const configuration = useQaDisplayConfiguration();
   const { users } = useMemberContext();
   const { allProjects, productLines } = useProjectContext();
   const { allTasks } = useTaskContext();
   const [dueDate, setDueDate] = useState(issue.dueDate || '');
   useEffect(() => setDueDate(issue.dueDate || ''), [issue.id, issue.version, issue.dueDate]);
   const update = (patch: Partial<Fields>) => {
-    if (disabled) return Promise.resolve(false);
+    if (disabled || ('priority' in patch && !configuration)) return Promise.resolve(false);
     if (Object.entries(patch).every(([key, value]) => issue[key as keyof Fields] === value)) return Promise.resolve(true);
     return onCommand({ type: 'update_fields', projectId: issue.projectId, assigneeId: issue.assigneeId,
       qaOwnerId: issue.qaOwnerId, severity: issue.severity, priority: issue.priority, dueDate: issue.dueDate, ...patch });
@@ -35,12 +38,12 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand }: {
     <QaSelect label={t('qa.project')} value={issue.projectId} disabled={disabled} onChange={event => update({ projectId: event.target.value })}>
       <ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, { keepIds: [issue.projectId] })} />
     </QaSelect>
-    <QaSelect label={t('qa.priority')} value={issue.priority} disabled={disabled} onChange={event => update({ priority: Number(event.target.value) })}>
-      {qaPriorities.map((value, index) => <option key={value} value={index + 1}>{t(`priority.${value}`)}</option>)}
+    <QaSelect label={t('qa.priority')} value={issue.priority} disabled={disabled || !configuration} onChange={event => update({ priority: Number(event.target.value) })}>
+      {configuration && getQaPriorityChoices(configuration, issue.priority).map(priority => <option key={priority} value={priority}>{t(`priority.${qaPriorities[priority - 1]}`)}</option>)}
     </QaSelect>
-    <QaSelect label={t('qa.severity')} value={issue.severity} disabled={disabled} onChange={event => update({ severity: event.target.value as QaSeverity })}>
+    {configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={issue.severity} disabled={disabled} onChange={event => update({ severity: event.target.value as QaSeverity })}>
       {['untriaged', 'low', 'medium', 'high'].map(value => <option key={value} value={value}>{t(`qa.severityNames.${value}`)}</option>)}
-    </QaSelect>
+    </QaSelect>}
     <UserSelect label={t('qa.assignee')} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
       onChange={value => update({ assigneeId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} size="md" />

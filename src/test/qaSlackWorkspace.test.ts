@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createQaIssue, type QaIssue } from '../lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW } from '../lib/qa/workflow';
+import { defaultQaDisplaySettings } from '../lib/qa/displaySettings';
 import { handleQaSlack, isQaSlackPayload, parseQaSlackCommand, type QaSlackActions, type QaSlackActor, type QaSlackPayload, type SlackBlock } from '../lib/qa/slack';
 
 const fixture = (): QaIssue => ({...createQaIssue({projectId:'project-1',title:'Synthetic bug',actual:'A visible failure',observedEnvironment:'Stage'},'issue-1',{
@@ -129,4 +130,43 @@ describe('private QA Slack workspace',()=>{
     expect(JSON.stringify(lastView())).toContain('Ready');expect(JSON.stringify(lastView())).not.toContain('livo_qa_workspace_page');
     expect(api).toHaveBeenCalledWith(expect.anything(),{action:'list',input:{offset:0,limit:10,state:'new'}});
   });
+
+  it.each(['en-US','zh-TW','zh-CN'])('hides severity in list and detail using fresh display settings for %s',async locale=>{
+    const {d,flush,lastView}=harness(locale);
+    d.displaySettings=vi.fn(async()=>({...defaultQaDisplaySettings(),showSeverity:false}));
+    await handleQaSlack(slash('bug list'),'display-list',d);await flush();
+    const list=lastView(),row=(list.blocks as SlackBlock[]).find(block=>(block.text as {text?:string})?.text?.startsWith('Synthetic bug\n'));
+    expect((row?.text as {text:string}).text).not.toContain(locale==='en-US'?'Untriaged':'待判定');
+    await handleQaSlack(action(list,'livo_qa_workspace_detail','issue-1'),'display-detail',d);await flush();
+    const body=JSON.stringify(lastView());
+    expect(body).not.toContain(locale==='en-US'?'Untriaged':'待判定');expect(body).toContain('A visible failure');expect(body).toContain('Stage');
+    expect(d.displaySettings).toHaveBeenCalledTimes(2);expect(d.publish).not.toHaveBeenCalled();expect(d.reply).not.toHaveBeenCalled();
+  });
+  it('reloads display settings for page and detail instead of trusting private metadata',async()=>{
+    const {d,flush,lastView}=harness();
+    d.displaySettings=vi.fn(async()=>({...defaultQaDisplaySettings(),showSeverity:false}));
+    await handleQaSlack(slash('bug list'),'display-first',d);await flush();const first=lastView();
+    vi.mocked(d.displaySettings).mockResolvedValue({...defaultQaDisplaySettings(),showSeverity:true});
+    const forged={...first,private_metadata:JSON.stringify({...JSON.parse(String(first.private_metadata)),showSeverity:false})};
+    vi.mocked(d.actor).mockResolvedValue({...actor,id:'fresh-member'});
+    await handleQaSlack(action(forged,'livo_qa_workspace_page','10'),'display-page',d);await flush();
+    expect(JSON.stringify(lastView())).toContain('Untriaged');
+    vi.mocked(d.displaySettings).mockResolvedValue({...defaultQaDisplaySettings(),showSeverity:false});
+    await handleQaSlack(action(lastView(),'livo_qa_workspace_detail','issue-1'),'display-detail',d);await flush();
+    expect(JSON.stringify(lastView())).not.toContain('Untriaged');expect(d.displaySettings).toHaveBeenCalledTimes(3);
+    expect(d.displaySettings).toHaveBeenLastCalledWith(expect.objectContaining({id:'fresh-member'}));
+  });
+  it.each(['transport-error','invalid-setting'])('fails closed when display settings produce %s',async failure=>{
+    const {d,api,flush,lastView}=harness();
+    d.displaySettings=vi.fn(async()=>{
+      if(failure==='transport-error')throw new Error('private-settings-error');
+      return {version:1,showSeverity:'bad',hiddenPriorityChoices:[],hiddenBoardStates:[]} as never;
+    });
+    await handleQaSlack(slash('bug list'),'display-failed',d);await flush();
+    const rendered=JSON.stringify(lastView());
+    expect(rendered).toContain('QA could not be loaded');expect(rendered).not.toContain('Synthetic bug');expect(rendered).not.toContain('private-settings-error');
+    expect(api.mock.calls.every(call=>['list','get_workflow'].includes(String(call[1].action)))).toBe(true);
+    expect(d.publish).not.toHaveBeenCalled();expect(d.reply).not.toHaveBeenCalled();
+  });
+
 });

@@ -2,6 +2,7 @@ import { Database, type Environment } from '../slack-interact/backend.ts';
 import { DeliveryError, type DeliveryStore } from './core.ts';
 import { type QaDeliveryState, type QaDeliveryStore } from './qa-core.ts';
 import { qaNotificationReferences } from '../qa/notificationText.ts';
+import { parseQaDisplaySettings } from '../qa/displaySettings.ts';
 
 export async function loadQaDeliveryState(db: Database, issueId: string, eventType?: string, eventDetail?: unknown): Promise<QaDeliveryState | undefined> {
   const row = (await db.rows('qa_issues', { select: 'data', id: `eq.${issueId}`, workspace_id: 'eq.default', limit: '1' }))[0];
@@ -20,7 +21,8 @@ export async function loadQaDeliveryState(db: Database, issueId: string, eventTy
     refs.members.length ? db.rows('members', { select: 'id,name', id: `in.(${refs.members.join(',')})`, limit: '10' }) : [],
     refs.projects.length ? db.rows('projects', { select: 'id,name', id: `in.(${refs.projects.join(',')})`, limit: '10' }) : [],
   ]);
-  return { issue: row.data, project: projects[0], members, memberNames: Object.fromEntries(memberLabels.map(member => [member.id, member.name])),
+  const displaySettings = parseQaDisplaySettings(await db.setting('qa_display_settings'));
+  return { displaySettings, issue: row.data, project: projects[0], members, memberNames: Object.fromEntries(memberLabels.map(member => [member.id, member.name])),
     projectNames: Object.fromEntries(projectLabels.map(project => [project.id, project.name])),
     triagers: coordinator ? [coordinator.id] : members.filter(m => ['admin', 'super_admin'].includes(m.role)).map(m => m.id) };
 }

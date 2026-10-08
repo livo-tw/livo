@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import type { QaState } from '@/lib/qa/domain';
 import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { useEffect } from 'react';
@@ -5,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
+const mocks = vi.hoisted(() => ({ create: vi.fn(), upload: vi.fn(), command: vi.fn(), comment: vi.fn(), get: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), toast: vi.fn(), loadFeatures: vi.fn(), saveFeature: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -24,7 +25,7 @@ vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProj
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration };
+  const client = { create: mocks.create, upload: mocks.upload, command: mocks.command, comment: mocks.comment, get: mocks.get, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration };
   return { useQa: () => ({ client, actor: { id: 'admin', role: 'admin' }, enabled: true }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: (): null => null }));

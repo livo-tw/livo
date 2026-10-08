@@ -1,7 +1,8 @@
 import type { TFunction } from 'i18next';
+import { QA_STATES, type QaIssue } from '@/lib/qa/domain';
 import { qaShortId } from '@/lib/qa/shortId';
 import { qaPriorities } from './QaBadges';
-import { qaFieldChanges, qaDueDateText } from '@/lib/qa/notificationText';
+import { qaFieldChanges, qaDueDateText, qaVerificationAutoClosed } from '@/lib/qa/notificationText';
 
 /**
  * Readable history entries. The servers store each event as an audit snapshot
@@ -16,8 +17,10 @@ export interface QaEventTextContext {
   /** Task key and title for an id; unknown ids come back unchanged. */
   task: (id: string) => string;
   project?: (id: string) => string;
+  showSeverity?: boolean;
   stateLabel: (state: string) => string;
   date: (iso: string) => string;
+  issue?: QaIssue;
 }
 
 const RESOLUTIONS = ['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'];
@@ -55,12 +58,14 @@ function handoff(type: string, detail: string, ctx: QaEventTextContext): string 
   return [t('qaHandoff.evidence') + '：', text('resolutionEvidence')].join('\n');
 }
 
-export function qaEventText(event: { type: string; detail: string }, ctx: QaEventTextContext): string {
+export function qaEventText(event: { type: string; detail: string; version?: number }, ctx: QaEventTextContext): string {
   const { t } = ctx, detail = event.detail || '';
   if (!detail) return '';
   if (event.type === 'set_state') {
-    try { const value = JSON.parse(detail); return t('qa.stateHistory', { from: ctx.stateLabel(value.from), to: ctx.stateLabel(value.to) }); }
-    catch { return detail; }
+    try { const value = JSON.parse(detail);
+      if (!value || typeof value !== 'object' || !QA_STATES.includes(value.from) || !QA_STATES.includes(value.to)) return t('qa.historyEvent.set_state');
+      return t('qa.stateHistory', { from: ctx.stateLabel(value.from), to: ctx.stateLabel(value.to) }); }
+    catch { return t('qa.historyEvent.set_state'); }
   }
   if (event.type === 'update_fields') {
     const changes = qaFieldChanges(detail);
@@ -77,14 +82,16 @@ export function qaEventText(event: { type: string; detail: string }, ctx: QaEven
       return t('common.unknown');
     };
     const labels: Record<string, string> = { projectId: 'project', assigneeId: 'assignee', qaOwnerId: 'qaOwner', severity: 'severity', priority: 'priority', dueDate: 'dueDate' };
-    return changes.map(change => change.hasBefore ? t('qa.historyFieldChange', { field: t(`qa.${labels[change.field]}`), before: display(change.field, change.before), after: display(change.field, change.after) })
+    const visible = changes.filter(change => ctx.showSeverity !== false || change.field !== 'severity');
+    if (!visible.length) return t('qa.historyEvent.update_fields');
+    return visible.map(change => change.hasBefore ? t('qa.historyFieldChange', { field: t(`qa.${labels[change.field]}`), before: display(change.field, change.before), after: display(change.field, change.after) })
       : `${t(`qa.${labels[change.field]}`)}：${display(change.field, change.after)}`).join('\n');
   }
   if (event.type === 'triage') {
     const match = /^RD: (\S+) · QA: (\S+)\n(\w+) · P(\d)(?:\n(\S+))?$/.exec(detail);
     if (match && SEVERITIES.includes(match[3])) return [
       `${t('qa.assignee')}：${ctx.member(match[1])} · ${t('qa.qaOwner')}：${ctx.member(match[2])}`,
-      `${t('qa.severity')}：${t(`qa.severityNames.${match[3]}`)} · ${t('qa.priority')}：${t(`priority.${qaPriorities[Number(match[4]) - 1] ?? 'medium'}`)}`,
+      `${ctx.showSeverity !== false ? `${t('qa.severity')}：${t(`qa.severityNames.${match[3]}`)} · ` : ''}${t('qa.priority')}：${t(`priority.${qaPriorities[Number(match[4]) - 1] ?? 'medium'}`)}`,
       match[5] ? `${t('qa.dueDate')}：${match[5]}` : '',
     ].filter(Boolean).join('\n');
   }
@@ -100,11 +107,15 @@ export function qaEventText(event: { type: string; detail: string }, ctx: QaEven
   }
   if (['request_handoff', 'accept_handoff', 'resolve_handoff'].includes(event.type)) {
     const text = handoff(event.type, detail, ctx);
-    if (text !== null) return text;
+    return text !== null ? text : t(`qa.historyEvent.${event.type}`);
   }
   if (event.type === 'link_tasks') return detail.split('\n').filter(Boolean).map(ctx.task).join('\n');
   if (event.type === 'record_verification') {
-    return names(detail.split('\n').map(line => RESULTS[line] ? t(`qa.result.${RESULTS[line]}`) : line).join('\n'), ctx);
+    const autoClosed = ctx.issue?.version === event.version && qaVerificationAutoClosed(detail, ctx.issue);
+    const lines = detail.split('\n');
+    if (autoClosed) lines.pop();
+    const text = names(lines.map(line => RESULTS[line] ? t(`qa.result.${RESULTS[line]}`) : line).join('\n'), ctx);
+    return autoClosed ? `${text}\n${t('qa.verificationAutoCloseHistory')}` : text;
   }
   return names(detail, ctx);
 }

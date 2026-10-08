@@ -11,6 +11,7 @@ import { canManageQaConfiguration } from '@/lib/qa/fields';
 import QaCustomFieldManager from './QaCustomFieldManager';
 import QaWorkflowSettings from './QaWorkflowSettings';
 import QaManualStateVisibilitySettings from './QaManualStateVisibilitySettings';
+import QaDisplaySettings from './QaDisplaySettings';
 import QaCoordinatorSettings from './QaCoordinatorSettings';
 import { qaButton, QaSelect } from './QaFields';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -23,21 +24,24 @@ export default function QaSettingsPage({ client, actor, workflow, onWorkflowSave
 }) {
   const { t } = useTranslation();
   const { confirm, ConfirmDialog } = useConfirmDialog();
-  const [tab, setTab] = useState<'workflow' | 'fields' | 'coordinators' | 'manualStates'>('workflow');
+  const [tab, setTab] = useState<'workflow' | 'fields' | 'coordinators' | 'manualStates' | 'display'>('workflow');
   // Coordinators are chosen per project here, without selecting a project elsewhere first.
   const canSetCoordinators = actor.role === 'admin' || actor.role === 'super_admin';
 
   const [fieldsVisited, setFieldsVisited] = useState(false), [dirty, setDirty] = useState(false);
   const [manualStatesVisited, setManualStatesVisited] = useState(false);
+  const [displayVisited, setDisplayVisited] = useState(false);
   const [busy, setBusy] = useState(false);
-  const pending = useRef({ workflow: false, fields: false, manualStates: false });
+  const pending = useRef({ workflow: false, fields: false, manualStates: false, display: false });
   const workflowBusy = useCallback((value: boolean) => { pending.current.workflow = value; setBusy(Object.values(pending.current).some(Boolean)); }, []);
   const fieldsBusy = useCallback((value: boolean) => { pending.current.fields = value; setBusy(Object.values(pending.current).some(Boolean)); }, []);
-  const changes = useRef({ workflow: false, fields: false, manualStates: false });
+  const changes = useRef({ workflow: false, fields: false, manualStates: false, display: false });
   const workflowChanged = useCallback((value: boolean) => { changes.current.workflow = value; setDirty(Object.values(changes.current).some(Boolean)); }, []);
   const fieldsChanged = useCallback((value: boolean) => { changes.current.fields = value; setDirty(Object.values(changes.current).some(Boolean)); }, []);
   const manualStatesBusy = useCallback((value: boolean) => { pending.current.manualStates = value; setBusy(Object.values(pending.current).some(Boolean)); }, []);
   const manualStatesChanged = useCallback((value: boolean) => { changes.current.manualStates = value; setDirty(Object.values(changes.current).some(Boolean)); }, []);
+  const displayBusy = useCallback((value: boolean) => { pending.current.display = value; setBusy(Object.values(pending.current).some(Boolean)); }, []);
+  const displayChanged = useCallback((value: boolean) => { changes.current.display = value; setDirty(Object.values(changes.current).some(Boolean)); }, []);
   useQaNavigationGuard(dirty);
   const close = async () => {
     if (Object.values(pending.current).some(Boolean)) { toast.info(t('qa.finishPending')); return; }
@@ -52,16 +56,18 @@ export default function QaSettingsPage({ client, actor, workflow, onWorkflowSave
     <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('qa.settingsTitle')}>
       {([{ id: 'workflow', label: 'qa.workflowTitle', icon: Settings2 }, { id: 'fields', label: 'qa.customFields.title', icon: ListChecks },
         { id: 'manualStates', label: 'qa.manualStates.title', icon: Settings2 },
+        ...(actor.role === 'super_admin' ? [{ id: 'display', label: 'qa.displaySettings.title', icon: Settings2 }] as const : []),
         ...(canSetCoordinators ? [{ id: 'coordinators', label: 'qaHandoff.coordinatorTitle', icon: UserCog }] as const : [])] as const).map(({ id, label, icon: Icon }) =>
         <button type="button" key={id} role="tab" id={`qa-settings-tab-${id}`} aria-controls={`qa-settings-panel-${id}`} aria-selected={tab === id}
           className={`${qaButton} ${tab === id ? 'border-primary/30 bg-primary/10 text-primary' : 'text-muted-foreground'}`}
-          onClick={() => { setTab(id); if (id === 'fields') setFieldsVisited(true); if (id === 'manualStates') setManualStatesVisited(true); }}><Icon size={15} aria-hidden="true" />{t(label)}</button>)}
+          onClick={() => { setTab(id); if (id === 'fields') setFieldsVisited(true); if (id === 'manualStates') setManualStatesVisited(true); if (id === 'display') setDisplayVisited(true); }}><Icon size={15} aria-hidden="true" />{t(label)}</button>)}
     </div>
     <div id="qa-settings-panel-workflow" role="tabpanel" aria-labelledby="qa-settings-tab-workflow" hidden={tab !== 'workflow'}>
       <QaWorkflowSettings client={client} actor={actor} workflow={workflow} onDirtyChange={workflowChanged} onBusyChange={workflowBusy} onSaved={value => { workflowChanged(false); workflowBusy(false); onWorkflowSaved(value); }} onClose={() => void close()} />
     </div>
     {fieldsVisited && <div id="qa-settings-panel-fields" role="tabpanel" aria-labelledby="qa-settings-tab-fields" hidden={tab !== 'fields'}><QaCustomFieldManager client={client} actor={actor} onDirtyChange={fieldsChanged} onBusyChange={fieldsBusy} /></div>}
     {manualStatesVisited && <div id="qa-settings-panel-manualStates" role="tabpanel" aria-labelledby="qa-settings-tab-manualStates" hidden={tab !== 'manualStates'}><QaManualStateVisibilitySettings client={client} actor={actor} workflow={workflow} onDirtyChange={manualStatesChanged} onBusyChange={manualStatesBusy} onClose={() => void close()} /></div>}
+    {displayVisited && actor.role === 'super_admin' && <div id="qa-settings-panel-display" role="tabpanel" aria-labelledby="qa-settings-tab-display" hidden={tab !== 'display'}><QaDisplaySettings client={client} actor={actor} workflow={workflow} onDirtyChange={displayChanged} onBusyChange={displayBusy} onClose={() => void close()} /></div>}
     {canSetCoordinators && tab === 'coordinators'  && <div id="qa-settings-panel-coordinators" role="tabpanel" aria-labelledby="qa-settings-tab-coordinators"><QaCoordinatorsPanel client={client} onSaved={onCoordinationSaved} /></div>}
   </div>{ConfirmDialog}</div>;
 }

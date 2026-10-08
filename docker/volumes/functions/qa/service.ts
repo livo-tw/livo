@@ -6,6 +6,7 @@ import { validateQaBackup } from './restore.ts';
 import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
 import { parseQaManualStateVisibility, validateQaManualStateVisibility } from './manualStateVisibility.ts';
+import { parseQaDisplaySettings, validateQaDisplaySettings } from './displaySettings.ts';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './fields.ts';
 import { qaVersionSuggestions } from './versions.ts';
 import { isDeploymentQueueOperator } from './deploymentQueue.ts';
@@ -34,7 +35,7 @@ function databaseError(body: Row, status: number): never {
   const message = String(body.message || '');
   const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
   if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
-  const known = ['qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
+  const known = ['qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
     'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request'];
   const code = known.find(code => message.includes(code));
   if (code) fail(code.startsWith('qa_') ? code : `qa_${code}`, ['42501'].includes(body.code) ? 403
@@ -218,6 +219,15 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         if(!Number.isSafeInteger(request.expectedVersion)||request.expectedVersion<0)fail('qa_invalid_version');
         return db.rpc('livo_qa_save_coordination',{p_auth_id:actor.authId,p_project_id:projectId,p_coordinator_id:coordinatorId,
           p_expected_version:request.expectedVersion,p_command_id:commandId(request.commandId),p_payload_hash:await qaPayloadHash(request),p_slack_identity:actor.slackIdentity});
+      }
+      case 'get_display_settings': {
+        const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_display_settings', limit: 1 }))[0];
+        return parseQaDisplaySettings(row?.value);
+      }
+      case 'save_display_settings': {
+        if (actor.role !== 'super_admin') fail('qa_forbidden', 403);
+        const configuration = validateQaDisplaySettings(request.configuration);
+        return db.rpc('livo_qa_save_display_settings', { p_auth_id: actor.authId, p_configuration: configuration });
       }
       case 'get_manual_state_visibility': {
         const row = (await db.rows('system_settings', { select: 'value', key: 'eq.qa_manual_state_visibility', limit: 1 }))[0];

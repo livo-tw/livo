@@ -1,10 +1,11 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import type { QaState } from '@/lib/qa/domain';
 import type { QaManualStateVisibility } from '@/lib/qa/manualStateVisibility';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ProductLine, Task } from '@/types';
 import type { QaCreateInput } from '@/lib/qa/domain';
-const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, role: 'admin', qaAdmin: false, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), getCoordination: vi.fn(), command: vi.fn(), comment: vi.fn() }));
+const mocks = vi.hoisted(() => ({ selectedProjectId: null as string | null, role: 'admin', qaAdmin: false, create: vi.fn(), upload: vi.fn(), get: vi.fn(), list: vi.fn(), versions: vi.fn(), getWorkflow: vi.fn(), getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn(), getCoordination: vi.fn(), command: vi.fn(), comment: vi.fn() }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -22,7 +23,7 @@ vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] 
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ values: ['Stage'], ready: true, loadError: false }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, getCoordination: mocks.getCoordination, command: mocks.command, comment: mocks.comment };
+  const client = { create: mocks.create, upload: mocks.upload, get: mocks.get, list: mocks.list, versions: mocks.versions, getWorkflow: mocks.getWorkflow, getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, getCoordination: mocks.getCoordination, command: mocks.command, comment: mocks.comment };
   return { useQa: () => ({ client, actor: { id: 'admin', role: mocks.role, qaAdmin: mocks.qaAdmin }, enabled: true }) };
 });
 // Kanban loading is unrelated to navigation protection. The Workspace, create
@@ -60,7 +61,7 @@ describe('QA navigation preserves pending work', () => {
   it('retries an uncertain handoff with its original issue version and command identity after incoming updates', async () => {
     const current = handoffIssue(), accepted = { ...current, version: 5, handoff: { ...current.handoff, acceptedBy: 'admin', acceptedAt: issue.createdAt } };
     mocks.command.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValueOnce(accepted);
-    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
     const props = { detail: { ...detail, issue: current }, client, actor: { id: 'admin', role: 'admin' }, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
@@ -77,7 +78,7 @@ describe('QA navigation preserves pending work', () => {
   it('keeps a confirmed handoff visible when only the refresh fails without offering a mutation retry', async () => {
     const current = handoffIssue(), accepted = { ...current, version: 5, handoff: { ...current.handoff, acceptedBy: 'admin', acceptedAt: issue.createdAt } };
     mocks.command.mockResolvedValue(accepted); const onRefresh = vi.fn().mockRejectedValueOnce(new TypeError('reload unavailable')).mockResolvedValue(undefined);
-    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, command: mocks.command } as unknown as QaClient;
     render(<QaIssueDetail detail={{ ...detail, issue: current }} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'qaHandoff.title' }));
@@ -90,7 +91,7 @@ describe('QA navigation preserves pending work', () => {
     const target = { id: 'target-one', environment: 'Stage', component: '', build: 'release-one', required: true, deployedAt: issue.createdAt, deployedBy: 'admin', deploymentEvidence: '' };
     const current = { ...issue, state: action === 'close' ? 'verified' as const : 'in_progress' as const, version: 4, fixCycle: 1, assigneeId: 'admin', qaOwnerId: 'admin', targets: action === 'close' ? [target] : [], runs: action === 'close' ? [{ id: 'run-one', sequence: 1, fixCycle: 1, targetId: target.id, environment: target.environment, component: '', build: target.build, result: 'pass' as const, note: '', testerId: 'admin', createdAt: issue.createdAt }] : [] };
     mocks.command.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValueOnce({ ...current, version: 5 });
-    const props = { detail: { ...detail, issue: current }, client: { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient, actor: { id: 'admin', role: 'admin' }, initialAction: action, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
+    const props = { detail: { ...detail, issue: current }, client: { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient, actor: { id: 'admin', role: 'admin' }, initialAction: action, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
     const view = render(<QaIssueDetail {...props} />);
     const dialog = await screen.findByRole('dialog', { name: action === 'close' ? 'qa.close' : 'qa.submitFix' });
     if (action === 'close') fireEvent.change(within(dialog).getByLabelText(/qa.resolutionField/), { target: { value: 'fixed' } });
@@ -110,7 +111,7 @@ describe('QA navigation preserves pending work', () => {
     const current = { ...issue, state: 'in_progress' as const, version: 4, assigneeId: 'admin', qaOwnerId: 'admin' };
     mocks.command.mockResolvedValue({ ...current, state: 'verification', version: 5 });
     const onRefresh = vi.fn().mockRejectedValueOnce(new TypeError('read failed')).mockResolvedValue(undefined);
-    render(<QaIssueDetail detail={{ ...detail, issue: current }} client={{ getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
+    render(<QaIssueDetail detail={{ ...detail, issue: current }} client={{ getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, versions: mocks.versions, command: mocks.command } as unknown as QaClient} actor={{ id: 'admin', role: 'admin' }} initialAction="submit_fix" onRefresh={onRefresh} onBack={vi.fn()} />);
     const dialog = await screen.findByRole('dialog', { name: 'qa.submitFix' }); fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
     await screen.findByText('qaHandoff.savedRefreshFailed'); expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'qa.retryCommand' })).toBeNull();
@@ -167,7 +168,7 @@ describe('QA navigation preserves pending work', () => {
     let resolveUpload!: (value: unknown) => void, resolveRefresh!: () => void;
     mocks.upload.mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     const onRefresh = vi.fn(() => new Promise<void>(resolve => { resolveRefresh = resolve; })), onBack = vi.fn();
-    const client = { getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, upload: mocks.upload, versions: mocks.versions } as unknown as QaClient;
+    const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: mocks.getFieldConfiguration, upload: mocks.upload, versions: mocks.versions } as unknown as QaClient;
     render(<QaIssueDetail detail={detail} client={client} actor={{ id: 'admin', role: 'admin' }} onRefresh={onRefresh} onBack={onBack} />);
     fireEvent.click(screen.getByRole('button', { name: 'qa.addAttachment' }));
     const attachmentInput = screen.getByLabelText('qa.attach');

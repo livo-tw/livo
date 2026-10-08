@@ -122,10 +122,10 @@ function enforceWritePolicy(
   // QA configuration has schema/identity and scoped-capability guards in its API.
   // The generic query endpoint must not bypass those guards with broad updates.
   if (table === 'system_settings') {
-    const protectedKeys = ['qa_custom_fields', 'qa_workflow', 'qa_manual_state_visibility'];
+    const protectedKeys = ['qa_custom_fields', 'qa_workflow', 'qa_manual_state_visibility', 'qa_display_settings'];
     const values = Array.isArray(req.values) ? req.values : [req.values];
     if (values.some(value => value && typeof value === 'object' && protectedKeys.includes(String((value as Row).key)))) return permissionDenied(table);
-    if (req.op === 'update') req.filters = [...(req.filters || []), ...protectedKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
+    if (['update','delete'].includes(req.op)) req.filters = [...(req.filters || []), ...protectedKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
     // Operator appointments are an explicit super_admin-only setting. Broad
     // administrator updates cannot replace or rename that protected row.
     const queueKey = 'deployment_queue';

@@ -8,7 +8,7 @@ The sidebar permits direct editing of project, state, severity, priority, fix as
 
 Repair notes, component, product build/version, deployment evidence and verification notes are optional. Empty details are stored as empty details, never as invented versions or proof. A repair still declares at least one required environment. Previous repair targets may be reused as suggestions; a discovery version must not be silently asserted as the repaired build. Environment options come from the workspace deployment environment setting.
 
-Formal verification and closure remain distinct. Formal fixed closure requires every required target in the current fix cycle to have an actual deployment record and a passing verification. Optional QA handoff remains an advanced action and does not certify a test result. Manual state editing preserves its existing contract and never creates deployment or verification evidence.
+Formal verification closes the Bug as fixed in the same transaction once every required target in the current fix cycle has an actual deployment record and its latest verification passes. This final PASS records the verifying actor and closure time, retains the single verification event and command receipt, and removes the Bug from open assignments. Partial PASS, FAIL and BLOCKED do not close the Bug. A manually selected PASS never creates deployment or verification evidence or triggers automatic closure; historical PASS remains available for explicit evidence-backed closure with source acknowledgment. Optional QA handoff remains an advanced action and does not certify a test result.
 
 ## Slack interaction
 

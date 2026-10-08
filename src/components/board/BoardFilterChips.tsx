@@ -16,9 +16,9 @@ type Options = ComponentProps<typeof MultiSelectDropdown>['options'];
  * status, priority, reviewer and (without a selected project) project. A board
  * adds its own chips through `extra` and its controls through `trailing`.
  */
-export default function BoardFilterChips({ users, statusOptions, allProjects, showProjects, filters, assigneeLabel, reviewerLabel, extra, extraActive = false, onClear, trailing }: {
+export default function BoardFilterChips({ users, statusOptions, allProjects, showProjects, filters, assigneeLabel, reviewerLabel, extra, extraActive = false, onClear, trailing, priorityChoices }: {
   users: User[]; statusOptions: Options; allProjects: Project[]; showProjects: boolean; filters: BoardFilterState;
-  assigneeLabel?: string; reviewerLabel?: string;
+  assigneeLabel?: string; reviewerLabel?: string; priorityChoices?: string[];
   extra?: ReactNode; extraActive?: boolean; onClear?: () => void; trailing?: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -26,7 +26,7 @@ export default function BoardFilterChips({ users, statusOptions, allProjects, sh
   const toggle = useCallback((setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
     setter(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]), []);
   const memberOptions = useMemo(() => sortUsersByDept(users.filter(user => user.isActive)).map(user => ({ id: user.id, label: user.name, avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle })), [users]);
-  const priorityOptions = useMemo(() => Object.entries(priorityConfig).map(([id, priority]) => ({ id, label: t(`priority.${id}`, { defaultValue: priority.label }), icon: priority.icon as React.ReactElement })), [t]);
+  const priorityOptions = useMemo(() => Object.entries(priorityConfig).filter(([id]) => !priorityChoices || priorityChoices.includes(id)).map(([id, priority]) => ({ id, label: t(`priority.${id}`, { defaultValue: priority.label }), icon: priority.icon as React.ReactElement })), [t, priorityChoices]);
   return <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-1 hidden md:inline">{t('filter.label')}</span>
     <DepartmentFilter value={filters.filterDept} onChange={filters.setFilterDept} />

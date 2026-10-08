@@ -1,6 +1,7 @@
 /** Private QA coordination forms. Actor and authorization never come from metadata. */
 import { canQaCommand, type QaCommand, type QaDetail, type QaIssue } from './domain.ts';
-import type { QaSlackActions, QaSlackPayload, SlackBlock } from './slack.ts';
+import { getQaSlackDisplaySettings, type QaSlackActions, type QaSlackPayload, type SlackBlock } from './slack.ts';
+import { getQaPriorityChoices } from './displaySettings.ts';
 import { qaPriorityText } from './notificationText.ts';
 const messages={
  'zh-TW':{triage:'分流 Bug',start_fix:'開始修復',hold:'記錄卡關',request_handoff:'建立交接',accept_handoff:'接收交接',resolve_handoff:'解除交接',
@@ -52,7 +53,8 @@ export async function handleQaCoordinationSlack(p:QaSlackPayload,d:QaSlackAction
   const selected=(key:string)=>values[key]?.[key] as {value?:string;selected_option?:{value:string};selected_date?:string;selected_date_time?:number}|undefined;
   const value=(key:string)=>selected(key)?.value??selected(key)?.selected_option?.value??'';
   if(!recognized(meta.kind)||typeof meta.issueId!=='string'||!Number.isSafeInteger(meta.version))return {response_action:'update',view:message(t.failed)};
-  const required=meta.kind==='triage'?['rd','qa','severity','priority']:meta.kind==='request_handoff'?['reason','owner']:meta.kind==='hold'?['reason']:meta.kind==='resolve_handoff'?['evidence']:[];
+  // Severity is checked after loading the live display setting, never from metadata.
+  const required=meta.kind==='triage'?['rd','qa','priority']:meta.kind==='request_handoff'?['reason','owner']:meta.kind==='hold'?['reason']:meta.kind==='resolve_handoff'?['evidence']:[];
   const errors=Object.fromEntries(required.filter(k=>!value(k).trim()).map(k=>[k,t.required]));
   if(Object.keys(errors).length)return {response_action:'errors',errors};
   const viewId=p.view!.id;
@@ -62,7 +64,11 @@ export async function handleQaCoordinationSlack(p:QaSlackPayload,d:QaSlackAction
     const scoped={...actor,qaCoordinatorProjectIds:detail.coordination?.coordinatorId===actor.id?[detail.issue.projectId]:[]};
     if(!canQaCommand(detail.issue,scoped,meta.kind))throw new Error('qa_forbidden');
     let command:QaCommand;
-    if(meta.kind==='triage')command={type:'triage',assigneeId:value('rd'),qaOwnerId:value('qa'),severity:value('severity') as 'low'|'medium'|'high',priority:Number(value('priority')),dueDate:selected('due')?.selected_date||null};
+    if(meta.kind==='triage'){
+     const display=await getQaSlackDisplaySettings(d,actor);
+     if(display.showSeverity&&!value('severity').trim())throw new Error('qa_required');
+     command={type:'triage',assigneeId:value('rd'),qaOwnerId:value('qa'),severity:display.showSeverity?value('severity') as QaIssue['severity']:detail.issue.severity,priority:Number(value('priority')),dueDate:selected('due')?.selected_date||null};
+    }
     else if(meta.kind==='request_handoff'){const stamp=selected('reply')?.selected_date_time;command={type:'request_handoff',reason:value('reason'),nextOwnerId:value('owner'),replyBy:stamp==null?null:new Date(stamp*1000).toISOString(),externalDependency:value('external')};}
     else if(meta.kind==='accept_handoff')command={type:'accept_handoff',handoffId:meta.handoffId};
     else if(meta.kind==='resolve_handoff')command={type:'resolve_handoff',handoffId:meta.handoffId,evidence:value('evidence')};
@@ -91,7 +97,12 @@ export async function handleQaCoordinationSlack(p:QaSlackPayload,d:QaSlackAction
    const blocks:SlackBlock[]=[{type:'section',text:text(issue.title)},{type:'section',text:text(t.confirm)}];
    const person=(key:string,label:string)=>field(key,label,{type:'external_select',min_query_length:0});
    const note=(key:string,label:string,max=3000,optional=false)=>field(key,label,{type:'plain_text_input',multiline:true,max_length:max},optional);
-   if(kind==='triage')blocks.push(person('rd',t.rd),person('qa',t.qa),field('severity',t.severity,{type:'static_select',options:['low','medium','high'].map(s=>option(s,t[s as 'low']))}),field('priority',t.priority,{type:'static_select',options:[1,2,3,4,5].map(n=>option(String(n),qaPriorityText(n,actor.locale))),initial_option:option(String(issue.priority),qaPriorityText(issue.priority,actor.locale))}),field('due',t.due,{type:'datepicker',...(issue.dueDate?{initial_date:issue.dueDate}:{})},true));
+   if(kind==='triage'){
+    const display=await getQaSlackDisplaySettings(d,actor);
+    blocks.push(person('rd',t.rd),person('qa',t.qa));
+    if(display.showSeverity)blocks.push(field('severity',t.severity,{type:'static_select',options:['low','medium','high'].map(s=>option(s,t[s as 'low']))}));
+    blocks.push(field('priority',t.priority,{type:'static_select',options:getQaPriorityChoices(display,issue.priority).map(n=>option(String(n),qaPriorityText(n,actor.locale))),initial_option:option(String(issue.priority),qaPriorityText(issue.priority,actor.locale))}),field('due',t.due,{type:'datepicker',...(issue.dueDate?{initial_date:issue.dueDate}:{})},true));
+   }
    else if(kind==='hold')blocks.push(note('reason',t.reason));
    else if(kind==='request_handoff')blocks.push(note('reason',t.reason),person('owner',t.owner),field('reply',t.reply,{type:'datetimepicker'},true),note('external',t.external,2000,true));
    else if(kind==='resolve_handoff')blocks.push(note('evidence',t.evidence));

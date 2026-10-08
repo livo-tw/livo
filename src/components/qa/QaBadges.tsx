@@ -1,3 +1,4 @@
+import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle } from 'lucide-react';
 import { priorityConfig, StatusBadge } from '@/components/ui/badges';
@@ -31,6 +32,8 @@ export function QaPriorityBadge({ priority, issue }: { priority: number; issue?:
 }
 export function QaSeverityBadge({ severity }: { severity: QaSeverity }) {
   const { t } = useTranslation();
+  const configuration = useQaDisplayConfiguration();
+  if (!configuration?.showSeverity) return null;
   // Reuse the task card's icon treatment; severity remains its own domain field.
   const visual = severity === 'untriaged' ? null : priorityConfig[severity];
   return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title={t('qa.severity')}>

@@ -29,7 +29,7 @@ export function getQaNextAction(issue: QaIssue, actor: QaActor): { command: QaCo
   if (issue.state === 'new') return { command: 'start_fix', label: 'startFix' };
   if ((issue.state === 'verification' || issue.state === 'verified') && !issue.targets.length && !isHistoricalQaPass(issue)) return { command: 'submit_fix', label: 'submitFix' };
   if (issue.state === 'verification' && issue.targets.some(target => !target.deployedAt) && canQaCommand(issue, actor, 'record_deployment')) return { command: 'record_deployment', label: 'deployment' };
-  if (issue.state === 'verified' && !requiredTargetsPassed(issue) && !isHistoricalQaPass(issue)) return { command: 'record_verification', label: 'verification' };
+  if (issue.state === 'verified' && !requiredTargetsPassed(issue) && !isHistoricalQaPass(issue)) return { command: 'record_verification', label: 'addVerificationEvidence' };
   return qaNextAction(issue.state);
 }
 

@@ -11,8 +11,9 @@ export default function QaVerificationPanel({ targets, initialResult, canDeploy,
   busy: boolean;
   onCommand: (command: QaCommand) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const initialTarget = targets.find(target => target.deployedAt && target.required) || targets.find(target => target.deployedAt);
-  return <div className="space-y-3">{targets.map(target => <QaVerificationTarget key={target.id} target={target}
+  return <div className="space-y-3">{canVerify && <p className="text-sm text-muted-foreground">{t('qa.autoCloseAfterVerificationHint')}</p>}{targets.map(target => <QaVerificationTarget key={target.id} target={target}
     initialResult={canVerify && target.id === initialTarget?.id ? initialResult : undefined}
     canDeploy={canDeploy} canVerify={canVerify} busy={busy} onCommand={onCommand} />)}</div>;
 }

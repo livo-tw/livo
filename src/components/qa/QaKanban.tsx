@@ -6,6 +6,8 @@ import { GripVertical, Inbox } from 'lucide-react';
 import { DndContext, DragOverlay, useDraggable, useDroppable, closestCenter, pointerWithin, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from '@dnd-kit/core';
 import { useBoardSensors } from '@/hooks/useBoardSensors';
 import QaIssueCard from './QaIssueCard';
+import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
+import { getQaBoardStates } from '@/lib/qa/displaySettings';
 import { qaStateColors } from './QaBadges';
 import { isQaTerminal, type QaActor, type QaCommand, type QaIssue, type QaListInput, type QaListResult, type QaState } from '@/lib/qa/domain';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
@@ -60,9 +62,10 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
   useEffect(() => { onPendingChange?.(pendingOperation); return () => onPendingChange?.(false); }, [pendingOperation, onPendingChange]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   // A status filter keeps only the columns, and the states within a column, it selects.
+  const configuration = useQaDisplayConfiguration();
   const selectedStates = filters.states || (filters.state ? [filters.state] : null);
   const columns = getQaWorkflowColumns(workflow, state => t(`qa.state.${state}`))
-    .map(column => selectedStates ? { ...column, shown: column.states.filter(state => selectedStates.includes(state)) } : { ...column, shown: column.states })
+    .map(column => ({ ...column, shown: configuration ? getQaBoardStates(configuration, column.states, selectedStates) : [] }))
     .filter(column => column.shown.length > 0);
   const sensors = useBoardSensors(columnCoordinates);
   const columnLoaded = useCallback((state: QaState, loadedRevision: number) => {

@@ -41,7 +41,9 @@ async function candidate(id='issue'){
 async function complete(id='issue'){
  let i=await candidate(id);
  for(const t of i.targets){i=await command(i,{type:'record_deployment',targetId:t.id,build:'',evidence:''},'developer');i=await command(i,{type:'record_verification',targetId:t.id,build:'',result:'pass',note:''},'tester');}
- return command(i,{type:'close',resolution:'fixed',reason:''},'tester');
+ expect(i).toMatchObject({state:'closed',resolution:'fixed',closedBy:'tester'});
+ expect(i.closedAt).toBe(i.updatedAt);
+ return i;
 }
 function nativeReceipt(issue,changes={},overrides={}){
  const data={...structuredClone(issue),...changes,version:issue.version+1,updatedAt:overrides.updatedAt||new Date().toISOString()};
@@ -60,8 +62,11 @@ describe('QA inline metadata and optional workflow with native SQLite and real W
    i=await command(i,{type:'record_verification',targetId:t.id,build:'',result:'pass',note:''},'tester');
    if(n===0){expect(i.state).toBe('verification');await expect(command(i,{type:'close',resolution:'fixed',reason:''},'tester')).rejects.toThrow('qa_verification_required');}
   }
-  expect(i.state).toBe('verified');expect(i.runs.every(r=>r.build===''&&r.note===''&&r.result==='pass')).toBe(true);
-  i=await command(i,{type:'close',resolution:'fixed',reason:''},'tester');expect(i.state).toBe('closed');expect(i.closedBy).toBe('tester');
+  expect(i).toMatchObject({state:'closed',resolution:'fixed',closedBy:'tester'});expect(i.closedAt).toBe(i.updatedAt);
+  expect(i.runs.every(r=>r.build===''&&r.note===''&&r.result==='pass')).toBe(true);
+  expect(rows("SELECT type FROM qa_events WHERE issue_id='issue' AND type='close'")).toEqual([]);
+  const audit=rows("SELECT detail FROM qa_events WHERE issue_id='issue' AND type='record_verification' ORDER BY version DESC")[0];expect(audit.detail).toContain('已自動結案');
+  await expect(command(i,{type:'close',resolution:'fixed',reason:''},'tester')).rejects.toThrow('qa_forbidden');
  });
  it('FAIL without a note remains a real failure and cannot close as fixed',async()=>{
   let i=await candidate();i=await command(i,{type:'record_deployment',targetId:i.targets[0].id,build:'',evidence:''},'developer');

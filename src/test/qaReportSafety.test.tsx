@@ -1,3 +1,4 @@
+import type { QaDisplaySettings } from '@/lib/qa/displaySettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import QaReportForm from '@/components/qa/QaReportForm';
@@ -22,7 +23,7 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals();Reflect.deleteProperty(HTMLElemen
 describe('QA report catalog and history preservation',()=>{
   it('keeps disabled, unknown and retired custom values when editing only the report title',async()=>{
     const customFields={reason:'Observed',disabled:'Old evidence',retired:'Old choice',unknown:'Imported value'},submit=vi.fn();
-    const client={versions:vi.fn().mockResolvedValue([]),getFieldConfiguration:vi.fn().mockResolvedValue(configuration)};
+    const client={versions:vi.fn().mockResolvedValue([]),getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration:vi.fn().mockResolvedValue(configuration)};
     render(<QaReportForm initial={{...issue,component:'Historical area',customFields}} projects={[project]} productLines={[]} client={client} busy={false} onSubmit={submit} onCancel={()=>{}}/>);
     await screen.findByLabelText(/^Reason/);fireEvent.change(screen.getByLabelText(/qa.titleField/),{target:{value:'Revised report'}});
     fireEvent.click(screen.getByRole('button',{name:'qa.save'}));
@@ -30,7 +31,7 @@ describe('QA report catalog and history preservation',()=>{
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({title:'Revised report',component:'Historical area',customFields}));
   });
   it('blocks report submission while catalog retrieval fails and recovers only after a successful retry',async()=>{
-    const submit=vi.fn(),client={versions:vi.fn().mockResolvedValue([]),getFieldConfiguration:vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(configuration)};
+    const submit=vi.fn(),client={versions:vi.fn().mockResolvedValue([]),getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration:vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(configuration)};
     render(<QaReportForm initial={{...issue,customFields:{reason:'Observed'}}} projects={[project]} productLines={[]} client={client} busy={false} onSubmit={submit} onCancel={()=>{}}/>);
     await screen.findByRole('alert');expect(screen.getByRole('button',{name:'qa.save'})).toBeDisabled();
     fireEvent.submit(screen.getByLabelText(/qa.titleField/).closest('form')!);expect(submit).not.toHaveBeenCalled();

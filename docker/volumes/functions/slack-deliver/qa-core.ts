@@ -1,11 +1,12 @@
 import { qaNotificationRecipients, type QaCommand, type QaIssue } from '../qa/domain.ts';
-import { qaSlackCard } from '../qa/slack.ts';
+import { qaSlackCard, qaSlackTargetSummary } from '../qa/slack.ts';
 import { qaSlackCurrentState } from '../qa/slackWorkspace.ts';
 import { parseQaWorkflow } from '../qa/workflow.ts';
-import { qaNotificationDetailText, qaPriorityText, qaDueDateText } from '../qa/notificationText.ts';
+import { defaultQaDisplaySettings, type QaDisplaySettings } from '../qa/displaySettings.ts';
+import { qaNotificationDetailText, qaPriorityText, qaSeverityText, qaDueDateText } from '../qa/notificationText.ts';
 import { activeThread, DeliveryError, escapeSlack, failureResult, matchingChannels, memberAllowed, plainText, slackTransport, type DeliveryStore, type Job, type Row } from './core.ts';
 
-export interface QaDeliveryState { issue: QaIssue; project: Row; triagers: string[]; members: Row[]; memberNames?: Record<string, string>; projectNames?: Record<string, string> }
+export interface QaDeliveryState { issue: QaIssue; project: Row; triagers: string[]; members: Row[]; memberNames?: Record<string, string>; projectNames?: Record<string, string>; displaySettings?: QaDisplaySettings }
 export interface QaDeliveryStore extends Pick<DeliveryStore, 'config' | 'token' | 'binding' | 'canSend' | 'finish'> {
   enabled(): Promise<boolean>;
   state(issueId: string, eventType?: string, eventDetail?: unknown): Promise<QaDeliveryState | undefined>;
@@ -26,7 +27,7 @@ export function qaRecipientResponsible(state: QaDeliveryState, job: Job): boolea
     'start_fix', 'link_tasks', 'record_deployment', 'submit_fix', 'record_verification', 'close', 'reopen', 'hold'];
   return known.includes(type) && qaNotificationRecipients(state.issue, type as QaCommand['type'] | 'create' | 'comment', job.payload.actorId, state.triagers).includes(job.target_id);
 }
-const events: Record<string, string> = { created: '新增 Bug', comment: '新增留言', triage: '指派責任人', edit: '更新 Bug', update_fields:'更新 Bug 欄位', set_state: '狀態變更',
+const events: Record<string, string> = { create: '新增 Bug', created: '新增 Bug', comment: '新增留言', triage: '指派責任人', edit: '更新 Bug', update_fields:'更新 Bug 欄位', set_state: '狀態變更',
   submit_fix: '回報修復', record_deployment: '部署紀錄', record_verification: '驗證紀錄', close: '結案', reopen: '重新開啟',
   hold: '記錄卡關', start_fix: '開始修復', link_tasks: '連結任務', request_handoff: '建立交接', accept_handoff: '接收交接', resolve_handoff: '解除交接' };
 export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase: string, workflow?: Row): Row {
@@ -37,18 +38,38 @@ export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase:
   };
   const name = (id: string | null) => String(id ? memberName(id) || '未知成員' : '未指定').slice(0, 50);
   const title = `${job.target_type === 'member' ? '[個人通知] ' : ''}${events[job.payload.eventType] || 'Bug 更新'}`;
-  const currentState=qaSlackCurrentState(issue.state,parseQaWorkflow(workflow));
+  const display = state.displaySettings || defaultQaDisplaySettings();
+  const flow = parseQaWorkflow(workflow), currentState = qaSlackCurrentState(issue.state, flow);
   const summary = `*${escapeSlack(currentState)}*\n*通知原因：${title}*\n<${url}|Bug - ${escapeSlack(issue.title.slice(0, 120))}>\n` +
+    `專案：${escapeSlack(String(state.project.name).slice(0, 80))}｜操作人：${escapeSlack(name(job.payload.actorId))}\n` +
     `👤 修復：${escapeSlack(name(issue.assigneeId))}｜驗證：${escapeSlack(name(issue.qaOwnerId))}\n` +
-    `⚡ 優先級：${qaPriorityText(issue.priority)}｜📅 ${qaDueDateText(issue.dueDate)}\n` +
-    `專案：${escapeSlack(String(state.project.name).slice(0, 80))}｜操作人：${escapeSlack(name(job.payload.actorId))}`;
-  const readable = qaNotificationDetailText(job.payload.eventType, job.payload.detail, { memberName,
-    projectName: id => state.projectNames?.[id] || (state.project.id === id ? state.project.name : undefined) }) ?? plainText(job.payload.detail);
-  const detail = escapeSlack(readable.slice(0, 1500)).slice(0, 2800);
-  const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: summary } },
-    ...(detail ? [{ type: 'section', text: { type: 'mrkdwn', text: detail } }] : []),
-    ...qaSlackCard(issue, url, parseQaWorkflow(workflow)).slice(2)];
-  return { text: summary + (detail ? '\n' + detail : ''), blocks, unfurl_links: false, unfurl_media: false };
+    `⚡ 優先級：${qaPriorityText(issue.priority)}${display.showSeverity ? `｜嚴重度：${qaSeverityText(issue.severity)}` : ''}\n` +
+    `📅 截止日：${qaDueDateText(issue.dueDate)}｜修復輪次：${issue.fixCycle}`;
+  // A queued report can predate the current card. Show a labeled current snapshot rather
+  // than trying to split the legacy flattened payload or changing immutable audit data.
+  const report = ['create', 'created', 'edit'].includes(job.payload.eventType);
+  const section = (value: string) => ({ type: 'section', text: { type: 'mrkdwn', text: value } });
+  const bounded = (value: unknown, limit = 900) => {
+    const raw = String(value ?? '').trim();
+    return escapeSlack(raw.length > limit ? raw.slice(0, limit) + '…' : raw).slice(0, 2800);
+  };
+  const detailSections: string[] = report ? [
+    `*回報內容（目前卡片）*\n環境：${bounded(issue.observedEnvironment, 120) || '未設定'}｜發現版本：${bounded(issue.observedVersion, 200) || '未填寫'}`,
+    ...([['實際結果', issue.actual], ['預期結果', issue.expected], ['重現步驟／備註', issue.steps]] as const)
+      .filter(([, value]) => typeof value === 'string' && value.trim())
+      .map(([label, value]) => `*${label}*\n${bounded(value)}`),
+  ] : (() => {
+    const readable = qaNotificationDetailText(job.payload.eventType, job.payload.detail, { memberName, fixSnapshot: issue, verificationSnapshot: issue, showSeverity: display.showSeverity,
+      stateName: id => Object.prototype.hasOwnProperty.call(flow.labels, id) ? flow.labels[id as keyof typeof flow.labels] || undefined : undefined,
+      projectName: id => state.projectNames && Object.prototype.hasOwnProperty.call(state.projectNames, id) ? state.projectNames[id] : state.project.id === id ? state.project.name : undefined,
+    }) ?? (['comment', 'hold', 'reopen'].includes(job.payload.eventType) && typeof job.payload.detail === 'string' ? job.payload.detail : plainText(job.payload.detail));
+    const detail = bounded(readable, 1500);
+    return detail ? [detail] : [];
+  })();
+  const targets = qaSlackTargetSummary(issue), deployment = targets ? `*修復部署與驗證*\n${bounded(targets, 1500)}` : '';
+  const blocks = [section(summary), ...detailSections.map(section), ...(deployment ? [section(deployment)] : []),
+    ...qaSlackCard(issue, url, flow, display).slice(3)];
+  return { text: [summary, ...detailSections, deployment].filter(Boolean).join('\n\n'), blocks, unfurl_links: false, unfurl_media: false };
 }
 /** QA shares the durable queue and receipt rules; ordinary task routes are never used. */
 export async function deliverQaJob(job: Job, owner: string, store: QaDeliveryStore, appBase: string, fetcher: typeof fetch = fetch, now = Date.now()): Promise<string> {

@@ -3241,6 +3241,19 @@
   },
   "qa": {
     "qaOwnerReporterDefaultHint": "The reporter is the default QA owner. You can choose another member.",
+    "addVerificationEvidence": "Add verification evidence",
+    "displaySettings": {
+      "title": "QA display settings",
+      "hint": "Changes display in this workspace only. History, all states, and verification and closure rules are preserved. Explicit historical state filters can show hidden columns.",
+      "showSeverity": "Show severity",
+      "priorityChoices": "Available priority choices (keep at least one)",
+      "boardStates": "Default board columns (keep at least one)",
+      "restore": "Restore default display",
+      "loading": "Loading QA display settings…",
+      "loadFailed": "QA display settings could not be loaded. Retry before editing the affected fields.",
+      "saved": "QA display settings saved and confirmed",
+      "forbidden": "Only super admins can change QA display settings."
+    },
     "manualStates": {
       "title": "Manual state choices",
       "hint": "Choose the states available in Change state. Current values, history, boards and formal verification or closing stay available.",
@@ -3468,6 +3481,7 @@
       "failed": "Upload failed"
     },
     "error": {
+      "qa_invalid_display_settings": "Invalid QA display settings. Keep at least one priority choice and board column.",
       "qa_invalid_manual_state_visibility": "State choices are invalid. Choose only existing QA states.",
       "qa_invalid_environment": "Deployment environments changed. Select an available environment.",
       "qa_historical_pass_unavailable": "The original PASS evidence is unavailable. Complete verification first.",
@@ -3505,6 +3519,9 @@
     "verificationTab": "Repair and verification",
     "changeState": "Change status",
     "stateChanged": "Status updated",
+    "verificationAutoClosed": "Verification passed and bug closed",
+    "autoCloseAfterVerificationHint": "When every required environment in this fix cycle is deployed and passes verification, the bug closes automatically and leaves your open assignments.",
+    "verificationAutoCloseHistory": "All required environments were deployed and passed verification. The bug closed automatically.",
     "retryCommand": "Retry submission",
     "commandRetryHint": "The submission result is not confirmed. Retry to confirm it without submitting twice.",
     "copyLinkSuccess": "Link copied",
