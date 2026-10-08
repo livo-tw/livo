@@ -37,6 +37,7 @@ import { runKnowledgeImportCleanup } from './functions/knowledgeImportCleanup';
 import { ImportError } from './knowledgeImport';
 import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
+import { handleMemberInvitations } from './functions/memberInvitations';
 import {
   handleSlackNotify,
   handleSlackChannels,
@@ -153,6 +154,8 @@ app.post('/api/functions/knowledge-import', requireMember, knowledgeImport);
 app.post('/api/functions/qa-slack/:workspaceId', handleQaSlackHttp); // Slack HMAC + timestamp; actor/workspace checked by adapter
 app.post('/api/functions/slack-interact/:workspaceId', handleQaSlackHttp);
 app.post('/api/functions/manage-member', requireMember, demoGuard, handleManageMember);
+// Email confirmation is public; manager actions enforce live identity inside.
+app.post('/api/functions/member-invitations', handleMemberInvitations);
 app.post('/api/functions/slack-notify', requireMember, handleSlackNotify);
 app.post('/api/functions/slack-channels', requireMember, handleSlackChannels);
 // Service integrations (Slack, email, webhooks, API keys) are managed by super_admins only,
@@ -182,6 +185,7 @@ app.get('/api/functions/og-task', handleOgTask);
 app.post('/functions/v1/knowledge-workflow', requireMember, handleKnowledgeWorkflow);
 app.post('/functions/v1/knowledge-import', requireMember, knowledgeImport);
 app.post('/functions/v1/manage-member', requireMember, demoGuard, handleManageMember);
+app.post('/functions/v1/member-invitations', handleMemberInvitations);
 app.post('/functions/v1/slack-notify', requireMember, handleSlackNotify);
 app.post('/functions/v1/task-work-command', requireMember, handleTaskWorkCommand);
 app.post('/functions/v1/approval-command', requireMember, handleApprovalCommand);

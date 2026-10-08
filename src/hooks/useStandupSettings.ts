@@ -119,6 +119,10 @@ export function useStandupSettings(memberIds: string[], options: { active?: bool
     });
   }, []);
 
+  // Editing the displayed queue accepts its current grouping. A late initial
+  // read must not replace that grouping, and queue edits do not save settings.
+  const keepCurrentSettings = useCallback(() => { revision.current++; }, []);
+
   const setMemberDuration = useCallback((memberId: string, duration: number) => {
     revision.current++;
     setSettings(prev => {
@@ -160,6 +164,7 @@ export function useStandupSettings(memberIds: string[], options: { active?: bool
     settings,
     setSettings,
     updateSettings,
+    keepCurrentSettings,
     setMemberDuration,
     updateMemberDuration: setMemberDuration,
     resetMemberDuration,

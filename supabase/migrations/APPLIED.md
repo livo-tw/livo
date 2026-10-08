@@ -54,6 +54,10 @@
 
 ---
 
+## 成員邀請 migration（尚未正式部署）
+
+新增 `20261103_member_invitations.sql`：已於隔離 PostgreSQL 15.18 fixture 連跑兩次，含實際角色與並發驗證；正式 Docker 主機尚未套用。Cloud 對應 D1 schema／migration 尚未部署，本表不以隔離測試代替正式 ledger。
+
 ## v46 前端修復（無資料庫變更）
 
 構建版本：`dist-v46`（本地版）/ `dist-v46-cloud`（雲端版）

@@ -548,6 +548,11 @@ export const TABLES: TableRegistry = {
     clientAccess: 'none',
     autoNowCols: ['created_at'],
   },
+  // Invitation credentials and pending email verification never enter the
+  // generic query engine or realtime stream.
+  member_invitations: { pk: 'id', clientAccess: 'none', boolCols: ['is_qa_admin'] },
+  member_invitation_confirmations: { pk: 'id', clientAccess: 'none' },
+  member_invitation_send_attempts: { pk: 'id', clientAccess: 'none' },
   cloud_waitlist: {
     pk: 'email',
     clientAccess: 'none',

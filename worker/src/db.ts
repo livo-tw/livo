@@ -29,6 +29,7 @@ import { notifyChanges } from './notify';
 import { sendNotificationEmails } from './functions/emailNotify';
 import { dispatchWebhooks } from './functions/webhooks';
 import { deadlinePatch, deadlineVersionSql, livePlanningMember } from './taskPlanning';
+import { isMemberLimitError, memberLimitFailure } from './memberQuota';
 
 // Structural tables the hourly demo reset cannot heal — writes from demo
 // users are blocked on these (see the demo write-guard in runQuery).
@@ -901,6 +902,10 @@ export async function runQuery(
         throw new Error(`Unsupported op: ${String(req.op)}`);
     }
   } catch (e) {
+    if (isMemberLimitError(e)) {
+      const failure = await memberLimitFailure(env, auth?.member?.workspaceId || DEFAULT_WORKSPACE);
+      return { data: null, error: { code: failure.code, message: failure.message } };
+    }
     const message = e instanceof Error ? e.message : String(e);
     const error: ApiError = { message };
     if (/UNIQUE constraint failed/i.test(message)) error.code = '23505';

@@ -1,8 +1,12 @@
 import { useRef, useState, type ComponentProps, type FormEvent } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
 import AddMemberModal from '@/components/member-manage/AddMemberModal';
+
+vi.mock('@/components/member-manage/MemberInvitationPanel', () => ({ default: (): null => null }));
+
+const openManual = () => fireEvent.mouseDown(screen.getByRole('tab', { name: i18n.t('memberInvite.manualTab') }), { button: 0, ctrlKey: false });
 
 type Form = ComponentProps<typeof AddMemberModal>['form'];
 function Harness({ onClose = vi.fn(), onSubmit = vi.fn(), canEditJobTitle = true, loading = false, startOpen = true }: {
@@ -30,6 +34,7 @@ describe('mobile member creation dialog', () => {
     fireEvent.click(trigger);
     const dialog = screen.getByRole('dialog', { name: i18n.t('memberList.addMemberTitle') });
     expect(dialog).toHaveFocus();
+    openManual();
     screen.getByLabelText(/Email/).focus();
     if (dismissal === 'Escape') fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     else fireEvent.click(screen.getByRole('button', { name: dismissal === 'cancel' ? i18n.t('memberList.cancelButton') : 'Close' }));
@@ -41,6 +46,7 @@ describe('mobile member creation dialog', () => {
   it('uses the bounded shared dialog and keeps submit/cancel outside the scrollable fields', () => {
     render(<Harness />);
     const dialog = screen.getByRole('dialog', { name: i18n.t('memberList.addMemberTitle') });
+    openManual();
     const email = screen.getByLabelText(/Email/);
     const fields = email.closest('.overflow-y-auto');
     const submit = screen.getByRole('button', { name: i18n.t('memberList.addButton') });
@@ -59,6 +65,7 @@ describe('mobile member creation dialog', () => {
   it('preserves field validation, role choices and the original submit handler', () => {
     const submit = vi.fn((event: FormEvent) => event.preventDefault());
     render(<Harness onSubmit={submit} />);
+    openManual();
     const email = screen.getByLabelText(/Email/);
     const name = screen.getByLabelText(new RegExp(i18n.t('memberList.nameLabel')));
     const password = screen.getByLabelText(i18n.t('memberList.passwordLabel'));
@@ -71,9 +78,9 @@ describe('mobile member creation dialog', () => {
     fireEvent.change(name, { target: { value: 'Example member' } });
     fireEvent.change(password, { target: { value: 'example-password' } });
     fireEvent.change(role, { target: { value: 'qa_admin' } });
-    fireEvent.focus(screen.getByLabelText(i18n.t('memberList.jobTitleLabel')));
+    fireEvent.focus(within(screen.getByRole('tabpanel', { name: i18n.t('memberInvite.manualTab') })).getByLabelText(i18n.t('memberList.jobTitleLabel')));
     fireEvent.click(screen.getByRole('button', { name: 'QA lead' }));
-    expect(screen.getByLabelText(i18n.t('memberList.jobTitleLabel'))).toHaveValue('QA lead');
+    expect(within(screen.getByRole('tabpanel', { name: i18n.t('memberInvite.manualTab') })).getByLabelText(i18n.t('memberList.jobTitleLabel'))).toHaveValue('QA lead');
     expect(role).toHaveValue('qa_admin');
     fireEvent.click(screen.getByRole('button', { name: i18n.t('memberList.addButton') }));
     expect(submit).toHaveBeenCalledTimes(1);
@@ -82,6 +89,7 @@ describe('mobile member creation dialog', () => {
   it('keeps restricted role choices and loading state, and supports accessible Escape dismissal', () => {
     const close = vi.fn();
     render(<Harness canEditJobTitle={false} loading onClose={close} />);
+    openManual();
     expect(screen.queryByLabelText(i18n.t('memberList.jobTitleLabel'))).toBeNull();
     expect(screen.getAllByRole('option')).toHaveLength(1);
     expect(screen.getByRole('button', { name: i18n.t('memberList.processingButton') })).toBeDisabled();

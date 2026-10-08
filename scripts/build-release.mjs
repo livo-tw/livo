@@ -300,6 +300,7 @@ if (skippedUntracked.length) {
   log(`  ℹ docker/ 略過 ${skippedUntracked.length} 個未進版控的檔案：${skippedUntracked.join(', ')}`);
 }
 for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql',
+  ...['core.ts','handler.ts','backend.ts','index.ts'].map(file => `volumes/functions/member-invitations/${file}`),
   ...['core.ts','index.ts'].map(file => `volumes/functions/approval-command/${file}`),
   ...['index.ts','knowledgeImportCleanup.ts'].map(file => `volumes/functions/knowledge-import-cleanup/${file}`),
   ...['core.ts','index.ts'].map(file => `volumes/functions/task-work-command/${file}`),

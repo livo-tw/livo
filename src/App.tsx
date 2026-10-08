@@ -17,6 +17,7 @@ const Index = lazy(() => import("./pages/Index"));
 const Auth = lazy(() => import("./pages/Auth"));
 const Signup = lazy(() => import("./pages/Signup"));
 const SetPassword = lazy(() => import("./pages/SetPassword"));
+const Join = lazy(() => import("./pages/Join"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const PageFallback = () => {
@@ -225,6 +226,8 @@ const App = () => {
             {/* Invitation link for a login an admin created (Jira import / 啟用帳號);
                 renders with or without a session — the link decides whose password it sets. */}
             <Route path="/set-password" element={<SetPassword />} />
+            {/* Member invitations are public; an existing session must not swallow the link. */}
+            <Route path="/join" element={<Join />} />
             <Route path="/" element={
               <ProtectedRoute session={session}>
                 <Index />

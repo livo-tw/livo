@@ -6,14 +6,16 @@ export interface StandupOrder { groupKeys: string[]; memberIds: Record<string, s
 export interface StandupLaunchSnapshot {
   settings: StandupSettings;
   groups: Array<Omit<StandupGroup, 'members'> & { memberIds: string[] }>;
+  excludedMemberIds?: string[];
 }
 
 // A launch is local to this running UI. Never round-trip the preview through an
 // asynchronous database read: that can replace it with the previous meeting order.
 let launchSnapshot: StandupLaunchSnapshot | undefined;
-export function saveStandupLaunch(settings: StandupSettings, groups: StandupGroup[]) {
+export function saveStandupLaunch(settings: StandupSettings, groups: StandupGroup[], excludedMemberIds: string[] = []) {
   launchSnapshot = { settings: { ...settings, memberDurations: { ...settings.memberDurations } },
-    groups: groups.map(({ members, ...group }) => ({ ...group, memberIds: members.map(member => member.id) })) };
+    groups: groups.map(({ members, ...group }) => ({ ...group, memberIds: members.map(member => member.id) })),
+    excludedMemberIds: [...new Set(excludedMemberIds)] };
 }
 export const getStandupLaunch = () => launchSnapshot;
 export const clearStandupLaunch = () => { launchSnapshot = undefined; };
@@ -32,6 +34,12 @@ export function shuffleStandupOrder(groups: StandupGroup[], random = Math.random
     memberIds: Object.fromEntries(groups.map(group => [group.group_key, shuffled(group.members.map(member => member.id), random)])) };
 }
 
+/** Capture user-edited ordering without storing stale member objects or durations. */
+export function standupOrderFromGroups(groups: StandupGroup[]): StandupOrder {
+  return { groupKeys: groups.map(group => group.group_key),
+    memberIds: Object.fromEntries(groups.map(group => [group.group_key, group.members.map(member => member.id)])) };
+}
+
 export function applyStandupOrder(groups: StandupGroup[], order?: StandupOrder): StandupGroup[] {
   if (!order) return groups;
   const rank = (ids: string[], id: string) => { const index = ids.indexOf(id); return index < 0 ? ids.length : index; };
@@ -41,9 +49,10 @@ export function applyStandupOrder(groups: StandupGroup[], order?: StandupOrder):
 
 /** Keep launch order, but resolve every participant against the current active roster. */
 export function restoreStandupGroups(snapshot: StandupLaunchSnapshot, users: User[], tasks: Task[], getDuration: (id: string) => number, buffer: number): StandupGroup[] {
+  const excluded = new Set(snapshot.excludedMemberIds || []);
   const active = new Map(users.filter(user => user.isActive === true).map(user => [user.id, user]));
   return snapshot.groups.map(({ memberIds, ...group }) => {
-    const members = [...new Set(memberIds)].flatMap(id => active.has(id) ? [active.get(id)!] : []);
+    const members = [...new Set(memberIds)].flatMap(id => active.has(id) && !excluded.has(id) ? [active.get(id)!] : []);
     const ids = new Set(members.map(member => member.id));
     return { ...group, members, task_count: tasks.filter(task => task.assigneeId && ids.has(task.assigneeId) &&
       (snapshot.settings.sortMode !== 'by_project' || task.projectId === group.group_key)).length,

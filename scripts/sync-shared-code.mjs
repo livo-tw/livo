@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source:'src/lib/memberInvitationsCore.ts', copies:['worker/src/memberInvitationsCore.ts','docker/volumes/functions/member-invitations/core.ts','supabase/functions/member-invitations/core.ts'] },
+  ...['index.ts','backend.ts','handler.ts'].map(file=>({source:`docker/volumes/functions/member-invitations/${file}`,copies:[`supabase/functions/member-invitations/${file}`]})),
   ...['core.ts','engine.ts'].map(file=>({source:`src/lib/knowledgeWork/${file}`,copies:[`worker/src/knowledgeWork/${file}`,`docker/volumes/functions/knowledge-work/${file}`,`supabase/functions/knowledge-work/${file}`]})),
   {source:'worker/src/knowledgeAccess.ts',copies:['src/lib/knowledgeWork/access.ts','worker/src/knowledgeWork/access.ts','docker/volumes/functions/knowledge-work/access.ts','supabase/functions/knowledge-work/access.ts']},
   {source:'docker/volumes/functions/knowledge-work/index.ts',copies:['supabase/functions/knowledge-work/index.ts']},

@@ -14,6 +14,7 @@ import { notifyChanges } from '../notify';
 import { hashPassword, clearMemberCache } from '../auth';
 import { API_KEY_FORBIDDEN, deliverLogin, isApiKeyCaller, LoginError, prepareLogin, resolveLoginChannel } from '../memberLogin';
 import { isPlaceholderEmail, isValidEmail, normalizeEmail } from './jiraCsv';
+import { isMemberLimitError, memberLimitFailure } from '../memberQuota';
 
 const ADMIN_ROLES = ['admin', 'super_admin'];
 
@@ -88,6 +89,7 @@ export const handleManageMember = async (c: Context<AppContext>): Promise<Respon
 
     return c.json({ error: 'Unknown action' }, 400);
   } catch (err) {
+    if (isMemberLimitError(err)) return c.json(await memberLimitFailure(c.env, callerWs(c)), 403);
     return c.json({ error: String(err) }, 500);
   }
 };
@@ -299,16 +301,13 @@ async function createMember(c: Context<AppContext>, body: ManageMemberBody): Pro
       .bind(ws)
       .first<{ lim: number; used: number }>();
     if (quota && quota.used >= quota.lim) {
-      return c.json(
-        { error: `成員數已達 Beta 上限（${quota.lim} 人）。需要更多名額請聯繫 service@livo-tw.com` },
-        403
-      );
+      return c.json(await memberLimitFailure(env, ws), 403);
     }
   }
 
   // Find-or-create the auth user (email column is COLLATE NOCASE).
   let authUserId: string;
-  let createdAuthUser = false;
+  const statements: D1PreparedStatement[] = [];
   const existingAuth = await env.DB
     .prepare('SELECT id FROM auth_users WHERE email = ?1')
     .bind(email)
@@ -321,13 +320,11 @@ async function createMember(c: Context<AppContext>, body: ManageMemberBody): Pro
     // Random long password when none supplied (original: login was OAuth-only).
     const password = body.password || crypto.randomUUID() + crypto.randomUUID() + 'Aa1!';
     const passwordHash = await hashPassword(password);
-    await env.DB
+    statements.push(env.DB
       .prepare(
         'INSERT INTO auth_users (id, email, password_hash, banned, created_at) VALUES (?1, ?2, ?3, 0, ?4)'
       )
-      .bind(authUserId, email.toLowerCase(), passwordHash, nowIso())
-      .run();
-    createdAuthUser = true;
+      .bind(authUserId, email.toLowerCase(), passwordHash, nowIso()));
   }
 
   // Member row (same id scheme as the original edge function).
@@ -351,23 +348,29 @@ async function createMember(c: Context<AppContext>, body: ManageMemberBody): Pro
   }
 
   const cols = Object.keys(row);
-  const sql = `INSERT INTO members (${cols.join(', ')}) VALUES (${cols
+  // Both rows commit together: no other request can adopt a provisional auth
+  // that would be removed after a quota or email-uniqueness failure. Resolve an
+  // existing auth inside the insert too, since members.auth_id has no FK.
+  const sql = `INSERT INTO members (${cols.join(', ')}) SELECT ${cols
     .map((_, i) => `?${i + 1}`)
-    .join(', ')}) RETURNING *`;
+    .join(', ')} WHERE EXISTS(SELECT 1 FROM auth_users WHERE id=?${cols.length + 1}
+      AND email=?${cols.length + 2} COLLATE NOCASE) RETURNING *`;
 
   let inserted: Record<string, unknown> | null = null;
   try {
-    inserted = await env.DB
-      .prepare(sql)
-      .bind(...cols.map((col) => valueToDb(col, row[col], meta)))
-      .first<Record<string, unknown>>();
+    statements.push(env.DB.prepare(sql)
+      .bind(...cols.map((col) => valueToDb(col, row[col], meta)), authUserId, email));
+    const results = await env.DB.batch(statements);
+    inserted = (results[results.length - 1]?.results as Record<string, unknown>[] | undefined)?.[0] ?? null;
   } catch (err) {
-    // Roll back the auth user only if we created it here.
-    if (createdAuthUser) {
-      await env.DB.prepare('DELETE FROM auth_users WHERE id = ?1').bind(authUserId).run()
-        .catch(() => { /* best-effort rollback */ });
+    if (isMemberLimitError(err)) return c.json(await memberLimitFailure(env, ws), 403);
+    if (/UNIQUE.*(?:auth_users|members)\.email/i.test(err instanceof Error ? err.message : String(err))) {
+      return c.json({ error: 'email_taken', message: '此 Email 已被使用' }, 409);
     }
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+  if (!inserted) {
+    return c.json({ error: 'auth_changed', message: '登入帳號已變更，請重新新增成員' }, 409);
   }
 
   const event: ChangeEvent = {

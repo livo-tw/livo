@@ -29,6 +29,7 @@ import { TABLES } from '../tables';
 import { valueToDb, nowIso } from '../meta';
 import { notifyChanges } from '../notify';
 import { checkProfessional } from '../license';
+import { isMemberLimitError, memberLimitFailure } from '../memberQuota';
 import {
   API_KEY_FORBIDDEN,
   deliverLogin,
@@ -458,7 +459,8 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       if (quota && quota.used + newMemberCount > quota.lim) {
         return c.json(
           {
-            error: `匯入將新增 ${newMemberCount} 位成員，超過 Beta 成員上限（${quota.lim} 人）。請先精簡 CSV 中的人員，或聯繫 service@livo-tw.com`,
+            error: 'member_limit', code: 'member_limit',
+            message: `匯入將新增 ${newMemberCount} 位成員，超過 Beta 成員上限（${quota.lim} 人）。請先精簡 CSV 中的人員，或聯繫 service@livo-tw.com`,
             stats,
           },
           403
@@ -610,6 +612,11 @@ export const handleImportJira = async (c: Context<AppContext>) => {
           });
         }
       } catch (error) {
+        if (isMemberLimitError(error)) {
+          accountsResult.failed.push({ name, email: p.email, reason: 'member_limit' });
+          memberFallbackError = error;
+          return;
+        }
         console.error('Create login error:', name, error);
         if (memberWritten) {
           // Member and login exist; only the invitation / password step failed.
@@ -623,7 +630,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
             await insertRows(env, 'members', [newMemberRow(p.memberId, name, placeholderEmail(p.memberId))], ws);
             membersTouched = true;
           } catch (fallbackError) {
-            console.error('Insert fallback member error:', fallbackError);
+            if (!isMemberLimitError(fallbackError)) console.error('Insert fallback member error:', fallbackError);
             memberFallbackError = fallbackError;
           }
         }
@@ -850,6 +857,16 @@ export const handleImportJira = async (c: Context<AppContext>) => {
       warnings,
     });
   } catch (err) {
+    if (isMemberLimitError(err)) {
+      const failure = await memberLimitFailure(env, c.get('auth').member.workspaceId || DEFAULT_WORKSPACE);
+      return c.json({ ...failure, ...(written.wiped ? {
+        error: 'import_failed',
+        message: `${failure.message} 匯入未完成；原有工作資料已清除，新資料可能只寫入一部分。請確認名額後重新匯入同一份 CSV。`,
+        step: err instanceof ImportStepError ? err.step : 'members',
+        partial: { tasksInserted: written.tasksInserted, commentsInserted: written.commentsInserted, specsInserted: written.specsInserted },
+        accounts: written.accounts,
+      } : {}) }, 403);
+    }
     if(!written.wiped && err instanceof Error && err.message.includes('approval_pending'))return c.json({error:'approval_pending',message:'仍有待處理簽核，原有資料未變更。'},409);
     if(!written.wiped && err instanceof Error && /work_history_requires_restore|qa_task_links_require_restore/.test(err.message))return c.json({error:err.message.includes('qa_task_links_require_restore')?'qa_task_links_require_restore':'work_history_requires_restore',message:'此工作區保留任務操作歷史，請使用完整伺服器備份還原。'},409);
     if(!written.wiped && err instanceof Error && err.message.includes('knowledge_requires_server_restore'))return c.json({error:'knowledge_requires_server_restore',message:'知識庫文件引用了現有任務或 QA，無法覆蓋匯入。請使用完整伺服器備份還原，原資料已保留。'},409);

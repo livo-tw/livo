@@ -1,5 +1,5 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { X, ChevronDown, ChevronUp, Shuffle } from 'lucide-react';
@@ -10,7 +10,9 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { useStandupSettings, type SortMode } from '@/hooks/useStandupSettings';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
-import { applyStandupOrder, saveStandupLaunch, shuffleStandupOrder, type StandupOrder } from '@/lib/standupLaunch';
+import { StandupQueueEditor } from './standup/StandupQueueEditor';
+import type { StandupGroup } from '@/hooks/useStandupGrouping';
+import { applyStandupOrder, restoreStandupGroups, saveStandupLaunch, shuffleStandupOrder, standupOrderFromGroups, type StandupOrder } from '@/lib/standupLaunch';
 
 export interface StandupLaunchDialogProps {
   open: boolean;
@@ -42,14 +44,24 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   const { currentSprint } = useSprintContext();
   const { allProjects } = useProjectContext();
   const [showOverrides, setShowOverrides] = useState(false);
-  const [randomOrder, setRandomOrder] = useState<StandupOrder>();
-  useEffect(() => { if (open) setRandomOrder(undefined); }, [open]);
+  const [order, setOrder] = useState<StandupOrder>();
+  const [orderSource, setOrderSource] = useState<'manual' | 'shuffle'>();
+  const [excludedMemberIds, setExcludedMemberIds] = useState<string[]>([]);
+  const [lastExclusion, setLastExclusion] = useState<{ memberId: string; name: string; ids: string[]; order?: StandupOrder; source?: 'manual' | 'shuffle' }>();
+  useEffect(() => {
+    if (!open) return;
+    setOrder(undefined);
+    setOrderSource(undefined);
+    setExcludedMemberIds([]);
+    setLastExclusion(undefined);
+  }, [open]);
 
   const activeUsers = users.filter(user => user.isActive === true);
   const memberIds = activeUsers.map(u => u.id);
   const {
     settings,
     updateSettings,
+    keepCurrentSettings,
     setMemberDuration,
     resetMemberDuration,
     getDurationForMember,
@@ -63,26 +75,77 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
     activeUsers, sprintTasks, allProjects,
     settings.sortMode, getDurationForMember, settings.bufferSeconds,
   );
-  const groups = applyStandupOrder(sortedGroups, randomOrder);
+  const fullGroups = applyStandupOrder(sortedGroups, order);
+  const groups = excludedMemberIds.length ? restoreStandupGroups({
+    settings,
+    groups: fullGroups.map(({ members, ...group }) => ({ ...group, memberIds: members.map(member => member.id) })),
+    excludedMemberIds,
+  }, activeUsers, sprintTasks, getDurationForMember, settings.bufferSeconds) : fullGroups;
+  const excludedMembers = activeUsers.filter(user => excludedMemberIds.includes(user.id));
+  const reportTurns = groups.reduce((sum, group) => sum + group.members.length, 0);
+  const participantCount = new Set(groups.flatMap(group => group.members.map(member => member.id))).size;
 
   const totalSec = groups.reduce((sum, group) => sum + group.estimated_duration, 0);
   const totalMins = Math.round(totalSec / 60);
 
+  // The editor works on eligible reports; keep hidden members in the launch roster
+  // so every exclusion can be recovered, including repeated project reports.
+  const applyEligibleOrder = (nextGroups: StandupGroup[], source: 'manual' | 'shuffle') => {
+    keepCurrentSettings();
+    setOrder(standupOrderFromGroups(applyStandupOrder(fullGroups, standupOrderFromGroups(nextGroups))));
+    setOrderSource(source);
+    setLastExclusion(undefined);
+  };
+  const excludeMember = (memberId: string) => {
+    const member = activeUsers.find(user => user.id === memberId);
+    if (!member || excludedMemberIds.includes(memberId)) return;
+    setLastExclusion({ memberId, name: member.name, ids: excludedMemberIds, order, source: orderSource });
+    setExcludedMemberIds(ids => [...ids, memberId]);
+  };
+  const restoreMember = (memberId: string) => {
+    if (!excludedMemberIds.includes(memberId)) return;
+    keepCurrentSettings();
+    const previouslyHiddenGroups = new Set(fullGroups.filter(group => group.members.every(member => excludedMemberIds.includes(member.id))).map(group => group.group_key));
+    const restored = fullGroups.map(group => ({ ...group, members: [
+      ...group.members.filter(member => member.id !== memberId),
+      ...group.members.filter(member => member.id === memberId),
+    ] }));
+    const appendGroups = new Set(restored.filter(group => group.members.some(member => member.id === memberId) &&
+      (settings.sortMode === 'by_member' || previouslyHiddenGroups.has(group.group_key))).map(group => group.group_key));
+    setOrder(standupOrderFromGroups([...restored.filter(group => !appendGroups.has(group.group_key)), ...restored.filter(group => appendGroups.has(group.group_key))]));
+    setOrderSource('manual');
+    setExcludedMemberIds(ids => ids.filter(id => id !== memberId));
+    setLastExclusion(undefined);
+  };
+  const resetOrder = () => { setOrder(undefined); setOrderSource(undefined); setLastExclusion(undefined); };
+
   const handleCancel = () => { onCancel?.(); onOpenChange(false); };
   const cancelRef = useRef(handleCancel); cancelRef.current = handleCancel;
   const focus = useFocusTrap(open);
+  const undoFocusRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const memberId = undoFocusRef.current;
+    if (!memberId) return;
+    const handle = Array.from(focus.current?.querySelectorAll<HTMLButtonElement>('button[data-standup-report-id]') ?? [])
+      .find(button => button.getAttribute('data-standup-report-id') === memberId);
+    (handle ?? focus.current?.querySelector<HTMLButtonElement>('button:not([disabled])'))?.focus();
+    undoFocusRef.current = null;
+  }, [excludedMemberIds, focus]);
   // Esc closes it like the other dialogs, unless a dropdown inside is open (it closes first).
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       if ((event.target as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper], [role="listbox"]')) return;
+      // The dialog listener predates dnd-kit's sensor listener. Let the sensor
+      // cancel an active drag before a later Escape can close the dialog.
+      if (focus.current?.querySelector('[data-standup-dragging="true"]')) return;
       cancelRef.current();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
-  const handleConfirm = () => { if (!groups.length) return; saveStandupLaunch(settings, groups); onConfirm?.(); onOpenChange(false); };
+  const handleConfirm = () => { if (!groups.length) return; saveStandupLaunch(settings, fullGroups, excludedMemberIds); onConfirm?.(); onOpenChange(false); };
 
   if (!open) return null;
 
@@ -112,7 +175,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
               {SORT_MODES.map(m => (
                 <button
                   key={m.value}
-                  onClick={() => { setRandomOrder(undefined); updateSettings({ sortMode: m.value }); }}
+                  onClick={() => { resetOrder(); updateSettings({ sortMode: m.value }); }}
                   aria-pressed={settings.sortMode === m.value}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     settings.sortMode === m.value
@@ -123,8 +186,8 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                   {t(m.labelKey)}
                 </button>
               ))}
-              <button type="button" disabled={activeUsers.length < 2} aria-pressed={!!randomOrder}
-                onClick={() => setRandomOrder(shuffleStandupOrder(groups))}
+              <button type="button" disabled={reportTurns < 2} aria-pressed={orderSource === 'shuffle'}
+                onClick={() => applyEligibleOrder(applyStandupOrder(groups, shuffleStandupOrder(groups)), 'shuffle')}
                 className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50">
                 <Shuffle size={13} aria-hidden="true" />{t('standup.settings.shuffle')}
               </button>
@@ -136,6 +199,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
             <label className="text-xs font-medium text-muted-foreground mb-2 block">{t('standup.settings.defaultDuration')}</label>
             <SearchableSelect
               value={settings.defaultSpeakDuration}
+              aria-label={t('standup.settings.defaultDuration')}
               onChange={e => updateSettings({ defaultSpeakDuration: Number(e.target.value) })}
               className="w-full border border-border rounded px-3 py-2 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary"
             >
@@ -158,7 +222,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
               className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
                 settings.autoAdvance ? 'bg-primary' : 'bg-muted'
               }`}
-              aria-label="toggle auto advance"
+              aria-label={t('standup.settings.autoAdvance')}
             >
               <span
                 className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
@@ -192,6 +256,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                       <span className="text-xs flex-1 text-foreground truncate">{user.name}</span>
                       <SearchableSelect
                         value={custom ?? settings.defaultSpeakDuration}
+                        aria-label={`${user.name} · ${t('standup.settings.memberOverrides')}`}
                         onChange={e => setMemberDuration(user.id, Number(e.target.value))}
                         className={`border rounded px-1.5 py-0.5 text-xs bg-card text-foreground outline-none focus:ring-1 focus:ring-primary ${
                           custom ? 'border-primary' : 'border-border'
@@ -216,41 +281,57 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
             )}
           </div>
 
-          {/* Group preview */}
-          {groups.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-2 block">{t('standup.settings.preview')}</label>
-              <div className="space-y-1" role="list" aria-label={t('standup.settings.preview')}>
-                {groups.map((g, i) => (
-                  <div key={g.group_key} role="listitem" className="flex items-center gap-2 text-xs py-1 px-2 rounded bg-accent/30">
-                    <span className="text-muted-foreground w-5 flex-shrink-0">{i + 1}.</span>
-                    <div className="min-w-0 flex-1"><span className="block font-medium text-foreground truncate">{g.group_title}</span>{settings.sortMode !== 'by_member' && <span className="mt-0.5 block break-words text-muted-foreground">{g.members.map(member => member.name).join(' → ')}</span>}</div>
-                    <span className="text-muted-foreground flex-shrink-0">{g.members.length} {t('standup.settings.memberCountUnit')}</span>
-                    <span className="text-muted-foreground flex-shrink-0">{formatDuration(g.estimated_duration)}</span>
-                  </div>
-                ))}
+          {/* Editable report order and meeting-local exclusions */}
+          {fullGroups.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-muted-foreground">{t('standup.settings.preview')}</p>
+                {orderSource === 'manual' && <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">{t('standup.queue.manual')}</span>
+                  <button type="button" onClick={resetOrder} className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded">{t('standup.queue.reset')}</button>
+                </div>}
               </div>
+              <p className="text-xs text-muted-foreground" role="status">{t('standup.queue.summary', { count: participantCount, excluded: excludedMembers.length, turns: reportTurns })}</p>
+              <StandupQueueEditor
+                groups={groups}
+                sortMode={settings.sortMode}
+                onReorder={nextGroups => applyEligibleOrder(nextGroups, 'manual')}
+                excludedMembers={excludedMembers}
+                onExclude={excludeMember}
+                onRestore={restoreMember}
+                label={t('standup.settings.preview')}
+              />
+              {lastExclusion && <div role="status" className="flex items-center justify-between gap-2 rounded border border-border bg-accent/30 px-3 py-2 text-xs">
+                <span>{t('standup.queue.excludedNotice', { name: lastExclusion.name })}</span>
+                <button type="button" className="font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded" onClick={() => {
+                  undoFocusRef.current = lastExclusion.memberId;
+                  setExcludedMemberIds(lastExclusion.ids);
+                  setOrder(lastExclusion.order);
+                  setOrderSource(lastExclusion.source);
+                  setLastExclusion(undefined);
+                }}>{t('standup.queue.undo')}</button>
+              </div>}
             </div>
           )}
-          {!groups.length && <p role="status" className="text-sm text-muted-foreground">{t('standup.noActiveMembers')}</p>}
+          {!groups.length && <p role="status" className="text-sm text-muted-foreground">{t(fullGroups.length ? 'standup.queue.allExcluded' : 'standup.noActiveMembers')}</p>}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border flex items-center justify-between flex-shrink-0">
-          <span className="text-sm text-muted-foreground">
+        <div className="px-6 py-4 border-t border-border flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
+          <span className="text-sm text-muted-foreground whitespace-nowrap">
             {t('standup.settings.totalDuration')}<strong className="text-foreground">{totalMins} {t('common.minutes')}</strong>
           </span>
-          <div className="flex gap-2">
+          <div className="ml-auto flex shrink-0 gap-2">
             <button
               onClick={handleCancel}
-              className="px-4 py-2 rounded text-sm border border-border text-foreground hover:bg-accent transition-colors"
+              className="px-4 py-2 rounded text-sm whitespace-nowrap border border-border text-foreground hover:bg-accent transition-colors"
             >
               {t('common.cancel')}
             </button>
             <button
               onClick={handleConfirm}
               disabled={!groups.length}
-              className="px-4 py-2 rounded text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+              className="px-4 py-2 rounded text-sm whitespace-nowrap bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {t('standup.startButton')}
             </button>

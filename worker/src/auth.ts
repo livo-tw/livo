@@ -173,23 +173,31 @@ function bearerToken(c: Context<AppContext>): string {
 
 // ─── Sessions ─────────────────────────────────────────────────────────────
 
-async function createSession(env: Env, userId: string, email: string): Promise<AuthSession> {
+/** Prepare credentials without writing, so member onboarding can commit the
+ * refresh token in the same transaction as its one-time invitation claim. */
+export async function prepareAuthSession(env: Env, userId: string, email: string): Promise<{
+  session: AuthSession; tokenHash: string; createdAt: string; refreshExpiresAt: string;
+}> {
   const { token: access_token, exp } = await signAccessToken(env, userId, email);
   const refreshBytes = crypto.getRandomValues(new Uint8Array(32));
   const refresh_token = toB64Url(refreshBytes);
   const tokenHash = await sha256Hex(refresh_token);
   const nowIso = new Date().toISOString();
   const expiresIso = new Date(Date.now() + REFRESH_TOKEN_TTL_S * 1000).toISOString();
-  await env.DB
-    .prepare('INSERT INTO auth_refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .bind(tokenHash, userId, expiresIso, nowIso)
-    .run();
-  return {
+  const session: AuthSession = {
     user: { id: userId, email },
     access_token,
     refresh_token,
     expires_at: exp,
   };
+  return { session, tokenHash, createdAt: nowIso, refreshExpiresAt: expiresIso };
+}
+
+async function createSession(env: Env, userId: string, email: string): Promise<AuthSession> {
+  const prepared = await prepareAuthSession(env, userId, email);
+  await env.DB.prepare('INSERT INTO auth_refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
+    .bind(prepared.tokenHash, userId, prepared.refreshExpiresAt, prepared.createdAt).run();
+  return prepared.session;
 }
 
 function authFailure(message: string, code?: string): AuthResponse {

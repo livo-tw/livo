@@ -101,6 +101,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
       </div>
 
       <AddMemberModal
+        key={currentMemberId}
         show={showAddModal}
         onClose={() => setShowAddModal(false)}
         form={addForm}
@@ -112,6 +113,7 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
         onSubmit={handleAddMember}
         loading={addLoading}
         canEditJobTitle={isSuperAdmin}
+        invitationJobTitles={existingJobTitles}
       />
       <ResetPasswordModal
         target={resetTarget}

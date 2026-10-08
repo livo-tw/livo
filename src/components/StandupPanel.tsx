@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useUIContext } from '@/context/UIContext';
 import { useMemberContext } from '@/context/MemberContext';
@@ -16,8 +16,11 @@ import { SprintCompleteModal, SprintStartModal } from '@/components/board/Sprint
 import { useSprintFlow } from '@/hooks/useSprintFlow';
 import { StandupGroupHeader } from './standup/StandupGroupHeader';
 import { StandupItemCard } from './standup/StandupItemCard';
+import { StandupQueueEditor } from './standup/StandupQueueEditor';
+import { useStandupQueue } from '@/hooks/useStandupQueue';
+import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
-import { clearStandupLaunch, getStandupLaunch, resolveStandupCursor, standupQueueKey } from '@/lib/standupLaunch';
+import { clearStandupLaunch, getStandupLaunch, standupQueueKey, type StandupLaunchSnapshot } from '@/lib/standupLaunch';
 
 const TIMER_STROKE: Record<string, string> = {
   idle:     'hsl(var(--sidebar-active))',
@@ -37,9 +40,9 @@ const StandupPanel = () => {
   const { allProjects } = useProjectContext();
 
   const [showSprintPrompt, setShowSprintPrompt] = useState(false);
-  const [cursor, setCursor] = useState<{ key: string | null; index: number }>({ key: null, index: 0 });
+  const [reviewingFinished, setReviewingFinished] = useState(false);
   const [launch] = useState(getStandupLaunch);
-  const [standupFinished, setStandupFinished]   = useState(false);
+  const fullLaunch = useMemo<StandupLaunchSnapshot | undefined>(() => launch ? { ...launch, excludedMemberIds: [] } : undefined, [launch]);
 
   const sprintPromptRef = useFocusTrap(showSprintPrompt);
 
@@ -49,30 +52,26 @@ const StandupPanel = () => {
     : allTasks;
 
   const { settings, getDurationForMember } = useStandupSettings(memberIds, { initial: launch?.settings });
-  const { groups, flatQueue } = useStandupGrouping(
+  const { groups } = useStandupGrouping(
     users, sprintTasks, allProjects,
-    settings.sortMode, getDurationForMember, settings.bufferSeconds, launch,
+    settings.sortMode, getDurationForMember, settings.bufferSeconds, fullLaunch,
   );
-
-  const queueIndex = resolveStandupCursor(flatQueue, cursor);
-  const currentItem    = flatQueue[queueIndex] ?? null;
+  const queue = useStandupQueue(groups, launch?.excludedMemberIds);
+  const restoreMemberRef = useRef(queue.restoreMember);
+  restoreMemberRef.current = memberId => {
+    queue.restoreMember(memberId);
+    setShowSprintPrompt(false);
+  };
+  const { currentItem, currentKey, flatQueue, queueIndex, finished: standupFinished } = queue;
+  const showCompletion = standupFinished && !reviewingFinished;
+  useEffect(() => { if (!standupFinished) setReviewingFinished(false); }, [standupFinished]);
   const currentDuration = currentItem
     ? getDurationForMember(currentItem.member.id)
     : settings.defaultSpeakDuration;
 
-  const handleAdvance = useCallback(() => {
-    if (!flatQueue.length) return;
-    const nextIdx = queueIndex + 1;
-    if (nextIdx < flatQueue.length) {
-      setCursor({ key: standupQueueKey(flatQueue[nextIdx]), index: nextIdx });
-      setStandupUserId(flatQueue[nextIdx].member.id);
-    } else {
-      // All members done — show completion screen
-      setStandupFinished(true);
-      setStandupUserId(null);
-      if (sprintActive) setShowSprintPrompt(true);
-    }
-  }, [queueIndex, flatQueue, setStandupUserId, sprintActive]);
+  const handleAdvance = () => {
+    if (queue.advance() && sprintActive) setShowSprintPrompt(true);
+  };
 
   const { displayTime, inBuffer, isRunning, timerStatus, toggle, reset, skip } = useStandupTimer({
     duration: currentDuration,
@@ -81,12 +80,7 @@ const StandupPanel = () => {
     onAdvance: handleAdvance,
   });
 
-  // Resolve the current speaker by identity when the active roster shrinks. An
-  // unrelated member disappearing must not move the speaker or overrun the queue.
-  const currentKey = currentItem ? standupQueueKey(currentItem) : null;
-  useEffect(() => {
-    setCursor(previous => previous.key === currentKey && previous.index === queueIndex ? previous : { key: currentKey, index: queueIndex });
-  }, [currentKey, queueIndex]);
+  // Editing pending turns cannot change the current identity or reset its timer.
   useEffect(() => {
     setStandupUserId(standupFinished ? null : currentItem?.member.id ?? null);
     reset();
@@ -143,18 +137,28 @@ const StandupPanel = () => {
   const maxTime  = inBuffer ? settings.bufferSeconds : currentDuration;
   const progress = maxTime > 0 ? (displayTime / maxTime) * 100 : 0;
   const strokeColor = TIMER_STROKE[timerStatus] ?? TIMER_STROKE.normal;
-  const currentGroup = currentItem ? groups[currentItem.groupIndex] : null;
-
-  const selectQueue = (idx: number) => {
-    if (!flatQueue[idx]) return;
-    setCursor({ key: standupQueueKey(flatQueue[idx]), index: idx });
-    setStandupUserId(flatQueue[idx]?.member.id ?? null);
-    reset();
+  const currentGroup = currentItem?.group ?? null;
+  const scheduledGroups = [...new Set(flatQueue.map(item => item.group.group_key))];
+  const excludeMember = (memberId: string) => {
+    queue.excludeMember(memberId);
+    const member = users.find(user => user.id === memberId);
+    toast(t('standup.queue.excludedNotice', { name: member?.name ?? '' }), {
+      action: { label: t('standup.queue.undo'), onClick: () => restoreMemberRef.current(memberId) },
+    });
+  };
+  const skipCurrent = () => {
+    if (!currentItem) return;
+    const { id, name } = currentItem.member;
+    queue.skipCurrent();
+    toast(t('standup.queue.excludedNotice', { name }), {
+      action: { label: t('standup.queue.undo'), onClick: () => restoreMemberRef.current(id) },
+    });
   };
 
   return (
     <>
       <div className="relative w-56 h-full min-h-0 bg-sidebar flex flex-col flex-shrink-0">
+        {!showCompletion && <>
         {/* Top bar */}
         <div className="px-4 py-2 flex items-center justify-between flex-shrink-0">
           <span className="text-xs font-bold text-sidebar-primary-foreground">{t('standup.mode')}</span>
@@ -170,8 +174,8 @@ const StandupPanel = () => {
         {currentGroup && settings.sortMode !== 'by_member' && (
           <StandupGroupHeader
             groupTitle={currentGroup.group_title}
-            groupIndex={currentItem?.groupIndex ?? 0}
-            totalGroups={groups.length}
+            groupIndex={scheduledGroups.indexOf(currentGroup.group_key)}
+            totalGroups={scheduledGroups.length}
             taskCount={currentGroup.task_count}
           />
         )}
@@ -203,7 +207,7 @@ const StandupPanel = () => {
 
           {/* Progress indicator */}
           <p className="text-[10px] text-sidebar-foreground/50 mb-2">
-            {currentItem ? queueIndex + 1 : 0} / {flatQueue.length} {t(settings.sortMode === 'by_project' ? 'standup.turnUnit' : 'standup.memberCount')}
+            {currentItem ? queueIndex + 1 : queue.completedQueue.length} / {flatQueue.length} {t(settings.sortMode === 'by_project' ? 'standup.turnUnit' : 'standup.memberCount')}
           </p>
 
           {/* Controls */}
@@ -239,50 +243,50 @@ const StandupPanel = () => {
         </div>
 
         {/* Member list */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-0.5">
-          {!flatQueue.length && <p role="status" className="px-2 py-3 text-xs text-sidebar-foreground/60">{t('standup.noActiveMembers')}</p>}
-          {settings.sortMode === 'by_member'
-            ? flatQueue.map((item, idx) => (
-                <StandupItemCard
-                  key={`${item.member.id}-${idx}`}
-                  member={item.member}
-                  active={idx === queueIndex}
-                  onClick={() => selectQueue(idx)}
-                />
-              ))
-            : groups.map((group, gi) => (
-                <div key={group.group_key}>
-                  <p className="px-2 pt-2 pb-0.5 text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wide truncate">
-                    {group.group_title}
-                  </p>
-                  {group.members.map(member => {
-                    const qIdx = flatQueue.findIndex(
-                      q => q.member.id === member.id && q.groupIndex === gi,
-                    );
-                    return (
-                      <StandupItemCard
-                        key={`${member.id}-${gi}`}
-                        member={member}
-                        active={qIdx === queueIndex}
-                        onClick={() => { if (qIdx >= 0) selectQueue(qIdx); }}
-                      />
-                    );
-                  })}
-                </div>
-              ))
-          }
+        <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-3">
+          {!flatQueue.length && <p role="status" className="px-2 py-3 text-xs text-sidebar-foreground/60">{t(groups.length ? 'standup.queue.noPending' : 'standup.noActiveMembers')}</p>}
+          {currentItem && <section>
+            <p className="px-2 pb-1 text-xs font-medium text-sidebar-foreground/60">{t('standup.queue.current')}</p>
+            <StandupItemCard member={currentItem.member} active onClick={() => {}} />
+            <button type="button" onClick={skipCurrent} className="min-h-11 w-full rounded px-2 text-xs text-sidebar-foreground/70 hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary">
+              {t('standup.queue.skipCurrent')}
+            </button>
+          </section>}
+          <section>
+            <p className="px-2 pb-1 text-xs font-medium text-sidebar-foreground/60">{t('standup.queue.pending')}</p>
+            <StandupQueueEditor groups={queue.pendingGroups} sortMode={settings.sortMode}
+              onReorder={queue.reorderPending} excludedMembers={queue.excludedMembers}
+              onExclude={excludeMember} onRestore={restoreMemberRef.current} onSelect={queue.select}
+              compact label={t('standup.queue.pending')} />
+          </section>
+          {queue.completedQueue.length > 0 && <details className="text-sidebar-foreground/60">
+            <summary className="min-h-9 cursor-pointer px-2 py-2 text-xs">{t('standup.queue.completed')} ({queue.completedQueue.length})</summary>
+            {queue.completedQueue.map(item => <div key={standupQueueKey(item)} className="px-2 py-1 text-xs">
+              {item.member.name}{settings.sortMode !== 'by_member' && <span className="ml-1 opacity-70">· {item.group.group_title}</span>}
+            </div>)}
+          </details>}
         </div>
+        </>}
 
         {/* ── Standup finished overlay ─────────────────────────────────────── */}
-        {standupFinished && (
+        {showCompletion && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-sidebar z-10 px-4 text-center">
             <Trophy size={40} className="text-yellow-400 mb-3" />
             <p className="text-sm font-bold text-sidebar-primary-foreground">{t('standup.completion.title')}</p>
             <p className="text-xs text-sidebar-foreground/60 mt-1">
-              {t('standup.completion.message', { count: new Set(flatQueue.map(item => item.member.id)).size })}
+              {t('standup.completion.message', { count: new Set(queue.completedQueue.map(item => item.member.id)).size })}
             </p>
+            {queue.excludedMembers.length > 0 && <div className="mt-3 max-h-40 w-full overflow-y-auto">
+              <p className="text-xs text-sidebar-foreground/60">{t('standup.queue.excluded', { count: queue.excludedMembers.length })}</p>
+              {queue.excludedMembers.map(member => <button key={member.id} type="button"
+                aria-label={t('standup.queue.restoreNamed', { name: member.name })}
+                className="min-h-11 w-full rounded px-2 text-xs text-sidebar-primary-foreground hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary"
+                onClick={() => restoreMemberRef.current(member.id)}>
+                {member.name} · {t('standup.queue.restore')}
+              </button>)}
+            </div>}
             <button
-              onClick={() => { setStandupFinished(false); setCursor({ key: flatQueue[0] ? standupQueueKey(flatQueue[0]) : null, index: 0 }); reset(); }}
+              onClick={() => { setReviewingFinished(true); setShowSprintPrompt(false); }}
               className="mt-4 text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground underline transition-colors"
             >
               {t('button.backToList')}
@@ -307,6 +311,12 @@ const StandupPanel = () => {
               </h2>
               <p className="text-sm text-muted-foreground mb-4">{t('sprint.prompt.description')}</p>
               <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowSprintPrompt(false); setReviewingFinished(true); }}
+                  className="min-h-11 rounded px-3 py-1.5 text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  {t('button.backToList')}
+                </button>
                 <button
                   onClick={handleSkipSprint}
                   className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
