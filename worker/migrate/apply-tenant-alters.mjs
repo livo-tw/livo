@@ -48,6 +48,9 @@ function tryWrangler(args) {
 // Independent column upgrades must run before the tenancy sentinel can exit.
 // schema.sql indexes some of these columns, so they must exist before it runs.
 for (const [table, column, definition] of [
+  ['members', 'email_identity_verified', 'INTEGER NOT NULL DEFAULT 1 CHECK (email_identity_verified IN (0,1))'],
+  ['external_account_bindings', 'verified_by_member_id', 'TEXT'],
+  ['external_account_bindings', 'reconfirm_required', 'INTEGER NOT NULL DEFAULT 0 CHECK (reconfirm_required IN (0,1))'],
   ['kb_pages', 'category', "TEXT NOT NULL DEFAULT 'general'"],
   ['kb_pages', 'access_policy', `TEXT NOT NULL DEFAULT '{"mode":"inherit"}'`],
   ['kb_attachments', 'storage_bucket', "TEXT NOT NULL DEFAULT 'task-images'"],

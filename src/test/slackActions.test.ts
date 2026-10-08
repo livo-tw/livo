@@ -7,7 +7,7 @@ import { canAssignSlackMember, slackEmailBelongsToOther, commentModal, commentRe
 import { constantTimeSecret, createActions, fail, memberJwt } from '../../docker/volumes/functions/slack-interact/backend';
 import { handleInteraction, type Actions } from '../../docker/volumes/functions/slack-interact/handler';
 import { resolveFeatureToggles } from '@/lib/featureToggles';
-const actor = { id: 'member-example', name: 'Example Member', email: 'member@example.com', is_active: true,
+const actor = { id: 'member-example', name: 'Example Member', email: 'member@example.com', email_identity_verified: true, is_active: true,
   auth_id: '00000000-0000-4000-8000-000000000001', team: 'TEXAMPLE', jwt: 'member-session' };
 const task = { id: 'task-example', task_key: 'ABC-123', title: 'Example card', project_id: 'project-example',
   assignee_id: 'member-assignee', reviewer_id: 'member-reviewer' };
@@ -248,7 +248,7 @@ describe('backend security and effects', () => {
     }));
     return writes;
   }
-  const owner = { id: 'member-owner', name: 'Example Owner', email: 'owner@example.com', role: 'super_admin', is_active: true, auth_id: '00000000-0000-4000-8000-000000000009' };
+  const owner = { id: 'member-owner', name: 'Example Owner', email: 'owner@example.com', email_identity_verified: true, role: 'super_admin', is_active: true, auth_id: '00000000-0000-4000-8000-000000000009' };
   const manual = (issuer?: string) => ({ id: 'binding-admin', platform_team_id: 'TEXAMPLE', platform_user_id: 'UEXAMPLE', member_id: actor.id,
     is_verified: true, verified_by: 'admin', ...(issuer === undefined ? {} : { verified_by_member_id: issuer }) });
   it('uses an admin-assigned binding even when the Slack email differs', async () => {
@@ -315,7 +315,7 @@ describe('backend security and effects', () => {
     expect(canAssignSlackMember(admin, undefined)).toBe(false);
   });
   it('refuses to map a Slack account whose email already identifies another member', () => {
-    const owners = [{ id: 'admin-self', email: 'Admin@Example.com' }, { id: 'member-off', email: 'off@example.com' }];
+    const owners = [{ id: 'admin-self', email: 'Admin@Example.com', email_identity_verified: true }, { id: 'member-off', email: 'off@example.com', email_identity_verified: true }];
     // An admin cannot hand their own Slack account to a plain member…
     expect(slackEmailBelongsToOther(owners, 'admin@example.com', 'member-plain')).toBe(true);
     // …nor reuse a deactivated member's address.

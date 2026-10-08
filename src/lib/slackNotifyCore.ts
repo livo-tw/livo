@@ -19,6 +19,12 @@
 export type NotifyRow = Record<string, unknown>;
 export type NotifyBlock = Record<string, unknown>;
 
+/** Login eligibility is separate from proof of email ownership. Legacy rows
+ * default to trusted; direct invitation registrations explicitly store false. */
+export function memberEmailIdentityVerified(member: { email_identity_verified?: unknown } | null | undefined): boolean {
+  return !!member && (member.email_identity_verified === true || member.email_identity_verified === 1);
+}
+
 export const NOTIFY_TASK_TYPES = ['task_created', 'status_changed', 'assignee_changed', 'comment_added', 'priority_changed'];
 export const NOTIFY_MAX_DM_TARGETS = 20;
 

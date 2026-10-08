@@ -191,6 +191,10 @@ function enforceWritePolicy(
         : {};
     // decideMembersUpdate looks at the same column set db.ts will SET (keys
     // with defined values; db.ts adds no autofields on update).
+    // Email ownership is server-owned; generic writes cannot certify a supplied address.
+    if (Object.keys(patch).some(column =>
+      (column.toLowerCase() === 'email_identity_verified' && patch[column] !== undefined) ||
+      (column.toLowerCase() === 'email' && column !== 'email'))) return permissionDenied(table);
     const decision = decideMembersUpdate(rank, patch);
     if (decision === 'deny') return permissionDenied(table);
     if (decision === 'invalid') {
@@ -843,6 +847,11 @@ export async function runQuery(
           setParams.push(valueToDb(column, patch[column], meta));
           return `${column} = ?`;
         });
+        if (table === 'members' && patch.email !== undefined) {
+          // Compare the previous row atomically; a changed address loses its ownership proof.
+          assignments.push('email_identity_verified = CASE WHEN email IS ? THEN email_identity_verified ELSE 0 END');
+          setParams.push(valueToDb('email', patch.email, meta));
+        }
         const deadlineVersion = table === 'tasks' ? deadlineVersionSql(patch) : {sql:'',params:[]};
         if (deadlineVersion.sql) assignments.push(deadlineVersion.sql);
         setParams.push(...deadlineVersion.params);

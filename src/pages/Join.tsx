@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, Mail } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { selectionRoleLabel } from '@/lib/memberRoleSelection';
 import {
-  acceptMemberInvitation, invitationErrorKey, previewMemberConfirmation, previewMemberInvitation,
-  readMemberInvitationLink, requestMemberConfirmation, navigateToInvitationLogin, type InvitationError,
+  acceptMemberInvitation, joinMemberInvitation, invitationErrorKey, previewMemberConfirmation, previewMemberInvitation,
+  readMemberInvitationLink, navigateToInvitationLogin, type InvitationError,
 } from '@/lib/memberInvitations';
 import {
-  CONFIRMATION_RESEND_MS, validateInviteEmail, validateInviteName, validateInvitePassword,
+  validateInviteEmail, validateInviteName, validateInvitePassword,
   type MemberConfirmationPreview, type MemberInvitePreview,
 } from '@/lib/memberInvitationsCore';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60';
 const buttonClass = 'min-h-11 w-full rounded-md px-3 py-2.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50';
 
-/** Public member onboarding. The server owns the role and validates the email before creating an account. */
+/** Invitation-authorized onboarding. Email is a login identifier; direct joins send no email. */
 const Join = () => {
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -31,9 +31,6 @@ const Join = () => {
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sentEmail, setSentEmail] = useState<string | null>(null);
-  const [resendDeadlines, setResendDeadlines] = useState<Record<string, number>>({});
-  const [now, setNow] = useState(Date.now());
   const [joined, setJoined] = useState<{ signedIn: boolean } | null>(null);
   const [uncertainJoinEmail, setUncertainJoinEmail] = useState<string | null>(null);
   const recoveryHeading = useRef<HTMLHeadingElement>(null);
@@ -48,9 +45,6 @@ const Join = () => {
   activeLinkKey.current = linkKey;
   const appUrl = import.meta.env.BASE_URL;
   const loginUrl = `${appUrl}auth`;
-  const currentEmail = sentEmail || validateInviteEmail(email) || '';
-  const resendAt = resendDeadlines[currentEmail] || 0;
-  const resendMinutes = Math.max(0, Math.ceil((resendAt - now) / 60000));
 
   useEffect(() => {
     ++actionRevision.current;
@@ -65,8 +59,6 @@ const Join = () => {
     setEmail('');
     setPassword('');
     setPassword2('');
-    setSentEmail(null);
-    setResendDeadlines({});
     return () => { ++actionRevision.current; };
   }, [linkKey]);
 
@@ -76,7 +68,6 @@ const Join = () => {
     setDetails(null);
     setLinkError(null);
     setActionError(null);
-    setSentEmail(null);
     setPassword('');
     setPassword2('');
     if (!link) {
@@ -94,11 +85,6 @@ const Join = () => {
     return () => { cancelled = true; };
   }, [link, checkRevision]);
 
-  useEffect(() => {
-    if (!Object.keys(resendDeadlines).length) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [resendDeadlines]);
 
   useEffect(() => {
     if (uncertainJoinEmail !== null) recoveryHeading.current?.focus();
@@ -157,37 +143,13 @@ const Join = () => {
     if (error.code === 'invalid_token') setLinkError(error);
   };
 
-  const handleSend = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!link || link.kind !== 'invite' || !details || submitting.current) return;
-    const validName = validateInviteName(name);
-    const validEmail = validateInviteEmail(email);
-    if (!validName || !validEmail) {
-      setActionError({ code: 'invalid_request' });
-      toast.error(t('memberInvite.errors.invalid_request'));
-      return;
-    }
-    if (Date.now() < (resendDeadlines[validEmail] || 0)) return;
-    const revision = actionRevision.current;
-    const submittedLinkKey = linkKey;
-    submitting.current = true;
-    setLoading(true);
-    setActionError(null);
-    const result = await requestMemberConfirmation(link.token, validName, validEmail);
-    if (revision !== actionRevision.current || submittedLinkKey !== activeLinkKey.current) return;
-    if (result.error) showError(result.error);
-    else {
-      setSentEmail(validEmail);
-      setResendDeadlines(deadlines => ({ ...deadlines, [validEmail]: Date.now() + CONFIRMATION_RESEND_MS }));
-      setNow(Date.now());
-    }
-    setLoading(false);
-    submitting.current = false;
-  };
-
   const handleAccept = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!link || link.kind !== 'confirmation' || !details || submitting.current) return;
+    if (!link || !details || submitting.current) return;
+    if (link.kind === 'invite' && uncertainJoinEmail !== null) return;
+    const validName = link.kind === 'invite' ? validateInviteName(name) : null;
+    const validEmail = link.kind === 'invite' ? validateInviteEmail(email) : null;
+    if (link.kind === 'invite' && (!validName || !validEmail)) { showError({ code: 'invalid_request' }); return; }
     if (!validateInvitePassword(password)) { showError({ code: 'password_invalid' }); return; }
     if (password !== password2) { setActionError({ code: 'password_mismatch' }); toast.error(t('setPassword.mismatch')); return; }
     const revision = actionRevision.current;
@@ -195,16 +157,18 @@ const Join = () => {
     submitting.current = true;
     setLoading(true);
     setActionError(null);
-    const result = await acceptMemberInvitation(link.token, password);
+    const result = link.kind === 'invite'
+      ? await joinMemberInvitation(link.token, validName!, validEmail!, password)
+      : await acceptMemberInvitation(link.token, password);
     if (revision !== actionRevision.current || submittedLinkKey !== activeLinkKey.current) return;
     if (result.error) {
       if (['network_failed', 'invalid_response', 'server_error'].includes(result.error.code)) {
-        setUncertainJoinEmail('email' in details ? details.email : '');
+        setUncertainJoinEmail(validEmail || ('email' in details ? details.email : ''));
       }
       showError(result.error);
-      if (result.error.code === 'email_taken') setLinkError(result.error);
+      if (['email_taken', 'registration_pending'].includes(result.error.code)) setLinkError(result.error);
       setLoading(false);
-      submitting.current = false;
+      submitting.current = link.kind === 'invite' && ['network_failed', 'invalid_response', 'server_error'].includes(result.error.code);
       return;
     }
     let signedIn = false;
@@ -250,7 +214,7 @@ const Join = () => {
           : linkError ? <div className="space-y-4 text-center">
             <h1 className="text-lg font-semibold">{t('memberInvite.invalidTitle')}</h1>
             <p role="alert" className="text-sm leading-relaxed text-muted-foreground">{uncertainJoinEmail !== null && linkError.code === 'invalid_token' ? t('memberInvite.resultUnknownLinkUnavailable') : errorText(linkError)}</p>
-            {link && !['invalid_token', 'email_taken'].includes(linkError.code) && <button type="button" onClick={() => setCheckRevision(value => value + 1)} className={`${buttonClass} border border-border hover:bg-accent`}>{t('common.retry')}</button>}
+            {link && !['invalid_token', 'email_taken', 'registration_pending'].includes(linkError.code) && <button type="button" onClick={() => setCheckRevision(value => value + 1)} className={`${buttonClass} border border-border hover:bg-accent`}>{t('common.retry')}</button>}
             <a href={loginUrl} className="inline-block min-h-11 py-3 text-sm text-primary hover:underline">{t('setPassword.backToLogin')}</a>
           </div> : details && link ? <>
             <div className="space-y-2 text-center">
@@ -266,26 +230,18 @@ const Join = () => {
               </>}
             </dl>
             {actionError && <p role="alert" className="text-sm text-destructive">{errorText(actionError)}</p>}
-            {link.kind === 'invite' ? <form onSubmit={handleSend} className="space-y-4">
-              {sentEmail ? <div className="space-y-3 rounded-lg border border-primary/30 p-4" role="status">
-                <Mail size={24} className="text-primary" aria-hidden="true" />
-                <h2 className="font-semibold">{t('memberInvite.confirmationSent')}</h2>
-                <p className="break-words text-sm">{t('memberInvite.sentTo', { email: sentEmail })}</p>
-                <p className="text-sm text-muted-foreground">{t('memberInvite.checkInbox')}</p>
-                <button type="button" onClick={() => { setSentEmail(null); setActionError(null); }} className="min-h-11 text-sm text-primary hover:underline">{t('memberInvite.editDetails')}</button>
-              </div> : <>
+            {(link.kind === 'confirmation' || uncertainJoinEmail === null) && <form onSubmit={handleAccept} className="space-y-4">
+              {link.kind === 'invite' && <>
                 <div className="space-y-1">
                   <label htmlFor="join-name" className="text-sm font-medium">{t('memberInvite.nameLabel')}</label>
                   <input id="join-name" value={name} onChange={event => setName(event.target.value)} className={inputClass} required maxLength={80} autoComplete="name" disabled={loading} />
                 </div>
                 <div className="space-y-1">
-                  <label htmlFor="join-email" className="text-sm font-medium">Email</label>
-                  <input id="join-email" type="email" value={email} onChange={event => setEmail(event.target.value)} className={inputClass} required maxLength={254} autoComplete="email" disabled={loading} />
+                  <label htmlFor="join-email" className="text-sm font-medium">{t('memberInvite.loginAccountLabel')}</label>
+                  <input id="join-email" type="email" value={email} onChange={event => setEmail(event.target.value)} aria-describedby="join-email-hint" className={inputClass} required maxLength={254} autoComplete="email" disabled={loading} />
+                  <p id="join-email-hint" className="text-xs text-muted-foreground">{t('memberInvite.loginAccountHint')}</p>
                 </div>
               </>}
-              <button type="submit" disabled={loading || resendMinutes > 0} aria-busy={loading} className={`${buttonClass} bg-primary text-primary-foreground hover:bg-primary/90`}>{t(loading ? 'memberInvite.sending' : sentEmail ? 'memberInvite.resend' : 'memberInvite.sendConfirmation')}</button>
-              {resendMinutes > 0 && <p className="text-xs text-muted-foreground">{t('memberInvite.resendWait', { count: resendMinutes })}</p>}
-            </form> : <form onSubmit={handleAccept} className="space-y-4">
               <div className="space-y-1">
                 <label htmlFor="join-password" className="text-sm font-medium">{t('setPassword.passwordLabel')}</label>
                 <input id="join-password" type="password" value={password} onChange={event => setPassword(event.target.value)} className={inputClass} minLength={8} required autoComplete="new-password" disabled={loading} aria-describedby="join-password-hint" />

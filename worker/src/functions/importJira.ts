@@ -597,7 +597,7 @@ export const handleImportJira = async (c: Context<AppContext>) => {
             ? insertStatements(env, 'members', [{ ...newMemberRow(p.memberId, name, p.email), auth_id: login.authUserId }], ws)
             : [
                 env.DB
-                  .prepare('UPDATE members SET email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4')
+                  .prepare('UPDATE members SET email_identity_verified = CASE WHEN email IS ?1 THEN email_identity_verified ELSE 0 END, email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4')
                   .bind(p.email, login.authUserId, p.memberId, ws),
               ];
         await env.DB.batch([...login.statements, ...memberStmts]);

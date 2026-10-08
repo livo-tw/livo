@@ -39,7 +39,8 @@ async function request<T>(body: unknown, guard: (value: unknown) => value is T):
   try {
     const result = await callFunction<unknown>('member-invitations', body);
     if (!result.ok) {
-      const code = record(result.data) && typeof result.data.error === 'string' ? result.data.error : 'server_error';
+      const candidate = record(result.data) && typeof result.data.error === 'string' ? result.data.error : 'server_error';
+      const code = INVITATION_ERROR_CODES.some(known => known === candidate) ? candidate : 'server_error';
       return { data: null, error: { code } };
     }
     if (!guard(result.data)) return { data: null, error: { code: 'invalid_response' } };
@@ -59,10 +60,11 @@ export const createMemberInvitation = (value: InvitationGrant) => request({ acti
 export const revokeMemberInvitation = (invitationId: string) => request({ action: 'revoke', invitationId },
   (value): value is { success: true } => record(value) && value.success === true);
 export const previewMemberInvitation = (inviteToken: string) => request({ action: 'preview', inviteToken }, preview);
-export const requestMemberConfirmation = (inviteToken: string, name: string, email: string) => request({ action: 'request_confirmation', inviteToken, name, email },
-  (value): value is { sent: true } => record(value) && value.sent === true);
 export const previewMemberConfirmation = (confirmationToken: string) => request({ action: 'confirmation_preview', confirmationToken }, confirmation);
 export const acceptMemberInvitation = (confirmationToken: string, password: string) => request({ action: 'accept', confirmationToken, password },
+  (value): value is { success: true; session: InvitationSession | null } => record(value) && value.success === true
+    && (value.session === null || session(value.session)));
+export const joinMemberInvitation = (inviteToken: string, name: string, email: string, password: string) => request({ action: 'accept_invite', inviteToken, name, email, password },
   (value): value is { success: true; session: InvitationSession | null } => record(value) && value.success === true
     && (value.session === null || session(value.session)));
 

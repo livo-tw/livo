@@ -753,7 +753,7 @@ export async function resolveActiveMember(
     // members.email is globally UNIQUE (one email = one workspace), so this
     // can never cross a tenant boundary.
     member = await db
-      .prepare('SELECT id, role, email, name, is_active, workspace_id FROM members WHERE email = ? COLLATE NOCASE LIMIT 1')
+      .prepare('SELECT id, role, email, name, is_active, workspace_id FROM members WHERE email = ? COLLATE NOCASE AND email_identity_verified=1 LIMIT 1')
       .bind(email)
       .first<MemberRow>();
     if (member) {

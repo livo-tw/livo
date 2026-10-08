@@ -10,7 +10,7 @@
 import { shouldPostChannel } from '../slack-interact/core.ts';
 import { constantTimeSecret, Database, type Environment } from '../slack-interact/backend.ts';
 import { commentMentionIds, commentPlainText, dmRecipients, notifyChannelId, notifyDetails, NOTIFY_TASK_TYPES, reportMessage,
-  requestedEmails, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from './core.ts';
+  requestedEmails, memberEmailIdentityVerified, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from './core.ts';
 
 type Row = Record<string, any>;
 const corsHeaders = {
@@ -144,11 +144,11 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       const hour = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
       const inWindow = startHour <= endHour ? hour >= startHour && hour < endHour : hour >= startHour || hour < endHour;
       if (dmEnabled && inWindow) {
-        const members = await admin.rows('members', { select: 'id,email', is_active: 'eq.true', id: `in.(${[...allowed.keys()].join(',')})` });
+        const members = await admin.rows('members', { select: 'id,email,email_identity_verified', is_active: 'eq.true', id: `in.(${[...allowed.keys()].join(',')})` });
         // Members who unlinked Slack in My settings get no direct messages.
         const unlinked = new Set((await admin.rows('slack_link_preferences', { select: 'member_id', linking_disabled: 'eq.true',
           member_id: `in.(${[...allowed.keys()].join(',')})` })).map(row => row.member_id));
-        const targets = members.filter(m => !unlinked.has(m.id) && typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
+        const targets = members.filter(m => memberEmailIdentityVerified(m) && !unlinked.has(m.id) && typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
         const results = await Promise.allSettled(targets.map(async m => {
           const found = await slack('users.lookupByEmail', { email: m.email.trim() });
           // No Slack account, or a guest/bot/deactivated one: skipped on purpose, not a failure.

@@ -55,7 +55,7 @@ export async function runMemberInvitationsNative(plan, { binaryDir, clientPackag
   const config = { host: '127.0.0.1', port, user: 'postgres', database: 'postgres', connectionTimeoutMillis: 5000, query_timeout: 120000 };
   const result = { ...plan.summary, runId, scope: 'owned_isolated_local_native_postgres', productionOperations: 0,
     nativeVersion: version.stdout.trim(), artifacts: run, planSha256: createHash('sha256').update(plan.sql).digest('hex') };
-  let client, startAttempted = false, failure;
+  let client, startAttempted = false, failure, failurePhase = 'cluster_setup';
   const command = (name, args, label, expectZero = true) => {
     const fd = fs.openSync(path.join(run, label + '.log'), 'w');
     try {
@@ -82,16 +82,29 @@ export async function runMemberInvitationsNative(plan, { binaryDir, clientPackag
     const engine = (await client.query("SELECT version(),current_setting('data_directory') AS data,current_setting('listen_addresses') AS addresses")).rows[0];
     if (path.resolve(engine.data) !== path.resolve(data) || engine.addresses !== '127.0.0.1') throw new Error('Owned cluster scope mismatch');
     result.engine = engine;
+    failurePhase = 'static_assertions';
     const outputs = await client.query(plan.sql);
     const rows = (Array.isArray(outputs) ? outputs : [outputs]).flatMap(output => output.rows ?? []);
     const verified = Object.values(rows.at(-1) ?? {})[0];
     if (verified?.status !== 'passed' || verified.assertions !== plan.summary.assertions) throw new Error('PostgreSQL assertion readback mismatch');
     result.verified = verified;
     if (plan.verifyRaces) {
+      failurePhase = 'real_two_session_races';
       const races = await plan.verifyRaces(execute);
       Object.assign(result, races, { assertions: result.assertions + races.raceAssertions });
     }
-  } catch (error) { failure = error; }
+  } catch (error) {
+    failure = error;
+    // Record only structural diagnostics, never query text/detail/where/body.
+    result.failurePhase = failurePhase;
+    result.errorCode = typeof error.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code) ? error.code : null;
+    const position = Number(error.position);
+    result.errorPosition = Number.isSafeInteger(position) && position > 0 ? position : null;
+    result.errorLine = failurePhase === 'static_assertions' && result.errorPosition !== null
+      ? Array.from(plan.sql).slice(0, result.errorPosition - 1).join('').split('\n').length : null;
+    result.errorTable = typeof error.table === 'string' && /^[A-Za-z0-9_]{1,200}$/.test(error.table) ? error.table : null;
+    result.errorConstraint = typeof error.constraint === 'string' && /^[A-Za-z0-9_]{1,200}$/.test(error.constraint) ? error.constraint : null;
+  }
   finally {
     if (client) await client.end().catch(() => {});
     const owner = JSON.parse(fs.readFileSync(path.join(run, 'owner.json'), 'utf8'));

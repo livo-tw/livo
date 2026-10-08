@@ -18,7 +18,7 @@ export type InvitationTokenKind = 'invite' | 'confirmation';
 export const INVITATION_ERROR_CODES = [
   'invalid_request', 'invalid_token', 'forbidden', 'api_key_forbidden', 'demo_blocked',
   'email_taken', 'member_limit', 'email_not_configured', 'email_send_failed', 'rate_limited',
-  'password_invalid', 'server_error',
+  'password_invalid', 'registration_pending', 'server_error',
 ] as const;
 export type InvitationErrorCode = typeof INVITATION_ERROR_CODES[number];
 

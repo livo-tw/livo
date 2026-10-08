@@ -20,6 +20,7 @@ function fixture() {
     confirmationPreview: vi.fn().mockResolvedValue({ ...invitation, name: 'Alex', email: 'alex@example.com' }),
     send: vi.fn().mockResolvedValue(true), createAuth: vi.fn().mockResolvedValue('new-auth-only'),
     accept: vi.fn().mockResolvedValue(undefined), deleteCreatedAuth: vi.fn().mockResolvedValue(true),
+    createDirectAuth: vi.fn().mockResolvedValue('new-direct-auth'), acceptDirect: vi.fn().mockResolvedValue(undefined),
     session: vi.fn().mockResolvedValue({ access_token: 'fixture-access', refresh_token: 'fixture-refresh', user: { id: 'new-auth-only', email: 'alex@example.com' } }),
   } satisfies InvitationBackend;
 }
@@ -80,33 +81,68 @@ describe('Docker invitation endpoint contract', () => {
     backend.caller.mockResolvedValue({ authId: 'auth-one', memberId: 'super-one', role: 'super_admin', apiKey: true });
     for (const action of ['create', 'list', 'revoke']) expect((await post(backend, { action })).body.error).toBe('api_key_forbidden');
   });
-  it('fails clearly without email configuration and keeps list and revoke usable', async () => {
+  it('creates invitations without mail configuration and rejects the obsolete sending action', async () => {
     const backend = fixture(); backend.mail.mockResolvedValue(null);
-    expect((await post(backend, { action: 'create' })).body.error).toBe('email_not_configured');
-    expect(backend.create).not.toHaveBeenCalled();
-    expect((await post(backend, { action: 'request_confirmation', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com' })).body.error).toBe('email_not_configured');
-    expect(backend.reserve).not.toHaveBeenCalled();
+    expect((await post(backend, { action: 'create' })).status).toBe(200);
+    expect(backend.create).toHaveBeenCalledOnce();
+    expect(backend.mail).not.toHaveBeenCalled();
+    const pruned = backend.prune.mock.calls.length;
+    expect((await post(backend, { action: 'request_confirmation', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com' })).body.error).toBe('invalid_request');
+    expect(backend.prune.mock.calls.length).toBe(pruned);
+    expect(backend.reserve).not.toHaveBeenCalled(); expect(backend.send).not.toHaveBeenCalled();
     expect((await post(backend, { action: 'list' })).status).toBe(200);
     expect((await post(backend, { action: 'revoke', invitationId: 'invite-one' })).body).toEqual({ success: true });
   });
-  it('confirmation dispatch never creates a login/member or exposes the confirmation token', async () => {
-    const backend = fixture();
-    const result = await post(backend, { action: 'request_confirmation', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: ' Alex ', email: 'ALEX@example.com' });
-    expect(result.body).toEqual({ sent: true });
-    const link = backend.send.mock.calls[0][2] as string;
-    expect(link).toContain('/join#confirmation=mc1.');
-    const token = decodeURIComponent(link.split('#confirmation=')[1]);
-    expect(backend.reserve.mock.calls[0][3]).toBe(await hashMemberInvitationToken(token));
-    expect(backend.reserve.mock.calls[0].slice(4)).toEqual(['Alex', 'alex@example.com']);
-    expect(backend.createAuth).not.toHaveBeenCalled(); expect(backend.accept).not.toHaveBeenCalled();
-    expect(backend.caller).not.toHaveBeenCalled();
+  it('joins directly with normalized login fields and no confirmation or mail operation', async () => {
+    const backend = fixture(); backend.mail.mockResolvedValue(null);
+    const inviteToken = mintMemberInvitationToken('invite', 'default', 'invite-one');
+    const tokenHash = await hashMemberInvitationToken(inviteToken);
+    const result = await post(backend, { action: 'accept_invite', inviteToken, name: ' Alex ', email: 'ALEX@example.com', password: 'own-password-123' });
+    expect(result).toMatchObject({ status: 200, body: { success: true } });
+    expect(backend.preview).toHaveBeenCalledWith('invite-one', tokenHash);
+    expect(backend.createDirectAuth).toHaveBeenCalledWith('alex@example.com', 'own-password-123', 'Alex', { invitationId: 'invite-one', tokenHash });
+    expect(backend.acceptDirect).toHaveBeenCalledWith('invite-one', tokenHash, 'new-direct-auth', expect.any(String), 'Alex', 'alex@example.com');
+    expect(backend.preview.mock.invocationCallOrder[0]).toBeLessThan(backend.createDirectAuth.mock.invocationCallOrder[0]);
+    expect(backend.session).toHaveBeenCalledWith('alex@example.com', 'own-password-123');
+    for (const fn of [backend.caller, backend.mail, backend.reserve, backend.send, backend.finishSend, backend.confirmationPreview, backend.createAuth, backend.accept, backend.deleteCreatedAuth]) expect(fn).not.toHaveBeenCalled();
   });
-  it('a rejected provider response marks failure and never pretends the mail was sent', async () => {
-    const backend = fixture(); backend.send.mockResolvedValue(false);
-    const result = await post(backend, { action: 'request_confirmation', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com' });
-    expect(result).toMatchObject({ status: 503, body: { error: 'email_send_failed' } });
-    expect(backend.finishSend.mock.calls[0][2]).toBe(false);
-    expect(backend.createAuth).not.toHaveBeenCalled();
+  it('rejects direct authority overrides and malformed identity before creating auth', async () => {
+    const inviteToken = mintMemberInvitationToken('invite', 'default', 'invite-one');
+    const valid = { action: 'accept_invite', inviteToken, name: 'Alex', email: 'alex@example.com', password: 'own-password-123' };
+    for (const extra of [{ role: 'super_admin' }, { authId: 'old-auth' }, { memberId: 'old-member' }, { isQaAdmin: true }, { jobTitle: 'Owner' }, { email_identity_verified: true }, { workspaceId: 'another' }]) {
+      const backend = fixture();
+      expect((await post(backend, { ...valid, ...extra })).body.error).toBe('invalid_request');
+      expect(backend.preview).not.toHaveBeenCalled(); expect(backend.createDirectAuth).not.toHaveBeenCalled();
+    }
+    // Preserve reserved-placeholder rejection without a noncanonical literal test mailbox.
+    const reservedPlaceholder = 'placeholder@example.com'.replace('.com', '.invalid');
+    for (const changed of [{ name: '' }, { email: 'bad' }, { email: reservedPlaceholder }, { password: 'short' }]) {
+      const backend = fixture();
+      expect((await post(backend, { ...valid, ...changed })).status).toBe(400);
+      expect(backend.createDirectAuth).not.toHaveBeenCalled();
+    }
+  });
+  it('checks invitation availability before GoTrue and never adopts or resets an existing login', async () => {
+    const body = { action: 'accept_invite', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com', password: 'own-password-123' };
+    const expired = fixture(); expired.preview.mockRejectedValue(new InvitationFailure('invalid_token', 409));
+    expect((await post(expired, body)).body.error).toBe('invalid_token'); expect(expired.createDirectAuth).not.toHaveBeenCalled();
+    const existing = fixture(); existing.createDirectAuth.mockRejectedValue(new InvitationFailure('email_taken', 409));
+    expect((await post(existing, body)).body.error).toBe('email_taken');
+    expect(existing.acceptDirect).not.toHaveBeenCalled(); expect(existing.deleteCreatedAuth).not.toHaveBeenCalled();
+  });
+  it('keeps a direct orphan isolated and reports pending when attachment fails or is unknown', async () => {
+    for (const error of [new InvitationFailure('invalid_token', 409), new Error('transport outcome unknown')]) {
+      const backend = fixture(); backend.acceptDirect.mockRejectedValue(error);
+      const result = await post(backend, { action: 'accept_invite', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com', password: 'own-password-123' });
+      expect(result).toMatchObject({ status: 503, body: { error: 'registration_pending' } });
+      expect(backend.deleteCreatedAuth).not.toHaveBeenCalled(); expect(backend.session).not.toHaveBeenCalled();
+      expect(result.body).not.toHaveProperty('authId'); expect(result.body).not.toHaveProperty('success');
+    }
+  });
+  it('keeps a committed direct join successful when session issuance is temporarily unavailable', async () => {
+    const backend = fixture(); backend.session.mockRejectedValue(new Error('session unavailable'));
+    expect((await post(backend, { action: 'accept_invite', inviteToken: mintMemberInvitationToken('invite', 'default', 'invite-one'), name: 'Alex', email: 'alex@example.com', password: 'own-password-123' })).body).toEqual({ success: true, session: null });
+    expect(backend.deleteCreatedAuth).not.toHaveBeenCalled();
   });
   it('uses only the confirmation-bound name/email and a newly selected password', async () => {
     const backend = fixture();

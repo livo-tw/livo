@@ -105,7 +105,7 @@ export const TABLES: TableRegistry = {
   members: {
     pk: 'id',
     clientAccess: 'full',
-    boolCols: ['is_active', 'is_qa_admin'],
+    boolCols: ['is_active', 'is_qa_admin', 'email_identity_verified'],
     // update is governed by the members SPECIAL rule in db.ts (runs before
     // the generic rules, columns in memberProfile.ts): super_admin
     // unrestricted; admin limited to {theme, auth_id, sort_order}; member
@@ -436,7 +436,7 @@ export const TABLES: TableRegistry = {
     pk: 'id',
     uniques: [['platform', 'platform_user_id', 'platform_team_id']],
     clientAccess: 'full',
-    boolCols: ['is_verified'],
+    boolCols: ['is_verified', 'reconfirm_required'],
     autoId: true,
     autoNowCols: ['bound_at'],
     write: { insert: 'own', update: 'own', delete: 'own', ownerCol: 'member_id' },

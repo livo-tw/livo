@@ -1,3 +1,4 @@
+import { memberEmailIdentityVerified } from '../slack-notify/core.ts';
 import { groupProjectsByLine, slackProjectOptionGroups } from './projectGroups.ts';
 // Portable interaction rules: no tokens, network calls or runtime globals.
 // Slack is reached only through a `slack` function that the caller passes in.
@@ -122,11 +123,11 @@ export const SLACK_USER_ID = /^[UW][A-Z0-9]{2,30}$/;
 export function slackEmailBelongsToOther(members: Row[], slackEmail: unknown, targetId: string): boolean {
   if (typeof slackEmail !== 'string' || !slackEmail.trim()) return false;
   const email = slackEmail.trim().toLowerCase();
-  return members.some(m => m.email?.trim().toLowerCase() === email && m.id !== targetId);
+  return members.some(m => memberEmailIdentityVerified(m) && m.email?.trim().toLowerCase() === email && m.id !== targetId);
 }
 export function matchEmail(members: Row[], email: string): Row | undefined {
   if (!email?.trim()) return;
-  const matches = members.filter(m => m.email?.trim().toLowerCase() === email.trim().toLowerCase());
+  const matches = members.filter(m => memberEmailIdentityVerified(m) && m.email?.trim().toLowerCase() === email.trim().toLowerCase());
   return matches.length === 1 && matches[0].is_active === true ? matches[0] : undefined;
 }
 /** Only safe text and the editor's mention spans survive. */

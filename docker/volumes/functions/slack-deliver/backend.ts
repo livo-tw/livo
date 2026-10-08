@@ -1,14 +1,16 @@
 import { Database, memberJwt, trustedAdminBinding, type Environment } from '../slack-interact/backend.ts';
 import { DeliveryError, type DeliveryStore, type Job, type Row, deliverJob } from './core.ts';
+import { memberEmailIdentityVerified } from '../slack-notify/core.ts';
 import { qaDeliveryStore } from './qa-backend.ts';
 import { deliverQaJob } from './qa-core.ts';
 
 async function verifiedRecipient(db: Database, memberId: string, teamId: string) {
-  const member = (await db.rows('members', { select: 'id,auth_id,email', id: `eq.${memberId}`, is_active: 'eq.true', limit: '1' }))[0];
+  const member = (await db.rows('members', { select: 'id,auth_id,email,email_identity_verified', id: `eq.${memberId}`, is_active: 'eq.true', limit: '1' }))[0];
   if (!member?.auth_id || (await db.rows('slack_link_preferences', { select: 'member_id', member_id: `eq.${memberId}`, linking_disabled: 'eq.true', limit: '1' })).length) return undefined;
-  const bindings = await db.rows('external_account_bindings', { select: 'id,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id', member_id: `eq.${memberId}`,
+  const bindings = await db.rows('external_account_bindings', { select: 'id,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id,reconfirm_required', member_id: `eq.${memberId}`,
     platform: 'eq.slack', platform_team_id: `eq.${teamId}`, is_verified: 'eq.true', verified_by: 'in.(email,admin)', limit: '2' });
-  if (bindings.length !== 1 || !/^U[A-Z0-9]+$/.test(bindings[0].platform_user_id)) return undefined;
+  if (bindings.length !== 1 || bindings[0].reconfirm_required === true || !/^U[A-Z0-9]+$/.test(bindings[0].platform_user_id)) return undefined;
+  if (bindings[0].verified_by === 'email' && !memberEmailIdentityVerified(member)) return undefined;
   if (bindings[0].verified_by === 'admin' && !(await trustedAdminBinding(db, bindings[0]))) return undefined;
   return { member, binding: bindings[0] };
 }

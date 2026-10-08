@@ -1,5 +1,6 @@
 import { applyReleaseCommand, canonicalReleaseJson, parseReleaseRequest, ReleaseError, RELEASE_ERROR_STATUS, releaseReferenceIds,
   type ReleaseBatch, type ReleaseContext, type ReleaseEvent, type ReleaseQaSource, type ReleaseRequest, type ReleaseResult } from './core.ts';
+import { memberEmailIdentityVerified } from '../slack-notify/core.ts';
 import { parseDeploymentEnvironments } from './environments.ts';
 export interface ReleaseEnvironment { get(name:string):string|undefined }
 type Row=Record<string,any>;
@@ -23,10 +24,10 @@ export function createReleaseService(env:ReleaseEnvironment,token:string,fetcher
     if(!base||!anon||!service)throw new ReleaseError('release_unavailable',503);
     if(!token||token===anon||token===service)throw new ReleaseError('release_unauthorized',401);
     const user=await request('/auth/v1/user');if(typeof user?.id!=='string'||!/^[0-9a-f-]{36}$/i.test(user.id))throw new ReleaseError('release_unauthorized',401);
-    const candidates=await rows('members',{select:'id,role,is_active,auth_id',auth_id:`eq.${user.id}`,is_active:'eq.true',limit:2});
+    const candidates=await rows('members',{select:'id,role,is_active,auth_id,email_identity_verified',auth_id:`eq.${user.id}`,is_active:'eq.true',limit:2});
     if(candidates.length!==1)throw new ReleaseError('release_forbidden',403);
     const identity=slackClaims(token,user.id);
-    if(identity){const features=await rows('system_settings',{select:'value',key:'eq.feature_toggles',limit:1});if(features[0]?.value?.slackActions!==true)throw new ReleaseError('release_forbidden',403);const bindings=await rows('external_account_bindings',{select:'id,verified_by',id:`eq.${identity.bindingId}`,member_id:`eq.${candidates[0].id}`,platform:'eq.slack',platform_team_id:`eq.${identity.teamId}`,platform_user_id:`eq.${identity.userId}`,is_verified:'eq.true',limit:1});if(bindings.length!==1||!['email','admin'].includes(bindings[0].verified_by))throw new ReleaseError('release_forbidden',403);}
+    if(identity){const features=await rows('system_settings',{select:'value',key:'eq.feature_toggles',limit:1});if(features[0]?.value?.slackActions!==true)throw new ReleaseError('release_forbidden',403);const bindings=await rows('external_account_bindings',{select:'id,verified_by,verified_by_member_id,reconfirm_required',id:`eq.${identity.bindingId}`,member_id:`eq.${candidates[0].id}`,platform:'eq.slack',platform_team_id:`eq.${identity.teamId}`,platform_user_id:`eq.${identity.userId}`,is_verified:'eq.true',limit:1});if(bindings.length!==1||bindings[0].reconfirm_required===true||!['email','admin'].includes(bindings[0].verified_by))throw new ReleaseError('release_forbidden',403);if(bindings[0].verified_by==='email'&&!memberEmailIdentityVerified(candidates[0]))throw new ReleaseError('release_forbidden',403);if(bindings[0].verified_by==='admin'){const issuers=await rows('members',{select:'id',id:`eq.${bindings[0].verified_by_member_id}`,role:'eq.super_admin',is_active:'eq.true',limit:1});if(issuers.length!==1)throw new ReleaseError('release_forbidden',403);}}
     return {id:String(candidates[0].id),role:String(candidates[0].role),authId:user.id as string,identity};
   };
   const get=async(id:string):Promise<ReleaseBatch>=>{const list=await rows('release_batches',{select:'data',id:`eq.${id}`,limit:1});if(!list[0])throw new ReleaseError('release_not_found',404);return list[0].data;};

@@ -226,7 +226,7 @@ async function createLogin(c: Context<AppContext>, body: ManageMemberBody): Prom
     const results = await env.DB.batch([
       ...login.statements,
       env.DB
-        .prepare('UPDATE members SET email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4 RETURNING *')
+        .prepare('UPDATE members SET email_identity_verified = CASE WHEN email IS ?1 THEN email_identity_verified ELSE 0 END, email = ?1, auth_id = ?2 WHERE id = ?3 AND workspace_id = ?4 RETURNING *')
         .bind(email, login.authUserId, member.id, ws),
     ]);
     const last = results[results.length - 1];

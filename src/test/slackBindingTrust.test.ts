@@ -32,11 +32,13 @@ describe('manual Slack mappings need an active owner as issuer', () => {
   it.each([
     ['email binding', binding({}), [owner], 'UEXAMPLE'],
     ['owner-made mapping', binding({ verified_by: 'admin', verified_by_member_id: owner.id }), [owner], 'UEXAMPLE'],
+    ['paused owner mapping', binding({ verified_by: 'admin', verified_by_member_id: owner.id, reconfirm_required: true }), [owner], undefined],
+    ['paused email mapping', binding({ reconfirm_required: true }), [owner], undefined],
     ['legacy mapping without issuer', binding({ verified_by: 'admin' }), [owner], undefined],
     ['plain-admin mapping', binding({ verified_by: 'admin', verified_by_member_id: 'member-admin' }), [owner, { id: 'member-admin', role: 'admin', is_active: true }], undefined],
     ['mapping by a deactivated owner', binding({ verified_by: 'admin', verified_by_member_id: owner.id }), [{ ...owner, is_active: false }], undefined],
   ])('personal delivery resolves the recipient for %s accordingly', async (_label, row, issuers, expected) => {
-    database({ members: [{ id: 'member-example', auth_id: 'auth-example', role: 'member', is_active: true }, ...issuers], external_account_bindings: [row] });
+    database({ members: [{ id: 'member-example', email_identity_verified: true, auth_id: 'auth-example', role: 'member', is_active: true }, ...issuers], external_account_bindings: [row] });
     expect(await deliveryStore(env).binding('member-example', 'TEXAMPLE')).toBe(expected);
   });
 
@@ -58,7 +60,7 @@ describe('manual Slack mappings need an active owner as issuer', () => {
       release_events: [{ workspace_id: 'default', id: 'event-1', operation: 'create', version: 1, revision: 1 }],
       external_account_bindings: [binding({ id: 'binding-1', verified_by: 'admin', verified_by_member_id: issuer })],
       projects: [{ id: 'project-1', name: 'Example', line_id: 'line-1', is_archived: false }],
-      members: [{ id: 'member-example', name: 'Example member', role: 'member', is_active: true }, ...issuers],
+      members: [{ id: 'member-example', name: 'Example member', role: 'member', is_active: true, email_identity_verified: true, auth_id: 'auth-example' }, ...issuers],
     });
     const state = await releaseDeliveryStore(env).snapshot({ id: 'job-1', event_id: 'event-1', batch_id: 'batch-1', workspace_id: 'default', attempts: 0 });
     expect(state?.publisherUser).toBe(published ? 'UEXAMPLE' : undefined);
@@ -74,14 +76,14 @@ describe('manual Slack mappings need an active owner as issuer', () => {
 });
 
 describe('Slack settings for account mappings', () => {
-  const people = [{ id: 'member-owner', name: 'Example Owner', role: 'super_admin', is_active: true, auth_id: 'auth-owner' },
-    { id: 'member-admin', name: 'Example Admin', role: 'admin', is_active: true, auth_id: 'auth-admin' },
-    { id: 'member-example', name: 'Example Member', role: 'member', is_active: true, auth_id: 'auth-member' }];
+  const people = [{ id: 'member-owner', name: 'Example Owner', role: 'super_admin', is_active: true, email_identity_verified: true, auth_id: 'auth-owner' },
+    { id: 'member-admin', name: 'Example Admin', role: 'admin', is_active: true, email_identity_verified: true, auth_id: 'auth-admin' },
+    { id: 'member-example', name: 'Example Member', role: 'member', is_active: true, email_identity_verified: true, auth_id: 'auth-member' }];
   function config(caller: string, bindings: Row[] = []) {
     const writes: { url: URL; method: string; body: Row }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input)), table = url.pathname.split('/').pop()!;
-      if (url.hostname === 'slack.com') return Response.json({ ok: true, members: [{ id: 'UPERSON', name: 'person', profile: { email: 'person@example.org' } }] });
+      if (url.hostname === 'slack.com') return Response.json({ ok: true, members: [{ id: 'UPERSON', name: 'person', profile: { email: 'person@example.org', email_identity_verified: true } }] });
       if (url.pathname === '/auth/v1/user') return Response.json({ id: caller });
       if (init?.method && init.method !== 'GET') { writes.push({ url, method: init.method, body: JSON.parse(String(init.body)) }); return Response.json([]); }
       if (table === 'system_settings') return Response.json([{ value: url.searchParams.get('key') === 'eq.feature_toggles' ? { slackActions: true } : null }]);

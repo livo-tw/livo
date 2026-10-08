@@ -1,4 +1,5 @@
 import { appBaseUrl, type Env } from './env';
+import { trustedSlackRecipients } from './slackBindingTrust';
 import { approvalsEnabled } from './featureToggles';
 import { checkProfessional } from './license';
 import { resolveSlackToken } from './functions/slack';
@@ -87,8 +88,7 @@ export async function deliverApprovalJob(env:Env,job:ApprovalDeliveryJob,fetcher
       const member=await env.DB.prepare('SELECT id,role,is_active FROM members WHERE workspace_id=? AND id=?').bind(job.workspace_id,job.recipient_id).first<Row>();
       if(!member?.is_active||(request.status==='pending'?!canActOnApproval(request,{id:member.id,role:member.role,active:true}):request.requested_by!==member.id)){
         await finish(env,job,'skipped',{error:'recipient_changed'});return 'skipped';}
-      const bindings=await env.DB.prepare("SELECT platform_user_id FROM external_account_bindings WHERE workspace_id=? AND member_id=? AND platform='slack' AND platform_team_id=? AND is_verified=1 AND verified_by IN ('email','admin') LIMIT 2")
-        .bind(job.workspace_id,job.recipient_id,job.team_id).all<{platform_user_id:string}>();
+      const bindings={results:await trustedSlackRecipients(env,job.workspace_id,job.recipient_id!,job.team_id)};
       if(bindings.results.length!==1||!/^U[A-Z0-9]+$/.test(bindings.results[0].platform_user_id))throw new DeliveryError('verified_binding_unavailable');
       const user=bindings.results[0].platform_user_id,info=await slack('users.info',{user});verifiedUser=user;
       if(!info.user||info.user.id!==user||info.user.deleted||info.user.is_bot||info.user.team_id&&info.user.team_id!==job.team_id)throw new DeliveryError('recipient_unavailable');
@@ -112,8 +112,7 @@ export async function deliverApprovalJob(env:Env,job:ApprovalDeliveryJob,fetcher
       if(currentConfig.dmEnabled!==true||(Object.hasOwn(currentConfig,'dmMemberIds')&&(!Array.isArray(currentConfig.dmMemberIds)||!currentConfig.dmMemberIds.includes(job.recipient_id)))
         ||!live?.is_active||(latest.status==='pending'?!canActOnApproval(liveRequest,{id:live.id,role:live.role,active:true}):latest.requested_by!==live.id)){
         await finish(env,job,'skipped',{error:'recipient_changed'});return 'skipped';}
-      const bindings=await env.DB.prepare("SELECT platform_user_id FROM external_account_bindings WHERE workspace_id=? AND member_id=? AND platform='slack' AND platform_team_id=? AND is_verified=1 AND verified_by IN ('email','admin') LIMIT 2")
-        .bind(job.workspace_id,job.recipient_id,job.team_id).all<{platform_user_id:string}>();
+      const bindings={results:await trustedSlackRecipients(env,job.workspace_id,job.recipient_id!,job.team_id)};
       if(bindings.results.length!==1||bindings.results[0].platform_user_id!==verifiedUser){
         await finish(env,job,'skipped',{error:'binding_changed'});return 'skipped';}
     }

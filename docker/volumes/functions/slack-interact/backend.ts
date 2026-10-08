@@ -66,7 +66,7 @@ export class Database {
  */
 export async function trustedAdminBinding(db: Database, binding: Row | undefined): Promise<boolean> {
   const issuer = binding?.verified_by_member_id;
-  if (binding?.is_verified !== true || binding.verified_by !== 'admin' || typeof issuer !== 'string' || !/^[\w-]{1,200}$/.test(issuer)) return false;
+  if (binding?.is_verified !== true || binding.reconfirm_required === true || binding.verified_by !== 'admin' || typeof issuer !== 'string' || !/^[\w-]{1,200}$/.test(issuer)) return false;
   const rows = await db.rows('members', { select: 'id,role,is_active', id: `eq.${issuer}`, role: 'eq.super_admin', is_active: 'eq.true', limit: '1' });
   return rows.length === 1 && rows[0].id === issuer && rows[0].role === 'super_admin' && rows[0].is_active === true;
 }
@@ -143,6 +143,7 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       if (!info || info.deleted || info.is_bot || info.is_restricted || info.is_ultra_restricted || (info.team_id && info.team_id !== team)) fail(NO_ACCOUNT);
       let binding = (await admin.rows('external_account_bindings', { select: '*', platform: 'eq.slack',
         platform_user_id: `eq.${user}`, platform_team_id: `eq.${team}`, limit: '1' }))[0];
+      if (binding?.reconfirm_required === true) fail(NO_ACCOUNT);
       let member: Row | undefined;
       if (binding?.is_verified && binding.verified_by === 'admin') {
         // An untrusted manual mapping is no mapping: the Slack email must prove

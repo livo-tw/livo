@@ -119,6 +119,27 @@ export function createInvitationBackend(admin: SupabaseClient, env: InvitationEn
         return await rpc('livo_member_invitation_discard_auth', { p_confirmation_id: proof.confirmationId, p_token_hash: proof.tokenHash, p_auth_id: id }) === true;
       } catch { console.error('[member-invitations] login cleanup unavailable'); return false; }
     },
+    async createDirectAuth(email, password, name, proof) {
+      // email_confirm permits password login; the service-written trust marker
+      // deliberately records that this flow did not verify mailbox ownership.
+      const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true,
+        user_metadata: { full_name: name }, app_metadata: { email_identity_verified: false,
+          livo_member_invitation_direct: { invitation_id: proof.invitationId, token_hash: proof.tokenHash, created_state: 'pending_member_attachment' } } });
+      if (error || !data.user) {
+        if (error?.code === 'email_exists' || error?.code === 'user_already_exists') throw new InvitationFailure('email_taken', 409);
+        if (error?.code === 'weak_password') throw new InvitationFailure('password_invalid');
+        throw new InvitationFailure('server_error', 503);
+      }
+      return data.user.id;
+    },
+    async acceptDirect(id, hash, authId, memberId, name, email) {
+      const result = await rpc('livo_member_invitation_accept_direct', { p_invitation_id: id, p_token_hash: hash,
+        p_auth_id: authId, p_member_id: memberId, p_name: name, p_email: email });
+      // A malformed success response is an unknown attachment, never a joined claim.
+      if (!result || typeof result !== 'object' || Array.isArray(result)) throw new InvitationFailure('server_error', 503);
+      const ack = result as Record<string, unknown>;
+      if (ack.success !== true || ack.memberId !== memberId) throw new InvitationFailure('server_error', 503);
+    },
     async session(email, password) {
       const client = createClient(env.url, env.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
       const { data, error } = await client.auth.signInWithPassword({ email, password });

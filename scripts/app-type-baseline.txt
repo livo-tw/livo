@@ -1,0 +1,339 @@
+src/components/ActivityLogView.tsx: TS6133: 'List' is declared but its value is never read.
+src/components/BoardView.tsx: TS6133: 'setSelectedTask' is declared but its value is never read.
+src/components/BoardView.tsx: TS6133: 'toggleArr' is declared but its value is never read.
+src/components/BulkActionBar.tsx: TS6196: 'Task' is declared but never used.
+src/components/ColumnConfigDropdown.tsx: TS6196: 'ColumnDef' is declared but never used.
+src/components/CreateProjectModal.tsx: TS6133: 'isLockedBy' is declared but its value is never read.
+src/components/CreateProjectModal.tsx: TS6133: 'trackEditing' is declared but its value is never read.
+src/components/CreateProjectModal.tsx: TS6133: 'useCallback' is declared but its value is never read.
+src/components/CreateTaskModal.tsx: TS2322: Type 'RequiredFieldsConfig' is not assignable to type 'Record<string, boolean>'.
+src/components/CreateTaskModal.tsx: TS2352: Conversion of type 'RequiredFieldsConfig' to type 'Record<string, boolean>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/components/CustomFieldManager.tsx: TS6133: 'Calendar' is declared but its value is never read.
+src/components/CustomFieldManager.tsx: TS6133: 'GripVertical' is declared but its value is never read.
+src/components/DepartmentFilter.tsx: TS6133: 'deptColors' is declared but its value is never read.
+src/components/GanttView.tsx: TS2345: Argument of type 'Task[]' is not assignable to parameter of type 'EnrichedTask[]'.
+src/components/GanttView.tsx: TS6133: 'HEADER_H' is declared but its value is never read.
+src/components/ListView.tsx: TS6133: 'today' is declared but its value is never read.
+src/components/MultiSelectDropdown.tsx: TS6133: 'someSelected' is declared but its value is never read.
+src/components/ProductLineManageModal.tsx: TS6133: 'trackEditing' is declared but its value is never read.
+src/components/RequiredFieldsSettings.tsx: TS2344: Type 'typeof supabase.from<"system_settings">' does not satisfy the constraint '(...args: any) => any'.
+src/components/RequiredFieldsSettings.tsx: TS2635: Type '{ <TableName extends "tasks" | "task_checks" | "task_todos" | "members" | "projects" | "statuses" | "system_settings" | "task_specs" | "status_logs" | "activity_logs" | "status_transition_rules" | ... 13 more ... | "team_settings", Table extends { ...; }[TableName]>(relation: TableName): PostgrestQueryBuilder<...>; ...' has no signatures for which the type argument list is applicable.
+src/components/RichTextEditor.tsx: TS2322: Type '() => { onStart: (props: SuggestionProps) => void; onUpdate: (props: SuggestionProps) => void; onKeyDown: (props: SuggestionProps) => boolean; onExit: () => void; }' is not assignable to type '() => { onBeforeStart?: (props: SuggestionProps<any, MentionNodeAttrs>) => void; onStart?: (props: SuggestionProps<any, MentionNodeAttrs>) => void; onBeforeUpdate?: (props: SuggestionProps<...>) => void; onUpdate?: (props: SuggestionProps<...>) => void; onExit?: (props: SuggestionProps<...>) => void; onKeyDown?: (pr...'.
+src/components/RichTextEditor.tsx: TS2322: Type '({ editor, range, props }: { editor: Editor; range: { from: number; to: number; }; props: { id: string; label: string; }; }) => void' is not assignable to type '(props: { editor: Editor; range: Range; props: MentionNodeAttrs; }) => void'.
+src/components/RichTextEditor.tsx: TS6133: 'Columns3' is declared but its value is never read.
+src/components/RichTextEditor.tsx: TS6133: 'Rows3' is declared but its value is never read.
+src/components/RichTextEditor.tsx: TS6133: 'minimal' is declared but its value is never read.
+src/components/RichTextEditor.tsx: TS6133: 'options' is declared but its value is never read.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'enabled' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'frequency' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'hour' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'include_assigned' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'include_review' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2339: Property 'weekday' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/SlackNotifyPreferences.tsx: TS2769: No overload matches this call.
+src/components/SlackNotifyPreferences.tsx: TS2769: No overload matches this call.
+src/components/StatusManageView.tsx: TS6133: 'trackEditing' is declared but its value is never read.
+src/components/SystemAdminView.tsx: TS6133: 'permissions' is declared but its value is never read.
+src/components/TaskCard.tsx: TS6133: 'ApprovalConfirmPayload' is declared but its value is never read.
+src/components/TaskCard.tsx: TS6133: 'Lock' is declared but its value is never read.
+src/components/TeamManageView.tsx: TS2367: This comparison appears to be unintentional because the types 'TeamManageTab' and '"approval"' have no overlap.
+src/components/ThemeSelector.tsx: TS6133: 'ThemeKey' is declared but its value is never read.
+src/components/WorkReportView.tsx: TS2741: Property 'reportType' is missing in type '{ history: WorkReport[]; onSelect: (report: WorkReport) => void; }' but required in type 'WorkReportHistoryProps'.
+src/components/auto-report/ReportConfigForm.tsx: TS6133: 'reportToStorage' is declared but its value is never read.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'custom_template' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'custom_template' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'enabled' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'hour' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'minute' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'scope' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'scope_project_ids' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'send_channel' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'send_target' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'template_key' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2339: Property 'weekday' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/auto-report/useAutoReportSettings.ts: TS2769: No overload matches this call.
+src/components/auto-report/useAutoReportSettings.ts: TS2769: No overload matches this call.
+src/components/board/BoardHeader.tsx: TS6133: 'ChevronDown' is declared but its value is never read.
+src/components/board/BoardHeader.tsx: TS6133: 'ChevronRight' is declared but its value is never read.
+src/components/board/BoardHeader.tsx: TS6133: 'Trophy' is declared but its value is never read.
+src/components/board/BoardHeader.tsx: TS6196: 'Status' is declared but never used.
+src/components/board/BoardProjectRow.tsx: TS6133: 'useCallback' is declared but its value is never read.
+src/components/board/BoardProjectRow.tsx: TS6133: 'useMemo' is declared but its value is never read.
+src/components/create-task/TaskFormFields.tsx: TS2769: No overload matches this call.
+src/components/create-task/TaskFormFields.tsx: TS2769: No overload matches this call.
+src/components/create-task/TaskFormFields.tsx: TS2769: No overload matches this call.
+src/components/create-task/TaskFormFields.tsx: TS2769: No overload matches this call.
+src/components/create-task/useCreateTaskForm.ts: TS2769: No overload matches this call.
+src/components/create-task/useTemplateOperations.ts: TS6133: 'taskChecks' is declared but its value is never read.
+src/components/create-task/useTemplateOperations.ts: TS6133: 'taskTodos' is declared but its value is never read.
+src/components/create-task/useTemplateOperations.ts: TS6133: 'updateTaskTemplate' is declared but its value is never read.
+src/components/dashboard/DashboardTeamWorkload.tsx: TS6133: 'getDwellColor' is declared but its value is never read.
+src/components/gantt/GanttDependencyArrows.tsx: TS6133: 'taskMap' is declared but its value is never read.
+src/components/gantt/GanttTaskBar.tsx: TS6196: 'DragInfo' is declared but never used.
+src/components/gantt/GanttTaskBar.tsx: TS6196: 'ViewMode' is declared but never used.
+src/components/gantt/GanttTimelineHeader.tsx: TS6133: 'CELL_WIDTHS' is declared but its value is never read.
+src/components/gantt/GanttToolbar.tsx: TS6196: 'ProductLine' is declared but never used.
+src/components/member-manage/useMemberManage.ts: TS6133: 'useCallback' is declared but its value is never read.
+src/components/reports/ReportSendConfig.tsx: TS2322: Type 'ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>' is not assignable to type 'ComponentType<{ size?: number; className?: string; }>'.
+src/components/reports/ReportSendConfig.tsx: TS2322: Type 'ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>' is not assignable to type 'ComponentType<{ size?: number; className?: string; }>'.
+src/components/reports/ReportSendConfig.tsx: TS2322: Type 'ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>' is not assignable to type 'ComponentType<{ size?: number; className?: string; }>'.
+src/components/reports/ReportSendConfig.tsx: TS2322: Type 'ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>' is not assignable to type 'ComponentType<{ size?: number; className?: string; }>'.
+src/components/reports/ReportSendConfig.tsx: TS2352: Conversion of type 'ChannelConfig' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/components/reports/ReportSendConfig.tsx: TS6196: 'ChannelConfig' is declared but never used.
+src/components/reports/ReportSendPanel.tsx: TS2352: Conversion of type 'ChannelConfig' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/components/system-admin/AdminBackupSection.tsx: TS2769: No overload matches this call.
+src/components/task-detail/TaskDetailContent.tsx: TS2345: Argument of type '(v: any) => boolean' is not assignable to parameter of type 'boolean'.
+src/components/task-detail/TaskDetailContent.tsx: TS6133: 'allDepsFinished' is declared but its value is never read.
+src/components/task-detail/TaskDetailContent.tsx: TS6133: 'useMemo' is declared but its value is never read.
+src/components/task-detail/TaskDetailContent.tsx: TS7006: Parameter 'v' implicitly has an 'any' type.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'ChevronRight' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'customFieldValues' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'dragFieldIdx' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'hasFeature' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'project' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'setSidebarFieldOrder' is declared but its value is never read.
+src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'upsertCustomFieldValue' is declared but its value is never read.
+src/components/task-detail/TaskSpecTab.tsx: TS6133: 'useIsMobile' is declared but its value is never read.
+src/components/task-detail/TaskSubtasksTab.tsx: TS2339: Property 'updateTaskInDb' does not exist on type '{ ConfirmDialog: ReactPortal; sidebarFieldOrder: string[]; setSidebarFieldOrder: Dispatch<SetStateAction<string[]>>; isLayoutMode: boolean; ... 169 more ...; handleAdvisorySubmitApproval: () => Promise<...>; }'.
+src/components/task-detail/hooks/useTaskActions.ts: TS6133: 'assignee' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskActions.ts: TS7018: Object literal's property 'parentTaskId' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS2345: Argument of type '(prev: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS2345: Argument of type '(prev: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS6133: 'allTasks' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskAttachments.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS2345: Argument of type '(prev: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskComments.ts: TS2345: Argument of type '(prev: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskComments.ts: TS2345: Argument of type '(prev: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskComments.ts: TS6133: 'allTasks' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskComments.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskDetail.ts: TS2322: Type '(template: Omit<TaskTemplate, "id" | "createdAt" | "updatedAt">) => Promise<TaskTemplate>' is not assignable to type '(template: Record<string, unknown>) => Promise<void>'.
+src/components/task-detail/hooks/useTaskDetail.ts: TS2352: Conversion of type '(SelectQueryError<"column 'tag_id' does not exist on 'tasks'."> | SelectQueryError<"column 'tag_id' does not exist on 'task_checks'."> | ... 22 more ... | SelectQueryError<...>)[]' to type '{ tag_id: string; }[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/components/task-detail/hooks/useTaskDetail.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskDetail.ts: TS6133: 'useState' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskPresence.ts: TS2352: Conversion of type '{ presence_ref: string; }' to type 'PresencePayload' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2345: Argument of type '(prev2: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2345: Argument of type '(prev2: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2345: Argument of type '(prev2: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2345: Argument of type '(prev2: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2345: Argument of type '(prev2: any) => any' is not assignable to parameter of type 'Task[]'.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS2769: No overload matches this call.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS6133: 'allTasks' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS6133: 'users' is declared but its value is never read.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 'prev2' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 'prev2' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 'prev2' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 'prev2' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 'prev2' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/task-detail/hooks/useTaskSidebarFields.ts: TS7006: Parameter 't' implicitly has an 'any' type.
+src/components/ui/badges.tsx: TS6133: 'placeholder' is declared but its value is never read.
+src/components/ui/calendar.tsx: TS6133: '_props' is declared but its value is never read.
+src/components/ui/calendar.tsx: TS6133: '_props' is declared but its value is never read.
+src/components/work-report/WorkReportEditor.tsx: TS6133: 'anchor' is declared but its value is never read.
+src/components/work-report/WorkReportEditor.tsx: TS6133: 'shiftAnchor' is declared but its value is never read.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'content' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'content' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'content' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'content' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'content' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'custom_template' does not exist on type 'SelectQueryError<"column 'template_key' does not exist on 'tasks'."> | SelectQueryError<"column 'template_key' does not exist on 'task_checks'."> | ... 22 more ... | SelectQueryError<...>'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'custom_template' does not exist on type 'SelectQueryError<"column 'template_key' does not exist on 'tasks'."> | SelectQueryError<"column 'template_key' does not exist on 'task_checks'."> | ... 22 more ... | SelectQueryError<...>'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'generated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'generated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'generated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'is_edited' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'is_edited' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'is_edited' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_end' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_end' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_end' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_start' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_start' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'period_start' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'template_key' does not exist on type 'SelectQueryError<"column 'template_key' does not exist on 'tasks'."> | SelectQueryError<"column 'template_key' does not exist on 'task_checks'."> | ... 22 more ... | SelectQueryError<...>'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'title' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'title' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'title' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'updated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'updated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'updated_at' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'user_id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'user_id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2339: Property 'user_id' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/components/work-report/useWorkReport.ts: TS2769: No overload matches this call.
+src/context/AppProvider.tsx: TS6133: 'useCallback' is declared but its value is never read.
+src/context/LicenseContext.tsx: TS2345: Argument of type '"activate_license"' is not assignable to parameter of type '"livo_set_task_reminder" | "livo_set_task_deadline"'.
+src/context/LicenseContext.tsx: TS2345: Argument of type '"check_license"' is not assignable to parameter of type '"livo_set_task_reminder" | "livo_set_task_deadline"'.
+src/context/LicenseContext.tsx: TS2345: Argument of type '"reset_license"' is not assignable to parameter of type '"livo_set_task_reminder" | "livo_set_task_deadline"'.
+src/context/hooks/useConfigSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type 'CustomFieldValueRow'.
+src/context/hooks/useConfigSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type 'TaskDependencyRow'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type 'TaskRow'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type 'TaskRow'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ attachment_name: string; attachment_size: number; attachment_url: string; content: string; created_at: string; id: string; task_id: string; user_id: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ attachment_name: string; attachment_size: number; attachment_url: string; content: string; created_at: string; id: string; task_id: string; user_id: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ background: string; id: string; notes: string; requirement: string; task_id: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ background: string; id: string; notes: string; requirement: string; task_id: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ id: string; is_done: boolean; version: number; sort_order: number; task_id: string; text: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ id: string; is_done: boolean; version: number; sort_order: number; task_id: string; text: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ id: string; is_done: boolean; version: number; sort_order: number; task_id: string; text: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2345: Argument of type '{ [key: string]: any; }' is not assignable to parameter of type '{ id: string; is_done: boolean; version: number; sort_order: number; task_id: string; text: string; }'.
+src/context/hooks/useHighFreqSubs.ts: TS2352: Conversion of type '({ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; })[]' to type 'TaskTagRow[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/context/hooks/useHighFreqSubs.ts: TS2769: No overload matches this call.
+src/context/hooks/useHighFreqSubs.ts: TS7018: Object literal's property 'deployments' implicitly has an 'any[]' type.
+src/context/hooks/useInitialLoad.ts: TS2345: Argument of type '(row: CustomFieldRow) => CustomField' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useInitialLoad.ts: TS2345: Argument of type '(row: CustomFieldValueRow) => TaskCustomFieldValue' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useInitialLoad.ts: TS2345: Argument of type '(row: TagRow) => Tag' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useInitialLoad.ts: TS2345: Argument of type '(row: TaskDependencyRow) => TaskDependency' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useInitialLoad.ts: TS2345: Argument of type '(row: TaskTemplateRow) => TaskTemplate' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useInitialLoad.ts: TS2352: Conversion of type '({ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; })[]' to type 'TaskTagRow[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS2769: No overload matches this call.
+src/context/hooks/useInitialLoad.ts: TS7018: Object literal's property 'user' implicitly has an 'any' type.
+src/context/hooks/useProjectState.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useProjectState.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useProjectState.ts: TS2769: No overload matches this call.
+src/context/hooks/useProjectState.ts: TS2769: No overload matches this call.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'custom_template' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'custom_template' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'hour' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'hour' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'minute' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'report_type' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'template_key' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2339: Property 'weekday' does not exist on type '{ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; }'.
+src/context/hooks/useSideEffects.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useSideEffects.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useSideEffects.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useSideEffects.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useSideEffects.ts: TS2769: No overload matches this call.
+src/context/hooks/useSideEffects.ts: TS2769: No overload matches this call.
+src/context/hooks/useSideEffects.ts: TS2769: No overload matches this call.
+src/context/hooks/useSideEffects.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskCRUD.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2345: Argument of type '(row: CustomFieldRow) => CustomField' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useTaskQueries.ts: TS2345: Argument of type '(row: CustomFieldValueRow) => TaskCustomFieldValue' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useTaskQueries.ts: TS2345: Argument of type '(row: TagRow) => Tag' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useTaskQueries.ts: TS2345: Argument of type '(row: TaskDependencyRow) => TaskDependency' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useTaskQueries.ts: TS2345: Argument of type '(row: TaskTemplateRow) => TaskTemplate' is not assignable to parameter of type '(value: { completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; ... 7 more ...; sort_order: number; } | ... 22 more ... | { ...; }, index: number, array: ({ ...; } | ... 23 more ......'.
+src/context/hooks/useTaskQueries.ts: TS2352: Conversion of type '({ completed_at: string; completed_count: number; id: string; is_active: boolean; name: string; pending_count: number; started_at: string; } | { auth_id: string; avatar: string; color: string; email: string; ... 6 more ...; sort_order: number; } | ... 22 more ... | { ...; })[]' to type 'TaskTagRow[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskQueries.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2589: Type instantiation is excessively deep and possibly infinite.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useTaskRelations.ts: TS2769: No overload matches this call.
+src/context/hooks/useUIState.ts: TS2344: Type 'typeof supabase.from<"system_settings">' does not satisfy the constraint '(...args: any) => any'.
+src/context/hooks/useUIState.ts: TS2352: Conversion of type 'RequiredFieldsConfig' to type 'Record<string, boolean>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/context/hooks/useUIState.ts: TS2635: Type '{ <TableName extends "tasks" | "task_checks" | "task_todos" | "members" | "projects" | "statuses" | "system_settings" | "task_specs" | "status_logs" | "activity_logs" | "status_transition_rules" | ... 13 more ... | "team_settings", Table extends { ...; }[TableName]>(relation: TableName): PostgrestQueryBuilder<...>; ...' has no signatures for which the type argument list is applicable.
+src/context/mappers.ts: TS2322: Type 'string' is not assignable to type '"finish_to_start"'.
+src/context/mappers.ts: TS6133: 'TaskDeployment' is declared but its value is never read.
+src/hooks/useListColumns.tsx: TS6133: 'priorityConfig' is declared but its value is never read.
+src/hooks/useReportSender.ts: TS2352: Conversion of type 'ChannelConfig' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/hooks/useReportSender.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/hooks/useReportSender.ts: TS7018: Object literal's property 'logId' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS6133: '_subscribeCb' is declared but its value is never read.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'error' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'session' implicitly has an 'any' type.
+src/integrations/supabase/mockClient.ts: TS7018: Object literal's property 'user' implicitly has an 'any' type.
+src/integrations/supabase/seedData.ts: TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/integrations/supabase/seedData.ts: TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/integrations/supabase/seedData.ts: TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/integrations/supabase/seedData.ts: TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/integrations/supabase/seedData.ts: TS2538: Type 'unknown' cannot be used as an index type.
+src/integrations/supabase/seedData.ts: TS2538: Type 'unknown' cannot be used as an index type.
+src/integrations/supabase/seedData.ts: TS2538: Type 'unknown' cannot be used as an index type.
+src/integrations/supabase/seedData.ts: TS2538: Type 'unknown' cannot be used as an index type.
+src/integrations/supabase/seedData.ts: TS2538: Type 'unknown' cannot be used as an index type.
+src/integrations/supabase/seedData.ts: TS6133: 'ALL_MEMBERS' is declared but its value is never read.
+src/integrations/supabase/seedData.ts: TS6133: 'MEMBER_NAMES' is declared but its value is never read.
+src/integrations/supabase/seedData.ts: TS6133: 'STATUS_NAMES' is declared but its value is never read.
+src/integrations/supabase/seedData.ts: TS6133: 'uuid' is declared but its value is never read.
+src/lib/approvalQueries.ts: TS6133: 'userId' is declared but its value is never read.
+src/lib/department.ts: TS6133: 'DEPT_SORT_ORDER' is declared but its value is never read.
+src/lib/department.ts: TS6133: 'NAME_ORDER' is declared but its value is never read.
+src/lib/department.ts: TS6133: 'User' is declared but its value is never read.
+src/lib/license.ts: TS7018: Object literal's property 'email' implicitly has an 'any' type.
+src/lib/license.ts: TS7018: Object literal's property 'expiresAt' implicitly has an 'any' type.
+src/lib/license.ts: TS7018: Object literal's property 'expiryStr' implicitly has an 'any' type.
+src/lib/license.ts: TS7018: Object literal's property 'signature' implicitly has an 'any' type.
+src/lib/license.ts: TS7018: Object literal's property 'tierCode' implicitly has an 'any' type.
+src/lib/slackNotify.ts: TS6133: 'SlackBlock' is declared but its value is never read.
+src/lib/slackNotify.ts: TS6192: All imports in import declaration are unused.
+src/lib/workspaceQuota.ts: TS2345: Argument of type '"check_license"' is not assignable to parameter of type '"livo_set_task_reminder" | "livo_set_task_deadline"'.
+src/pages/Index.tsx: TS2322: Type '{ onClose: () => void; }' is not assignable to type 'IntrinsicAttributes'.
+src/pages/Index.tsx: TS6133: 'isResizing' is declared but its value is never read.
+src/pages/SeedPage.tsx: TS2304: Cannot find name 'SUPABASE_URL'.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS2769: No overload matches this call.
+src/pages/SeedPage.tsx: TS6133: 'taskCount' is declared but its value is never read.
+src/test/setup.ts: TS7018: Object literal's property 'onchange' implicitly has an 'any' type.

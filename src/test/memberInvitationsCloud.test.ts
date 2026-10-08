@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mintMemberInvitationToken, parseMemberInvitationToken, hashMemberInvitationToken } from '../lib/memberInvitationsCore';
 
 type Invitation = {
   id: string; role: string; jobTitle: string; isQaAdmin: boolean;
@@ -43,9 +44,10 @@ const fixtureModulePath = '../../scripts/lib/member-invitations-d1-fixture.mjs';
 const { createMemberInvitationsFixture } = await import(fixtureModulePath) as {
   createMemberInvitationsFixture: () => Promise<Fixture>;
 };
-let fixture: Fixture, ownerJwt: string, mail: Mail[], deliveryStatus: number;
-let deliveryGate: Promise<void> | null;
-let providerEffect: (() => void) | null;
+// Use the canonical name-only address, keeping Worker globals out of frontend types.
+const jiraModulePath = '../../worker/src/functions/jiraCsv.ts';
+const { placeholderEmail } = await import(jiraModulePath) as { placeholderEmail: (memberId: string) => string };
+let fixture: Fixture, ownerJwt: string, mail: Mail[];
 
 const errorCode = (reply: Reply) => reply.body.code ?? (typeof reply.body.error === 'string' ? reply.body.error : reply.body.error?.code);
 const call = (body: Record<string, unknown>, bearer = '') => fixture.call(body, bearer);
@@ -60,20 +62,22 @@ const create = async (grant: Record<string, unknown> = {}, bearer = ownerJwt) =>
   expect(new URLSearchParams(url.hash.slice(1)).get('invite') === reply.body.inviteToken).toBe(true);
   return { invitation: reply.body.invitation!, token: reply.body.inviteToken! };
 };
-const confirmationFromMail = (index = mail.length - 1) => {
-  const links = [...mail[index].html.matchAll(/href="([^"]+)"/g)].map(match => new URL(match[1].replace(/&amp;/g, '&')));
-  const link = links.find(url => url.pathname === '/demo/join' && new URLSearchParams(url.hash.slice(1)).has('confirmation'));
-  expect(Boolean(link)).toBe(true);
-  expect(link?.origin).toBe('https://app.example.com');
-  expect(link?.search).toBe('');
-  return new URLSearchParams(link!.hash.slice(1)).get('confirmation')!;
-};
+// Historical sent proofs are seeded explicitly: the retired endpoint creates no new proof or mail.
+const sqlText = (value: string) => "'" + value.replace(/'/g, "''") + "'";
 const confirm = async (inviteToken: string, email = 'new@example.com', name = 'Example Newcomer') => {
-  const reply = await call({ action: 'request_confirmation', inviteToken, email, name });
-  expect(reply.status).toBe(200);
-  expect(reply.body.sent).toBe(true);
-  return confirmationFromMail();
+  const scope = parseMemberInvitationToken(inviteToken, 'invite')!;
+  const id = crypto.randomUUID();
+  const token = mintMemberInvitationToken('confirmation', scope.workspaceId, id);
+  const hash = await hashMemberInvitationToken(token);
+  const now = new Date().toISOString();
+  const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  fixture.exec(`INSERT INTO member_invitation_confirmations
+    (workspace_id,id,invitation_id,token_hash,name,email,created_at,expires_at,send_state,sent_at)
+    VALUES(${[scope.workspaceId,id,scope.id,hash,name.trim(),email.trim().toLowerCase(),now,expiry,'sent',now].map(sqlText).join(',')});`);
+  return token;
 };
+const join = (inviteToken: string, extra: Record<string, unknown> = {}) =>
+  call({ action: 'accept_invite', inviteToken, name: 'Example Newcomer', email: 'new@example.com', password: 'synthetic-valid-password', ...extra });
 const accept = (confirmationToken: string, extra: Record<string, unknown> = {}) =>
   call({ action: 'accept', confirmationToken, password: 'synthetic-valid-password', ...extra });
 const manage = (body: Record<string, unknown>) => fixture.call(body, ownerJwt, { url: 'https://api.example.com/api/functions/manage-member' });
@@ -94,16 +98,11 @@ const expectUnjoined = () => {
 
 beforeEach(async () => {
   mail = [];
-  deliveryStatus = 200;
-  deliveryGate = null;
-  providerEffect = null;
   vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const target = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
     if (target !== 'https://api.resend.com/emails') throw new Error('Unexpected external request in isolated invitation test');
     mail.push(JSON.parse(String(init?.body)) as Mail);
-    if (deliveryGate) await deliveryGate;
-    providerEffect?.();
-    return Response.json({ id: 'synthetic-delivery' }, { status: deliveryStatus });
+    return Response.json({ id: 'synthetic-delivery' });
   }));
   fixture = await createMemberInvitationsFixture();
   ownerJwt = await fixture.jwt();
@@ -116,7 +115,190 @@ afterEach(() => {
 });
 
 describe('Cloudflare member invitations on native SQLite', () => {
-  it('verifies email before atomically creating the fixed member grant, password and session', async () => {
+
+  it('joins directly once with the fixed grant and usable password/session while supplied email stays unverified', async () => {
+    const { token, invitation } = await create({ role: 'member', jobTitle: 'Engineering', isQaAdmin: true });
+    const accepted = await join(token, { name: '  Example Newcomer  ', email: ' NEW@EXAMPLE.COM ' });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.success).toBe(true);
+    expect(accepted.body.session?.user.email).toBe('new@example.com');
+    expect(Boolean(accepted.body.session?.access_token && accepted.body.session?.refresh_token)).toBe(true);
+    const member = fixture.row("SELECT * FROM members WHERE email='new@example.com'");
+    expect(member).toMatchObject({ workspace_id: 'a', name: 'Example Newcomer', role: 'member', job_title: 'Engineering', is_qa_admin: 1, is_active: 1, email_identity_verified: 0 });
+    const login = fixture.row("SELECT * FROM auth_users WHERE email='new@example.com'");
+    expect(member.auth_id).toBe(login.id);
+    expect(typeof login.password_hash === 'string' && login.password_hash.startsWith('pbkdf2$')).toBe(true);
+    expect(fixture.row('SELECT used_member_id,used_auth_id FROM member_invitations WHERE id=?', invitation.id)).toMatchObject({ used_member_id: member.id, used_auth_id: login.id });
+    expect(fixture.count('auth_refresh_tokens')).toBe(1);
+    expect(fixture.count('member_invitation_confirmations')).toBe(0);
+    const wire = await fixture.query({ table: 'members', op: 'select', cols: '*', filters: [{ col: 'id', op: 'eq', val: member.id }] });
+    expect(wire.error).toBeNull();
+    expect(wire.data).toEqual([expect.objectContaining({ email_identity_verified: false })]);
+    const signIn = await fixture.call({ email: 'new@example.com', password: 'synthetic-valid-password' }, '', { url: 'https://api.example.com/api/auth/login' });
+    expect(signIn.status).toBe(200);
+    expect((await join(token)).status).toBeGreaterThanOrEqual(400);
+    expect(mail).toHaveLength(0);
+  });
+
+  it('allows only one direct claimant even with different supplied emails', async () => {
+    const { token } = await create();
+    const replies = await Promise.all([join(token, { email: 'first@example.com' }), join(token, { email: 'second@example.com' })]);
+    expect(replies.filter(reply => reply.status === 200)).toHaveLength(1);
+    expect(replies.filter(reply => reply.status >= 400)).toHaveLength(1);
+    expect(fixture.count('members')).toBe(5);
+    expect(fixture.count('auth_users')).toBe(5);
+    expect(fixture.count('auth_refresh_tokens')).toBe(1);
+    expect(mail).toHaveLength(0);
+  });
+
+  it('shares the same single-use claim across a direct join and an old confirmed join', async () => {
+    const { token } = await create();
+    const oldProof = await confirm(token, 'legacy@example.com');
+    const replies = await Promise.all([join(token), accept(oldProof)]);
+    expect(replies.filter(reply => reply.status === 200)).toHaveLength(1);
+    expect(fixture.count('members')).toBe(5);
+    expect(fixture.count('auth_users')).toBe(5);
+    expect(fixture.count('auth_refresh_tokens')).toBe(1);
+  });
+
+  it.each(['role', 'jobTitle', 'isQaAdmin', 'authId', 'workspaceId', 'email_identity_verified', 'confirmationToken'])('rejects direct authority injection %s before consuming the invitation', async field => {
+    const { token } = await create();
+    expect((await join(token, { [field]: field === 'isQaAdmin' || field === 'email_identity_verified' ? true : 'forged' })).status).toBe(400);
+    expectUnjoined();
+    expect((await join(token)).status).toBe(200);
+  });
+
+  it.each([
+    { name: '' }, { name: 'x'.repeat(81) }, { name: 'bad\u0001name' },
+    { email: 'bad' }, { email: placeholderEmail('example-user') },
+    { password: '1234567' }, { password: 'é'.repeat(37) },
+  ])('rejects invalid direct input without a claim: %j', async invalid => {
+    const { token } = await create();
+    expect((await join(token, invalid)).status).toBe(400);
+    expectUnjoined();
+    expect((await join(token)).status).toBe(200);
+  });
+
+  it.each(['inactive', 'downgraded', 'banned', 'relinked', 'suspended'])('rechecks %s authorization inside the direct transaction', async change => {
+    const { invitation, token } = await create({ role: 'admin' });
+    const mutation = {
+      inactive: "UPDATE members SET is_active=0 WHERE workspace_id='a' AND id='owner'",
+      downgraded: "UPDATE members SET role='admin' WHERE workspace_id='a' AND id='owner'",
+      banned: "UPDATE auth_users SET banned=1 WHERE id='login-owner'",
+      relinked: "UPDATE members SET auth_id='replacement-login' WHERE workspace_id='a' AND id='owner'",
+      suspended: "UPDATE workspaces SET status='suspended' WHERE id='a'",
+    }[change];
+    fixture.beforeNextStatement = { match: /UPDATE member_invitations AS i SET used_at/, run: async () => fixture.exec(mutation) };
+    expect((await join(token)).status).toBeGreaterThanOrEqual(400);
+    expectUnjoined();
+    expect(fixture.row('SELECT used_at FROM member_invitations WHERE id=?', invitation.id).used_at).toBeNull();
+  });
+
+  it.each(['revoked', 'expired'])('rejects a %s direct link without creating an account', async state => {
+    const { invitation, token } = await create();
+    if (state === 'revoked') await call({ action: 'revoke', invitationId: invitation.id }, ownerJwt);
+    else { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + 8 * 24 * 60 * 60 * 1000); }
+    expect((await join(token)).status).toBeGreaterThanOrEqual(400);
+    expectUnjoined();
+  });
+
+  it('allocates the last seat to one direct join and rolls the loser back completely', async () => {
+    fixture.exec("UPDATE workspaces SET member_limit=4 WHERE id='a'");
+    const first = await create(), second = await create();
+    const replies = await Promise.all([join(first.token, { email: 'first@example.com' }), join(second.token, { email: 'second@example.com' })]);
+    expect(replies.filter(reply => reply.status === 200)).toHaveLength(1);
+    expect(replies.filter(reply => errorCode(reply) === 'member_limit')).toHaveLength(1);
+    expect(fixture.rows("SELECT id FROM members WHERE workspace_id='a' AND is_active=1")).toHaveLength(4);
+    expect(fixture.count('auth_users')).toBe(5);
+    expect(fixture.count('auth_refresh_tokens')).toBe(1);
+    expect(fixture.rows('SELECT used_at FROM member_invitations').filter(row => row.used_at !== null)).toHaveLength(1);
+  });
+
+  it('rechecks direct capacity when a competing member takes the last seat after preflight', async () => {
+    fixture.exec("UPDATE workspaces SET member_limit=4 WHERE id='a'");
+    const { invitation, token } = await create();
+    fixture.beforeNextStatement = { match: /UPDATE member_invitations AS i SET used_at/, run: async () => fixture.exec("INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('a','competitor','Example Competitor','','competitor@example.com','member',1)") };
+    const reply = await join(token);
+    expect(errorCode(reply)).toBe('member_limit');
+    expect(fixture.row('SELECT used_at FROM member_invitations WHERE id=?', invitation.id).used_at).toBeNull();
+    expect(fixture.count('auth_users')).toBe(4);
+    expect(fixture.count('auth_refresh_tokens')).toBe(0);
+  });
+
+  it.each(['members', 'auth_refresh_tokens'])('rolls back a direct claim and auth creation when %s insertion fails', async table => {
+    const { invitation, token } = await create();
+    fixture.exec(`CREATE TRIGGER direct_insert_failure BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'synthetic_direct_failure'); END`);
+    expect((await join(token)).status).toBeGreaterThanOrEqual(400);
+    expectUnjoined();
+    expect(fixture.row('SELECT used_at FROM member_invitations WHERE id=?', invitation.id).used_at).toBeNull();
+    fixture.exec('DROP TRIGGER direct_insert_failure');
+    expect((await join(token)).status).toBe(200);
+  });
+
+  it('rolls back a direct join against another tenant email without reading or adopting that member', async () => {
+    const { invitation, token } = await create();
+    fixture.exec("INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('b','unlinked','Example Existing','','existing@example.com','member',0)");
+    const before = JSON.stringify(fixture.row("SELECT * FROM members WHERE workspace_id='b' AND id='unlinked'"));
+    const reply = await join(token, { email: 'EXISTING@EXAMPLE.COM' });
+    expect(errorCode(reply)).toBe('email_taken');
+    expect(JSON.stringify(reply.body).includes('Example Existing')).toBe(false);
+    expect(JSON.stringify(fixture.row("SELECT * FROM members WHERE workspace_id='b' AND id='unlinked'"))).toBe(before);
+    expect(fixture.row('SELECT used_at FROM member_invitations WHERE id=?', invitation.id).used_at).toBeNull();
+    expect(fixture.count('auth_users')).toBe(4);
+    expect(fixture.count('auth_refresh_tokens')).toBe(0);
+  });
+
+  it.each(['changed', 'same-unverified'])('keeps server account activation email trust safe when the current address is %s', async state => {
+    delete fixture.env.RESEND_API_KEY;
+    fixture.exec(`INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('a','name-only','Example Pending','',${sqlText(placeholderEmail('name-only'))},'member',1)`);
+    if (state === 'same-unverified') {
+      // A concurrent update occurs after the activation preflight. Rebinding the
+      // same unverified address cannot restore ownership trust.
+      fixture.beforeNextStatement = { match: /UPDATE members SET email_identity_verified/, run: async () => fixture.exec("UPDATE members SET email='enabled@example.com',email_identity_verified=0 WHERE workspace_id='a' AND id='name-only'") };
+    }
+    const reply = await manage({ action: 'create_login', memberId: 'name-only', email: 'enabled@example.com' });
+    expect(reply.status).toBe(200);
+    expect(fixture.row("SELECT email,email_identity_verified FROM members WHERE workspace_id='a' AND id='name-only'")).toEqual({ email: 'enabled@example.com', email_identity_verified: 0 });
+    expect(mail).toHaveLength(0);
+  });
+
+  it.each(['changed', 'same-unverified'])('keeps Jira account activation email ownership safe when the current address is %s', async state => {
+    await fixture.enableJiraImport();
+    delete fixture.env.RESEND_API_KEY;
+    fixture.exec(`INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('a','jira-name-only','Example Imported','',${sqlText(placeholderEmail('jira-name-only'))},'member',1)`);
+    if (state === 'same-unverified') fixture.beforeNextStatement = { match: /UPDATE members SET email_identity_verified/, run: async () => fixture.exec("UPDATE members SET email='imported@example.com',email_identity_verified=0 WHERE workspace_id='a' AND id='jira-name-only'") };
+    const reply = await importExamplePerson([{ name: 'Example Imported', email: 'imported@example.com' }]);
+    expect(reply.status).toBe(200);
+    expect(fixture.row("SELECT email,email_identity_verified FROM members WHERE workspace_id='a' AND id='jira-name-only'")).toEqual({ email: 'imported@example.com', email_identity_verified: 0 });
+    expect(fixture.count('auth_users')).toBe(5);
+    expect(mail).toHaveLength(0);
+  });
+
+  it('prevents even super admin generic certification and clears ownership proof when email changes', async () => {
+    const memberBefore = fixture.row("SELECT * FROM members WHERE id='member'");
+    expect(memberBefore.email_identity_verified).toBe(1);
+    for (const op of ['update', 'insert', 'upsert']) {
+      for (const column of ['email_identity_verified', 'EMAIL_IDENTITY_VERIFIED', 'Email_Identity_Verified']) {
+        const reply = await fixture.query({ table: 'members', op, values: { id: 'member', [column]: true }, filters: [{ col: 'id', op: 'eq', val: 'member' }] });
+        expect(Boolean(reply.error)).toBe(true);
+      }
+    }
+    for (const values of [{ EMAIL: 'changed@example.com' }, { email: memberBefore.email, EMAIL: 'changed@example.com' }]) {
+      const reply = await fixture.query({ table: 'members', op: 'update', values, filters: [{ col: 'id', op: 'eq', val: 'member' }] });
+      expect(Boolean(reply.error)).toBe(true);
+    }
+    const same = await fixture.query({ table: 'members', op: 'update', values: { email: memberBefore.email }, filters: [{ col: 'id', op: 'eq', val: 'member' }] });
+    expect(same.error).toBeNull();
+    expect(fixture.row("SELECT email_identity_verified FROM members WHERE id='member'").email_identity_verified).toBe(1);
+    const changed = await fixture.query({ table: 'members', op: 'update', values: { email: 'changed@example.com' }, filters: [{ col: 'id', op: 'eq', val: 'member' }] });
+    expect(changed.error).toBeNull();
+    expect(fixture.row("SELECT email_identity_verified FROM members WHERE id='member'").email_identity_verified).toBe(0);
+    const second = await fixture.query({ table: 'members', op: 'update', values: { email: 'changed@example.com' }, filters: [{ col: 'id', op: 'eq', val: 'member' }] });
+    expect(second.error).toBeNull();
+    expect(fixture.row("SELECT email_identity_verified FROM members WHERE id='member'").email_identity_verified).toBe(0);
+  });
+
+  it('preserves a previously emailed proof and its verified fixed grant, password and session', async () => {
     const { invitation, token } = await create({ role: 'member', jobTitle: 'Engineering', isQaAdmin: true });
     expect(invitation).toMatchObject({ role: 'member', jobTitle: 'Engineering', isQaAdmin: true, status: 'pending', createdBy: 'owner' });
     expectUnjoined();
@@ -124,11 +306,8 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect(preview).toMatchObject({ status: 200, body: { workspaceName: 'Example Team', role: 'member', jobTitle: 'Engineering', isQaAdmin: true } });
     const stored = fixture.rows('SELECT * FROM member_invitations');
     expect(JSON.stringify(stored).includes(token)).toBe(false);
-    const request = await call({ action: 'request_confirmation', inviteToken: token, name: '  Example Newcomer  ', email: ' NEW@EXAMPLE.COM ' });
-    expect(request).toMatchObject({ status: 200, body: { sent: true } });
-    expect(mail[0].to).toEqual(['new@example.com']);
-    const confirmationToken = confirmationFromMail();
-    expect(JSON.stringify(request.body).includes(confirmationToken)).toBe(false);
+    const confirmationToken = await confirm(token, ' NEW@EXAMPLE.COM ', '  Example Newcomer  ');
+    expect(mail).toHaveLength(0);
     expect(JSON.stringify(fixture.rows('SELECT * FROM member_invitation_confirmations')).includes(confirmationToken)).toBe(false);
     const confirmationPreview = await call({ action: 'confirmation_preview', confirmationToken });
     expect(confirmationPreview).toMatchObject({ status: 200, body: { name: 'Example Newcomer', email: 'new@example.com', role: 'member', jobTitle: 'Engineering', isQaAdmin: true } });
@@ -140,7 +319,7 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect(accepted.body.session?.user.email).toBe('new@example.com');
     expect(Boolean(accepted.body.session?.access_token && accepted.body.session?.refresh_token)).toBe(true);
     const member = fixture.row('SELECT * FROM members WHERE email=?', 'new@example.com');
-    expect(member).toMatchObject({ workspace_id: 'a', name: 'Example Newcomer', role: 'member', job_title: 'Engineering', is_qa_admin: 1, is_active: 1 });
+    expect(member).toMatchObject({ workspace_id: 'a', name: 'Example Newcomer', role: 'member', job_title: 'Engineering', is_qa_admin: 1, is_active: 1, email_identity_verified: 1 });
     const auth = fixture.row('SELECT * FROM auth_users WHERE email=?', 'new@example.com');
     expect(member.auth_id).toBe(auth.id);
     expect(typeof auth.password_hash === 'string' && auth.password_hash.startsWith('pbkdf2$')).toBe(true);
@@ -319,8 +498,8 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect((await call({ action: 'confirmation_preview', confirmationToken: liveToken })).status).toBe(200);
     expect(fixture.count('member_invitations')).toBe(2);
     const throttled = await call({ action: 'request_confirmation', inviteToken: own.token, name: 'Example', email: 'new@example.com' });
-    expect(throttled.status).toBe(429);
-    expect(errorCode(throttled)).toBe('rate_limited');
+    expect(throttled.status).toBe(400);
+    expect(errorCode(throttled)).toBe('invalid_request');
     expect((await accept(liveToken)).status).toBe(200);
   });
 
@@ -349,8 +528,8 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect(fixture.row("SELECT id FROM member_invitation_send_attempts WHERE id='at-cutoff'")).toBeNull();
     expect(fixture.rows("SELECT id FROM member_invitation_send_attempts WHERE workspace_id='a'")).toHaveLength(10);
     const throttled = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'another@example.com' });
-    expect(throttled.status).toBe(429);
-    expect(errorCode(throttled)).toBe('rate_limited');
+    expect(throttled.status).toBe(400);
+    expect(errorCode(throttled)).toBe('invalid_request');
     expect(mail).toHaveLength(0);
   });
 
@@ -404,15 +583,14 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect(signIn.body.session?.user.email).toBe('new@example.com');
   });
 
-  it('creates no invitation or token when outgoing mail is not configured', async () => {
+  it('creates and consumes an invitation without outgoing mail configuration', async () => {
     delete fixture.env.RESEND_API_KEY;
-    const reply = await call({ action: 'create' }, ownerJwt);
-    expect(reply.status).toBe(503);
-    expect(errorCode(reply)).toBe('email_not_configured');
-    expect(Boolean(reply.body.inviteToken || reply.body.inviteUrl)).toBe(false);
-    expect(fixture.count('member_invitations')).toBe(0);
+    const { token } = await create();
+    expect((await join(token)).status).toBe(200);
+    expect(fixture.row("SELECT email_identity_verified FROM members WHERE email='new@example.com'").email_identity_verified).toBe(0);
+    expect(fixture.count('member_invitation_confirmations')).toBe(0);
+    expect(fixture.count('member_invitation_send_attempts')).toBe(0);
     expect(mail).toHaveLength(0);
-    expectUnjoined();
   });
 
   it('keeps list and revoke usable after mail configuration is removed', async () => {
@@ -522,6 +700,7 @@ describe('Cloudflare member invitations on native SQLite', () => {
     for (const invalid of ['', 'garbage', bad]) {
       for (const body of [
         { action: 'preview', inviteToken: invalid },
+        { action: 'accept_invite', inviteToken: invalid, name: 'Example', email: 'new@example.com', password: 'synthetic-valid-password' },
         { action: 'request_confirmation', inviteToken: invalid, name: 'Example', email: 'new@example.com' },
         { action: 'confirmation_preview', confirmationToken: invalid },
         { action: 'accept', confirmationToken: invalid, password: 'synthetic-valid-password' },
@@ -548,156 +727,15 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect((await accept(confirmationToken)).status).toBe(200);
   });
 
-  it('keeps original invitation usable when transport is not configured', async () => {
+  it('retires confirmation requests without sending or recording applicant data', async () => {
     const { token } = await create();
-    delete fixture.env.RESEND_API_KEY;
-    const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' });
-    expect(reply.status).toBe(503);
-    expect(errorCode(reply)).toBe('email_not_configured');
+    const replies = await Promise.all(Array.from({ length: 3 }, () => call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' })));
+    expect(replies.every(reply => reply.status === 400 && errorCode(reply) === 'invalid_request')).toBe(true);
     expect(mail).toHaveLength(0);
+    expect(fixture.count('member_invitation_confirmations')).toBe(0);
+    expect(fixture.count('member_invitation_send_attempts')).toBe(0);
     expectUnjoined();
-    expect((await call({ action: 'preview', inviteToken: token })).status).toBe(200);
-  });
-
-  it('reports provider refusal without confirming email, creating accounts or consuming the invite', async () => {
-    const { token } = await create();
-    deliveryStatus = 503;
-    const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' });
-    expect(reply.status).toBe(503);
-    expect(errorCode(reply)).toBe('email_send_failed');
-    expect(reply.body.sent).not.toBe(true);
-    const failedConfirmation = confirmationFromMail();
-    expect(JSON.stringify(reply.body).includes(failedConfirmation)).toBe(false);
-    expect((await accept(failedConfirmation)).status).toBeGreaterThanOrEqual(400);
-    expect((await call({ action: 'confirmation_preview', confirmationToken: failedConfirmation })).status).toBeGreaterThanOrEqual(400);
-    expect((await call({ action: 'preview', inviteToken: token })).status).toBe(200);
-    expectUnjoined();
-  });
-
-  it('waits for the mail provider and never treats a pending delivery as email proof', async () => {
-    const { token } = await create();
-    let releaseDelivery: () => void;
-    deliveryGate = new Promise(resolve => { releaseDelivery = resolve; });
-    let returned = false;
-    const request = call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' })
-      .then(reply => { returned = true; return reply; });
-    await vi.waitFor(() => expect(mail).toHaveLength(1));
-    expect(returned).toBe(false);
-    const confirmationToken = confirmationFromMail();
-    expect((await accept(confirmationToken)).status).toBeGreaterThanOrEqual(400);
-    expect((await call({ action: 'confirmation_preview', confirmationToken })).status).toBeGreaterThanOrEqual(400);
-    expectUnjoined();
-    releaseDelivery();
-    expect((await request).status).toBe(200);
-    expect((await accept(confirmationToken)).status).toBe(200);
-  });
-
-  it('does not report mail success when a delivery marker no longer owns the pending proof', async () => {
-    const { token } = await create();
-    providerEffect = () => fixture.exec("UPDATE member_invitation_confirmations SET send_state='failed' WHERE workspace_id='a' AND email='new@example.com'");
-    const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' });
-    expect(reply.status).toBe(503);
-    expect(errorCode(reply)).toBe('server_error');
-    expect(reply.body.sent).not.toBe(true);
-    const confirmationToken = confirmationFromMail();
-    expect((await call({ action: 'confirmation_preview', confirmationToken })).status).toBeGreaterThanOrEqual(400);
-    expect((await accept(confirmationToken)).status).toBeGreaterThanOrEqual(400);
-    expect(fixture.row("SELECT send_state FROM member_invitation_confirmations WHERE workspace_id='a' AND email='new@example.com'").send_state).toBe('failed');
-    expectUnjoined();
-    expect((await call({ action: 'preview', inviteToken: token })).status).toBe(200);
-  });
-
-  it('keeps an accepted provider request unverified if recording delivery fails', async () => {
-    const { token } = await create();
-    fixture.exec("CREATE TRIGGER injected_delivery_marker_failure BEFORE UPDATE OF send_state ON member_invitation_confirmations WHEN NEW.send_state='sent' BEGIN SELECT RAISE(ABORT,'synthetic_delivery_marker_failure'); END");
-    const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' });
-    expect(reply.status).toBe(503);
-    expect(errorCode(reply)).toBe('server_error');
-    expect(reply.body.sent).not.toBe(true);
-    const confirmationToken = confirmationFromMail();
-    expect((await accept(confirmationToken)).status).toBeGreaterThanOrEqual(400);
-    expect(fixture.row("SELECT send_state FROM member_invitation_confirmations WHERE workspace_id='a' AND email='new@example.com'").send_state).toBe('pending');
-    expectUnjoined();
-  });
-
-  it('uses the workspace mail configuration when there is no instance transport', async () => {
-    const { token } = await create();
-    delete fixture.env.RESEND_API_KEY;
-    fixture.exec("INSERT INTO email_config(id,api_key,from_address) VALUES('a','synthetic-workspace-transport','workspace@example.com')");
-    await confirm(token);
-    expect(mail).toHaveLength(1);
-    expectUnjoined();
-  });
-
-  it('escapes applicant and workspace names in the confirmation mail', async () => {
-    fixture.exec("UPDATE workspaces SET name='<Example Team>' WHERE id='a'");
-    const { token } = await create();
-    await confirm(token, 'new@example.com', '<script>alert(1)</script>');
-    expect(mail[0].html.includes('<script>')).toBe(false);
-    expect(mail[0].html.includes('&lt;script&gt;')).toBe(true);
-    expect(mail[0].html.includes('&lt;Example Team&gt;')).toBe(true);
-    expectUnjoined();
-  });
-
-  it('reserves the email send attempt atomically so concurrent requests send once', async () => {
-    const { token } = await create();
-    const request = { action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' };
-    const replies = await Promise.all([call(request), call(request)]);
-    expect(replies.filter(reply => reply.status === 200)).toHaveLength(1);
-    expect(replies.filter(reply => reply.status === 429)).toHaveLength(1);
-    expect(mail).toHaveLength(1);
-    expectUnjoined();
-  });
-
-  it('limits the same email across different invitation links', async () => {
-    const first = await create(), second = await create();
-    const replies = await Promise.all([first, second].map(invite => call({ action: 'request_confirmation', inviteToken: invite.token, name: 'Example', email: 'new@example.com' })));
-    expect(replies.filter(reply => reply.status === 200)).toHaveLength(1);
-    expect(replies.filter(reply => reply.status === 429)).toHaveLength(1);
-    expect(mail).toHaveLength(1);
-    expectUnjoined();
-  });
-
-  it('allows nine coworkers on a shared office source to request their own confirmation', async () => {
-    for (let i = 0; i < 9; i++) {
-      const { token } = await create();
-      const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: `example-${i}@example.com` });
-      expect(reply.status).toBe(200);
-    }
-    expect(mail).toHaveLength(9);
-    expectUnjoined();
-  });
-
-  it('limits a shared source to 100 sends a day across otherwise valid invitations', async () => {
-    const tokens: string[] = [];
-    for (let i = 0; i < 11; i++) tokens.push((await create()).token);
-    for (let i = 0; i < 100; i++) {
-      const reply = await call({ action: 'request_confirmation', inviteToken: tokens[Math.floor(i / 10)], name: 'Example', email: `example-${i}@example.com` });
-      expect(reply.status).toBe(200);
-    }
-    const reply = await call({ action: 'request_confirmation', inviteToken: tokens[10], name: 'Example', email: 'example-100@example.com' });
-    expect(reply.status).toBe(429);
-    expect(errorCode(reply)).toBe('rate_limited');
-    expect(mail).toHaveLength(100);
-    expectUnjoined();
-  });
-
-  it('limits total sends for an invitation across different source addresses', async () => {
-    const { token } = await create();
-    for (let i = 0; i < 11; i++) {
-      const reply = await fixture.call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: `example-${i}@example.com` }, '', { headers: { 'CF-Connecting-IP': `192.0.2.${i + 1}` } });
-      expect(reply.status).toBe(i < 10 ? 200 : 429);
-    }
-    expect(mail).toHaveLength(10);
-    expectUnjoined();
-  });
-
-  it('fails closed without an edge source address in production', async () => {
-    const { token } = await create();
-    const reply = await fixture.call({ action: 'request_confirmation', inviteToken: token, name: 'Example', email: 'new@example.com' }, '', { headers: { 'CF-Connecting-IP': '' } });
-    expect(reply.status).toBe(503);
-    expect(mail).toHaveLength(0);
-    expectUnjoined();
+    expect((await join(token)).status).toBe(200);
   });
 
   it('revocation invalidates the invitation and every outstanding confirmation', async () => {
@@ -739,7 +777,7 @@ describe('Cloudflare member invitations on native SQLite', () => {
     if (kind === 'auth') fixture.exec("INSERT INTO auth_users(id,email,password_hash,banned) VALUES('orphan','existing@example.com','preserve-original-hash',1)");
     else fixture.exec("INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('a','unlinked','Example Existing','','existing@example.com','member',0)");
     const before = JSON.stringify(fixture.rows(kind === 'auth' ? 'SELECT * FROM auth_users' : 'SELECT * FROM members'));
-    const reply = await call({ action: 'request_confirmation', inviteToken: token, name: 'Replacement', email: 'EXISTING@EXAMPLE.COM' });
+    const reply = await join(token, { name: 'Replacement', email: 'EXISTING@EXAMPLE.COM' });
     expect(reply.status).toBe(409);
     expect(errorCode(reply)).toBe('email_taken');
     expect(JSON.stringify(fixture.rows(kind === 'auth' ? 'SELECT * FROM auth_users' : 'SELECT * FROM members'))).toBe(before);
@@ -752,7 +790,6 @@ describe('Cloudflare member invitations on native SQLite', () => {
     fixture.exec("INSERT INTO members(workspace_id,id,name,avatar,email,role,is_active) VALUES('b','unlinked','Example Existing','','existing@example.com','member',0)");
     const existingBefore = JSON.stringify(fixture.row("SELECT * FROM members WHERE workspace_id='b' AND id='unlinked'"));
     const confirmationToken = await confirm(token, 'EXISTING@EXAMPLE.COM');
-    expect(mail[0].to).toEqual(['existing@example.com']);
     const preview = await call({ action: 'confirmation_preview', confirmationToken });
     expect(preview.status).toBe(200);
     expect(preview.body.workspaceName).toBe('Example Team');
@@ -987,7 +1024,7 @@ describe('Cloudflare member invitations on native SQLite', () => {
     expect(fixture.count('auth_users')).toBe(5);
     expect(fixture.count('auth_refresh_tokens')).toBe(1);
     expect(fixture.count('tasks')).toBe(0);
-    expect(mail).toHaveLength(1);
+    expect(mail).toHaveLength(0);
   });
 
   it('blocks concurrent reactivation after an invitation consumes the last seat and keeps login banned', async () => {

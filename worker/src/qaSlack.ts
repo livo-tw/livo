@@ -38,13 +38,27 @@ export function createCloudQaSlackActions(env: Env, ws: string, ctx: Ctx): QaSla
       const team = p.team_id || p.team?.id, user = p.user_id || p.user?.id || p.event?.user;
       if (!team || !user || await configuredTeam() !== team) throw new Error('qa_forbidden');
       const profile = (await slack('users.info', { user, include_locale: true })).user;
-      if (!profile || profile.deleted || profile.is_bot || profile.is_restricted || profile.is_ultra_restricted || profile.team_id !== team || typeof profile.profile?.email !== 'string') throw new Error('qa_forbidden');
-      // A client-editable legacy binding is not proof of identity. Verified Slack email
-      // must uniquely match an active member and its live, non-banned auth account.
-      const members = await env.DB.prepare('SELECT m.id,m.name,m.role,m.email,m.auth_id FROM members m JOIN auth_users a ON a.id=m.auth_id AND a.banned=0 WHERE m.workspace_id=? AND m.is_active=1 AND m.email=? COLLATE NOCASE AND a.email=m.email COLLATE NOCASE LIMIT 2')
-        .bind(ws, profile.profile.email.trim()).all<{id:string;name:string;role:string;email:string;auth_id:string}>();
-      if (members.results.length !== 1) throw new Error('qa_forbidden');
-      const member = members.results[0], auth: AuthCtx = { userId: member.auth_id, email: member.email, member: { ...member, workspaceId: ws } };
+      if (!profile || profile.deleted || profile.is_bot || profile.is_restricted || profile.is_ultra_restricted || profile.team_id !== team) throw new Error('qa_forbidden');
+      type SlackMember = {id:string;name:string;role:string;email:string;auth_id:string};
+      // Manual mappings are deliberate owner verification, never self-asserted email.
+      const manual = await env.DB.prepare(`SELECT m.id,m.name,m.role,m.email,m.auth_id FROM external_account_bindings b
+        JOIN members m ON m.workspace_id=b.workspace_id AND m.id=b.member_id
+        JOIN auth_users a ON a.id=m.auth_id AND a.banned=0
+        JOIN members issuer ON issuer.workspace_id=b.workspace_id AND issuer.id=b.verified_by_member_id
+        WHERE b.workspace_id=? AND b.platform='slack' AND b.platform_team_id=? AND b.platform_user_id=?
+          AND b.is_verified=1 AND b.reconfirm_required=0 AND b.verified_by='admin'
+          AND m.is_active=1 AND issuer.role='super_admin' AND issuer.is_active=1 LIMIT 2`)
+        .bind(ws,team,user).all<SlackMember>();
+      if (manual.results.length > 1) throw new Error('qa_forbidden');
+      let member = manual.results[0];
+      if (!member) {
+        if (typeof profile.profile?.email !== 'string') throw new Error('qa_forbidden');
+        const members = await env.DB.prepare('SELECT m.id,m.name,m.role,m.email,m.auth_id FROM members m JOIN auth_users a ON a.id=m.auth_id AND a.banned=0 WHERE m.workspace_id=? AND m.is_active=1 AND m.email_identity_verified=1 AND m.email=? COLLATE NOCASE AND a.email=m.email COLLATE NOCASE LIMIT 2')
+          .bind(ws, profile.profile.email.trim()).all<SlackMember>();
+        if (members.results.length !== 1) throw new Error('qa_forbidden');
+        member = members.results[0];
+      }
+      const auth: AuthCtx = { userId: member.auth_id, email: member.email, member: { ...member, workspaceId: ws } };
       if (isDemoMember(env, auth)) throw new Error('qa_forbidden');
       // The member turned Slack linking off in My settings.
       if (await slackLinkDisabled(env, ws, member.id)) throw new Error('slack_link_disabled');

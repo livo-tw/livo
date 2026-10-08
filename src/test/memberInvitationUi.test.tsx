@@ -24,7 +24,7 @@ const confirmation = { ...preview, name: 'Alex Example', email: 'alex@example.co
 const renderJoin = (kind = 'invite') => render(<MemoryRouter initialEntries={[`/join#${kind}=example-token`]}><Join /></MemoryRouter>);
 const fillIdentity = async () => {
   fireEvent.change(await screen.findByLabelText('memberInvite.nameLabel'), { target: { value: ' Alex Example ' } });
-  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'alex@example.com' } });
+  fireEvent.change(screen.getByLabelText('memberInvite.loginAccountLabel'), { target: { value: 'alex@example.com' } });
 };
 const fillPassword = async (password = 'example-password', confirm = password) => {
   fireEvent.change(await screen.findByLabelText('setPassword.passwordLabel'), { target: { value: password } });
@@ -46,69 +46,92 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('public member invitations', () => {
-  it('requests email confirmation before exposing password fields or changing a session', async () => {
-    mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(ok({ sent: true }));
+  it('sets identity and password on the invitation page and joins without requesting email', async () => {
+    const session = { access_token: 'access-example', refresh_token: 'refresh-example', user: { id: 'auth-example', email: confirmation.email } };
+    mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(ok({ success: true, session }));
     renderJoin();
     await fillIdentity();
-    expect(screen.queryByLabelText('setPassword.passwordLabel')).toBeNull();
+    await fillPassword();
+    expect(screen.getByText('memberInvite.loginAccountHint')).toBeInTheDocument();
     expect(screen.queryByRole('combobox')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
-    expect(await screen.findByText('memberInvite.confirmationSent')).toBeInTheDocument();
-    expect(mocks.call).toHaveBeenLastCalledWith('member-invitations', { action: 'request_confirmation', inviteToken: 'example-token', name: 'Alex Example', email: 'alex@example.com' });
-    expect(mocks.setSession).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'memberInvite.resend' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
+    expect(await screen.findByText('memberInvite.joined')).toBeInTheDocument();
+    expect(mocks.call).toHaveBeenLastCalledWith('member-invitations', { action: 'accept_invite', inviteToken: 'example-token', name: 'Alex Example', email: 'alex@example.com', password: 'example-password' });
+    expect(mocks.call.mock.calls.some(args => args[1]?.action === 'request_confirmation')).toBe(false);
+    expect(mocks.setSession).toHaveBeenCalledWith(session);
   });
 
-  it('shows missing email configuration without claiming an email was sent', async () => {
-    mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(failed('email_not_configured'));
+  it('does not submit direct registration before valid identity and password confirmation', async () => {
+    mocks.call.mockResolvedValueOnce(ok(preview));
     renderJoin();
     await fillIdentity();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('memberInvite.errors.email_not_configured');
-    expect(screen.queryByText('memberInvite.confirmationSent')).toBeNull();
-    expect(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeEnabled();
+    await fillPassword('example-password', 'different-password');
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('setPassword.mismatch');
+    await fillPassword('密'.repeat(25));
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('memberInvite.errors.password_invalid');
+    expect(mocks.call).toHaveBeenCalledTimes(1);
   });
 
-  it('allows correcting an email typo immediately while retaining cooldowns for each previously sent address', async () => {
-    mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(ok({ sent: true })).mockResolvedValueOnce(ok({ sent: true }));
+  it('prevents repeat submissions while the direct join is pending', async () => {
+    let resolveJoin!: (value: ReturnType<typeof ok>) => void;
+    mocks.call.mockResolvedValueOnce(ok(preview)).mockImplementationOnce(() => new Promise(resolve => { resolveJoin = resolve; }));
     renderJoin();
     await fillIdentity();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
-    await screen.findByText('memberInvite.confirmationSent');
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.editDetails' }));
-    expect(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'corrected@example.com' } });
-    expect(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
-    await screen.findByText('memberInvite.confirmationSent');
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.editDetails' }));
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' ALEX@example.com ' } });
-    expect(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeDisabled();
-    expect(mocks.call).toHaveBeenCalledTimes(3);
+    await fillPassword();
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
+    expect(screen.getByRole('button', { name: 'memberInvite.joining' })).toBeDisabled();
+    expect(screen.getByLabelText('memberInvite.loginAccountLabel')).toBeDisabled();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    resolveJoin(ok({ success: true, session: null }));
+    expect(await screen.findByText('memberInvite.signInRequired')).toBeInTheDocument();
   });
 
-  it('ignores an old send result after opening a different invitation in the same page', async () => {
-    let resolveSend!: (value: ReturnType<typeof ok>) => void;
-    mocks.call.mockResolvedValueOnce(ok(preview)).mockImplementationOnce(() => new Promise(resolve => { resolveSend = resolve; })).mockResolvedValueOnce(ok(preview));
+  it('ignores an old direct join result after opening a different invitation', async () => {
+    let resolveJoin!: (value: ReturnType<typeof ok>) => void;
+    mocks.call.mockResolvedValueOnce(ok(preview)).mockImplementationOnce(() => new Promise(resolve => { resolveJoin = resolve; })).mockResolvedValueOnce(ok(preview));
     render(<MemoryRouter initialEntries={['/join#invite=example-token']}><JoinWithNavigation /></MemoryRouter>);
     await fillIdentity();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
+    await fillPassword();
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open next invitation' }));
     expect(await screen.findByLabelText('memberInvite.nameLabel')).toHaveValue('');
-    resolveSend(ok({ sent: true }));
+    resolveJoin(ok({ success: true, session: null }));
     await waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(3));
-    expect(screen.queryByText('memberInvite.confirmationSent')).toBeNull();
-    expect(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' })).toBeEnabled();
+    expect(screen.queryByText('memberInvite.joined')).toBeNull();
+    expect(screen.getByLabelText('setPassword.passwordLabel')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'memberInvite.joinButton' })).toBeEnabled();
+    expect(mocks.setSession).not.toHaveBeenCalled();
   });
 
-  it('uses a safe unknown-error message and leaves the form recoverable', async () => {
+  it('retains safe login recovery when the direct registration result is unknown', async () => {
     mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(failed('internal-diagnostic-example'));
     renderJoin();
     await fillIdentity();
-    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.sendConfirmation' }));
+    await fillPassword();
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('memberInvite.errors.server_error');
+    expect(await screen.findByText('memberInvite.resultUnknownTitle')).toBeInTheDocument();
     expect(screen.queryByText('internal-diagnostic-example')).toBeNull();
     expect(screen.queryByText('memberInvite.confirmationSent')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'memberInvite.joinButton' })).toBeNull();
+    expect(screen.queryByLabelText('memberInvite.loginAccountLabel')).toBeNull();
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks for administrator review instead of retrying a partially registered account', async () => {
+    mocks.call.mockResolvedValueOnce(ok(preview)).mockResolvedValueOnce(failed('registration_pending'));
+    renderJoin();
+    await fillIdentity();
+    await fillPassword();
+    fireEvent.click(screen.getByRole('button', { name: 'memberInvite.joinButton' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('memberInvite.errors.registration_pending');
+    expect(screen.queryByRole('button', { name: 'memberInvite.joinButton' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'common.retry' })).toBeNull();
+    expect(screen.queryByText('memberInvite.joined')).toBeNull();
+    expect(mocks.setSession).not.toHaveBeenCalled();
   });
 
   it('shows invalid/expired invitations without offering a registration form', async () => {
@@ -258,7 +281,7 @@ describe('public member invitations', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open next invitation' }));
     expect(await screen.findByLabelText('memberInvite.nameLabel')).toHaveValue('');
     expect(screen.queryByText('memberInvite.joined')).toBeNull();
-    expect(screen.getByLabelText('Email')).toHaveValue('');
+    expect(screen.getByLabelText('memberInvite.loginAccountLabel')).toHaveValue('');
   });
 
   it('does not offer to retry final registration when the verified email already belongs to an account', async () => {

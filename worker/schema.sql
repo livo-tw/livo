@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS members (
   job_title  TEXT NOT NULL DEFAULT '',
   color      TEXT NOT NULL DEFAULT '#6B778C',
   email      TEXT NOT NULL DEFAULT '',
+  email_identity_verified INTEGER NOT NULL DEFAULT 1 CHECK (email_identity_verified IN (0,1)),
   is_active  INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0,
   auth_id    TEXT,                          -- no FK: imported data may hold stale ids; app heals by email
@@ -841,6 +842,8 @@ CREATE TABLE IF NOT EXISTS external_account_bindings (
   display_name     TEXT,
   is_verified      INTEGER NOT NULL DEFAULT 0,
   verified_by      TEXT CHECK(verified_by IS NULL OR verified_by IN ('email','admin')),
+  verified_by_member_id TEXT,
+  reconfirm_required INTEGER NOT NULL DEFAULT 0 CHECK(reconfirm_required IN (0,1)),
   bound_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   last_active_at   TEXT,
   UNIQUE (platform, platform_user_id, platform_team_id)
@@ -2592,7 +2595,7 @@ END;
 
 
 -- Server-only member invitations. Pending confirmations are deliberately not
--- members or auth users: email identity must be proved before Slack can see it.
+-- members or auth users. Direct joins separately keep supplied email identity unverified.
 CREATE TABLE IF NOT EXISTS member_invitations (
   workspace_id TEXT NOT NULL,
   id TEXT NOT NULL,

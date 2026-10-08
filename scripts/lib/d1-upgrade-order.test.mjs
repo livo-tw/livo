@@ -100,6 +100,25 @@ describe('D1 upgrade order', () => {
     expect(alters()).not.toContain('deferred');
   }, 60_000);
 
+  it('adds invitation email trust and manual Slack issuer columns to an already-tenanted database without changing legacy rows', () => {
+    const db = open();
+    try {
+      db.exec(schema);
+      db.exec("ALTER TABLE members DROP COLUMN email_identity_verified; ALTER TABLE external_account_bindings DROP COLUMN verified_by_member_id; ALTER TABLE external_account_bindings DROP COLUMN reconfirm_required;");
+      db.exec("INSERT INTO members(workspace_id,id,name,avatar,email,role) VALUES('a','legacy-member','Example Legacy','','legacy@example.com','member'); INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,is_verified,verified_by) VALUES('a','legacy-binding','legacy-member','slack','U_EXAMPLE',1,'admin');");
+    } finally { db.close(); }
+    alters(); alters();
+    const after = open();
+    try {
+      expect(after.prepare("SELECT name,email,email_identity_verified FROM members WHERE id='legacy-member'").get()).toEqual({ name: 'Example Legacy', email: 'legacy@example.com', email_identity_verified: 1 });
+      expect(after.prepare("SELECT is_verified,verified_by,verified_by_member_id,reconfirm_required FROM external_account_bindings WHERE id='legacy-binding'").get()).toEqual({ is_verified: 1, verified_by: 'admin', verified_by_member_id: null, reconfirm_required: 0 });
+      expect(() => after.exec("UPDATE members SET email_identity_verified=2 WHERE id='legacy-member'")).toThrow();
+      expect(() => after.exec("UPDATE external_account_bindings SET reconfirm_required=2 WHERE id='legacy-binding'")).toThrow();
+      after.exec(schema);
+      expect(after.prepare("SELECT email_identity_verified FROM members WHERE id='legacy-member'").get()).toEqual({ email_identity_verified: 1 });
+    } finally { after.close(); }
+  }, 60_000);
+
   it('derives every pre-existing table the knowledge-work guards attach to', () => {
     const targets = sqlTriggerTargets(readFileSync(path.join(WORKER, 'migrate', 'knowledge-work.sql'), 'utf8'));
     expect(targets).toEqual(expect.arrayContaining(['qa_issues', 'qa_attachments', 'kb_pages', 'members', 'task_planning_import_guard']));

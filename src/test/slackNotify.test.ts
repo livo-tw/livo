@@ -14,11 +14,11 @@ afterEach(() => vi.unstubAllGlobals());
 function backend(tables: Record<string, Row[]> = {}) {
   const db: Record<string, Row[]> = {
     members: [
-      { id: 'actor', name: 'Example actor', email: 'actor@example.com', role: 'member', is_active: true, auth_id: 'auth-actor' },
-      { id: 'assignee', name: 'Example assignee', email: 'assignee@example.com', role: 'member', is_active: true },
-      { id: 'reviewer', name: 'Example reviewer', email: 'reviewer@example.com', role: 'member', is_active: true },
-      { id: 'outsider', name: 'Example outsider', email: 'outsider@example.com', role: 'member', is_active: true },
-      { id: 'guest', name: 'Example guest', email: 'guest@example.com', role: 'member', is_active: true }],
+      { id: 'actor', name: 'Example actor', email: 'actor@example.com', role: 'member', is_active: true, email_identity_verified: true, auth_id: 'auth-actor' },
+      { id: 'assignee', name: 'Example assignee', email: 'assignee@example.com', role: 'member', is_active: true, email_identity_verified: true },
+      { id: 'reviewer', name: 'Example reviewer', email: 'reviewer@example.com', role: 'member', is_active: true, email_identity_verified: true },
+      { id: 'outsider', name: 'Example outsider', email: 'outsider@example.com', role: 'member', is_active: true, email_identity_verified: true },
+      { id: 'guest', name: 'Example guest', email: 'guest@example.com', role: 'member', is_active: true, email_identity_verified: true }],
     tasks: [{ id: 'task', task_key: 'EX-1', title: 'Stored &lt;!channel&gt; title', priority: 'high', project_id: 'project', status_id: 'todo', assignee_id: 'assignee', reviewer_id: 'reviewer' }],
     projects: [{ id: 'project', name: 'Example <!here> project' }],
     statuses: [{ id: 'todo', name: 'Todo' }],
@@ -160,6 +160,14 @@ describe('Docker slack-notify', () => {
       dmTargets: [{ email: 'assignee@example.com', reason: 'x' }, { email: 'reviewer@example.com', reason: 'x' }] });
     expect(t.posts().filter(post => String(post.channel).startsWith('D')).map(post => post.channel)).toEqual(['DUASSIGNEE']);
     expect(t.slack.filter(call => call.method === 'users.lookupByEmail').map(call => call.args.email)).toEqual(['assignee@example.com']);
+  });
+  it('does not look up or DM a self-asserted member email, even when a client claims a target', async () => {
+    const t = backend();
+    t.db.members.find(member => member.id === 'assignee')!.email_identity_verified = false;
+    await t.send({ type: 'assignee_changed', taskId: 'task',
+      dmTargets: [{ email: 'assignee@example.com', reason: 'x', email_identity_verified: true }] });
+    expect(t.slack.filter(call => call.method === 'users.lookupByEmail').map(call => call.args.email)).not.toContain('assignee@example.com');
+    expect(t.posts().filter(post => String(post.channel).startsWith('D')).map(post => post.channel)).not.toContain('DUASSIGNEE');
   });
   it('keeps the database outbox as the single sender when durable delivery is on', async () => {
     const t = backend({ system_settings: [{ key: 'slack_delivery', value: { enabled: true, routes: [] } }] });

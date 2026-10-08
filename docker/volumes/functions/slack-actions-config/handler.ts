@@ -1,4 +1,5 @@
 import { Database, slackClient, type Environment } from '../slack-interact/backend.ts';
+import { memberEmailIdentityVerified } from '../slack-notify/core.ts';
 import { canAssignSlackMember, enabled, SLACK_USER_ID, slackEmailBelongsToOther } from '../slack-interact/core.ts';
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
@@ -41,9 +42,9 @@ export async function handleSlackActionsConfig(req: Request, env: Environment): 
       const bindings = await admin.rows('external_account_bindings', { select: 'id,member_id,platform_user_id,display_name,bound_at,verified_by,verified_by_member_id,is_verified,reconfirm_required',
         platform: 'eq.slack', or: '(is_verified.eq.true,reconfirm_required.eq.true)', order: 'bound_at.desc' });
       const ids = [...new Set(bindings.flatMap(b => [b.member_id, b.verified_by_member_id]).filter(Boolean))];
-      const members = ids.length ? await admin.rows('members', { select: 'id,name,is_active,role', id: `in.(${ids.join(',')})` }) : [];
+      const members = ids.length ? await admin.rows('members', { select: 'id,name,is_active,role,email_identity_verified', id: `in.(${ids.join(',')})` }) : [];
       return json({ connected: heartbeat?.connected === true && Date.now() - Date.parse(heartbeat.at) < 90000,
-        lastSeen: heartbeat?.at || null, bindings: bindings.map(b => ({ ...b, verifiedBy: b.verified_by || 'email',
+        lastSeen: heartbeat?.at || null, bindings: bindings.map(b => ({ ...b, is_verified: b.is_verified === true && (b.verified_by === 'admin' ? members.some(m => m.id === b.verified_by_member_id && m.role === 'super_admin' && m.is_active) : memberEmailIdentityVerified(members.find(m => m.id === b.member_id))), verifiedBy: b.verified_by || 'email',
           memberName: members.find(m => m.id === b.member_id)?.name || '', verifiedByOwner: b.is_verified === true && members.some(m => m.id === b.verified_by_member_id && m.role === 'super_admin' && m.is_active),
           active: members.find(m => m.id === b.member_id)?.is_active === true })) });
     }
@@ -66,7 +67,7 @@ export async function handleSlackActionsConfig(req: Request, env: Environment): 
       const slackEmail = info.profile?.email;
       if (typeof slackEmail === 'string' && slackEmail.trim()) {
         const pattern = slackEmail.trim().replace(/[\\%_]/g, (c: string) => '\\' + c);
-        const owners = await admin.rows('members', { select: 'id,email', email: `ilike.${pattern}`, limit: '5' });
+        const owners = await admin.rows('members', { select: 'id,email,email_identity_verified', email: `ilike.${pattern}`, limit: '5' });
         if (slackEmailBelongsToOther(owners, slackEmail, target.id)) return json({ error: 'slack_user_belongs_to_other' }, 409);
       }
       const name = info.profile?.display_name || info.real_name || info.name || info.id;

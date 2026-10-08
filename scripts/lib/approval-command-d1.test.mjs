@@ -48,8 +48,11 @@ beforeEach(() => {
                     throw e;
                 }
             } }, APP_BASE_URL: 'http://localhost:8080/app', SLACK_BOT_TOKEN: 'unit-test-token' };
-    for (const [id, role, ws] of [['requester', 'member', 'a'], ['approver', 'admin', 'a'], ['super', 'super_admin', 'a'], ['other', 'member', 'a'], ['foreign', 'admin', 'b']])
-        db.prepare("INSERT INTO members(workspace_id,id,name,avatar,role,email) VALUES(?,?,?,'',?,?)").run(ws, id, id, role, id + '@example.test');
+    for (const [id, role, ws] of [['requester', 'member', 'a'], ['approver', 'admin', 'a'], ['super', 'super_admin', 'a'], ['other', 'member', 'a'], ['foreign', 'admin', 'b']]) {
+        // Real legacy members have a live login; email trust uses schema DEFAULT1.
+        db.prepare("INSERT INTO members(workspace_id,id,name,avatar,role,email,auth_id) VALUES(?,?,?,'',?,?,?)").run(ws, id, id, role, id + '@example.test', id);
+        db.prepare("INSERT INTO auth_users(id,email,banned) SELECT id,email,0 FROM members WHERE id=?").run(id);
+    }
     db.exec(`INSERT INTO product_lines(workspace_id,id,name) VALUES('a','line','Line'),('b','foreign-line','Other');
     INSERT INTO projects(workspace_id,id,line_id,name,key) VALUES('a','project','line','Project','P'),('b','foreign-project','foreign-line','Other','O');
     INSERT INTO statuses(workspace_id,id,name,is_done,auto_start) VALUES('a','todo','Todo',0,0),('a','done','Done',1,1),('b','foreign-status','Other',0,0);
@@ -447,7 +450,7 @@ describe('approval delivery presentation and retry safety', () => {
     });
     it('skips a DM when its project route is removed after opening the conversation',async()=>{
         const {job}=await queued('dm');
-        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin')");
+        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
         const network=vi.fn(async(url)=>{
             const method=String(url).split('/').pop();
             if(method==='auth.test')return response({ok:true,team_id:'TUNIT'});
@@ -464,7 +467,7 @@ describe('approval delivery presentation and retry safety', () => {
     });
     it('rechecks step authorization immediately before DM posting', async () => {
         const { job } = await queued('dm');
-        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin')");
+        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
         const network = vi.fn(async (url) => {
             const method = String(url).split('/').pop();
             if (method === 'auth.test')
@@ -493,7 +496,7 @@ describe('approval delivery presentation and retry safety', () => {
         "UPDATE external_account_bindings SET is_verified=0 WHERE id='binding'",
     ])('does not post a DM after its identity binding changes: %s',async(mutation)=>{
         const {job}=await queued('dm');
-        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin')");
+        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
         const network=vi.fn(async(url)=>{
             const method=String(url).split('/').pop();
             if(method==='auth.test')return response({ok:true,team_id:'TUNIT'});
@@ -507,11 +510,41 @@ describe('approval delivery presentation and retry safety', () => {
     });
     it('rejects a users.info response for another Slack user',async()=>{
         const {job}=await queued('dm');
-        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin')");
+        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
         const network=vi.fn(async(url)=>String(url).endsWith('auth.test')?response({ok:true,team_id:'TUNIT'}):response({ok:true,user:{id:'UOTHER',team_id:'TUNIT'}}));
         expect(await deliverApprovalJob(env,job,network)).toBe('pending');
         expect(network).toHaveBeenCalledTimes(2);
         expect(row('approval_delivery_outbox',job.id).last_error).toBe('recipient_unavailable');
+    });
+    it.each([
+        ["unproved email", "UPDATE members SET email_identity_verified=0 WHERE id='approver'; UPDATE external_account_bindings SET verified_by='email',verified_by_member_id=NULL WHERE id='binding'"],
+        ["plain-admin issuer", "UPDATE external_account_bindings SET verified_by_member_id='approver' WHERE id='binding'"],
+        ["inactive issuer", "UPDATE members SET is_active=0 WHERE id='super'"],
+        ["paused mapping", "UPDATE external_account_bindings SET reconfirm_required=1 WHERE id='binding'"],
+        ["banned login", "UPDATE auth_users SET banned=1 WHERE id='approver'"],
+    ])('does not resolve a DM recipient for %s',async(_label,mutation)=>{
+        const {job}=await queued('dm');
+        db.exec("INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
+        db.exec(mutation);
+        const network=vi.fn(async()=>response({ok:true,team_id:'TUNIT'}));
+        expect(await deliverApprovalJob(env,job,network)).toBe('pending');
+        expect(row('approval_delivery_outbox',job.id).last_error).toBe('verified_binding_unavailable');
+        expect(network).toHaveBeenCalledTimes(1); // only team identity; no users.info/open/post
+    });
+    it('keeps deliberate live-owner mapping usable with an unproved login email',async()=>{
+        const {job}=await queued('dm');
+        db.exec("UPDATE members SET email_identity_verified=0 WHERE id='approver'; INSERT INTO external_account_bindings(workspace_id,id,member_id,platform,platform_user_id,platform_team_id,is_verified,verified_by,verified_by_member_id) VALUES('a','binding','approver','slack','UUNIT','TUNIT',1,'admin','super')");
+        const network=vi.fn(async(url)=>{
+            const method=String(url).split('/').pop();
+            if(method==='auth.test')return response({ok:true,team_id:'TUNIT'});
+            if(method==='users.info')return response({ok:true,user:{id:'UUNIT',team_id:'TUNIT'}});
+            if(method==='conversations.open')return response({ok:true,channel:{id:'DUNIT'}});
+            if(method==='chat.postMessage')return response({ok:true,ts:'1800000000.000001'});
+            throw new Error('unexpected transport method');
+        });
+        expect(await deliverApprovalJob(env,job,network)).toBe('sent');
+        expect(network).toHaveBeenCalledTimes(4);
+        expect(row('members','approver').email_identity_verified).toBe(0);
     });
     it('retains subpath, uses title link and escapes mention-bearing content', () => {
         expect(approvalTaskUrl('http://localhost/app/', 'P-1')).toBe('http://localhost/app/?task=P-1');

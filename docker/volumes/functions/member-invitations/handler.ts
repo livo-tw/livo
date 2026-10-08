@@ -34,6 +34,8 @@ export interface InvitationBackend {
   createAuth(email: string, password: string, name: string, proof: { confirmationId: string; tokenHash: string }): Promise<string>;
   accept(id: string, hash: string, authId: string, memberId: string): Promise<void>;
   deleteCreatedAuth(id: string, proof: { confirmationId: string; tokenHash: string }): Promise<boolean>;
+  createDirectAuth(email: string, password: string, name: string, proof: { invitationId: string; tokenHash: string }): Promise<string>;
+  acceptDirect(id: string, hash: string, authId: string, memberId: string, name: string, email: string): Promise<void>;
   session(email: string, password: string): Promise<unknown | null>;
 }
 
@@ -61,7 +63,7 @@ export function createInvitationHandler(backend: InvitationBackend) {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new InvitationFailure('invalid_request');
       const body = parsed as Record<string, unknown>;
       const action = body.action;
-      if (typeof action !== 'string' || !['create', 'list', 'revoke', 'preview', 'request_confirmation', 'confirmation_preview', 'accept'].includes(action))
+      if (typeof action !== 'string' || !['create', 'list', 'revoke', 'preview', 'accept_invite', 'confirmation_preview', 'accept'].includes(action))
         throw new InvitationFailure('invalid_request');
       await backend.prune();
       if (action === 'create' || action === 'list' || action === 'revoke') {
@@ -75,7 +77,6 @@ export function createInvitationHandler(backend: InvitationBackend) {
           if (!canIssueInvitation(caller.role, grant)) throw new InvitationFailure('forbidden', 403);
           // Validate the canonical base before minting a link. Never trust a caller Origin.
           const appUrl = backend.appUrl();
-          if (!await backend.mail()) throw new InvitationFailure('email_not_configured', 503);
           const id = crypto.randomUUID();
           const token = mintMemberInvitationToken('invite', 'default', id);
           const invitation = await backend.create(caller, id, await hashMemberInvitationToken(token), grant);
@@ -90,8 +91,8 @@ export function createInvitationHandler(backend: InvitationBackend) {
         await backend.revoke(caller, body.invitationId);
         return respond({ success: true });
       }
-      if (action === 'preview' || action === 'request_confirmation') {
-        const allowed = action === 'preview' ? ['action', 'inviteToken'] : ['action', 'inviteToken', 'name', 'email'];
+      if (action === 'preview' || action === 'accept_invite') {
+        const allowed = action === 'preview' ? ['action', 'inviteToken'] : ['action', 'inviteToken', 'name', 'email', 'password'];
         if (!hasOnlyKeys(body, allowed)) throw new InvitationFailure('invalid_request');
         const scope = parseMemberInvitationToken(body.inviteToken, 'invite');
         if (!scope || scope.workspaceId !== 'default') throw new InvitationFailure('invalid_token', 409);
@@ -99,15 +100,25 @@ export function createInvitationHandler(backend: InvitationBackend) {
         if (action === 'preview') return respond(preview(await backend.preview(scope.id, hash)));
         const name = validateInviteName(body.name), email = validateInviteEmail(body.email);
         if (!name || !email) throw new InvitationFailure('invalid_request');
-        const mail = await backend.mail();
-        if (!mail) throw new InvitationFailure('email_not_configured', 503);
-        const id = crypto.randomUUID(), token = mintMemberInvitationToken('confirmation', 'default', id);
-        const tokenHash = await hashMemberInvitationToken(token);
-        await backend.reserve(scope.id, hash, id, tokenHash, name, email);
-        const sent = await backend.send(mail, { name, email }, `${mail.appUrl}/join#confirmation=${encodeURIComponent(token)}`);
-        if (!await backend.finishSend(id, tokenHash, sent)) throw new InvitationFailure('server_error', 503);
-        if (!sent) throw new InvitationFailure('email_send_failed', 503);
-        return respond({ sent: true });
+        if (!validateInvitePassword(body.password)) throw new InvitationFailure('password_invalid');
+        // Read-only eligibility first; the acceptance RPC rechecks after taking its lock.
+        await backend.preview(scope.id, hash);
+        const password = body.password as string;
+        const proof = { invitationId: scope.id, tokenHash: hash };
+        const authId = await backend.createDirectAuth(email, password, name, proof);
+        try {
+          await backend.acceptDirect(scope.id, hash, authId, crypto.randomUUID(), name, email);
+        } catch {
+          // No direct-flow auth deletion: an uncertain attachment stays isolated
+          // behind the active-member gate until a super_admin inspects it.
+          console.warn('[member-invitations] direct member attachment requires manual inspection');
+          throw new InvitationFailure('registration_pending', 503);
+        }
+        // A self-entered Email is a login identifier, not proof of its ownership.
+        let session: unknown | null = null;
+        try { session = await backend.session(email, password); }
+        catch { console.warn('[member-invitations] joined directly; session unavailable'); }
+        return respond({ success: true, session });
       }
       if (action === 'confirmation_preview' || action === 'accept') {
         if (!hasOnlyKeys(body, action === 'accept' ? ['action', 'confirmationToken', 'password'] : ['action', 'confirmationToken']))

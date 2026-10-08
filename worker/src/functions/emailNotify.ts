@@ -18,6 +18,7 @@
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoWorkspace } from '../env';
+import { memberEmailIdentityVerified } from '../slackNotifyCore';
 
 const DEFAULT_FROM = 'LIVO <service@livo-tw.com>';
 const RESEND_API = 'https://api.resend.com';
@@ -236,10 +237,10 @@ async function sendWorkspaceNotificationEmails(env: Env, ws: string, rows: Row[]
     const taskIds = [...new Set(targets.map((t) => t.taskId).filter(Boolean))];
 
     const memberRes = await env.DB.prepare(
-      `SELECT id, name, email, is_active FROM members WHERE workspace_id = ? AND id IN (${placeholders(memberIds.length)})`
+      `SELECT id, name, email, is_active, email_identity_verified FROM members WHERE workspace_id = ? AND id IN (${placeholders(memberIds.length)})`
     )
       .bind(ws, ...memberIds)
-      .all<{ id: string; name: string; email: string | null; is_active: number }>();
+      .all<{ id: string; name: string; email: string | null; is_active: number; email_identity_verified?: unknown }>();
     const members = new Map((memberRes.results || []).map((m) => [m.id, m]));
 
     const prefRes = await env.DB.prepare(
@@ -265,7 +266,7 @@ async function sendWorkspaceNotificationEmails(env: Env, ws: string, rows: Row[]
       if (sent >= MAX_EMAILS_PER_CALL) break;
 
       const member = members.get(target.recipientId);
-      if (!member || !member.is_active || !member.email) continue;
+      if (!member || !member.is_active || !member.email || !memberEmailIdentityVerified(member)) continue;
 
       // Missing prefs row = defaults: enabled + all three types.
       const pref = prefs.get(target.recipientId);

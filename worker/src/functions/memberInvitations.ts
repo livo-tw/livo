@@ -1,18 +1,16 @@
-/** A shared invitation is a grant, not proof of an arbitrary email address.
- * Only the separately emailed confirmation can create a login/member. */
+/** A shared invitation grants membership. Direct joining does not prove
+ * ownership of the supplied email; legacy emailed proofs remain consumable. */
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoMember, isDemoWorkspace } from '../env';
-import { clearMemberCache, hashPassword, prepareAuthSession, requireMember, sha256Hex } from '../auth';
+import { clearMemberCache, hashPassword, prepareAuthSession, requireMember } from '../auth';
 import { liveMember, liveMemberSql } from '../liveMember';
 import { isApiKeyCaller } from '../memberLogin';
-import { loginSourceIp } from '../loginThrottle';
 import { notifyChanges } from '../notify';
 import { rowToWire } from '../meta';
 import { TABLES } from '../tables';
-import { escapeHtml, resolveEmailConfig, sendResendEmail } from './emailNotify';
 import {
-  INVITATION_TTL_MS, CONFIRMATION_TTL_MS, canIssueInvitation, hasOnlyKeys,
+  INVITATION_TTL_MS, canIssueInvitation, hasOnlyKeys,
   hashMemberInvitationToken, invitationStatus, mintMemberInvitationToken,
   parseMemberInvitationToken, validateInvitationGrant, validateInviteEmail,
   validateInviteName, validateInvitePassword,
@@ -116,7 +114,6 @@ async function create(c: Context<AppContext>, body: Record<string, unknown>): Pr
   const actor = await liveMember(c.env, c.get('auth'), { strict: true });
   if (!actor || !canIssueInvitation(actor.role, requested)) throw new InvitationError('forbidden', 403);
   const ws = c.get('auth').member.workspaceId || DEFAULT_WORKSPACE;
-  if (!await resolveEmailConfig(c.env, ws)) throw new InvitationError('email_not_configured', 503);
   const id = crypto.randomUUID();
   const token = mintMemberInvitationToken('invite', ws, id);
   const now = new Date().toISOString();
@@ -157,46 +154,6 @@ async function revoke(c: Context<AppContext>, body: Record<string, unknown>): Pr
   return c.json({ success: true, invitation: metadata(updated) });
 }
 
-async function requestConfirmation(c: Context<AppContext>, body: Record<string, unknown>): Promise<Response> {
-  if (!hasOnlyKeys(body, ['action', 'inviteToken', 'name', 'email'])) throw new InvitationError('invalid_request');
-  const name = validateInviteName(body.name), email = validateInviteEmail(body.email);
-  if (!name || !email) throw new InvitationError('invalid_request');
-  const invitation = await findInvitation(c.env, body.inviteToken);
-  await rejectExistingEmail(c.env, email, invitation.workspace_id);
-  const cfg = await resolveEmailConfig(c.env, invitation.workspace_id);
-  if (!cfg) throw new InvitationError('email_not_configured', 503);
-  let source: string | null;
-  try { source = loginSourceIp(c.req.url, c.req.header('CF-Connecting-IP')); }
-  catch { throw new InvitationError('server_error', 503); }
-  const id = crypto.randomUUID(), now = new Date().toISOString();
-  const token = mintMemberInvitationToken('confirmation', invitation.workspace_id, id);
-  const expires = new Date(Math.min(Date.now() + CONFIRMATION_TTL_MS, Date.parse(invitation.expires_at))).toISOString();
-  // Attempt reservation and pending proof share one snapshot. Triggers count
-  // in-flight sends too, so concurrent requests cannot bypass the mail limits.
-  await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO member_invitation_send_attempts
-      (workspace_id,id,invitation_id,email_hash,source_hash,created_at) VALUES (?,?,?,?,?,?)`)
-      .bind(invitation.workspace_id, id, invitation.id, await sha256Hex(`${invitation.workspace_id}:email:${email}`),
-        await sha256Hex(`${invitation.workspace_id}:source:${source || 'loopback-development'}`), now),
-    c.env.DB.prepare(`INSERT INTO member_invitation_confirmations
-      (workspace_id,id,invitation_id,token_hash,name,email,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)`)
-      .bind(invitation.workspace_id, id, invitation.id, await hashMemberInvitationToken(token), name, email, now, expires),
-  ]);
-  const link = `${appBaseUrl(c.env).replace(/\/$/, '')}/demo/join#confirmation=${encodeURIComponent(token)}`;
-  const safeLink = escapeHtml(link);
-  const html = `<p>${escapeHtml(name)} 您好：</p><p>請確認要使用 ${escapeHtml(email)} 加入 ${escapeHtml(invitation.workspace_name || 'LIVO')}。</p>
-    <p><a href="${safeLink}">確認 Email 並設定密碼 / Confirm email and choose password</a></p>
-    <p>請在 1 小時內完成；原邀請若先到期，此連結也會失效。若不是您本人申請，請忽略此信。</p>
-    <p>Confirm your email and choose your own password within 1 hour, or before the original invitation expires. If you did not request this, ignore this email.</p>`;
-  const sent = await sendResendEmail(cfg, email, 'LIVO：確認 Email 並加入團隊 / Confirm your email', html);
-  const delivered = await c.env.DB.prepare(`UPDATE member_invitation_confirmations SET send_state=?,sent_at=?
-    WHERE workspace_id=? AND id=? AND send_state='pending' AND used_at IS NULL`)
-    .bind(sent ? 'sent' : 'failed', sent ? new Date().toISOString() : null, invitation.workspace_id, id).run();
-  if (!sent) throw new InvitationError('email_send_failed', 503);
-  if (!delivered.meta.changes) throw new InvitationError('server_error', 503);
-  return c.json({ sent: true });
-}
-
 async function accept(c: Context<AppContext>, body: Record<string, unknown>): Promise<Response> {
   if (!hasOnlyKeys(body, ['action', 'confirmationToken', 'password'])) throw new InvitationError('invalid_request');
   if (!validateInvitePassword(body.password)) throw new InvitationError('password_invalid');
@@ -220,8 +177,8 @@ async function accept(c: Context<AppContext>, body: Record<string, unknown>): Pr
       SELECT ?3,p.email,?6,0,?7 FROM member_invitations i JOIN member_invitation_confirmations p
         ON p.workspace_id=i.workspace_id AND p.invitation_id=i.id AND p.id=?5 WHERE ${ownedClaim}`)
       .bind(ws, id, authId, memberId, confirmation.confirmation_id, passwordHash, now),
-    c.env.DB.prepare(`INSERT INTO members(workspace_id,id,name,avatar,role,job_title,is_qa_admin,color,email,is_active,sort_order,auth_id,theme)
-      SELECT i.workspace_id,?4,p.name,?6,i.role,i.job_title,i.is_qa_admin,'#6B778C',p.email,1,0,?3,'dark'
+    c.env.DB.prepare(`INSERT INTO members(workspace_id,id,name,avatar,role,job_title,is_qa_admin,color,email,email_identity_verified,is_active,sort_order,auth_id,theme)
+      SELECT i.workspace_id,?4,p.name,?6,i.role,i.job_title,i.is_qa_admin,'#6B778C',p.email,1,1,0,?3,'dark'
       FROM member_invitations i JOIN member_invitation_confirmations p
         ON p.workspace_id=i.workspace_id AND p.invitation_id=i.id AND p.id=?5 WHERE ${ownedClaim} RETURNING *`)
       .bind(ws, id, authId, memberId, confirmation.confirmation_id, confirmation.name.slice(0, 1).toUpperCase()),
@@ -229,6 +186,47 @@ async function accept(c: Context<AppContext>, body: Record<string, unknown>): Pr
       WHERE workspace_id=?1 AND id=?6 AND invitation_id=?2 AND used_at IS NULL
         AND EXISTS(SELECT 1 FROM member_invitations i WHERE ${ownedClaim})`)
       .bind(ws, id, authId, memberId, now, confirmation.confirmation_id),
+    c.env.DB.prepare(`INSERT INTO auth_refresh_tokens(token_hash,user_id,expires_at,created_at)
+      SELECT ?5,?3,?6,?7 FROM member_invitations i WHERE ${ownedClaim}`)
+      .bind(ws, id, authId, memberId, prepared.tokenHash, prepared.refreshExpiresAt, prepared.createdAt),
+  ]);
+  const inserted = results[2]?.results[0] as Record<string, unknown> | undefined;
+  if (!results[0]?.meta.changes || !inserted) throw new InvitationError('invalid_token');
+  clearMemberCache(authId);
+  notifyChanges(c.env, c.executionCtx, [{ table: 'members', eventType: 'INSERT',
+    new: rowToWire(inserted, TABLES.members), old: null }], ws);
+  return c.json({ success: true, session: { ...prepared.session, token_type: 'bearer',
+    expires_in: Math.max(0, prepared.session.expires_at - Math.floor(Date.now() / 1000)) } });
+}
+
+/** Token possession grants only the stored invitation, never an email identity. */
+async function acceptInvite(c: Context<AppContext>, body: Record<string, unknown>): Promise<Response> {
+  if (!hasOnlyKeys(body, ['action', 'inviteToken', 'name', 'email', 'password'])) throw new InvitationError('invalid_request');
+  const name = validateInviteName(body.name), email = validateInviteEmail(body.email);
+  if (!name || !email) throw new InvitationError('invalid_request');
+  if (!validateInvitePassword(body.password)) throw new InvitationError('password_invalid');
+  const invitation = await findInvitation(c.env, body.inviteToken);
+  await rejectExistingEmail(c.env, email, invitation.workspace_id);
+  const ws = invitation.workspace_id, id = invitation.id, authId = crypto.randomUUID(), memberId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const prepared = await prepareAuthSession(c.env, authId, email);
+  const passwordHash = await hashPassword(body.password);
+  const tokenHash = await hashMemberInvitationToken(body.inviteToken as string);
+  const ownedClaim = `i.workspace_id=?1 AND i.id=?2 AND i.used_auth_id=?3 AND i.used_member_id=?4`;
+  // A zero-row CAS must not create a login/member/session. Every later write
+  // selects the claim owned by this request's new unpredictable identities.
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE member_invitations AS i SET used_at=?1,used_auth_id=?2,used_member_id=?3
+      WHERE i.workspace_id=?4 AND i.id=?5 AND i.token_hash=?6 AND i.used_at IS NULL
+        AND i.revoked_at IS NULL AND i.expires_at>?1 AND ${availableInvitation} RETURNING id`)
+      .bind(now, authId, memberId, ws, id, tokenHash),
+    c.env.DB.prepare(`INSERT INTO auth_users(id,email,password_hash,banned,created_at)
+      SELECT ?3,?5,?6,0,?7 FROM member_invitations i WHERE ${ownedClaim}`)
+      .bind(ws, id, authId, memberId, email, passwordHash, now),
+    c.env.DB.prepare(`INSERT INTO members(workspace_id,id,name,avatar,role,job_title,is_qa_admin,color,email,email_identity_verified,is_active,sort_order,auth_id,theme)
+      SELECT i.workspace_id,?4,?5,?6,i.role,i.job_title,i.is_qa_admin,'#6B778C',?7,0,1,0,?3,'dark'
+      FROM member_invitations i WHERE ${ownedClaim} RETURNING *`)
+      .bind(ws, id, authId, memberId, name, name.slice(0, 1).toUpperCase(), email),
     c.env.DB.prepare(`INSERT INTO auth_refresh_tokens(token_hash,user_id,expires_at,created_at)
       SELECT ?5,?3,?6,?7 FROM member_invitations i WHERE ${ownedClaim}`)
       .bind(ws, id, authId, memberId, prepared.tokenHash, prepared.refreshExpiresAt, prepared.createdAt),
@@ -270,7 +268,10 @@ export async function handleMemberInvitations(c: Context<AppContext>): Promise<R
       if (!hasOnlyKeys(body, ['action', 'inviteToken'])) throw new InvitationError('invalid_request');
       return c.json(preview(await findInvitation(c.env, body.inviteToken)));
     }
-    if (body.action === 'request_confirmation') return await requestConfirmation(c, body);
+    // Retired: shared links no longer send confirmation messages. Already
+    // emailed legacy proofs can still be previewed and accepted below.
+    if (body.action === 'request_confirmation') throw new InvitationError('invalid_request');
+    if (body.action === 'accept_invite') return await acceptInvite(c, body);
     if (body.action === 'confirmation_preview') {
       if (!hasOnlyKeys(body, ['action', 'confirmationToken'])) throw new InvitationError('invalid_request');
       const row = await findConfirmation(c.env, body.confirmationToken);

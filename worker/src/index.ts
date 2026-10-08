@@ -154,7 +154,7 @@ app.post('/api/functions/knowledge-import', requireMember, knowledgeImport);
 app.post('/api/functions/qa-slack/:workspaceId', handleQaSlackHttp); // Slack HMAC + timestamp; actor/workspace checked by adapter
 app.post('/api/functions/slack-interact/:workspaceId', handleQaSlackHttp);
 app.post('/api/functions/manage-member', requireMember, demoGuard, handleManageMember);
-// Email confirmation is public; manager actions enforce live identity inside.
+// Direct invitations and legacy confirmations are public; manager actions enforce live identity inside.
 app.post('/api/functions/member-invitations', handleMemberInvitations);
 app.post('/api/functions/slack-notify', requireMember, handleSlackNotify);
 app.post('/api/functions/slack-channels', requireMember, handleSlackChannels);

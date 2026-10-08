@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('@/lib/callFunction', () => ({ callFunction: mocks.call }));
 import {
-  acceptMemberInvitation, memberInvitationUrl, previewMemberInvitation, readMemberInvitationLink,
-  requestMemberConfirmation,
+  acceptMemberInvitation, joinMemberInvitation, memberInvitationUrl, previewMemberInvitation, readMemberInvitationLink,
 } from '@/lib/memberInvitations';
 
 beforeEach(() => vi.clearAllMocks());
@@ -22,9 +21,12 @@ describe('invitation client boundaries', () => {
     expect(memberInvitationUrl('example', 'http://example.com/join?invite=legacy')).toBe('http://example.com/join#invite=example');
     expect(new URL(memberInvitationUrl('example', 'javascript:example')).protocol).toBe('http:');
   });
-  it('does not claim sent email from malformed or unknown successful responses', async () => {
-    mocks.call.mockResolvedValue({ ok: true, status: 200, data: { success: true } });
-    expect(await requestMemberConfirmation('example', 'Alex', 'alex@example.com')).toEqual({ data: null, error: { code: 'invalid_response' } });
+  it('sends only the direct registration fields and requires an explicit joined session result', async () => {
+    mocks.call.mockResolvedValueOnce({ ok: true, status: 200, data: { success: true, session: null } })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { sent: true } });
+    expect((await joinMemberInvitation('example', 'Alex', 'alex@example.com', 'example-password')).data).toEqual({ success: true, session: null });
+    expect(mocks.call).toHaveBeenLastCalledWith('member-invitations', { action: 'accept_invite', inviteToken: 'example', name: 'Alex', email: 'alex@example.com', password: 'example-password' });
+    expect(await joinMemberInvitation('example', 'Alex', 'alex@example.com', 'example-password')).toEqual({ data: null, error: { code: 'invalid_response' } });
   });
   it('rejects elevated grants inconsistent with QA membership before displaying them', async () => {
     mocks.call.mockResolvedValue({ ok: true, status: 200, data: { role: 'super_admin', isQaAdmin: true, jobTitle: '', workspaceName: 'Example', expiresAt: '2099-10-08T12:00:00Z' } });
@@ -36,6 +38,10 @@ describe('invitation client boundaries', () => {
     expect((await previewMemberInvitation('example')).error?.code).toBe('network_failed');
     expect(log).toHaveBeenCalledWith('[memberInvitations] Request failed', { kind: 'Error' });
     log.mockRestore();
+  });
+  it('normalizes an unknown backend error before deciding whether direct registration can be retried', async () => {
+    mocks.call.mockResolvedValue({ ok: false, status: 503, data: { error: 'internal-diagnostic-example' } });
+    expect((await joinMemberInvitation('example', 'Alex', 'alex@example.com', 'example-password')).error?.code).toBe('server_error');
   });
   it('accepts explicit joined-without-session and rejects a malformed login session', async () => {
     mocks.call.mockResolvedValueOnce({ ok: true, status: 200, data: { success: true, session: null } })
