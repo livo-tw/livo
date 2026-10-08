@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { HardDrive, Database, Trash2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ const RECORD_TABLES = ['tasks', 'comments', 'status_logs', 'activity_logs', 'not
 /** Uploaded files and backups a member can list; the cloud uses the server's own counter instead. */
 const FILE_TABLES = ['task_attachments', 'kb_attachments', 'backup_history'] as const;
 /** Sizes and counts need only a table name; some of these tables are outside the generated types. */
-type UsageClient = { from: (table: string) => { select: (columns: string, options?: { count: 'exact'; head: true }) => PromiseLike<{ data: unknown[] | null; count: number | null }> } };
+type UsageClient = { from: (table: string) => { select: (columns: string, options?: { count: 'exact'; head: true }) => PromiseLike<{ data: unknown[] | null; count: number | null; error?: unknown }> } };
 const usageClient = supabase as unknown as UsageClient;
 
 const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
@@ -35,31 +35,67 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
   const [logRetentionDays, setLogRetentionDays] = useState(90);
   const [cleaningLogs, setCleaningLogs] = useState(false);
   const [logCounts, setLogCounts] = useState<{ activity: number | null; notifications: number | null }>({ activity: null, notifications: null });
+  const [usageLoading, setUsageLoading] = useState(true);
+  const [usageError, setUsageError] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const [logsError, setLogsError] = useState(false);
+  const usageRequest = useRef(0);
+  const logsRequest = useRef(0);
   const { confirm, ConfirmDialog } = useConfirmDialog();
 
   useEffect(() => {
     void loadUsageStats(false);
     void loadLogCounts();
+    return () => { usageRequest.current += 1; logsRequest.current += 1; };
   }, []);
 
   const loadLogCounts = async () => {
-    const [{ count: actCount }, { count: notifCount }] = await Promise.all([
-      supabase.from('activity_logs').select('*', { count: 'exact', head: true }),
-      supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('is_read', true),
-    ]);
-    setLogCounts({ activity: actCount ?? 0, notifications: notifCount ?? 0 });
+    const request = ++logsRequest.current;
+    setLogsLoading(true);
+    setLogsError(false);
+    try {
+      const [activity, notifications] = await Promise.all([
+        supabase.from('activity_logs').select('*', { count: 'exact', head: true }),
+        supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('is_read', true),
+      ]);
+      if ([activity, notifications].some(({ error, count }) => error || typeof count !== 'number' || !Number.isFinite(count))) {
+        throw new Error('log_count_unavailable');
+      }
+      if (request === logsRequest.current) {
+        setLogCounts({ activity: activity.count, notifications: notifications.count });
+      }
+    } catch {
+      if (request === logsRequest.current) setLogsError(true);
+    } finally {
+      if (request === logsRequest.current) setLogsLoading(false);
+    }
   };
 
   const loadUsageStats = async (refresh = true) => {
-    const quota = await getWorkspaceStorageQuota({ refresh });
-    setStorageLimit(quota?.limitBytes ?? null);
-    if (quota?.usedBytes != null) setStorageUsed(quota.usedBytes);
-    else {
-      const sizes = await Promise.all(FILE_TABLES.map(table => usageClient.from(table).select('file_size')));
-      setStorageUsed(sizes.reduce((sum: number, { data }) => sum + (data || []).reduce((s: number, row) => s + (Number((row as { file_size?: unknown }).file_size) || 0), 0), 0));
+    const request = ++usageRequest.current;
+    setUsageLoading(true);
+    setUsageError(false);
+    try {
+      const quota = await getWorkspaceStorageQuota({ refresh });
+      let nextStorageUsed = quota?.usedBytes ?? null;
+      if (nextStorageUsed === null) {
+        const sizes = await Promise.all(FILE_TABLES.map(table => usageClient.from(table).select('file_size')));
+        if (sizes.some(({ error, data }) => error || !Array.isArray(data))) throw new Error('file_sizes_unavailable');
+        nextStorageUsed = sizes.reduce((sum, { data }) => sum + (data ?? []).reduce<number>((size, row) => size + (Number((row as { file_size?: unknown }).file_size) || 0), 0), 0);
+      }
+      const counts = await Promise.all(RECORD_TABLES.map(table => usageClient.from(table).select('*', { count: 'exact', head: true })));
+      if (counts.some(({ error, count }) => error || typeof count !== 'number' || !Number.isFinite(count))) throw new Error('record_count_unavailable');
+      if (request === usageRequest.current) {
+        // Publish only a complete read; a failed refresh retains the last confirmed values.
+        setStorageLimit(quota?.limitBytes ?? null);
+        setStorageUsed(nextStorageUsed);
+        setRecords(counts.reduce((sum, { count }) => sum + (count ?? 0), 0));
+      }
+    } catch {
+      if (request === usageRequest.current) setUsageError(true);
+    } finally {
+      if (request === usageRequest.current) setUsageLoading(false);
     }
-    const counts = await Promise.all(RECORD_TABLES.map(table => usageClient.from(table).select('*', { count: 'exact', head: true })));
-    setRecords(counts.reduce((sum, { count }) => sum + (count || 0), 0));
   };
 
   const handleCleanupLogs = async () => {
@@ -113,7 +149,7 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">{t('adminUsage.recordsLabel')}</span>
                 <span className="font-medium text-foreground">
-                  {records !== null ? t('adminUsage.recordsValue', { value: records.toLocaleString() }) : t('common.loading')}
+                  {records !== null ? t('adminUsage.recordsValue', { value: records.toLocaleString() }) : t(usageLoading ? 'common.loading' : 'adminUsage.unknownValue')}
                 </span>
               </div>
             </div>
@@ -121,7 +157,7 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">{t('adminUsage.storageLabel')}</span>
                 <span className="font-medium text-foreground">
-                  {storageUsed !== null ? formatSize(storageUsed) : t('common.loading')}
+                  {storageUsed !== null ? formatSize(storageUsed) : t(usageLoading ? 'common.loading' : 'adminUsage.unknownValue')}
                   {storageLimit !== null && <span className="text-muted-foreground font-normal"> / {t('adminUsage.storageLimit', { size: formatSize(storageLimit) })}</span>}
                 </span>
               </div>
@@ -133,10 +169,14 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
                   />
                 </div>
               )}
-              {storageLimit === null && <p className="text-xs text-muted-foreground">{t('adminUsage.storageNoLimit')}</p>}
+              {records !== null && storageUsed !== null && storageLimit === null && <p className="text-xs text-muted-foreground">{t('adminUsage.storageNoLimit')}</p>}
             </div>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => { void loadUsageStats(); void loadLogCounts(); }}>
-              <RefreshCw size={14} /> {t('adminUsage.refreshButton')}
+            {usageError && <p role="alert" className="text-sm text-destructive">
+              {t(records !== null ? 'adminUsage.usageRefreshFailed' : 'adminUsage.usageLoadFailed')}
+            </p>}
+            <Button variant="outline" size="sm" className="gap-2" disabled={usageLoading || logsLoading || cleaningLogs} onClick={() => { void loadUsageStats(); void loadLogCounts(); }}>
+              <RefreshCw size={14} className={usageLoading || logsLoading ? 'animate-spin' : undefined} />
+              {t(usageLoading || logsLoading ? 'adminUsage.refreshing' : usageError || logsError ? 'adminUsage.retryButton' : 'adminUsage.refreshButton')}
             </Button>
           </CardContent>
         </Card>
@@ -151,9 +191,12 @@ const AdminUsageSection = ({ currentMemberId }: AdminUsageSectionProps) => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <span>{t('adminUsage.activityLogs')}<span className="font-medium text-foreground">{logCounts.activity ?? '...'}</span> {t('common.records')}</span>
-              <span>{t('adminUsage.readNotifications')}<span className="font-medium text-foreground">{logCounts.notifications ?? '...'}</span> {t('common.records')}</span>
+              <span>{t('adminUsage.activityLogs')}<span className="font-medium text-foreground">{logCounts.activity ?? t(logsLoading ? 'common.loading' : 'adminUsage.unknownValue')}</span> {t('common.records')}</span>
+              <span>{t('adminUsage.readNotifications')}<span className="font-medium text-foreground">{logCounts.notifications ?? t(logsLoading ? 'common.loading' : 'adminUsage.unknownValue')}</span> {t('common.records')}</span>
             </div>
+            {logsError && <p role="alert" className="text-sm text-destructive">
+              {t(logCounts.activity !== null ? 'adminUsage.logsRefreshFailed' : 'adminUsage.logsLoadFailed')}
+            </p>}
             <div className="flex items-center gap-3">
               <Select value={String(logRetentionDays)} onValueChange={(v) => setLogRetentionDays(parseInt(v))}>
                 <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>

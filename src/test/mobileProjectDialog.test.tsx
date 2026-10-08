@@ -64,7 +64,12 @@ function ProjectNavigation() {
   </>;
 }
 
+const initialProjects = state.projects;
+const initialLines = state.lines;
+
 beforeEach(() => {
+  state.projects = initialProjects.map(project => ({ ...project }));
+  state.lines = initialLines.map(line => ({ ...line }));
   vi.clearAllMocks();
   document.body.style.pointerEvents = '';
 });
@@ -115,4 +120,31 @@ it('keeps the mobile navigation usable after cancelling its nested personal orde
   const project = within(sidebar).getByRole('button', { name: /Example project/ });
   expect(getComputedStyle(project).pointerEvents).not.toBe('none');
   expect(state.navigated).not.toHaveBeenCalled();
+});
+it('preserves all-collapsed product lines when their data reloads', async () => {
+  const view = render(<ProjectNavigation />);
+  fireEvent.click(await screen.findByRole('button', { name: 'sidebar.collapse Example product line' }));
+  expect(screen.getByRole('button', { name: 'sidebar.expand Example product line' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('button', { name: /Example project/ })).not.toBeInTheDocument();
+
+  state.lines = state.lines.map(line => ({ ...line }));
+  view.rerender(<ProjectNavigation />);
+
+  const collapsed = screen.getByRole('button', { name: 'sidebar.expand Example product line' });
+  expect(collapsed).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('button', { name: /Example project/ })).not.toBeInTheDocument();
+  fireEvent.click(collapsed);
+  expect(screen.getByRole('button', { name: /Example project/ })).toBeInTheDocument();
+});
+
+it('expands a newly added product line while existing lines remain expanded', async () => {
+  const view = render(<ProjectNavigation />);
+  await screen.findByRole('button', { name: 'sidebar.collapse Example product line' });
+  state.lines = [...state.lines, { ...state.lines[0], id: 'new-example-line', name: 'New example product line' }];
+  state.projects = [...state.projects, { ...state.projects[0], id: 'new-example-project', lineId: 'new-example-line', name: 'New example project', key: 'NEW' }];
+  view.rerender(<ProjectNavigation />);
+
+  expect(screen.getByRole('button', { name: 'sidebar.collapse Example product line' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('button', { name: 'sidebar.collapse New example product line' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('button', { name: /New example project/ })).toBeInTheDocument();
 });

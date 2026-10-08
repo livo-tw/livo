@@ -104,10 +104,10 @@ export const useTaskComments = ({
       logActivity(currentMemberId, 'mention', `@${person.name}`, task.id, task.taskKey);
     }
     const commentPreview = plainText.slice(0, 100);
-    if (task.assigneeId && task.assigneeId !== currentMemberId && !mentionedIds.has(task.assigneeId))
-      createNotification(task.assigneeId, currentMemberId, 'comment', task.id, commentPreview);
-    if (task.reviewerId && task.reviewerId !== currentMemberId && !mentionedIds.has(task.reviewerId))
-      createNotification(task.reviewerId, currentMemberId, 'comment', task.id, commentPreview);
+    for (const recipientId of new Set([task.assigneeId, task.reviewerId])) {
+      if (recipientId && recipientId !== currentMemberId && !mentionedIds.has(recipientId))
+        createNotification(recipientId, currentMemberId, 'comment', task.id, commentPreview);
+    }
     sendSlackNotify({
       type: 'comment_added', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
       projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),

@@ -33,7 +33,8 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const sidebarOrder = useSidebarOrder(currentMemberId ?? '');
   const orderedProductLines = useMemo(() => sortSidebarItems(productLines, sidebarOrder.lineOrder, i18n?.language, sidebarOrder.sortMode), [productLines, sidebarOrder.lineOrder, i18n?.language, sidebarOrder.sortMode]);
   const { hasFeature } = useLicense();
-  const [expandedLines, setExpandedLines] = useState<string[]>([]);
+  // New lines start expanded; data refreshes preserve the lines the user collapsed.
+  const [collapsedLines, setCollapsedLines] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
 
   const [showStandupLaunch, setShowStandupLaunch] = useState(false);
@@ -43,12 +44,6 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   const { confirm, ConfirmDialog } = useConfirmDialog();
 
   useEffect(() => { setShowSidebarOrder(false); }, [currentMemberId]);
-
-  useEffect(() => {
-    if (productLines.length > 0 && expandedLines.length === 0) {
-      setExpandedLines(productLines.map(l => l.id));
-    }
-  }, [productLines]);
 
   useEffect(() => {
     const handler = (e: PointerEvent) => {
@@ -61,7 +56,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
   }, [contextMenu]);
 
   const toggleLine = (lineId: string) => {
-    setExpandedLines(prev =>
+    setCollapsedLines(prev =>
       prev.includes(lineId) ? prev.filter(id => id !== lineId) : [...prev, lineId]
     );
   };
@@ -231,7 +226,7 @@ const AppSidebar = ({ onNavigate }: AppSidebarProps) => {
 
         {orderedProductLines.map(line => {
           const lineProjects = sortSidebarItems(allProjects.filter(p => p.lineId === line.id && !p.isArchived), sidebarOrder.projectOrder, i18n?.language, sidebarOrder.sortMode);
-          const isExpanded = expandedLines.includes(line.id);
+          const isExpanded = !collapsedLines.includes(line.id);
 
           return (
             <div key={line.id} className="mb-0.5">
