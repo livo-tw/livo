@@ -1,30 +1,30 @@
 # LIVO
 
-A project management system built for Chinese-speaking teams: boards, Gantt charts, sprints, daily and weekly reports written from task status, stand-ups and approvals. Run it on your own machine with Docker (it works fine on an offline intranet) or deploy it to Cloudflare. Open source under the [AGPL-3.0](LICENSE).
+A project collaboration system built for Chinese-speaking teams. Keep tasks, knowledge and meeting records, Bug repair and verification, and release records in one workflow, with links back to the original cards and documents.
 
-[中文說明](README.md) · [Live demo](https://livo-tw.com/demo/?demo=pro) · [Website](https://livo-tw.com)
+Self-host with Docker on your server or intranet, or deploy to Cloudflare. Open source under the [AGPL-3.0](LICENSE): self-hosting is free, with no member limit or license key. Enable QA, approvals, Slack actions and releases when your team needs them.
+
+[中文說明](README.md) · [Live demo](https://livo-tw.com/demo/?demo=pro) · [Website](https://livo-tw.com) · [Blog](https://livo-tw.com/articles)
 
 [![CI](https://github.com/livo-tw/livo/actions/workflows/ci.yml/badge.svg)](https://github.com/livo-tw/livo/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 ![LIVO board](docs/images/board.jpg)
 
-The live demo needs no sign-up. Everything you change stays in that browser tab and is gone when you close it.
+The live demo needs no sign-up. Everything you change stays in that browser tab and is gone when you close it. Demo mode does not connect to Slack or create real member invitations.
 
 ## Features
 
-- **Knowledge base**: shared and project pages, a three-level tree, rich text and images, attachments, cross-page search, and the latest 20 previous versions with restore. Edit locks prevent concurrent overwrites. Members can create and edit; admins can restrict individual pages and archive them. Available on Docker and Cloudflare with no extra setup, third-party service or feature switch.
-
-- **Views**: board, list, backlog, Gantt chart with task dependencies, my tasks
-- **Sprints**: plan and complete sprints; unfinished tasks can move into the next one
-- **Work reports**: daily, weekly and monthly reports assembled from task status; edit them, keep a history, or send them to Slack on a schedule
-- **Stand-up mode**, **approval workflows**, **dashboard**
-- **Tasks**: subtasks, dependencies, custom fields, required fields, templates, status transition rules, time tracking
-- **Collaboration**: live updates, and a lock with a notice when two people edit the same field
-- **Notifications and integrations**: in-app, email (Resend), Slack, webhooks, personal API tokens
-- **Administration**: members and roles, activity log, JSON backup and export, Jira CSV import
-- **Feature switches**: administrators enable or disable approvals for the whole team; off on fresh installs
-- **Interface**: Traditional Chinese, Simplified Chinese and English; dark and light themes; `Ctrl/Cmd + K` search
+- **Tasks and sprints**: boards, lists, backlog, Gantt charts and dependencies; subtasks, custom and required fields, templates, transition rules and time tracking. Carry unfinished work into the next sprint. Assignment and review responsibility take effect immediately, without an acceptance step.
+- **Personal work**: assigned and reviewed tasks, plus Bugs you repair or test, in one place. Set your own product line and project order in the sidebar without changing teammates' order.
+- **Knowledge and meetings**: shared and project pages, a three-level tree, rich text, search, version restore and comments. Set view, edit and comment access by role, position or member; download attachments through authenticated access. Keep private drafts, confirm published document revisions, and link decisions to tasks or Bugs.
+- **Document imports**: preview and review Markdown, DOCX, PDF (including local OCR) and explicitly allowed Notion pages before committing them. Retain original sources and source versions. Requires a separately configured optional private processor.
+- **QA Bugs**: dedicated board and list, repair and QA owners, custom fields and display workflows, private evidence attachments, repair and verification across environments, and cross-team handoffs. Bugs close automatically after all required environments have deployment records and their latest formal verification passes.
+- **Deployment and releases**: a shared deployment queue reuses original tasks and Bugs. Release batches collect versions, QA/UAT evidence, exceptions and records of manual deployment, rollback and recovery across projects and components.
+- **Reports and stand-ups**: daily, weekly and monthly reports assembled from task status, with editing, history and scheduled Slack delivery. Stand-ups support timers, groups, speaking order and temporary participant exclusion/restoration. Dashboards and optional approvals are also included.
+- **Collaboration and integrations**: live updates, field edit locks, in-app notifications, email (Resend), Slack, webhooks and personal API tokens. Slack capabilities depend on deployment and configuration; see the comparison below.
+- **Team administration**: members and roles, single-use invitation links, activity logs, JSON backup/export and Jira CSV import. Complete recovery also requires database and file backups.
+- **Interface**: Traditional Chinese, Simplified Chinese and English; dark and light themes; `Ctrl/Cmd + K` search; mobile navigation and touch board controls.
 
 | Gantt chart | Work report |
 | --- | --- |
@@ -32,11 +32,44 @@ The live demo needs no sign-up. Everything you change stays in that browser tab 
 | **Dashboard** | **Stand-up** |
 | ![Dashboard](docs/images/dashboard.jpg) | ![Stand-up](docs/images/standup.jpg) |
 
-### Approval feature switch
+### Enable the features your team needs
+
+Administrators manage approvals, QA Bugs, Slack actions, release workspace and the deployment queue in **System administration → Feature switches**. These optional features are off on fresh installs; knowledge pages and ordinary tasks need no switch. Disabling an optional feature retains its data. Slack and document processing still require their own service configuration.
+
+Invitation links let colleagues enter a name, an Email-format login identifier and a password to join directly, without a confirmation email or mail service. Each link works once, expires after seven days and can be revoked by an administrator. Direct joining does not verify ownership of the supplied email.
+
+#### Approvals
 
 Open **System administration → Feature switches** to enable the approval workflow, rules and notifications for your team. Only admins and super admins can change it. Both Docker and Cloudflare are supported, with no third-party service or license key required. The `?demo=pro` demo starts with approvals on and uses only in-memory data.
 
 Existing installations with any approval rules or requests keep approvals on after upgrading. Turning approvals off lists all pending tasks: cancel or choose **Withdraw all and turn off**. Withdrawal clears each task's pending state and records the activity through the normal withdrawal path. With approvals off, approval screens, status interception and notifications disappear. Rules and history are retained and become visible when enabled again. Existing Realtime broadcasts propagate changes; offline clients pick them up on the next load. Rerun the Docker installer to apply the migration, or apply the updated `worker/schema.sql` on Cloudflare.
+
+### Workflows and deployment differences
+
+QA supports direct workflow state changes as well as formal repair, deployment and PASS/FAIL/BLOCKED records. Selecting PASS or closed manually changes the work state without creating verification evidence. Automatic closure requires actual deployment and the latest formal PASS for every required target in the current repair cycle. The shared queue creates no extra task, and release batches do not execute deployments or automatically change task or Bug states.
+
+Knowledge and meeting pages can create or link tasks and Bugs with references to the source page and paragraph. Document checklists do not replace task completion or QA verification. Ancestor page restrictions still apply, and administrators do not automatically gain access to restricted pages.
+
+| Capability | Docker self-hosting | Cloudflare |
+| --- | --- | --- |
+| Tasks, knowledge and meetings, QA, deployment queue, release data | Supported | Supported |
+| Ordinary task Slack panel, card creation and comments | Socket Mode; bot, app token and outbound access required | This ordinary task interaction entry is unavailable |
+| QA Slack actions and Bug thread synchronization | Socket Mode; events and scopes required | Signed HTTP endpoint; signing secret and events required |
+| Slack knowledge search | Existing Socket Mode relay | Signed HTTP endpoint |
+| Slack release confirmation and delivery | Existing integration and channel routes must be configured | Unsupported for ordinary D1 login identities |
+| Document parsing and OCR | Optional internal processor, off by default | Configure a trusted private processor; Workers do not run native parsers |
+
+On Docker, `/livo` opens the private task panel. Use `/livo new Title` to create a card, `/livo comment ABC-123` to comment, or `/livo context ABC-123` to read task background and requirements. QA uses `/livo bug ...`; knowledge search uses `/livo kb keyword`. Every action checks current membership and data access. Manual account mappings require a super administrator; members can unlink their own Slack account.
+
+Task notifications can route by product line or project, with a durable queue, deduplication and rate-limit retries. Uncertain delivery outcomes are held for review. Socket Mode needs no public Request URL on an intranet, but outbound HTTPS/WebSocket access is still required. Deploying code does not configure a real Slack app; complete setup and acceptance checks in your own environment after upgrading.
+
+### Documentation
+
+- [Docker installation, upgrades and Slack setup](release-template/README.md) (Chinese)
+- [Task responsibility and Slack panels](docs/task-work-slack.md) · [Deadlines and due reminders](docs/task-planning-slack.md)
+- [Knowledge and meeting workflows](KNOWLEDGE-WORKFLOW.md) · [Page permissions](docs/knowledge-permissions.md) · [Private document imports](docs/knowledge-import.md)
+- [QA Bugs and Slack](QA-WORKFLOW.md) · [QA, automatic closure and shared deployment queue](docs/qa-slack-and-deployment-workflow.md)
+- [Release batches and threads](release-template/README.md#跨卡發布批次與持續討論串) · [Use cases and blog articles](https://livo-tw.com/articles)
 
 ## Getting started
 
@@ -70,7 +103,7 @@ Sign in as `admin@livo.test` / `test1234`. To start empty instead, replace `npm 
 node scripts/init-instance.mjs --local --email you@example.com --name "Your Name"
 ```
 
-### 2. Self-host with Docker (your data never leaves your machine)
+### 2. Self-host with Docker (store data on your own server)
 
 Good for a company intranet or your own server. Needs Docker with Compose; the machine that builds the package also needs Node.js 22 or later.
 
@@ -133,7 +166,10 @@ scripts/build-release.mjs  builds the Docker package
 ## Known limitations
 
 - From source (`npm run dev`) or on Cloudflare the app is served under the `/demo/` path; the Docker install serves it at the site root (for example `http://localhost:3000/`).
-- Jira import only understands CSV column names from Jira's Simplified Chinese interface for now.
+- Jira CSV import supports English and Simplified Chinese header aliases; other headers need conversion first. Move attachments with the separate `scripts/jira-attachments.mjs` tool; CSV alone does not transfer them automatically.
+- Document imports require a private processor and import permissions. Each source is limited to 10 MB and PDFs to 40 pages. OCR and unsupported content produce review warnings; Notion child pages must be individually allowed and selected.
+- JSON backup is not a complete server backup. Check its coverage manifest for private knowledge and files; some restore and cross-database migration paths are guarded. Complete recovery needs database and file-storage backups. QA attachments do not move automatically between Docker and R2.
+- Slack, email and webhooks send configured notification content to external services. Without those integrations, an intranet installation can remain internal. Ordinary task and QA thread synchronization have different scopes; see the documentation above.
 - Traditional Chinese is the most complete language; some screens are not translated to Simplified Chinese or English yet.
 
 ## License
@@ -149,15 +185,3 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Yo
 ## Author
 
 Lingye, an independent developer in Taiwan with ten years as a product manager. LIVO started as a tool for their own team.
-
-### Slack actions (optional, Docker self-hosting)
-
-Docker task notifications can route product lines or projects to specific channels, using a durable queue and one thread per card and channel. Rate limits retry automatically; uncertain delivery outcomes are held for review to avoid duplicate posts. This is off by default; see the [Docker setup guide](release-template/README.md).
-
-Create cards with `/livo`, add comments with `/livo comment ABC-123`, or use message shortcuts and a permission-filtered card picker.
-Socket Mode connects outbound, so an internal installation needs no public Request URL. No new npm dependencies are required.
-Off by default: an administrator enables **Feature switches → Slack actions**, then configures the bot in **Integrations → Slack**.
-Enable Socket Mode and Interactivity in the Slack app. Create an app-level token with `connections:write`, add `/livo` and the `livo_create_task` / `livo_comment_task` message shortcuts, add the `commands` bot scope and reinstall the app.
-Set `SLACK_APP_TOKEN` and `APP_BASE_URL` in `docker/.env` and rerun the installer. It generates the internal secret once and preserves existing values.
-Accounts bind by email to active LIVO logins; when the emails differ, an administrator can map the Slack account manually in the Slack settings. Searches and writes use the member's normal permissions. Disabling the feature retains configuration and history.
-Cloudflare hides this feature; demo mode makes no backend calls. See the [Docker setup guide](release-template/README.md) for scopes, Compose commands, account binding and limits.

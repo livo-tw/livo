@@ -1,30 +1,30 @@
 # LIVO
 
-給中文團隊用的專案管理系統：看板、甘特圖、Sprint、自動整理的日報週報、站會、簽核流程都在裡面。可以架在自己的機器上（Docker，內網也能跑），也可以部署到 Cloudflare。以 [AGPL-3.0](LICENSE) 開源。
+給中文團隊用的開源專案協作系統。把任務、知識與會議記錄、Bug 修復驗證、發布記錄放在同一套工作流程裡，從規劃、交接到驗收都能回到原始卡片與文件。
 
-[English](README.en.md) · [線上試玩](https://livo-tw.com/demo/?demo=pro) · [官網](https://livo-tw.com)
+支援 Docker 自架（可在內網使用）與 Cloudflare 部署。以 [AGPL-3.0](LICENSE) 開源，自架版免費、不限成員人數、不需授權金鑰；QA、簽核、Slack 互動與發布等功能可按團隊需要啟用。
+
+[English](README.en.md) · [線上試玩](https://livo-tw.com/demo/?demo=pro) · [官網](https://livo-tw.com) · [部落格](https://livo-tw.com/articles)
 
 [![CI](https://github.com/livo-tw/livo/actions/workflows/ci.yml/badge.svg)](https://github.com/livo-tw/livo/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 ![LIVO 看板](docs/images/board.jpg)
 
-線上試玩不用註冊，資料只存在你的瀏覽器分頁裡，關掉就消失。
+線上試玩不用註冊，資料只存在你的瀏覽器分頁裡，關掉就消失；展示模式不連接 Slack，也不能建立真實成員邀請。
 
 ## 功能
 
-- **知識庫**：共用或專案頁面、最多三層目錄、富文字與圖片、附件、跨頁搜尋、最近 20 個舊版本與還原；協作鎖避免互相覆蓋。所有成員可建立與編輯，管理員可限制單頁編輯與封存。Docker 與 Cloudflare 均可用，不需額外設定或第三方服務，也沒有功能開關。
-
-- **看任務的方式**：看板、列表、待辦清單、甘特圖（可設任務依賴）、我的任務
-- **Sprint**：衝刺規劃與完成衝刺，開新衝刺時可以把沒做完的任務一起帶過去
-- **工作報告**：依任務狀態整理出日報、週報、月報，可以手動編修、存歷史，也能排程發到 Slack
-- **站會模式**、**簽核流程**、**儀表板**
-- **任務細節**：子任務、任務依賴、自訂欄位、必填欄位、任務範本、狀態流轉規則、工時紀錄
-- **多人協作**：畫面即時同步；兩個人同時改同一個欄位時會提示並鎖定
-- **通知與整合**：站內通知、Email（Resend）、Slack、Webhooks、個人 API Token
-- **管理**：成員與角色權限、操作歷程、JSON 備份與匯出、Jira CSV 匯入
-- **功能開關**：管理員可為全體成員開啟或關閉簽核流程；新安裝預設關閉
-- **介面**：繁體中文、簡體中文、English，深色／淺色主題，`Ctrl/Cmd + K` 快速搜尋
+- **任務與 Sprint**：看板、列表、待辦清單、甘特圖與任務依賴；子任務、自訂與必填欄位、範本、狀態流轉、工時紀錄。未完成任務可帶入下一個 Sprint；指派與驗收責任立即生效，不需另行確認接單。
+- **我的工作**：集中查看自己負責或驗收的任務、修復或測試的 Bug；個人側欄可調整產線與專案順序，不影響其他成員。
+- **知識與會議記錄**：共用／專案頁面、三層目錄、富文字、搜尋、版本還原與留言；按角色、職稱或指定成員設定查看／編輯／留言權限，附件以登入權限下載。可保留私人草稿、確認發布文件版本，並把決議連到任務或 Bug。
+- **文件匯入**：預覽並校對 Markdown、DOCX、PDF（含掃描檔 OCR）及明確允許的 Notion 頁面，再確認入庫；保留原始來源與來源版本。需要額外配置可選的私有解析服務。
+- **QA Bug**：獨立看板與列表、RD／QA 負責人、自訂欄位與顯示流程、私人證據附件、修復與多環境部署驗證、跨部門交接。所有必要環境完成部署且最新正式驗證 PASS 後，自動結案。
+- **部署與發布**：共用待部署清單彙整原任務和 Bug；發布批次整理跨專案／元件的版本、QA／UAT 證據、例外及人工部署、回滾、恢復記錄。
+- **報告與站會**：依任務狀態整理日報、週報、月報，可編修、存歷史與排程送到 Slack；站會支援計時、分組、調整發言順序與臨時排除／恢復成員；另有儀表板與可選簽核流程。
+- **協作與整合**：即時更新、欄位協作鎖、站內通知、Email（Resend）、Slack、Webhooks、個人 API Token。Slack 能力依部署方式與設定而異，見下方比較。
+- **團隊管理**：成員與角色權限、一次性邀請連結、操作歷程、JSON 備份／匯出、Jira CSV 匯入；完整恢復需另外備份資料庫與附件。
+- **介面**：繁體中文、簡體中文、English，深色／淺色主題，`Ctrl/Cmd + K` 快速搜尋；手機導覽與看板觸控操作。
 
 | 甘特圖 | 工作報告 |
 | --- | --- |
@@ -32,11 +32,44 @@
 | **儀表板** | **站會** |
 | ![儀表板](docs/images/dashboard.jpg) | ![站會](docs/images/standup.jpg) |
 
-### 簽核功能開關
+### 按需要啟用功能
+
+管理員可在「系統管理 → 功能開關」管理簽核、QA Bug、Slack 互動、發布工作區與待部署清單。新安裝預設關閉這些可選功能；知識庫與一般任務不需要功能開關。關閉可選功能會保留其資料，Slack 及文件解析仍需各自完成服務設定。
+
+邀請連結讓同事直接填寫姓名、Email 格式的登入帳號與密碼加入，不需確認信或寄信服務。每條連結只能使用一次，7 天到期，可由管理員撤銷；直接加入不代表已驗證該 Email 的所有權。
+
+#### 簽核
 
 到「系統管理 → 功能開關」開啟「簽核流程」，即可使用任務簽核、規則與通知。只有管理員與超級管理員可修改。Docker 與 Cloudflare 都支援，無須第三方服務或授權金鑰；展示模式 `?demo=pro` 預設開啟，僅使用瀏覽器內的模擬資料。
 
 既有安裝若有簽核規則或申請，升級後仍保持開啟。關閉時會列出待簽核任務，管理員可取消或選擇「全部撤回並關閉」；撤回會清除任務的待簽核狀態並記錄操作。關閉後各頁面、狀態變更與通知都不再使用簽核。資料保留，重新開啟後可查看規則與歷史。設定透過既有 Realtime 同步；離線時於下次載入更新。Docker 升級請重跑安裝程式套用 migration，Cloudflare 請套用新版 `worker/schema.sql`。
+
+### 工作流程與部署差異
+
+QA 可直接調整工作狀態，也能正式記錄修復、部署及 PASS／FAIL／BLOCKED。手動選擇 PASS 或已結案只改工作狀態，不建立驗證證據；自動結案只由本輪所有必要環境的實際部署與最新正式 PASS 觸發。共用部署清單不另建任務，發布批次也不執行部署或自動更改任務／Bug 狀態。
+
+知識頁與會議記錄可以建立／連結任務或 Bug，並保留來源頁面與段落；文件檢查項不會替代任務完成或 QA 驗證。頁面權限受上層限制，管理員不會自動取得受限頁面的查看權。
+
+| 能力 | Docker 自架 | Cloudflare |
+| --- | --- | --- |
+| 任務、知識與會議、QA、部署清單、發布資料 | 支援 | 支援 |
+| 一般任務 Slack 私人面板、建卡與留言 | Socket Mode；需 Bot、App Token 與對外連線 | 未提供此一般任務互動入口 |
+| QA Slack 操作與 Bug 討論串同步 | Socket Mode，需設定事件與權限 | 簽名 HTTP 入口，需設定 Signing Secret 與事件 |
+| Slack 知識搜尋 | 既有 Socket Mode relay | 簽名 HTTP 入口 |
+| Slack 發布批次確認與配送 | 需配置既有整合與頻道路由 | 一般 D1 登入身份未支援 |
+| 文件解析／OCR | 選用內部處理器，預設關閉 | 另配置可信私有處理器，Workers 不直接執行解析程式 |
+
+Docker 的 `/livo` 開啟私人任務面板；`/livo new 標題` 建卡、`/livo comment ABC-123` 留言、`/livo context ABC-123` 查看任務背景與需求。QA 使用 `/livo bug ...`，知識搜尋使用 `/livo kb 關鍵字`。每次操作依目前成員與資料權限檢查；手動帳號對應限超級管理員，成員可解除自己的 Slack 連結。
+
+任務通知可按產線／專案指定頻道，使用持久佇列、去重與限流重試；無法確認送達的結果保留待查。Socket Mode 不需內網提供公開 Request URL，但仍需允許對外 HTTPS／WebSocket。新增程式碼不會自動設定真實 Slack App，升級後需在自己的環境完成設定與驗收。
+
+### 文件導航
+
+- [Docker 安裝、升級與 Slack 設定](release-template/README.md)
+- [任務責任與 Slack 面板](docs/task-work-slack.md) · [期限與到期提醒](docs/task-planning-slack.md)
+- [知識與會議工作流程](KNOWLEDGE-WORKFLOW.md) · [頁面權限](docs/knowledge-permissions.md) · [私有文件匯入](docs/knowledge-import.md)
+- [QA Bug 與 Slack](QA-WORKFLOW.md) · [QA、自動結案與共用部署清單](docs/qa-slack-and-deployment-workflow.md)
+- [發布批次與討論串](release-template/README.md#跨卡發布批次與持續討論串) · [使用情境與部落格文章](https://livo-tw.com/articles)
 
 ## 開始使用
 
@@ -70,7 +103,7 @@ npm run dev                         # 打開 http://localhost:5173/demo/
 node scripts/init-instance.mjs --local --email you@example.com --name 你的名字
 ```
 
-### 2. Docker 自架（資料完全留在自己的機器）
+### 2. Docker 自架（資料存放在自己的伺服器）
 
 適合放在公司內網或自己的伺服器。需要 Docker（含 Compose），打包安裝包的那台電腦需要 Node.js 22 以上。
 
@@ -133,7 +166,10 @@ scripts/build-release.mjs  產生 Docker 安裝包
 ## 目前的限制
 
 - 從原始碼執行（`npm run dev`）或部署到 Cloudflare 時，網址在 `/demo/` 路徑下；Docker 安裝版在網站根目錄（例如 `http://localhost:3000/`）。
-- Jira 匯入目前只認得「簡體中文介面」匯出的 CSV 欄位名稱。
+- Jira CSV 匯入支援英文與簡體中文欄位別名；其他欄位名稱需先轉換。附件搬遷使用另附的 `scripts/jira-attachments.mjs` 工具，不會只靠 CSV 自動搬入。
+- 文件匯入需私有解析服務與相應權限；每份來源最多 10 MB、PDF 最多 40 頁。掃描檔 OCR 與不支援的格式會顯示校對提示，Notion 子頁需逐一允許與選取。
+- JSON 備份不等於完整伺服器備份，私有知識與檔案的涵蓋範圍以備份清單為準；部分還原／跨資料庫搬遷會被保護規則阻擋。完整恢復應使用資料庫與檔案儲存備份，QA 附件不會自動跨 Docker／R2 搬遷。
+- Slack、Email、Webhooks 會將所設定的通知內容送到外部服務；不使用這些整合時可維持內網運作。一般任務與 QA 的 Slack 討論串同步範圍不同，設定與限制見上方文件。
 - 介面文字以繁體中文最完整，簡中和英文有部分畫面還沒翻譯。
 
 ## 授權
@@ -149,14 +185,3 @@ LIVO 以 [GNU AGPL-3.0](LICENSE) 釋出。你可以免費使用、修改、商�
 ## 作者
 
 Lingye，台灣的個人開發者，做了十年 PM。LIVO 一開始是做給自己團隊用的工具。
-
-### Slack 互動（可選，Docker 自架）
-
-Docker 任務通知可依產線／專案指定頻道，使用持久佇列及每張卡共用的討論串。支援限流重試；無法確認是否送達時保留待查紀錄，避免重複發送。設定預設關閉，見 [任務通知佇列與專案頻道](release-template/README.md#任務通知佇列與專案頻道docker可選)。
-
-支援 `/livo` 建卡、`/livo comment ABC-123` 留言，以及訊息捷徑與可見卡片搜尋。
-Socket Mode 主動連線，內網無須提供公開 Request URL；不需新增 npm 依賴。
-預設關閉：管理員先啟用「功能開關 → Slack 互動（建卡、留言）」，再於「整合 → Slack」設定 Bot、Socket Mode、`commands` 權限及 App Token。
-在 `docker/.env` 設 `SLACK_APP_TOKEN`、`APP_BASE_URL` 後重跑安裝程式；內部密鑰自動產生並保留。
-依 Email 綁定啟用中的 LIVO 帳號；Email 不同時，管理員可在 Slack 設定手動對應。停用功能保留設定及歷史。Cloudflare 版隱藏此功能，展示模式不連線。
-完整設定與範例見 [Docker 安裝說明](release-template/README.md#從-slack-建卡與留言docker可選預設關閉)。
