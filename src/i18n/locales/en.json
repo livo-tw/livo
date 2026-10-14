@@ -3282,7 +3282,9 @@
       "loading": "Loading QA display settings…",
       "loadFailed": "QA display settings could not be loaded. Retry before editing the affected fields.",
       "saved": "QA display settings saved and confirmed",
-      "forbidden": "Only super admins can change QA display settings."
+      "forbidden": "Only super admins can change QA display settings.",
+      "hiddenBoardHint": "The board hides {{states}}. These bugs remain available in the list and history.",
+      "viewHiddenStates": "View bugs in hidden states"
     },
     "manualStates": {
       "title": "Manual state choices",

@@ -8,7 +8,7 @@ import { QA_STATES, type QaListInput } from '@/lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { ProductLine, Project } from '@/types';
 
-const mocks = vi.hoisted(() => ({ getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getDisplaySettings: vi.fn().mockResolvedValue({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), list: vi.fn().mockResolvedValue({ issues: [], total: 0, hasMore: false }) }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -20,7 +20,7 @@ vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProj
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as never[] }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/hooks/useQa', () => {
-  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: mocks.getWorkflow };
+  const client = { getDisplaySettings: mocks.getDisplaySettings, getWorkflow: mocks.getWorkflow, list: mocks.list };
   return { useQa: () => ({ client, actor: { id: 'example-admin', role: 'admin' } }) };
 });
 vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <output aria-label="Filtered canonical state">{filters.states?.join(',') || 'all'}</output> }));
@@ -86,6 +86,17 @@ describe('shared coloured status select', () => {
 });
 
 describe('QA status filtering', () => {
+  it('provides a list shortcut for bugs hidden from the default board', async () => {
+    mocks.getDisplaySettings.mockResolvedValueOnce({ version: 1, showSeverity: false, hiddenPriorityChoices: [1, 5], hiddenBoardStates: ['triaged', 'closed'] } satisfies QaDisplaySettings);
+    mocks.getWorkflow.mockResolvedValue(DEFAULT_QA_WORKFLOW);
+    render(<QaWorkspace />);
+    const shortcut = await screen.findByRole('button', { name: 'qa.displaySettings.viewHiddenStates' });
+    expect(screen.getByText('qa.displaySettings.hiddenBoardHint')).toBeInTheDocument();
+    fireEvent.click(shortcut);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ states: ['triaged', 'closed'] }), expect.any(AbortSignal)));
+    expect(screen.getByRole('button', { name: 'qa.list' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('qa.displaySettings.hiddenBoardHint')).not.toBeInTheDocument();
+  });
   it('offers all eight canonical states with custom labels and board colours, and filters several at once', async () => {
     const workflow: QaWorkflow = {
       ...DEFAULT_QA_WORKFLOW, order: [...QA_STATES].reverse(),

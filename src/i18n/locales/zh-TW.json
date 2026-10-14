@@ -3282,7 +3282,9 @@
       "loading": "正在讀取 QA 顯示設定…",
       "loadFailed": "無法讀取 QA 顯示設定，請重試後再編輯相關欄位。",
       "saved": "QA 顯示設定已儲存並確認",
-      "forbidden": "只有超級管理員能調整 QA 顯示設定。"
+      "forbidden": "只有超級管理員能調整 QA 顯示設定。",
+      "hiddenBoardHint": "看板已隱藏「{{states}}」；這些 Bug 仍保留在清單與歷史紀錄中。",
+      "viewHiddenStates": "查看隱藏狀態的 Bug"
     },
     "manualStates": {
       "title": "變更狀態選項",

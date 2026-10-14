@@ -3282,7 +3282,9 @@
       "loading": "正在读取 QA 显示设置…",
       "loadFailed": "无法读取 QA 显示设置，请重试后再编辑相关字段。",
       "saved": "QA 显示设置已保存并确认",
-      "forbidden": "只有超级管理员能调整 QA 显示设置。"
+      "forbidden": "只有超级管理员能调整 QA 显示设置。",
+      "hiddenBoardHint": "看板已隐藏「{{states}}」；这些 Bug 仍保留在列表与历史记录中。",
+      "viewHiddenStates": "查看隐藏状态的 Bug"
     },
     "manualStates": {
       "title": "变更状态选项",

@@ -82,7 +82,9 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
     request.current = null; setFailure(null); setMove(null);
     const nextRevision = ++revisionNumber.current;
     refreshRequest.current = { revision: nextRevision, remaining: new Set(columns.map(column => column.id)) };
-    setRefreshing(true); setRevision(nextRevision);
+    // A configuration read can temporarily leave the board without columns.
+    // There is nothing to wait for until those columns are available again.
+    setRefreshing(columns.length > 0); setRevision(nextRevision);
   };
   const reloadSeen = useRef(reloadToken);
   useEffect(() => {
@@ -135,7 +137,10 @@ export default function QaKanban({ client, actor, workflow, filters, reloadToken
       toast.info(t(request.current && !sending.current ? 'qa.dropUncertain' : 'qa.saving'), { position: 'top-center' });
       return;
     }
-    const intent = getQaDropIntent(issue, actor, column.states, column.id);
+    // A grouped column may use a hidden state as its canonical ID. Dropping
+    // into that column must choose a state the user can actually see.
+    const destination = column.shown.includes(column.id) ? column.id : column.shown[0];
+    const intent = getQaDropIntent(issue, actor, column.shown, destination);
     if (intent.kind === 'blocked') {
       toast.error(t('qa.dropFailed'), { description: t(intent.reason === 'permission' ? 'qa.dropPermission' : 'qa.dropUnavailable'), position: 'top-center', duration: 10000,
         action: { label: t('qa.openBug'), onClick: () => openSafely(issue.id) } });

@@ -9,6 +9,9 @@ const read=p=>fs.readFileSync(path.join(source,p),'utf8'),{runPostgres}=await im
 const migration=read('supabase/migrations/20261029_deployment_queue_operators.sql'),q=v=>"'"+String(v).replaceAll("'","''")+"'",j=v=>q(JSON.stringify(v))+'::jsonb';
 const dependencyNames=['20261002_qa_workflow.sql','20261002_qa_workflow_settings.sql','20261006_deployment_environments.sql','20261007_qa_status_semantics.sql','20261012_qa_coordination.sql','20261013_qa_manual_state.sql','20261014_qa_admin_capability.sql','20261015_qa_custom_fields.sql','20261016_qa_coordination_alignment.sql','20261017_notifications_task_optional.sql','20261019_conflicts_not_retried.sql','20261024_qa_open_triage.sql','20261027_qa_inline_fields.sql'];
 const dependencies=dependencyNames.map(name=>read('supabase/migrations/'+name));
+const latestQaNames=['20261031_qa_create_basic_settings.sql','20261101_qa_display_settings.sql','20261102_qa_verification_auto_close.sql'];
+const latestQa=latestQaNames.map(name=>read('supabase/migrations/'+name));
+const submitFixName='20261106_qa_submit_fix_target_alias.sql',submitFix=read('supabase/migrations/'+submitFixName);
 const reminder=read('supabase/migrations/20261028_simple_task_reminders.sql'),oldReminder=read('supabase/migrations/20261010_task_reminder_preferences.sql');
 const prefsDDL=oldReminder.slice(oldReminder.indexOf('CREATE TABLE IF NOT EXISTS public.task_reminder_preferences'),oldReminder.indexOf('ALTER TABLE public.task_reminder_preferences'));
 const oldPause=oldReminder.slice(oldReminder.indexOf('CREATE OR REPLACE FUNCTION public.livo_task_reminder_paused'),oldReminder.indexOf('-- Personal due-date digest'));
@@ -17,9 +20,9 @@ const check=(name,condition)=>{labels.push(name);sql.push(`SELECT qa_test.check(
 const uid=n=>'00000000-0000-0000-0000-'+String(n).padStart(12,'0'),set=n=>sql.push(`SELECT set_config('request.jwt.claim.sub',${q(uid(n))},false);`);
 const current=`CREATE FUNCTION public.current_member_id() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$ SELECT id FROM public.members WHERE auth_id=auth.uid() LIMIT 1 $$;GRANT SELECT ON public.members TO authenticated;
 CREATE TABLE public.task_deployments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text REFERENCES public.tasks(id),environment text NOT NULL,status text NOT NULL DEFAULT 'scheduled');GRANT ALL ON public.task_deployments TO service_role;
-CREATE TABLE public.external_account_bindings(id text PRIMARY KEY,member_id text,platform text,platform_team_id text,platform_user_id text,is_verified boolean,verified_by text);GRANT ALL ON public.external_account_bindings TO service_role;`;
+CREATE TABLE public.external_account_bindings(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),member_id text,platform text,platform_team_id text,platform_user_id text,is_verified boolean,verified_by text);GRANT ALL ON public.external_account_bindings TO service_role;`;
 sql.push("SET ROLE service_role;INSERT INTO public.system_settings(key,value) VALUES('deployment_queue',"+j(valid)+");RESET ROLE;CREATE TABLE qa_test.repeatability AS SELECT md5(string_agg(to_jsonb(s)::text,E'\\n' ORDER BY key)) digest FROM public.system_settings s;GRANT SELECT ON qa_test.repeatability TO authenticated,service_role;");
-sql.push(migration);
+sql.push(migration,...latestQa);
 check('migration applied twice preserves all preexisting settings',`(SELECT digest=(SELECT md5(string_agg(to_jsonb(s)::text,E'\\n' ORDER BY key)) FROM public.system_settings s) FROM qa_test.repeatability)`);
 for(const [role,n] of [['member',1],['admin',2]]){
  sql.push('SET ROLE authenticated;');set(n);
@@ -48,6 +51,36 @@ const reference={...base,id:'historical-reference',state:'closed',closedAt:when,
 sql.splice(1,0,seed(reference)+`INSERT INTO public.qa_events(id,issue_id,actor_id,type,detail,version,created_at) VALUES('00000000-0000-0000-0000-000000000090','historical-reference','m-qa','close','Example existing history',1,${q(when)});`);
 let seq=0;
 const commit=(n,data,{expected=1,cid='deployment-command-'+(++seq),type='record_deployment',hash='a'.repeat(64)}={})=>`public.livo_qa_commit(${q(uid(n))}::uuid,${q(data.id)},${q(cid)},${q(hash)},${expected},'command',${j(data)},${j({id:'event-'+cid,type,detail:'Example isolated deployment',recipients:[]})})`;
+// Submit through the latest RPC: seeding a candidate skipped this production path.
+// Optional text stays blank, while current owners, environments, CAS and receipts apply.
+sql.push(`INSERT INTO public.system_settings(key,value) VALUES('deployment_environments',${j({version:1,values:['Staging','Prod']})}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;`);
+const repairing={...base,id:'submit-optional-example',state:'in_progress',fixCycle:0,targets:[]};
+const submitted={...repairing,state:'verification',fixCycle:1,version:2,targets:[{...target,environment:'Staging'}]};
+sql.push(seed(repairing));
+const submitId='submit-optional-receipt',submitOnce=commit(4,submitted,{type:'submit_fix',cid:submitId});
+err('previous latest RPC reproduces ambiguous submit target reference','SELECT '+submitOnce,'42702','ambiguous');
+check('ambiguous submit rolls back issue receipt and audit together',`(SELECT data=${j(repairing)} AND version=1 FROM public.qa_issues WHERE id=${q(repairing.id)}) AND (SELECT count(*)=0 FROM public.qa_events WHERE issue_id=${q(repairing.id)}) AND (SELECT count(*)=0 FROM public.qa_commands WHERE issue_id=${q(repairing.id)})`);
+// Installer DDL runs as the database owner; QA commands keep the service role.
+sql.push('RESET ROLE;',submitFix,'SET ROLE service_role;');
+check('submit fix accepts blank summary component and build in configured Staging',`${submitOnce}=${j(submitted)}`);
+sql.push('RESET ROLE;',submitFix,'SET ROLE service_role;');
+check('submit fix stores the next cycle without fabricated deployment or verification',`(SELECT state='verification' AND version=2 AND data=${j(submitted)} AND data->>'fixSummary'='' AND data->'targets'->0->>'build'='' AND data->'targets'->0->'deployedAt'='null'::jsonb AND data->'runs'='[]'::jsonb FROM public.qa_issues WHERE id=${q(repairing.id)})`);
+check('submit fix replay writes one event and one receipt',`${submitOnce}=${j(submitted)} AND (SELECT count(*)=1 FROM public.qa_events WHERE issue_id=${q(repairing.id)}) AND (SELECT count(*)=1 FROM public.qa_commands WHERE issue_id=${q(repairing.id)})`);
+err('submit fix changed payload cannot reuse committed receipt','SELECT '+commit(4,{...submitted,fixSummary:'Changed input'},{type:'submit_fix',cid:submitId,hash:'b'.repeat(64)}),'23505','command_id_reused');
+err('submit fix stale CAS is rejected','SELECT '+commit(4,{...submitted,version:3},{type:'submit_fix',expected:1}),'PT409','version_conflict');
+err('submit fix rejects retired environment before changing the issue','SELECT '+commit(4,{...submitted,version:3,targets:[{...target,environment:'Retired Stage'}]},{type:'submit_fix',expected:2}),'22023','qa_invalid_environment');
+sql.push("UPDATE public.members SET is_active=false WHERE id='m-qa';");
+err('submit fix requires an active QA owner at commit time','SELECT '+commit(4,{...submitted,version:3},{type:'submit_fix',expected:2}),'22023','invalid_issue: member unavailable');
+sql.push("UPDATE public.members SET is_active=true WHERE id='m-qa';");
+sql.push(`UPDATE public.system_settings SET value=${j({version:1,values:['Prod']})} WHERE key='deployment_environments';`);
+check('committed submit remains replayable after its environment is retired',`${submitOnce}=${j(submitted)}`);
+check('rejected submissions preserve the candidate and original receipt audit',`(SELECT data=${j(submitted)} AND version=2 FROM public.qa_issues WHERE id=${q(repairing.id)}) AND (SELECT count(*)=1 FROM public.qa_events WHERE issue_id=${q(repairing.id)}) AND (SELECT count(*)=1 FROM public.qa_commands WHERE issue_id=${q(repairing.id)})`);
+const submittedDeployment={...submitted,version:3,targets:[{...submitted.targets[0],deployedAt:when,deployedBy:'m-assignee',deploymentEvidence:''}]};
+check('fixed submit candidate still requires and accepts a real deployment',`${commit(4,submittedDeployment,{type:'record_deployment',expected:2})}=${j(submittedDeployment)}`);
+const submittedPass={...submittedDeployment,version:4,state:'closed',resolution:'fixed',closedAt:when,closedBy:'m-qa',runs:[{id:'submit-pass-run',sequence:1,fixCycle:1,targetId:target.id,environment:'Staging',component:'',build:'',result:'pass',note:'',testerId:'m-qa',createdAt:when}]};
+check('fixed submit candidate preserves formal PASS auto closure',`${commit(5,submittedPass,{type:'record_verification',expected:3})}=${j(submittedPass)}`);
+check('formal PASS closure reads back the exact committed candidate',`(SELECT data=${j(submittedPass)} AND state='closed' AND version=4 FROM public.qa_issues WHERE id=${q(repairing.id)})`);
+sql.push(`UPDATE public.system_settings SET value=${j({version:1,values:['Dev','QA','Stage','Live Staging','Prod']})} WHERE key='deployment_environments';`);
 for(const [role,n,member] of [['member',1,'m-member'],['admin',2,'m-admin'],['super_admin',3,'m-super']]){
  const i={...base,id:'deployment-'+role},after={...i,version:2,targets:[{...target,deployedAt:when,deployedBy:member,deploymentEvidence:''},i.targets[1]]};sql.push(seed(i));
  const cid='deployment-'+role+'-receipt',once=commit(n,after,{cid});check(role+' confirms one current target',`${once}=${j(after)}`);
@@ -84,5 +117,5 @@ check('digest predicate includes task despite old future pause',"EXISTS(SELECT 1
 check('new pause function remains authenticated/service-only',"NOT has_function_privilege('anon','public.livo_task_reminder_paused(text,text)','EXECUTE') AND has_function_privilege('authenticated','public.livo_task_reminder_paused(text,text)','EXECUTE') AND has_function_privilege('service_role','public.livo_task_reminder_paused(text,text)','EXECUTE')");
 check('reminder migration preserved existing QA receipts and audits',"(SELECT events=(SELECT md5(string_agg(to_jsonb(e)::text,E'\\n' ORDER BY id)) FROM public.qa_events e) AND receipts=(SELECT md5(string_agg(to_jsonb(c)::text,E'\\n' ORDER BY id)) FROM public.qa_commands c) FROM qa_test.workflow_history)");
 sql.push('RESET ROLE;');sql.push("SELECT jsonb_build_object('status','passed','assertions',count(*),'labels',(SELECT jsonb_agg(label ORDER BY label) FROM qa_test.results)) FROM qa_test.results;");
-const plan={sql:['SET client_min_messages=warning;',read('scripts/lib/qa-postgres-fixture.sql'),current,...dependencies,migration,...sql].join('\n'),summary:{assertions:labels.length,migrationApplications:2,migration:{name:'20261029_deployment_queue_operators.sql',sha256:createHash('sha256').update(migration).digest('hex')},reminderMigration:{name:'20261028_simple_task_reminders.sql',applications:2,sha256:createHash('sha256').update(reminder).digest('hex')},fixture:'Synthetic enum roles, minimum QA dependency schema and actual historical reminder table/function/trigger; no production data',network:'none',publishedPorts:0,hostMounts:0,productionQueries:0,excluded:['full production RLS/GoTrue transport','whole weekly digest application']}};
+const plan={sql:['SET client_min_messages=warning;',read('scripts/lib/qa-postgres-fixture.sql'),current,...dependencies,migration,...latestQa,...sql].join('\n'),summary:{assertions:labels.length,migrationApplications:2,migration:{name:'20261029_deployment_queue_operators.sql',sha256:createHash('sha256').update(migration).digest('hex')},latestQaMigrations:latestQaNames.map((name,index)=>({name,applications:2,sha256:createHash('sha256').update(latestQa[index]).digest('hex')})),submitFixMigration:{name:submitFixName,applications:2,sha256:createHash('sha256').update(submitFix).digest('hex')},reminderMigration:{name:'20261028_simple_task_reminders.sql',applications:2,sha256:createHash('sha256').update(reminder).digest('hex')},fixture:'Synthetic enum roles, latest QA RPC, minimum QA dependency schema and actual historical reminder table/function/trigger; no production data',network:'none',publishedPorts:0,hostMounts:0,productionQueries:0,excluded:['full production RLS/GoTrue transport','whole weekly digest application']}};
 try{const result=await runPostgres(plan,report);console.log(JSON.stringify({status:result.status,assertions:result.assertions,cleanup:result.cleanup,report}));}catch(error){console.error(JSON.stringify({status:'failed',error:error.message,cleanup:error.report?.cleanup,report}));process.exitCode=1;}

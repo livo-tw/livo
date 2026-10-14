@@ -7,6 +7,8 @@ import { getQaDropIntent } from '@/lib/qa/boardInteraction';
 import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { QaClient } from '@/lib/qa/client';
+import { QaDisplaySettingsContext } from '@/context/QaDisplaySettingsContext';
+import { defaultQaDisplaySettings } from '@/lib/qa/displaySettings';
 
 const dnd = vi.hoisted(() => ({ end: undefined as ((event: DragEndEvent) => void) | undefined, draggable: vi.fn() }));
 const notices = vi.hoisted(() => ({ loading: vi.fn(), success: vi.fn(), error: vi.fn(), info: vi.fn(), dismiss: vi.fn() }));
@@ -70,6 +72,31 @@ describe('QA board state updates provide visible feedback and recover safely', (
     vi.clearAllMocks(); current = issue();
     command.mockImplementation(async (old: QaIssue, change: { state: QaState }) => { current = { ...old, state: change.state, version: old.version + 1 }; return current; });
     list.mockImplementation(async ({ states }: { states: QaState[] }) => ({ issues: states.includes(current.state) ? [current] : [], total: states.includes(current.state) ? 1 : 0, hasMore: false }));
+  });
+  it('drops into a visible state when the canonical grouped state is hidden', async () => {
+    current = issue('failed');
+    const workflow: QaWorkflow = { ...DEFAULT_QA_WORKFLOW, groups: [{ id: 'triaged', label: 'Incoming bugs', states: ['new', 'triaged'] }] };
+    render(<QaDisplaySettingsContext.Provider value={{ ...defaultQaDisplaySettings(), hiddenBoardStates: ['triaged'] }}>
+      <QaKanban client={client} actor={admin} workflow={workflow} filters={{}} onOpen={open} />
+    </QaDisplaySettingsContext.Provider>);
+    await screen.findByText(current.title);
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ states: ['new'] }), expect.any(AbortSignal));
+    drop('triaged');
+    expect(command).toHaveBeenCalledWith(expect.anything(), { type: 'set_state', state: 'new' }, expect.any(String));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Incoming bugs' })).getByText(current.title)).toBeInTheDocument());
+  });
+  it('can open bugs after refreshing while display settings are still unknown', async () => {
+    const pending = vi.fn();
+    const board = (ready: boolean, reloadToken: number) => <QaDisplaySettingsContext.Provider value={ready ? defaultQaDisplaySettings() : null}>
+      <QaKanban client={client} actor={admin} workflow={DEFAULT_QA_WORKFLOW} filters={{}} reloadToken={reloadToken} onOpen={open} onPendingChange={pending} />
+    </QaDisplaySettingsContext.Provider>;
+    const rendered = render(board(false, 0));
+    rendered.rerender(board(false, 1));
+    await waitFor(() => expect(pending).toHaveBeenLastCalledWith(false));
+    expect(list).not.toHaveBeenCalled();
+    rendered.rerender(board(true, 1));
+    fireEvent.click(await screen.findByRole('button', { name: current.title }));
+    expect(open).toHaveBeenCalledWith(current.id, undefined, undefined);
   });
   it('moves optimistically, announces progress and refetches only after acknowledgement', async () => {
     let acknowledge!: (value: QaIssue) => void;

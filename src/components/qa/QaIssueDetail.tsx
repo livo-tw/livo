@@ -74,7 +74,11 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const fields = useQaFieldConfiguration(client);
   const manualStates = useQaManualStateVisibility(client);
   const display = useQaDisplaySettings(client, baseActor.id);
-  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['update_fields', 'start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
+  // MemberContext has no complete-read marker. An absent member or an unknown
+  // active flag may still be loading or filtered; the server checks those.
+  const ownerUnavailable = (id: string | null) => !id || users.some(user => user.id === id && user.isActive === false);
+  const unavailableOwnerField = ownerUnavailable(issue.assigneeId) ? 'qa.assignee' : ownerUnavailable(issue.qaOwnerId) ? 'qa.qaOwner' : null;
+  const [action, setAction] = useState<ActionType | null>(() => initialAction && !['update_fields', 'start_fix', 'record_verification', 'record_deployment', 'request_handoff', 'accept_handoff', 'resolve_handoff'].includes(initialAction) && !(initialAction === 'submit_fix' && unavailableOwnerField) && canQaCommand(issue, actor, initialAction) ? initialAction : null);
   const [commandBusy, setBusy] = useState(false);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [unknownCommand, setUnknownCommand] = useState(false);
@@ -88,12 +92,15 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const canResolveFixed = isHistoricalQaPass(issue) || (['verified', 'verification'].includes(issue.state) && requiredTargetsPassed(issue));
   const [resolution, setResolution] = useState<QaResolution | ''>(() => initialDefaults?.resolution === 'wont_fix' ? 'wont_fix' : canResolveFixed ? 'fixed' : '');
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const focusOwnerAfterClose = useRef(false);
+  const focusOwnerAfterMenuClose = useRef(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
   const projectTasks = allTasks.filter(task => task.projectId === issue.projectId);
   const unavailableLinks = links.filter(id => !projectTasks.some(task => task.id === id));
   const [targets, setTargets] = useState<QaTargetDraft[]>(() => issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
+  const [fixSummary, setFixSummary] = useState('');
   const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
   const commandSending = useRef(false);
@@ -131,13 +138,24 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   };
   const focusOwners = () => {
     sidebarRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-    const label = t(!issue.assigneeId ? 'qa.assignee' : 'qa.qaOwner');
+    const label = t(unavailableOwnerField || (!issue.assigneeId ? 'qa.assignee' : 'qa.qaOwner'));
     const control = Array.from(sidebarRef.current?.querySelectorAll<HTMLButtonElement>('button[role="combobox"]') || []).find(button => button.getAttribute('aria-label') === label);
     control?.focus();
+  };
+  const requireActiveOwners = () => {
+    if (!unavailableOwnerField) return true;
+    setError({ code: 'qa_triage_required', status: 400 });
+    if (action === 'submit_fix') {
+      // Keep the repair draft while returning to the owner fields. The dialog's
+      // close event focuses the field after its focus trap has been removed.
+      focusOwnerAfterClose.current = true; setAction(null);
+    } else focusOwners();
+    return false;
   };
   useEffect(() => { if (initialAction === 'update_fields') focusOwners(); }, []); // Focus the owner fields when opened from a card.
   const openAction = (type: ActionType) => {
     if (busy || !can(type)) return;
+    if (['start_fix', 'submit_fix'].includes(type) && !requireActiveOwners()) return;
     setError(null);
     if (type === 'update_fields') focusOwners();
     else if (type === 'record_deployment' || type === 'record_verification') setTab('verification');
@@ -150,6 +168,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   };
   const send = async (command: QaCommand, expectedVersion = issue.version, retry = false): Promise<boolean> => {
     if (commandBusy || attachmentBusy || commandSending.current || (unknownCommand && !retry)) return false;
+    // An uncertain retry must keep the original ID so an already-applied write
+    // can still be acknowledged, even if responsibility changed afterward.
+    if (!retry && ['start_fix', 'submit_fix'].includes(command.type) && !requireActiveOwners()) return false;
     commandSending.current = true;
     setBusy(true); setError(null); setNotice('');
     const signature = JSON.stringify({ version: expectedVersion, command });
@@ -160,6 +181,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     try {
       const updated = await client.command(pending.issue, pending.command, pending.id);
       saved = true; setAcknowledgedIssue(updated); pendingCommand.current = undefined; setUnknownCommand(false); setAction(null);
+      if (pending.command.type === 'submit_fix') setFixSummary('');
       if (pending.command.type === 'set_state') toast.success(t('qa.stateChanged'));
       if (pending.command.type === 'record_verification' && pending.command.result === 'pass' && updated.state === 'closed' && updated.resolution === 'fixed') toast.success(t('qa.verificationAutoClosed'));
       // Invalidate personal assignments once the write is acknowledged, even if
@@ -202,12 +224,13 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     if (action === 'link_tasks' && unavailableLinks.length === 0) command = { type: action, taskIds: links };
     if (command) void send(command);
   };
-  // The card's 「開始修復」 starts the repair in one click, the same as the button here.
+  // Card actions use the same owner preflight as the detail controls.
   const startedFromCard = useRef(false);
   useEffect(() => {
-    if (initialAction !== 'start_fix' || startedFromCard.current) return;
+    if (!initialAction || !['start_fix', 'submit_fix'].includes(initialAction) || startedFromCard.current) return;
     startedFromCard.current = true;
-    if (can('start_fix') && issue.state !== 'in_progress') void send({ type: 'start_fix' });
+    if (!can(initialAction) || !requireActiveOwners()) return;
+    if (initialAction === 'start_fix' && issue.state !== 'in_progress') void send({ type: 'start_fix' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // The original bug can be given by the short id shown on cards (#1a2b3c4d) or its full id.
@@ -253,7 +276,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {!isQaTerminal(issue.state) && (!issue.assigneeId || !issue.qaOwnerId) && <p className="mb-3 text-sm text-muted-foreground">{t('qa.assignOwnersHint')}</p>}
           {isMobile && stateControl}
           {primaryAction ? <div className="space-y-2"><p className="text-sm text-muted-foreground">{t('qa.yourNextStep')}</p>{tab === 'verification' && ['record_deployment', 'record_verification'].includes(primaryAction.command) ? <p className="text-sm leading-relaxed">{t('qa.completeInPanel')}</p> : <button type="button" className={`${qaPrimary} w-full`} disabled={busy} onClick={() => openAction(primaryAction.command)}>{t(`qa.${primaryAction.label}`)}</button>}</div> : nextAction && <p className="text-sm leading-relaxed text-muted-foreground">{t('qa.waitingForAction', { name: nextOwner ? member(nextOwner) : t('qa.triageTeam'), action: t(`qa.${nextAction.label}`) })}</p>}
-          {(moreActions.length > 0 || canDelete || canOpenHandoff) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48">{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => openAction(type)}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canOpenHandoff && <DropdownMenuItem onSelect={() => setHandoffOpen(true)}>{t('qaHandoff.title')}</DropdownMenuItem>}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
+          {(moreActions.length > 0 || canDelete || canOpenHandoff) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48" onCloseAutoFocus={event => { if (focusOwnerAfterMenuClose.current) { event.preventDefault(); focusOwnerAfterMenuClose.current = false; focusOwners(); } }}>{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => { if (['start_fix', 'submit_fix'].includes(type) && unavailableOwnerField) focusOwnerAfterMenuClose.current = true; openAction(type); }}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canOpenHandoff && <DropdownMenuItem onSelect={() => setHandoffOpen(true)}>{t('qaHandoff.title')}</DropdownMenuItem>}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
           {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>;
   return <QaDisplaySettingsContext.Provider value={display.configuration}><div className="w-full min-w-0 space-y-4 p-3 md:p-5">
@@ -330,7 +353,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       </div>
     </div>
     <Dialog open={!!action} onOpenChange={open => { if (!open && !busy) setAction(null); }}>
-      <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-4xl flex-col overflow-hidden p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
+      <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-4xl flex-col overflow-hidden p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onCloseAutoFocus={event => { if (focusOwnerAfterClose.current) { event.preventDefault(); focusOwnerAfterClose.current = false; focusOwners(); } }}>
         <DialogHeader><DialogTitle>{action ? t(`qa.${actionLabels[action]}`) : ''}</DialogTitle></DialogHeader>
         {error !== null && <div className="space-y-2"><QaFailure error={error} /><button className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
         {commandRetryNotice}
@@ -343,7 +366,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
               {display.configuration?.showSeverity && <QaSelect label={t('qa.severity')} name="severity" required defaultValue={issue.severity === 'untriaged' ? '' : issue.severity}><option value="">{t('qa.choose')}</option>{['low', 'medium', 'high'].map(s => <option value={s} key={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
               <section className="rounded-lg border border-border p-3"><h3 className="text-sm font-medium">{t('qa.additionalDetails')}</h3><div className="mt-3 space-y-3"><QaSelect label={t('qa.priority')} name="priority" required defaultValue={issue.priority}>{display.configuration && getQaPriorityChoices(display.configuration, issue.priority).map(priority => <option key={priority} value={priority}>{t(`priority.${qaPriorities[priority - 1]}`)}</option>)}</QaSelect><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} /></div></section>
             </>}
-            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline maxLength={8000} />
+            {action === 'submit_fix' && <><QaField label={t('qa.fixSummary')} name="summary" multiline maxLength={8000} value={fixSummary} onChange={event => setFixSummary(event.target.value)} />
               <QaTargetEditor targets={targets} onChange={setTargets} versions={versions} disabled={busy} />
             </>}
             {action === 'close' && <><QaSelect label={t('qa.resolutionField')} required value={resolution} onChange={event => setResolution(event.target.value as QaResolution | '')}><option value="">{t('qa.choose')}</option>{['fixed', 'duplicate', 'not_bug', 'wont_fix', 'cannot_reproduce'].map(value => <option key={value} value={value} disabled={value === 'fixed' && !canResolveFixed}>{t(`qa.resolution.${value}`)}</option>)}</QaSelect>{!canResolveFixed && <p className="text-xs text-muted-foreground">{t('qa.fixedNeedsVerification')}</p>}{resolution === 'duplicate' && <QaField label={t('qa.duplicateId')} name="duplicateOfId" required placeholder="#1a2b3c4d" maxLength={130} />}</>}

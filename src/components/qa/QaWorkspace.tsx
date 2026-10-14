@@ -47,6 +47,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { t } = useTranslation();
   const { client, actor: baseActor } = useQa();
   const display = useQaDisplaySettings(client, baseActor.id);
+  const hiddenBoardStates = display.configuration?.hiddenBoardStates ?? [];
   const { taskDisplayMode = 'modal', selectedTask } = useUIContext();
   const isMobile = useIsMobile();
   const { allProjects, productLines, selectedProjectId } = useProjectContext();
@@ -256,6 +257,10 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
             </>} />
         </div>
         </div>
+        {view === 'board' && !filterStatuses.length && !!hiddenBoardStates.length && <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm">
+          <p className="text-muted-foreground">{t('qa.displaySettings.hiddenBoardHint', { states: hiddenBoardStates.map(state => workflow.labels[state] || t(`qa.state.${state}`)).join('、') })}</p>
+          <button type="button" className={qaButton} disabled={busy} onClick={() => { boardFilters.setFilterStatuses([...hiddenBoardStates]); setOffset(0); setView('list'); }}>{t('qa.displaySettings.viewHiddenStates')}</button>
+        </div>}
         {noMatch ? <div className="py-12 text-center text-sm text-muted-foreground">{t('qa.empty')} <button type="button" className="text-primary hover:underline" onClick={clearAll}>{t('qa.clearFilters')}</button></div>
         : view === 'board' ? <QaKanban key={JSON.stringify({ ...filters, revision, actor: actor.id })} client={client} actor={actor} workflow={workflow} filters={filters} reloadToken={boardRevision} onPendingChange={setBoardBusy} onOpen={openIssue} /> : <>
           {loading ? <p role="status" className="py-8 text-center text-sm">{t('qa.loading')}</p> : !list.issues.length ? <p className="py-12 text-center text-muted-foreground">{t('qa.empty')}</p> : <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{list.issues.map(issue => <li key={issue.id}><QaIssueCard list issue={issue} actor={actor} stateLabel={workflow.labels[issue.state] || t(`qa.state.${issue.state}`)} onOpen={openIssue} /></li>)}</ul>}

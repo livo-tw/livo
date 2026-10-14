@@ -63,6 +63,41 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 const service = () => createQaService(env, 'actual-session');
 
+describe('Docker submit QA verification', () => {
+  const command = { type: 'submit_fix', summary: '', targets: [{ environment: 'Stage', component: '', build: '', required: true }] };
+  const request = () => ({ action: 'command', id: issue.id, commandId: 'submit-empty-details', expectedVersion: issue.version, command });
+  beforeEach(() => { issue = { ...issue, state: 'in_progress', assigneeId: 'member-1', qaOwnerId: 'member-2' }; });
+
+  it('commits blank optional fields without inventing deployment or PASS evidence', async () => {
+    const updated = await service().handle(request());
+    expect(updated).toMatchObject({ state: 'verification', version: 2, fixCycle: 1, fixSummary: '', runs: [],
+      targets: [{ environment: 'Stage', component: '', build: '', required: true, deployedAt: null, deployedBy: null, deploymentEvidence: '' }] });
+    const commit = calls.find(call => call.url.pathname.endsWith('/rpc/livo_qa_commit'))!;
+    expect(commit.body).toMatchObject({ p_auth_id: AUTH, p_kind: 'command', p_expected_version: 1, p_data: updated, p_event: { type: 'submit_fix' } });
+  });
+
+  it('replays the same committed request without starting another repair cycle', async () => {
+    const submitted = request(), updated = await service().handle(submitted);
+    issue = updated;
+    receipt = { actor_id: 'member-1', issue_id: issue.id, payload_hash: await qaPayloadHash(submitted), response: updated };
+    calls = [];
+    expect(await service().handle(submitted)).toEqual(updated);
+    expect(calls.some(call => call.url.pathname.endsWith('/rpc/livo_qa_commit'))).toBe(false);
+  });
+
+  it('rejects stale submissions before the database commit', async () => {
+    const submitted = request(); issue = { ...issue, version: 2 };
+    await expect(service().handle(submitted)).rejects.toMatchObject({ code: 'qa_version_conflict', status: 409 });
+    expect(calls.some(call => call.url.pathname.endsWith('/rpc/livo_qa_commit'))).toBe(false);
+  });
+
+  it.each(['qa_invalid_environment', 'qa_invalid_date', 'qa_invalid_priority', 'qa_task_unavailable', 'qa_duplicate_unavailable', 'qa_not_deployed'])
+    ('preserves actionable transaction-time rejection %s instead of reporting storage failure', async code => {
+      rpcError = { code: '22023', message: code };
+      await expect(service().handle(request())).rejects.toMatchObject({ code, status: 400 });
+    });
+});
+
 describe('Docker QA create basic settings',()=>{
   it('includes selected owners in the active-member read and persists all settings in a single create commit',async()=>{
     const created=await service().handle({action:'create',id:'new-settings-issue',commandId:'new-settings-command',input:{...input,assigneeId:'member-2',qaOwnerId:'member-2',priority:2,dueDate:'2026-11-09'}});

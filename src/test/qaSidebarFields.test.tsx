@@ -12,7 +12,7 @@ import type { TFunction } from 'i18next';
 import QaIssueSidebarFields from '@/components/qa/QaIssueSidebarFields';
 
 const state = vi.hoisted(() => ({ projects: [] as Project[], users: [] as User[] }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key === 'qa.error.qa_triage_required' ? 'Choose active fix and QA owners first.' : key }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: state.users }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: state.projects, productLines: [{ id: 'line', name: 'Example line' }] as ProductLine[] }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[] }) }));
@@ -33,14 +33,14 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function renderDetail(initial: QaIssue, actorId = 'dev', initialAction?: QaCommand['type'], reject?: unknown) {
+function renderDetail(initial: QaIssue, actorId = 'dev', initialAction?: QaCommand['type'], reject?: unknown, actorRole: 'member' | 'admin' | 'super_admin' = 'member') {
   const command = vi.fn(async (current: QaIssue, next: QaCommand) => {
     if (reject) throw reject;
     const { type, ...patch } = next;
     return { ...current, ...(type === 'update_fields' ? patch : {}), version: current.version + 1 } as QaIssue;
   });
   const client = { command, versions: vi.fn().mockResolvedValue([]), getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }) } as unknown as QaClient;
-  render(<QaIssueDetail detail={{ issue: initial, comments: [], events: [], attachments: [] }} client={client} actor={{ id: actorId, role: 'member' }} initialAction={initialAction} onRefresh={vi.fn().mockResolvedValue(undefined)} onBack={vi.fn()} />);
+  render(<QaIssueDetail detail={{ issue: initial, comments: [], events: [], attachments: [] }} client={client} actor={{ id: actorId, role: actorRole }} initialAction={initialAction} onRefresh={vi.fn().mockResolvedValue(undefined)} onBack={vi.fn()} />);
   return command;
 }
 
@@ -136,6 +136,77 @@ describe('direct QA sidebar editing', () => {
 });
 
 describe('shorter QA processing forms', () => {
+  it('leaves owner validation to the server when member metadata is still unavailable', async () => {
+    state.users = [];
+    const command = renderDetail(issue, 'dev', 'submit_fix');
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    expect(command.mock.calls[0][1]).toMatchObject({ type: 'submit_fix', summary: '' });
+  });
+  it.each(['start_fix', 'submit_fix'] as const)('checks both active owners before the card opens %s', async action => {
+    for (const field of ['assigneeId', 'qaOwnerId'] as const) {
+      const current: QaIssue = { ...issue, state: 'triaged', [field]: null };
+      const command = renderDetail(current, 'other', action, undefined, 'admin');
+      await screen.findByText('Choose active fix and QA owners first.');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(command).not.toHaveBeenCalled();
+      expect(screen.getByRole('combobox', { name: field === 'assigneeId' ? 'qa.assignee' : 'qa.qaOwner' })).toHaveFocus();
+      cleanup();
+    }
+  });
+
+  it.each(['dev', 'qa'] as const)('rejects an inactive %s before opening repair submission', async inactiveId => {
+    state.users = state.users.map(user => user.id === inactiveId ? { ...user, isActive: false } : user);
+    const command = renderDetail(issue, 'other', 'submit_fix', undefined, 'admin');
+    await screen.findByText('Choose active fix and QA owners first.');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: inactiveId === 'dev' ? 'qa.assignee' : 'qa.qaOwner' })).toHaveFocus();
+  });
+
+  it('guides an administrator from More actions to the missing QA owner instead of sending', async () => {
+    const command = renderDetail({ ...issue, qaOwnerId: null }, 'other', undefined, undefined, 'admin');
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.submitFix' }));
+    await screen.findByText('Choose active fix and QA owners first.');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveFocus());
+  });
+
+  it('keeps a repair draft when its QA owner becomes inactive before saving', async () => {
+    const command = renderDetail(issue, 'dev', 'submit_fix');
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('qa.fixSummary'), { target: { value: 'Draft repair notes' } });
+    fireEvent.change(within(dialog).getByLabelText(/qa.build/), { target: { value: 'fix-v3' } });
+    state.users = state.users.map(user => user.id === 'qa' ? { ...user, isActive: false } : user);
+    fireEvent.change(within(dialog).getByLabelText('qa.fixSummary'), { target: { value: 'Kept repair notes' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await screen.findByText('Choose active fix and QA owners first.');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveFocus());
+    expect(command).not.toHaveBeenCalled();
+    state.users = state.users.map(user => ({ ...user, isActive: true }));
+    fireEvent.click(screen.getByRole('tab', { name: /^qa\.comments(?:\s|$)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'qa.submitFix' }));
+    dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('qa.fixSummary')).toHaveValue('Kept repair notes');
+    expect(within(dialog).getByLabelText(/qa.build/)).toHaveValue('fix-v3');
+  });
+
+  it('keeps repair summary and target drafts after a definite save failure', async () => {
+    const command = renderDetail(issue, 'dev', 'submit_fix', { status: 409, code: 'qa_conflict' });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('qa.fixSummary'), { target: { value: 'Repair notes to retry' } });
+    fireEvent.change(within(dialog).getByLabelText(/qa.build/), { target: { value: 'fix-v4' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
+    await waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    await within(dialog).findByRole('alert');
+    expect(within(dialog).getByLabelText('qa.fixSummary')).toHaveValue('Repair notes to retry');
+    expect(within(dialog).getByLabelText(/qa.build/)).toHaveValue('fix-v4');
+  });
+
   it('submits a repair with the observed environment and no invented fix version or summary', async () => {
     const command = renderDetail(issue, 'dev', 'submit_fix');
     const dialog = await screen.findByRole('dialog');

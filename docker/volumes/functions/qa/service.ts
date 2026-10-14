@@ -36,7 +36,8 @@ function databaseError(body: Row, status: number): never {
   const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
   if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
   const known = ['qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
-    'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request'];
+    'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request',
+    'qa_invalid_environment','qa_invalid_date','qa_invalid_priority','qa_task_unavailable','qa_duplicate_unavailable','qa_not_deployed'];
   const code = known.find(code => message.includes(code));
   if (code) fail(code.startsWith('qa_') ? code : `qa_${code}`, ['42501'].includes(body.code) ? 403
     : ['40001', 'PT409', '23505'].includes(body.code) ? 409 : body.code === 'P0002' ? 404 : 400);

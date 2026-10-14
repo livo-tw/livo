@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -23,25 +23,65 @@ jobs:
             package-lock.json
             worker/package-lock.json
 
+      - name: Prepare source outside Git checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/livo-source"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/livo-source"
+          echo "LIVO_APP=$RUNNER_TEMP/livo-source" >> "$GITHUB_ENV"
+
       - name: Install app dependencies
+        working-directory: ${{ env.LIVO_APP }}
         run: npm ci
 
       - name: Install worker dependencies
-        working-directory: worker
+        working-directory: ${{ env.LIVO_APP }}/worker
         run: npm ci
 
       - name: Type check (app)
-        run: npx tsc --noEmit
+        working-directory: ${{ env.LIVO_APP }}
+        run: node scripts/check-app-types.mjs
 
       - name: Unit tests
+        working-directory: ${{ env.LIVO_APP }}
         run: npx vitest run
 
-      - name: Build app
-        run: npx vite build
+      - name: Build local app
+        working-directory: ${{ env.LIVO_APP }}
+        run: npx vite build --mode localdb --outDir _build-local
         env:
           VITE_API_URL: http://localhost:8787
+          VITE_LOCAL_MODE: 'true'
+
+      - name: Build cloud app
+        working-directory: ${{ env.LIVO_APP }}
+        run: npx vite build --outDir _build-cloud
+        env:
+          VITE_API_URL: https://api.livo-tw.com
           VITE_LOCAL_MODE: 'false'
 
+      - name: Build customer app
+        working-directory: ${{ env.LIVO_APP }}
+        run: npx vite build --mode customer --outDir _build-customer
+
       - name: Type check (worker)
-        working-directory: worker
-        run: npx tsc --noEmit
+        working-directory: ${{ env.LIVO_APP }}/worker
+        run: npm run typecheck
+
+      - name: Build delivery package
+        working-directory: ${{ env.LIVO_APP }}
+        run: node scripts/build-release.mjs
+
+      - name: Verify real PostgreSQL migrations and QA commands
+        working-directory: ${{ env.LIVO_APP }}
+        run: |
+          docker pull postgres:15.8-alpine
+          node scripts/test-deployment-queue-postgres.mjs --source "$LIVO_APP" --report "$RUNNER_TEMP/livo-postgres.json"
+
+      - name: Save PostgreSQL acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-acceptance
+          path: ${{ runner.temp }}/livo-postgres.json
+          if-no-files-found: ignore
+          retention-days: 7
