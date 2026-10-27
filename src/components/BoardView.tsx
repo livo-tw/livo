@@ -86,7 +86,7 @@ function DraggableCard({ task, fields, subtaskMode, customCardFields }: { task: 
             data-drag-surface
             data-board-drag-handle
             aria-label={t('board.dragCard', { title: task.title })}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground cursor-grab active:cursor-grabbing md:hidden [@media(any-pointer:coarse)]:inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground cursor-grab active:cursor-grabbing md:[@media(hover:hover)_and_(pointer:fine)]:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             style={{ touchAction: 'none', WebkitTouchCallout: 'none' }}
             onClick={event => { event.preventDefault(); event.stopPropagation(); }}
           >

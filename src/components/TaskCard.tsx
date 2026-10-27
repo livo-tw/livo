@@ -398,16 +398,16 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
             })}
         </div>
       )}
-      {/* Keep quick edits in their own row: a hybrid pointer or desktop-size mobile viewport must never cover the title. */}
-      <div data-task-quick-actions className="mt-3 flex flex-wrap items-center justify-end gap-1 sm:gap-0.5">
-        {dragHandle && <div className="mr-auto shrink-0">{dragHandle}</div>}
+      {/* Keep touch targets clear of the title; a mouse-driven desktop gets a compact single-row toolbar. */}
+      <div data-task-quick-actions className="mt-2 flex flex-wrap items-center justify-end gap-1 md:[@media(hover:hover)_and_(pointer:fine)]:mt-1.5 md:[@media(hover:hover)_and_(pointer:fine)]:gap-0.5">
+        {dragHandle && <div className="mr-auto shrink-0 md:[@media(hover:hover)_and_(pointer:fine)]:hidden">{dragHandle}</div>}
         {(['priority', 'status', 'assignee'] as const).map(type => (
           <div key={type} className="relative">
             <button
               ref={el => { quickBtnRefs.current[type] = el; }}
               onPointerDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); setQuickEdit(quickEdit === type ? null : type); }}
-              className="w-11 h-11 sm:w-6 sm:h-6 [@media(any-pointer:coarse)]:min-w-11 [@media(any-pointer:coarse)]:min-h-11 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              className="h-11 w-11 shrink-0 md:[@media(hover:hover)_and_(pointer:fine)]:h-6 md:[@media(hover:hover)_and_(pointer:fine)]:w-6 rounded flex items-center justify-center bg-card/90 border border-border/60 shadow-sm hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
               title={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-label={t(`card.quick${type.charAt(0).toUpperCase() + type.slice(1)}`)}
               aria-expanded={quickEdit === type}
