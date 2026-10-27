@@ -2,6 +2,7 @@ import { createRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { CustomField, ProductLine, Project, Status, Tag, Task, User } from '@/types';
+import type { RequiredFieldsConfig } from '@/context/UIContext';
 import type { TaskDetailState } from '@/components/task-detail/hooks/useTaskDetail';
 
 vi.mock('react-i18next', async importOriginal => ({
@@ -10,7 +11,8 @@ vi.mock('react-i18next', async importOriginal => ({
 // Announcements have their own tests (taskFlows.test.tsx).
 vi.mock('@/hooks/useTaskAnnouncements', () => ({ useTaskAnnouncements: () => ({ actor: null as null, users: [] as never[], projects: [] as never[], statuses: [] as never[] }) }));
 vi.mock('@/lib/taskAnnouncements', () => ({ announceStatusChange: vi.fn(), announceAssignment: vi.fn() }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ approvalsEnabled: false }) }));
+const createState = vi.hoisted(() => ({ required: {} as Partial<RequiredFieldsConfig>, open: vi.fn() }));
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ approvalsEnabled: false, requiredFields:createState.required,openCreateSubtask:createState.open }) }));
 // Sub-task changes use the shared status rules; none are configured here.
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => ({ select: async () => ({ data: [] as never[], error: null as null }) }) } }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ statusLogs: [] as never[], statuses: [] as never[] }) }));
@@ -38,6 +40,7 @@ function baseDetail() {
 }
 
 beforeEach(() => {
+  createState.required = {}; createState.open.mockReset();
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
 });
@@ -95,12 +98,41 @@ describe('subtask status dropdown search', () => {
     expect(detail.setSelectedTask).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
   });
-  it('preserves the existing dot and five-option menu without opening the subtask detail', () => {
+  it('preserves the existing dot and five-option menu without opening the subtask detail', async () => {
     const detail = { ...baseDetail(), statuses: statuses.slice(0, 5), allTasks: [parent, child], setAllTasks: vi.fn(), subtaskStatusPickerId: child.id };
     render(<TaskSubtasksTab detail={detail as unknown as TaskDetailState} />);
     expect(screen.queryByRole('combobox')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Code review' }));
-    expect(detail.updateTaskInDb).toHaveBeenCalledExactlyOnceWith(child.id, { statusId: 'state-2' });
+    await waitFor(() => expect(detail.updateTaskInDb).toHaveBeenCalledExactlyOnceWith(child.id, { statusId: 'state-2' }));
     expect(detail.setSelectedTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('subtask quick entry escalates to the shared complete form only when needed', () => {
+  it.each(['background','requirement','startDate','tags','notes','checks','todos','gitlabUrl','deployments'] as const)('collects required %s before creating a child', key => {
+    createState.required = {[key]:true}; const detail = {...baseDetail(),allTasks:[parent],setAllTasks:vi.fn(),newSubtaskTitle:'Child draft'};
+    render(<TaskSubtasksTab detail={detail as unknown as TaskDetailState} />);
+    fireEvent.click(screen.getByRole('button',{name:'taskCreate.subtaskTitle'}));
+    expect(createState.open).toHaveBeenCalledExactlyOnceWith(parent.id,'Child draft'); expect(detail.handleCreateSubtask).not.toHaveBeenCalled();
+  });
+  it('collects a required custom field through the same form', () => {
+    const custom: CustomField = {id:'field-example',projectId:parent.projectId,fieldName:'Example answer',fieldType:'text',isRequired:true,sortOrder:0,createdAt:''};
+    const detail = {...baseDetail(),allTasks:[parent],setAllTasks:vi.fn(),newSubtaskTitle:'Child custom draft',customFields:[custom]};
+    render(<TaskSubtasksTab detail={detail as unknown as TaskDetailState} />);
+    fireEvent.keyDown(screen.getByPlaceholderText('taskDetail.subtasks.newPlaceholder'),{key:'Enter'});
+    expect(createState.open).toHaveBeenCalledExactlyOnceWith(parent.id,'Child custom draft'); expect(detail.handleCreateSubtask).not.toHaveBeenCalled();
+  });
+  it('keeps title-only creation working when all required values can be collected by the quick entry', () => {
+    const detail = {...baseDetail(),allTasks:[parent],setAllTasks:vi.fn(),newSubtaskTitle:'Simple child'};
+    render(<TaskSubtasksTab detail={detail as unknown as TaskDetailState} />);
+    fireEvent.click(screen.getByRole('button',{name:'taskCreate.subtaskTitle'}));
+    expect(detail.handleCreateSubtask).toHaveBeenCalledOnce(); expect(createState.open).not.toHaveBeenCalled();
+  });
+  it('opens the full form when the parent cannot supply a required due date and prevents nested entry', () => {
+    createState.required={dueDate:true}; const detail={...baseDetail(),allTasks:[parent],setAllTasks:vi.fn(),newSubtaskTitle:'Dated child'};
+    const {rerender}=render(<TaskSubtasksTab detail={detail as unknown as TaskDetailState} />);
+    fireEvent.click(screen.getByRole('button',{name:'taskCreate.subtaskTitle'})); expect(createState.open).toHaveBeenCalledWith(parent.id,'Dated child');
+    rerender(<TaskSubtasksTab detail={{...detail,task:child} as unknown as TaskDetailState} />);
+    expect(screen.queryByRole('button',{name:'taskCreate.subtaskTitle'})).toBeNull();
   });
 });

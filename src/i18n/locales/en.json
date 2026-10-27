@@ -950,6 +950,7 @@
   },
   "taskCreate": {
     "recovery": {
+      "resolveFirst": "Resolve the retained draft for the task already created before adding a subtask.",
       "createdPartial": "Task {{key}} was created, but some details were not fully saved.",
       "unsaved": "Saving is not confirmed for: {{sections}}.",
       "retained": "Your original input stays in this form. Open the existing task to restore the missing details; choosing Create task again returns to this draft. Keep the draft and avoid reloading until recovery is complete.",
@@ -1009,6 +1010,12 @@
     "checklist": "Acceptance Criteria",
     "checklistPlaceholder": "Add checklist item...",
     "subtasks": "Subtasks",
+    "subtaskResultUnknown": "The subtask result is not confirmed. Your original input is retained. Retry the same submission before editing to avoid creating a duplicate.",
+    "subtaskTitle": "Create subtask",
+    "subtaskContext": "Subtask of {{key}}. The project is fixed. Enter this subtask's details; attachments can be uploaded after creation.",
+    "subtaskTemplateProject": "Use a template from the parent's project or a shared template.",
+    "subtaskAttachmentsAfterCreation": "Create the subtask first, then upload attachments from its details.",
+    "subtasksNeedFullForm": "Subtasks need additional required details. Create the parent first, then add them from its Subtasks tab.",
     "subtaskPlaceholder": "Add subtask title, press Enter to add...",
     "moreOptions": "More Options ({{count}})",
     "todoList": "To Do List",
@@ -1206,6 +1213,7 @@
       "savingLayout": "Saving...",
       "layoutButton": "Layout",
       "layoutSaved": "Layout saved",
+      "projectInherited": "The subtask uses its parent's project. Change the project from the parent task.",
       "layoutSaveFailed": "Layout could not be saved. Your changes are retained; please retry.",
       "tagBeingEditedError": "{{name}} is editing tags, please try again later",
       "addTagFailed": "Failed to add tag: ",
@@ -1276,6 +1284,7 @@
       "deleteConfirm": "Are you sure you want to delete subtask \"{{title}}\"?",
       "deleteTitle": "Delete Subtask",
       "newPlaceholder": "Enter subtask title, press Enter to add...",
+      "completeFormHint": "This subtask needs required details and will open the complete form.",
       "approvalInDetail": "This subtask requires approval. It is open now; submit the change from its details."
     },
     "statusTransitionBlocked": "This task has not passed through \"{{missingNames}}\" and cannot be moved to \"{{targetName}}\"",

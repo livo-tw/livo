@@ -1,5 +1,6 @@
 // @vitest-environment node
 import {describe,expect,it,vi} from 'vitest';
+import type {TaskWorkCommand} from '@/lib/taskWork/core';
 import {taskWorkHandler} from '../../docker/volumes/functions/task-work-command/index';
 const values:Record<string,string>={SUPABASE_URL:'https://example.com',SUPABASE_ANON_KEY:'example-anon',SUPABASE_SERVICE_ROLE_KEY:'example-service'};
 const env={get:(key:string)=>values[key]};
@@ -62,9 +63,20 @@ describe('Docker task work command authentication boundary',()=>{
       [{code:'42501',message:'work_forbidden'},'work_forbidden',403],
       [{code:'P0002',message:'work_unavailable'},'work_unavailable',404],
       [{code:'42P01',message:'private internal detail'},'work_unavailable',503]] as const){
-      const fetcher=vi.fn(async(url:RequestInfo|URL)=>String(url).endsWith('/auth/v1/user')
+      const fetcher=vi.fn(async(url:RequestInfo|URL,_init?:RequestInit)=>String(url).endsWith('/auth/v1/user')
         ?Response.json({id:'00000000-0000-0000-0000-000000000001'}):Response.json(db,{status:400}));
       const response=await taskWorkHandler(env,fetcher)(req());expect(response.status).toBe(status);expect(await response.json()).toEqual({error});
     }
   });
+});
+
+
+it('accepts complete subtask rich text above the old 32 KiB limit and caps the raw HTTP body',async()=>{
+  const fetcher=vi.fn(async(url:RequestInfo|URL,_init?:RequestInit)=>String(url).endsWith('/auth/v1/user')?Response.json({id:authId}):Response.json({commandId:'command-example',replayed:false}));
+  const child:Extract<TaskWorkCommand,{operation:'create_subtask'}>={commandId:'command-example',operation:'create_subtask',taskId:'parent-example',title:'Child',statusId:'open',priority:'medium',assigneeId:null,reviewerId:null,dueDate:null,details:{requirement:'x'.repeat(40000)}};
+  expect((await taskWorkHandler(env,fetcher)(req(session(),child))).status).toBe(200);
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body)).p_command.details.requirement).toHaveLength(40000);
+  fetcher.mockClear();
+  expect((await taskWorkHandler(env,fetcher)(req(session(),{...child,details:{requirement:'x'.repeat(1024*1024)}}))).status).toBe(413);
+  expect(fetcher).not.toHaveBeenCalled();
 });

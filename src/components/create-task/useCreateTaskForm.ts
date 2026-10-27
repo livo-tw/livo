@@ -1,5 +1,7 @@
 import { defaultTaskProject } from './defaultProject';
 import { hasRichTextContent } from '@/lib/richTextContent';
+import { taskWorkErrorCode } from '@/lib/taskWork/client';
+import { subtaskCustomValues, subtaskNeedsFullForm, subtaskQuickCreateFields } from '@/lib/taskWork/subtaskDefaults';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { customFieldDefault, customFieldFilled, customFieldHasValue, type CustomFieldDraft } from '@/lib/customFieldValues';
@@ -34,11 +36,11 @@ export function useCreateTaskForm() {
   const environmentConfig = useDeploymentEnvironments();
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { showCreateTask, setShowCreateTask, setSelectedTask, requiredFields, currentView } = useUIContext();
+  const { showCreateTask, setShowCreateTask, setSelectedTask, requiredFields, currentView, createTaskSeed } = useUIContext();
   // Visible in the form: a task made from the backlog stays in the backlog unless the member ticks it.
   const [joinSprint, setJoinSprint] = useState(true);
   const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
-  const { allTasks, setAllTasks, statuses, tags, refreshTags, createTaskInDb, createSubtask, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos, refreshStatusLogs, taskTemplates, customFields, upsertCustomFieldValue } = useTaskContext();
+  const { allTasks, setAllTasks, statuses, tags, refreshTags, refreshTasks, createTaskInDb, createSubtask, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos, refreshStatusLogs, refreshCustomFieldValues, taskTemplates, customFields, upsertCustomFieldValue } = useTaskContext();
   const { currentSprint } = useSprintContext();
   const { hasFeature } = useLicense();
   const { confirm, ConfirmDialog } = useConfirmDialog();
@@ -75,11 +77,19 @@ export function useCreateTaskForm() {
   const creationInFlight = useRef<string | null>(null);
   const createdTask = useRef<Task | null>(null);
   const draftOwner = useRef(currentMemberId);
-  const actorVisit = useRef({ memberId: currentMemberId, generation: 0 });
-  if (actorVisit.current.memberId !== currentMemberId) actorVisit.current = { memberId: currentMemberId, generation: actorVisit.current.generation + 1 };
-  const creationScope = `${currentMemberId}:${actorVisit.current.generation}`;
-  const activeCreationScope = useRef(creationScope); activeCreationScope.current = creationScope;
   const [partialCreation, setPartialCreation] = useState<{ task: Task; sections: string[] } | null>(null);
+  const childSubmission = useRef<{ parentId:string; invoke:() => Promise<Task | null> } | null>(null);
+  const [uncertainSubtask, setUncertainSubtask] = useState(false);
+  const [retainedChildParentId, setRetainedChildParentId] = useState<string | null>(null);
+  const subtaskParentId = partialCreation ? undefined : retainedChildParentId || createTaskSeed?.parentTaskId;
+  const isSubtask = !!subtaskParentId;
+  const parentTask = allTasks.find(task => task.id === subtaskParentId);
+  const creationVisit = useRef({ memberId: currentMemberId, parentId: subtaskParentId, generation: 0 });
+  if (creationVisit.current.memberId !== currentMemberId || creationVisit.current.parentId !== subtaskParentId) {
+    creationVisit.current = { memberId: currentMemberId, parentId: subtaskParentId, generation: creationVisit.current.generation + 1 };
+  }
+  const creationScope = `${currentMemberId}:${creationVisit.current.generation}:${subtaskParentId || ''}`;
+  const activeCreationScope = useRef(creationScope); activeCreationScope.current = creationScope;
   const tagPickerRef = useRef<HTMLDivElement>(null);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#6554C0');
@@ -102,24 +112,29 @@ export function useCreateTaskForm() {
   useEffect(() => {
     if (draftOwner.current === currentMemberId) return;
     draftOwner.current = currentMemberId;
-    createdTask.current = null; setPartialCreation(null);
+    createdTask.current = null; setPartialCreation(null); childSubmission.current = null; setUncertainSubtask(false); setRetainedChildParentId(null);
     creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
     setShowCreateTask(false);
   }, [currentMemberId, setShowCreateTask]);
 
+  useEffect(() => { if (showCreateTask && partialCreation && createTaskSeed) toast.info(t('taskCreate.recovery.resolveFirst')); }, [showCreateTask, partialCreation, createTaskSeed, t]);
+
   // Reset only when the form opens: a project or line changing elsewhere (realtime)
   // while it is open must not wipe what was typed.
-  const wasOpen = useRef(false);
+  const lastOpenedScope = useRef<string | null>(null);
   useEffect(() => {
-    const opening = showCreateTask && !wasOpen.current;
-    wasOpen.current = showCreateTask;
-    if (opening && !partialCreation) {
+    const opening = showCreateTask && lastOpenedScope.current !== creationScope;
+    lastOpenedScope.current = showCreateTask ? creationScope : null;
+    if (opening && !partialCreation && !uncertainSubtask) {
       createdTask.current = null;
-      setJoinSprint(currentView !== 'backlog');
-      setProjectId(defaultTaskProject(groupProjectsByLine(productLines, allProjects), selectedProjectId, selectedLineId));
-      setTitle(''); setStatusId(statuses[0]?.id || ''); setPriority('medium');
-      setAssigneeId(''); setReviewerId('');
-      setDueDate(undefined); setStartDate(undefined);
+      creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
+      setJoinSprint(!isSubtask && currentView !== 'backlog');
+      setProjectId(isSubtask ? parentTask?.projectId || '' : defaultTaskProject(groupProjectsByLine(productLines, allProjects), selectedProjectId, selectedLineId));
+      setTitle(isSubtask ? createTaskSeed?.title || '' : ''); setStatusId(isSubtask ? parentTask?.statusId || '' : statuses[0]?.id || ''); setPriority('medium');
+      const inherited = parentTask ? subtaskQuickCreateFields(parentTask, requiredFields) : null;
+      setAssigneeId(inherited?.assigneeId && users.some(user => user.id === inherited.assigneeId && user.isActive) ? inherited.assigneeId : '');
+      setReviewerId(inherited?.reviewerId && users.some(user => user.id === inherited.reviewerId && user.isActive) ? inherited.reviewerId : '');
+      setDueDate(inherited?.dueDate ? new Date(inherited.dueDate + 'T00:00:00') : undefined); setStartDate(undefined);
       setBackground(''); setRequirement(''); setNotes(''); setGitlabUrl('');
       setCheckItems([]); setNewCheckText(''); setTodoItems([]); setNewTodoText('');
       setDeployments([]); setPendingFiles([]); setSelectedTagIds([]);
@@ -127,23 +142,25 @@ export function useCreateTaskForm() {
       setSubtaskItems([]); setNewSubtaskText('');
       setTimeout(() => titleRef.current?.focus(), 100);
     }
-  }, [showCreateTask, selectedProjectId, selectedLineId, allProjects, productLines, currentView, partialCreation]);
+  }, [showCreateTask, creationScope, isSubtask, parentTask, createTaskSeed, selectedProjectId, selectedLineId, allProjects, productLines, currentView, partialCreation, uncertainSubtask]);
 
   const projectCustomFields = useMemo(() => (customFields || []).filter(field => field.projectId === projectId).sort((a, b) => a.sortOrder - b.sortOrder), [customFields, projectId]);
   const customFieldsRef = useRef(projectCustomFields); customFieldsRef.current = projectCustomFields;
   // Defaults are filled in when the form opens or the project changes, not when a field list refreshes.
   useEffect(() => {
-    if (!showCreateTask) return;
+    if (!showCreateTask || partialCreation || uncertainSubtask) return;
     setCustomValues(Object.fromEntries(customFieldsRef.current.map(field => [field.id, customFieldDefault(field)])));
     setCustomTouched(false);
-  }, [showCreateTask, projectId]);
+  }, [showCreateTask, projectId, partialCreation]);
   const setCustomValue = (fieldId: string, value: CustomFieldDraft) => { setCustomValues(previous => ({ ...previous, [fieldId]: value })); setCustomTouched(true); setShowValidationErrors(false); };
   const missingCustomFields = projectCustomFields.filter(field => field.isRequired && !customFieldFilled(field, customValues[field.id]));
+  const subtasksRequireFullForm = subtaskNeedsFullForm(requiredFields, projectCustomFields.some(field => field.isRequired));
 
   const applyTemplate = (templateId: string) => {
-    if (isSubmitting || partialCreation) return;
+    if (isSubmitting || partialCreation || uncertainSubtask) return;
     const tmpl = taskTemplates.find(t => t.id === templateId);
     if (!tmpl) return;
+    if (isSubtask && tmpl.projectId && tmpl.projectId !== parentTask?.projectId) { toast.error(t('taskCreate.subtaskTemplateProject')); return; }
     if (tmpl.projectId) setProjectId(tmpl.projectId);
     if (tmpl.defaultPriority) setPriority(tmpl.defaultPriority);
     if (tmpl.defaultTagIds.length > 0) setSelectedTagIds(tmpl.defaultTagIds);
@@ -159,6 +176,7 @@ export function useCreateTaskForm() {
   };
 
   const isValid = (() => {
+    if (isSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId)) return false;
     if (!title.trim() || !projectId) return false;
     if (missingCustomFields.length) return false;
     if (requiredFields.dueDate && !dueDate) return false;
@@ -198,7 +216,8 @@ export function useCreateTaskForm() {
   // Reject oversized files as soon as they're picked, instead of after the task
   // has been created and the whole file has been sent to the server.
   const addPendingFiles = (files: FileList) => {
-    if (isSubmitting || partialCreation) return;
+    if (isSubtask) { toast.info(t('taskCreate.subtaskAttachmentsAfterCreation')); return; }
+    if (isSubmitting || partialCreation || uncertainSubtask) return;
     const all = Array.from(files);
     const oversized = all.filter(f => f.size > MAX_UPLOAD_BYTES);
     if (oversized.length > 0) {
@@ -266,6 +285,11 @@ export function useCreateTaskForm() {
 
   const handleSubmitAttempt = () => {
     if (isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if (uncertainSubtask) { void handleSubmit(); return; }
+    if (isSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId)) { toast.error(t('taskWork.errors.work_invalid_parent')); return; }
+    if (isSubtask && subtaskItems.length) { toast.error(t('task.noNestedSubtasks')); return; }
+    if (isSubtask && pendingFiles.length) { toast.info(t('taskCreate.subtaskAttachmentsAfterCreation')); return; }
+    if (!isSubtask && subtaskItems.length && subtasksRequireFullForm) { toast.info(t('taskCreate.subtasksNeedFullForm')); return; }
     if (isValid) { setShowValidationErrors(false); handleSubmit(); return; }
     setShowValidationErrors(true);
     const missing: string[] = [];
@@ -288,8 +312,46 @@ export function useCreateTaskForm() {
   };
 
   const handleSubmit = async () => {
-    if (!isValid || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
-    if (deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
+    if ((!isValid && !uncertainSubtask) || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if (!uncertainSubtask && deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
+    if (isSubtask) {
+      if (!uncertainSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId || pendingFiles.length || subtaskItems.length)) return;
+      creationInFlight.current = creationScope; setIsSubmitting(true);
+      const current = () => activeCreationScope.current === creationScope;
+      try {
+        const request = uncertainSubtask ? childSubmission.current : parentTask ? {
+          parentId: parentTask.id,
+          invoke: () => createSubtask(parentTask.id, title.trim(), projectId, statusId, undefined, {
+            priority, assigneeId: assigneeId || null, reviewerId: reviewerId || null, dueDate: dueDate ? format(dueDate, 'yyyy-MM-dd') : null,
+            details: { background, requirement, notes, startDate: startDate ? format(startDate, 'yyyy-MM-dd') : null,
+              gitlabUrl: gitlabUrl.trim() || null, checks: [...checkItems], todos: [...todoItems], tagIds: [...selectedTagIds],
+              deployments: deployments.map(value => ({ ...value, deployDate: value.deployDate || null })),
+              customFields: subtaskCustomValues(projectCustomFields, customValues) },
+          }),
+        } : null;
+        if (!request) return;
+        childSubmission.current = request;
+        const created = await request.invoke();
+        if (!current()) return;
+        if (!created) { childSubmission.current = null; setUncertainSubtask(false); return; }
+        await Promise.all([refreshTasks(), refreshTaskSpecs(), refreshTaskChecks(), refreshTaskTodos(), refreshStatusLogs(), refreshCustomFieldValues()])
+          .catch(() => { if (current()) toast.info(t('taskCreate.recovery.refreshFailed')); });
+        if (!current()) return;
+        childSubmission.current = null; setUncertainSubtask(false); setRetainedChildParentId(null);
+        setIsSubmitting(false); toast.success(t('task.created'));
+        setShowCreateTask(false); setSelectedTask(created);
+      } catch (error) {
+        if (current()) {
+          if (taskWorkErrorCode(error) === 'work_transport_error') { setRetainedChildParentId(childSubmission.current?.parentId || subtaskParentId || null); setUncertainSubtask(true); toast.error(t('taskCreate.subtaskResultUnknown')); }
+          else { childSubmission.current = null; setUncertainSubtask(false); }
+        }
+      } finally {
+        if (creationInFlight.current === creationScope) creationInFlight.current = null;
+        if (current()) setIsSubmitting(false);
+      }
+      return;
+    }
+    if (subtaskItems.length && subtasksRequireFullForm) { toast.info(t('taskCreate.subtasksNeedFullForm')); return; }
     creationInFlight.current = creationScope;
     setIsSubmitting(true);
     const status = statuses.find(s => s.id === statusId);
@@ -424,9 +486,11 @@ export function useCreateTaskForm() {
     || checkItems.length > 0 || todoItems.length > 0 || subtaskItems.length > 0 || pendingFiles.length > 0 || deployments.length > 0 || !!gitlabUrl.trim() || customTouched;
   const requestClose = async () => {
     if (isSubmitting) return;
-    if (partialCreation) { setShowCreateTask(false); return; }
+    if (partialCreation || uncertainSubtask) { setShowCreateTask(false); return; }
     if (dirty && !(await confirm({ title: t('taskCreate.discardTitle'), description: t('taskCreate.discardDesc'), destructive: true }))) return;
-    setShowCreateTask(false);
+    if (activeCreationScope.current !== creationScope) return;
+    setRetainedChildParentId(null); setShowCreateTask(false);
+    if (isSubtask && parentTask) setSelectedTask(parentTask);
   };
 
   const openCreatedTask = () => {
@@ -436,13 +500,16 @@ export function useCreateTaskForm() {
   };
   const discardPartialDraft = async () => {
     if (!(await confirm({ title: t('taskCreate.recovery.discard'), description: t('taskCreate.recovery.discardConfirm'), destructive: true }))) return;
+    if (activeCreationScope.current !== creationScope) return;
     createdTask.current = null;
     setPartialCreation(null);
     setShowCreateTask(false);
   };
 
   const fieldsProps = {
-    projectId, setProjectId, statusId, setStatusId, priority, setPriority,
+    projectId, setProjectId: isSubtask ? () => {} : setProjectId, projectLocked:isSubtask,
+    lockedProjectName: isSubtask ? allProjects.find(project => project.id === projectId)?.name : undefined,
+    statusId, setStatusId, priority, setPriority,
     assigneeId, setAssigneeId, reviewerId, setReviewerId,
     startDate, setStartDate, dueDate, setDueDate,
     gitlabUrl, setGitlabUrl, deployments, setDeployments,
@@ -452,13 +519,14 @@ export function useCreateTaskForm() {
     tagPickerOpen, setTagPickerOpen, tagPickerRef,
     newTagName, setNewTagName, newTagColor, setNewTagColor,
     tagManageMode, setTagManageMode, confirm,
-    sprintName: currentSprint?.name, joinSprint, setJoinSprint,
+    sprintName: isSubtask ? undefined : currentSprint?.name, joinSprint, setJoinSprint,
   };
   const customFieldsProps = { fields: projectCustomFields, values: customValues, onChange: setCustomValue, showValidationErrors };
 
   return {
     showCreateTask: showCreateTask && draftOwner.current === currentMemberId, setShowCreateTask,
     title, setTitle,
+    isSubtask, parentTask, subtasksRequireFullForm, uncertainSubtask,
     background, setBackground,
     requirement, setRequirement,
     notes, setNotes,

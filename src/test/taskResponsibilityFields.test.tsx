@@ -1,7 +1,7 @@
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Task, User } from '@/types';
+import type { Task, User, Project } from '@/types';
 import type { TaskDetailState } from '@/components/task-detail/hooks/useTaskDetail';
 
 const mocks = vi.hoisted(() => ({ from: vi.fn() }));
@@ -61,5 +61,30 @@ describe('task assignment is effective without acceptance', () => {
     expect(state.updateTask).toHaveBeenCalledExactlyOnceWith({ reviewerId: 'third-member' });
     expect(state.setSelectedTask).not.toHaveBeenCalled();
     expect(mocks.from).not.toHaveBeenCalled();
+  });
+});
+
+describe('subtask project inheritance in the actual detail sidebar', () => {
+  const projects = [
+    { id: 'project-example', name: 'Example project', key: 'EX', color: '#123456' },
+    { id: 'project-other', name: 'Other project', key: 'OT', color: '#654321' },
+  ] as Project[];
+  const projectDetail = (card: Task) => ({ ...detail(card), allProjects: projects,
+    sidebarFieldOrder: ['project'], SIDEBAR_DEFAULT_ORDER: ['project'] });
+
+  it('shows a child project as inherited information and never offers an independent move', () => {
+    const state = projectDetail({ ...task, parentTaskId: 'parent-example' });
+    render(<TaskSidebarFields detail={state} />);
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getByText('Example project')).toBeInTheDocument();
+    expect(screen.getByText('taskDetail.sidebar.projectInherited')).toBeInTheDocument();
+    expect(state.updateTask).not.toHaveBeenCalled();
+  });
+
+  it('keeps the parent project move on the existing task update path', () => {
+    const state = projectDetail(task);
+    render(<TaskSidebarFields detail={state} />);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'project-other' } });
+    expect(state.updateTask).toHaveBeenCalledExactlyOnceWith({ projectId: 'project-other' });
   });
 });

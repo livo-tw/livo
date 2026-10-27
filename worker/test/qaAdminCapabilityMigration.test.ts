@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { applyPostTenantSchemaUpgrades } from '../migrate/schema-upgrades.mjs';
 
 const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
-const refreshableGuards = ['approval-commands.sql', 'task-reminder-preferences.sql', 'task-work-commands.sql', 'qa-coordination.sql', 'knowledge-work.sql', 'release-workspace.sql'];
+const refreshableGuards = ['approval-commands.sql', 'task-reminder-preferences.sql', 'task-work-commands.sql','task-work-subtask-details.sql', 'qa-coordination.sql', 'knowledge-work.sql', 'release-workspace.sql'];
 let db: DatabaseSync;
 afterEach(() => db?.close());
 

@@ -950,6 +950,7 @@
   },
   "taskCreate": {
     "recovery": {
+      "resolveFirst": "請先處理已建立任務的保留草稿，再新增子任務。",
       "createdPartial": "任務 {{key}} 已建立，部分資料尚未完整儲存。",
       "unsaved": "尚未確認儲存：{{sections}}。",
       "retained": "原始輸入保留在此表單。可開啟已建立的任務補回；再點「建立任務」會回到這份草稿。補回前請勿清除草稿或重新整理頁面。",
@@ -1009,6 +1010,12 @@
     "checklist": "驗收標準",
     "checklistPlaceholder": "新增驗收項目...",
     "subtasks": "子任務",
+    "subtaskResultUnknown": "尚未確認子任務是否已建立。已保留原始內容；請按重試確認原提交，確認前無法修改，以免重複建立。",
+    "subtaskTitle": "建立子任務",
+    "subtaskContext": "父任務 {{key}} 的子任務，專案已固定。請填寫這張子任務的資料；附件可於建立後上傳。",
+    "subtaskTemplateProject": "請使用父任務專案的樣板，或通用樣板。",
+    "subtaskAttachmentsAfterCreation": "請先建立子任務，再從任務詳情上傳附件。",
+    "subtasksNeedFullForm": "子任務有更多必填資料。請先建立父任務，再從「子任務」新增。",
     "subtaskPlaceholder": "新增子任務標題，按 Enter 加入...",
     "moreOptions": "更多選項（{{count}}項）",
     "todoList": "To Do List",
@@ -1206,6 +1213,7 @@
       "savingLayout": "儲存中...",
       "layoutButton": "排版",
       "layoutSaved": "排版已儲存",
+      "projectInherited": "子任務的專案隨父任務，請在父任務調整。",
       "layoutSaveFailed": "排版未能儲存，調整仍保留，請重試。",
       "tagBeingEditedError": "{{name}} 正在編輯標籤，請稍後再試",
       "addTagFailed": "新增標籤失敗：",
@@ -1276,6 +1284,7 @@
       "deleteConfirm": "確定要刪除子任務「{{title}}」？",
       "deleteTitle": "刪除子任務",
       "newPlaceholder": "輸入子任務標題，按 Enter 新增...",
+      "completeFormHint": "此子任務有必填資料，會開啟完整表單。",
       "approvalInDetail": "這個子任務需要簽核，已為你開啟子任務，請在詳情中送簽。"
     },
     "statusTransitionBlocked": "此任務尚未經過「{{missingNames}}」，無法移至「{{targetName}}」",

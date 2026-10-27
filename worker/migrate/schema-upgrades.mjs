@@ -103,6 +103,7 @@ export async function applyPostTenantSchemaUpgrades({ queryRows, applyFile, log 
   if(workPresent.some(Boolean)&&!workPresent.every(Boolean))throw new Error('Partial task work schema; refusing to guess');
   if(!workPresent.some(Boolean)){await applyFile('task-work-alters.sql');applied.push('task-work-alters.sql');}
   await applyFile('task-work-commands.sql');applied.push('task-work-commands.sql');
+  await applyFile('task-work-subtask-details.sql');applied.push('task-work-subtask-details.sql');
   if(table('qa_issues')) {
     const qaColumns=await queryRows('PRAGMA table_info(qa_commands)');
     if(qaColumns.length&&!qaColumns.some(c=>c.name==='actor_auth_id')) {await applyFile('qa-coordination-alters.sql');applied.push('qa-coordination-alters.sql');}

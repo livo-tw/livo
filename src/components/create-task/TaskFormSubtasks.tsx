@@ -3,6 +3,7 @@ import { ListTree, Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 export interface TaskFormSubtasksProps {
+  requiresFullForm?: boolean;
   subtaskItems: string[];
   setSubtaskItems: (items: string[] | ((prev: string[]) => string[])) => void;
   newSubtaskText: string;
@@ -10,10 +11,11 @@ export interface TaskFormSubtasksProps {
 }
 
 const TaskFormSubtasks = memo(({
-  subtaskItems, setSubtaskItems, newSubtaskText, setNewSubtaskText,
+  subtaskItems, setSubtaskItems, newSubtaskText, setNewSubtaskText, requiresFullForm = false,
 }: TaskFormSubtasksProps) => {
   const { t } = useTranslation();
   const addSubtask = () => {
+    if (requiresFullForm) return;
     const txt = newSubtaskText.trim();
     if (txt) {
       setSubtaskItems(prev => [...prev, txt]);
@@ -47,8 +49,10 @@ const TaskFormSubtasks = memo(({
           ))}
         </div>
       )}
+      {requiresFullForm && <p className="mb-2 text-xs text-muted-foreground">{t('taskCreate.subtasksNeedFullForm')}</p>}
       <div className="flex items-center gap-1.5">
         <input
+          disabled={requiresFullForm}
           value={newSubtaskText}
           onChange={e => setNewSubtaskText(e.target.value)}
           onKeyDown={e => {
@@ -62,7 +66,7 @@ const TaskFormSubtasks = memo(({
         />
         <button
           onClick={addSubtask}
-          disabled={!newSubtaskText.trim()}
+          disabled={requiresFullForm || !newSubtaskText.trim()}
           className={`p-1.5 rounded transition-colors ${newSubtaskText.trim() ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground/30 cursor-not-allowed'}`}
         >
           <Plus size={14} />

@@ -132,10 +132,13 @@ const TaskSidebarFields = ({ detail }: Props) => {
   fieldJsx['project'] = (
     <div>
       <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{t('taskDetail.sidebar.project', '專案')}</label>
-      <SearchableSelect value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
+      {task.parentTaskId ? <>
+        <div className="mt-1 rounded bg-muted px-2 py-1.5 text-sm text-foreground">{project?.name || t('common.unknown')}</div>
+        <p className="mt-1 text-xs text-muted-foreground">{t('taskDetail.sidebar.projectInherited')}</p>
+      </> : <SearchableSelect value={task.projectId} onChange={e => updateTask({ projectId: e.target.value })}
         className="w-full mt-1 text-sm rounded px-2 py-1.5 outline-none bg-muted text-foreground">
         <ProjectSelectOptions groups={groupProjectsByLine(productLines, allProjects, [task.projectId])} />
-      </SearchableSelect>
+      </SearchableSelect>}
     </div>
   );
 

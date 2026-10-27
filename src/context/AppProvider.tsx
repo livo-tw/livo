@@ -128,11 +128,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     standupUserId: ui.standupUserId, setStandupUserId: ui.setStandupUserId,
     showCreateProject: ui.showCreateProject, setShowCreateProject: ui.setShowCreateProject,
     showCreateTask: ui.showCreateTask, setShowCreateTask: ui.setShowCreateTask,
+    createTaskSeed: ui.createTaskSeed, openCreateSubtask: ui.openCreateSubtask,
     editingProject: ui.editingProject, setEditingProject: ui.setEditingProject,
     taskDisplayMode: ui.taskDisplayMode, setTaskDisplayMode: ui.setTaskDisplayMode,
     requiredFields: ui.requiredFields, setRequiredFields: ui.setRequiredFields, saveRequiredFields: ui.saveRequiredFields,
     isLoading: ui.isLoading,
-  }), [ui.featureToggles, ui.approvalsEnabled, ui.featureTogglesReady, ui.featureTogglesError, ui.refreshFeatureToggles, ui.saveFeatureToggle, ui.currentView, ui.selectedTask, ui.standupMode, ui.standupUserId, ui.showCreateProject, ui.showCreateTask, ui.editingProject, ui.taskDisplayMode, ui.requiredFields, ui.saveRequiredFields, ui.isLoading]);
+  }), [ui.featureToggles, ui.approvalsEnabled, ui.featureTogglesReady, ui.featureTogglesError, ui.refreshFeatureToggles, ui.saveFeatureToggle, ui.currentView, ui.selectedTask, ui.standupMode, ui.standupUserId, ui.showCreateProject, ui.showCreateTask, ui.createTaskSeed, ui.openCreateSubtask, ui.editingProject, ui.taskDisplayMode, ui.requiredFields, ui.saveRequiredFields, ui.isLoading]);
 
   const projectValue = useMemo(() => ({
     allProjects: project.allProjects, setAllProjects: project.setAllProjects,

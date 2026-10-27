@@ -1,4 +1,4 @@
-import { TaskWorkError, canonicalTaskWorkPayload, parseTaskWorkCommand } from './core.ts';
+import { TASK_WORK_MAX_BODY_BYTES, TaskWorkError, canonicalTaskWorkPayload, parseTaskWorkCommand } from './core.ts';
 
 interface Environment { get(name: string): string | undefined; }
 declare const Deno: { env: Environment; serve(handler: (request: Request) => Promise<Response>): void };
@@ -30,9 +30,9 @@ export function taskWorkHandler(env: Environment, fetcher: typeof fetch = fetch)
     if (request.method==='OPTIONS') return new Response(null,{status:204,headers:cors});
     if (request.method!=='POST') return json({error:'work_method_not_allowed'},405);
     try {
-      if (Number(request.headers.get('content-length')||0)>32768) throw new TaskWorkError('work_request_too_large',413);
+      if (Number(request.headers.get('content-length')||0)>TASK_WORK_MAX_BODY_BYTES) throw new TaskWorkError('work_request_too_large',413);
       const raw=await request.text();
-      if (new TextEncoder().encode(raw).byteLength>32768) throw new TaskWorkError('work_request_too_large',413);
+      if (new TextEncoder().encode(raw).byteLength>TASK_WORK_MAX_BODY_BYTES) throw new TaskWorkError('work_request_too_large',413);
       const command=parseTaskWorkCommand(JSON.parse(raw));
       const token=request.headers.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];
       const base=env.get('SUPABASE_URL')?.replace(/\/$/,''), anon=env.get('SUPABASE_ANON_KEY'), service=env.get('SUPABASE_SERVICE_ROLE_KEY');

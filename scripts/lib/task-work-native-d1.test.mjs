@@ -62,7 +62,7 @@ describe('TaskWork native SQLite parity',()=>{
   const c=add(),r=await run(c);
   await run(command('update_item',{list:'checks',itemId:r.record.id,expectedVersion:0,text:'Changed'}));
   for(let i=0;i<2;i++)await applyPostTenantSchemaUpgrades({queryRows:async sql=>rows(sql),applyFile:async file=>db.exec(fs.readFileSync(new URL('../../worker/migrate/'+file,import.meta.url),'utf8')),log:()=>{}});
-  expect(rows('SELECT version FROM task_checks')[0].version).toBe(1);expect(rows('SELECT * FROM task_work_receipts')).toHaveLength(2);expect((await run(c)).replayed).toBe(true);assertAtomic();
+  expect(rows('SELECT version FROM task_checks')[0].version).toBe(1);expect(rows('SELECT * FROM task_work_receipts')).toHaveLength(2);expect((await run(c)).replayed).toBe(true);prepareDetails();expect((await run(child({details:fullDetails()}))).record).toBeTruthy();assertAtomic();
  });
  for(const role of ['member','admin','super'])it(role+' can mutate by current floor but cannot forge receipt tables',async()=>{
   expect((await run(add(),actor(role))).replayed).toBe(false);
@@ -153,6 +153,84 @@ describe('TaskWork native SQLite parity',()=>{
   setRequired(JSON.stringify({title:true,project:true,background:true}));
   await expect(run(child({dueDate:'2027-02-01'}))).rejects.toThrow('work_required_fields');
   expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(2);assertAtomic();
+ });
+ const fullDetails=()=>({background:'<p><img src="https://example.com/diagram.png"></p>',requirement:'Own requirement',notes:'Own notes',startDate:'2027-01-02',gitlabUrl:'https://example.com/code',checks:['Own check'],todos:['Own todo'],tagIds:['detail-tag'],deployments:[{environment:'Stage',status:'scheduled',deployDate:'2027-01-03'}],customFields:[{fieldId:'detail-text',valueText:'Own text'},{fieldId:'detail-textarea',valueText:'Own multiline'},{fieldId:'detail-number',valueNumber:0},{fieldId:'detail-boolean',valueBoolean:false},{fieldId:'detail-date',valueDate:'2027-01-04'},{fieldId:'detail-select',valueText:'Offered'},{fieldId:'detail-user',valueUserId:'other'}]});
+ const prepareDetails=()=>{
+  db.exec(`INSERT INTO task_specs(workspace_id,id,task_id,background,requirement,notes) VALUES('a','parent-spec','t','Parent background','Parent requirement','Parent notes');
+   INSERT INTO tags(workspace_id,id,name,color) VALUES('a','detail-tag','Synthetic tag','#000000');
+   INSERT INTO system_settings(workspace_id,key,value) VALUES('a','required_fields','{"background":true,"requirement":true,"notes":true,"startDate":true,"gitlabUrl":true,"checks":true,"todos":true,"tags":true,"deployments":true}');`);
+  for(const type of ['text','textarea','number','boolean','date','select','user'])db.prepare('INSERT INTO custom_fields(workspace_id,id,project_id,field_name,field_type,options,is_required) VALUES(?,?,?,?,?,?,1)').run('a','detail-'+type,'p','Synthetic '+type,type,type==='select'?'["Offered","Other"]':null);
+  db.exec(`INSERT INTO custom_fields(workspace_id,id,project_id,field_name,field_type,is_required) VALUES('b','detail-foreign','foreign','Foreign field','text',0);
+   INSERT INTO custom_fields(workspace_id,id,project_id,field_name,field_type,is_required) VALUES('a','detail-project','q','Other project field','text',0)`);
+ };
+ for(const role of ['member','admin','super'])it(role+' atomically saves child-owned details, typed zero/false and receipt replay',async()=>{
+  prepareDetails();const c=child({details:fullDetails()}),r=await run(c,actor(role)),id=r.record.id;
+  expect(task(id)).toMatchObject({creator_id:role,parent_task_id:'t',project_id:'p',started_at:'2027-01-02',gitlab_url:'https://example.com/code'});
+  expect(rows('SELECT * FROM task_specs').find(v=>v.task_id===id)).toMatchObject({background:c.details.background,requirement:'Own requirement',notes:'Own notes'});
+  for(const table of ['task_checks','task_todos','task_tags','task_deployments'])expect(rows('SELECT * FROM '+table).filter(v=>v.task_id===id)).toHaveLength(1);
+  expect(rows('SELECT * FROM task_custom_field_values').filter(v=>v.task_id===id)).toHaveLength(7);
+  expect(rows("SELECT value_number FROM task_custom_field_values WHERE field_id='detail-number'")[0].value_number).toBe(0);
+  expect(rows("SELECT value_boolean FROM task_custom_field_values WHERE field_id='detail-boolean'")[0].value_boolean).toBe(0);
+  // Later metadata must not turn an already committed intent into a second child.
+  db.exec("UPDATE custom_fields SET options='[\"Changed\"]' WHERE id='detail-select'");
+  expect((await run(c,actor(role))).record.id).toBe(id);
+  await expect(run({...c,details:{...c.details,notes:'Changed'}},actor(role))).rejects.toThrow('work_command_reused');
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(1);assertAtomic();
+ });
+ for(const key of ['background','requirement','notes'])it('required '+key+' rejects visually empty rich text and accepts own media',async()=>{
+  prepareDetails();await expect(run(child({details:{...fullDetails(),[key]:'<p><br>&nbsp;\u00a0</p>'}}))).rejects.toThrow('work_required_fields');
+  expect((await run(child({details:{...fullDetails(),[key]:'<HR>'}}))).record).toBeTruthy();assertAtomic();
+ });
+ for(const key of ['startDate','gitlabUrl','checks','todos','tagIds','deployments'])it('required child supplementary '+key+' cannot be omitted',async()=>{
+  prepareDetails();const details=fullDetails();delete details[key];await expect(run(child({details}))).rejects.toThrow('work_required_fields');
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(0);assertAtomic();
+ });
+ for(const value of ['[]','"text"','null','1','not-json'])it('malformed required metadata '+value+' fails closed consistently with PostgreSQL',async()=>{
+  prepareDetails();db.prepare("UPDATE system_settings SET value=? WHERE workspace_id='a' AND key='required_fields'").run(value);
+  await expect(run(child({details:fullDetails()}))).rejects.toThrow('work_required_fields');
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(0);assertAtomic();
+ });
+ const invalidDetails=[
+  ['missing custom value',d=>({...d,customFields:d.customFields.filter(v=>v.fieldId!=='detail-number')}),'work_required_fields'],
+  ['blank custom text',d=>({...d,customFields:d.customFields.map(v=>v.fieldId==='detail-text'?{...v,valueText:' \t\n\u00a0'}:v)}),'work_required_fields'],
+  ['unoffered select',d=>({...d,customFields:d.customFields.map(v=>v.fieldId==='detail-select'?{...v,valueText:'Not offered'}:v)}),'work_invalid_input'],
+  ['wrong typed column',d=>({...d,customFields:d.customFields.map(v=>v.fieldId==='detail-number'?{...v,valueText:'Bypass'}:v)}),'work_invalid_input'],
+  ['invalid calendar date',d=>({...d,customFields:d.customFields.map(v=>v.fieldId==='detail-date'?{...v,valueDate:'2027-02-30'}:v)}),'work_invalid_input'],
+  ['foreign workspace custom',d=>({...d,customFields:[...d.customFields,{fieldId:'detail-foreign',valueText:'Foreign'}]}),'work_invalid_input'],
+  ['foreign project custom',d=>({...d,customFields:[...d.customFields,{fieldId:'detail-project',valueText:'Foreign'}]}),'work_invalid_input'],
+  ['foreign workspace user',d=>({...d,customFields:d.customFields.map(v=>v.fieldId==='detail-user'?{...v,valueUserId:'foreign-member'}:v)}),'work_member_unavailable'],
+  ['duplicate custom',d=>({...d,customFields:[...d.customFields,d.customFields[0]]}),'work_invalid_input'],
+  ['unknown details',d=>({...d,projectId:'q'}),'work_invalid_input'],
+  ['unknown tag',d=>({...d,tagIds:['missing-tag']}),'work_invalid_input'],
+  ['unconfigured environment',d=>({...d,deployments:[{environment:'Staging',status:'scheduled'}]}),'work_invalid_input']
+ ];
+ for(const [label,mutate,code] of invalidDetails)it('child rejects '+label+' without partial rows',async()=>{
+  prepareDetails();await expect(run(child({details:mutate(fullDetails())}))).rejects.toThrow(code);
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(0);expect(rows('SELECT * FROM task_custom_field_values')).toHaveLength(0);assertAtomic();
+ });
+ for(const change of ['required','options','member','tag','environment'])it('child rechecks '+change+' live metadata within atomic write',async()=>{
+  prepareDetails();beforeMutation=()=>{
+   if(change==='required')db.exec("INSERT INTO custom_fields(workspace_id,id,project_id,field_name,field_type,is_required) VALUES('a','new-required','p','New required','text',1)");
+   if(change==='options')db.exec("UPDATE custom_fields SET options='[\"Changed\"]' WHERE id='detail-select'");
+   if(change==='member')db.exec("UPDATE members SET is_active=0 WHERE id='other'");
+   if(change==='tag')db.exec("DELETE FROM tags WHERE id='detail-tag'");
+   if(change==='environment')db.exec(`INSERT INTO system_settings(workspace_id,key,value) VALUES('a','deployment_environments','{"version":1,"values":["Changed"]}')`);
+  };
+  await expect(run(child({details:fullDetails()}))).rejects.toThrow(/work_(required_fields|invalid_input|member_unavailable)/);
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(0);assertAtomic();
+ });
+ it('a late supplementary insert failure rolls back task, spec, relations, logs and receipt',async()=>{
+  prepareDetails();let reachedLateInsert=false;db.function('work_test_details_reached',()=>{reachedLateInsert=true;return 1;});db.exec("CREATE TRIGGER details_forced_failure BEFORE INSERT ON task_custom_field_values WHEN NEW.field_id='detail-boolean' BEGIN SELECT work_test_details_reached(); SELECT RAISE(ABORT,'forced_details_failure'); END;");
+  await expect(run(child({details:fullDetails()}))).rejects.toThrow('work_unavailable');expect(reachedLateInsert).toBe(true);
+  for(const table of ['task_checks','task_todos','task_tags','task_deployments','task_custom_field_values','status_logs','task_work_receipts','task_work_events','activity_logs'])expect(rows('SELECT * FROM '+table)).toHaveLength(0);
+  expect(rows('SELECT * FROM tasks WHERE parent_task_id IS NOT NULL')).toHaveLength(0);expect(rows('SELECT * FROM task_specs')).toHaveLength(1);assertAtomic();
+ });
+ it('legacy child payload keeps own specs blank and optional null custom values survive',async()=>{
+  prepareDetails();db.exec("UPDATE system_settings SET value='{}' WHERE key='required_fields'; UPDATE custom_fields SET is_required=0");
+  const legacy=child(),r=await run(legacy);expect(JSON.parse(canonicalTaskWorkPayload(legacy)).details).toBeUndefined();
+  expect(rows('SELECT * FROM task_specs').find(v=>v.task_id===r.record.id)).toMatchObject({background:'',requirement:'',notes:''});
+  const d=fullDetails();d.customFields=d.customFields.map(v=>Object.fromEntries(Object.entries(v).map(([k,val])=>[k,k==='fieldId'?val:null])));
+  await run(child({details:d}));expect(rows('SELECT * FROM task_custom_field_values')).toHaveLength(7);assertAtomic();
  });
  it('a new subtask key skips a number held by a task moved to another project',async()=>{
   // P-7 moved to Q keeps its key; counting only P's tasks would hand out P-7 again and the

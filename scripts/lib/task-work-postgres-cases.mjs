@@ -98,7 +98,7 @@ export function buildTaskWorkPostgresCases({shippedRequired}={}){
  root();raw("UPDATE system_settings SET value='{\"dueDate\":true}' WHERE key='required_fields';");service();
  error('required deadline cannot be bypassed',call(sub('t-8')),'work_required_fields');
  save('dated-child',sub('t-8',{dueDate:'2027-01-31'}));
- root();raw("UPDATE system_settings SET value='{}' WHERE key='required_fields'; INSERT INTO custom_fields VALUES('required-custom','p',true);");service();
+ root();raw("UPDATE system_settings SET value='{}' WHERE key='required_fields'; INSERT INTO custom_fields(id,project_id,field_name,field_type,is_required) VALUES('required-custom','p','Synthetic required','text',true);");service();
  error('required custom fields prevent incomplete child',call(sub('t-8')),'work_required_fields');
  root();raw("DELETE FROM custom_fields WHERE id='required-custom';");service();
  // Shipped default: title/project are always supplied by the command itself, the
@@ -241,7 +241,55 @@ export function buildTaskWorkPostgresCases({shippedRequired}={}){
  enqueue('work-dm-nonassignment','member',{kind:'personal',recipientRules:[{role:'assignee',code:'status_changed'}],responsibilities:[{role:'assignee',expectedRevision:2}]});
  check('nonassignment notification cannot inherit injected acknowledgement',queued('work-dm-nonassignment')+"->'responsibilities'='[]'::jsonb");
  member();error('authenticated member cannot insert forged outbox job',"INSERT INTO slack_delivery_outbox(event_key,team_id,task_id,target_type,target_id,payload) VALUES('forged-client','TTEST','t-1','member','member','{}')",'permission denied');
+
+ // Atomic child-owned supplementary details, using real field/deployment types.
+ root();raw("INSERT INTO tasks(id,task_key,project_id,title,status_id,creator_id,assignee_id,reviewer_id) VALUES('t-details','P-900','p','Synthetic parent','todo','member','member','other'); INSERT INTO task_specs(id,task_id,background,requirement,notes) VALUES('parent-detail-spec','t-details','Parent background must not copy','Parent requirement','Parent notes'); INSERT INTO tags(id,name) VALUES('detail-tag','Synthetic tag');");
+ raw("INSERT INTO custom_fields(id,project_id,field_name,field_type,is_required,options) VALUES('detail-text','p','Text','text',true,NULL),('detail-area','p','Area','textarea',true,NULL),('detail-number','p','Number','number',true,NULL),('detail-boolean','p','Boolean','boolean',true,NULL),('detail-date','p','Date','date',true,NULL),('detail-select','p','Select','select',true,'[\"Allowed\",\"Another\"]'),('detail-user','p','User','user',true,NULL),('detail-foreign','q','Foreign','text',false,NULL);");
+ const ownDetails={background:'<img src="https://example.com/synthetic.png">',requirement:'<p>Own requirement</p>',notes:'Own notes',startDate:'2026-10-27',gitlabUrl:'https://example.com/repository',checks:['Own checklist'],todos:['Own todo'],tagIds:['detail-tag'],deployments:[{environment:'Stage',status:'scheduled',deployDate:'2026-10-28'}],customFields:[{fieldId:'detail-text',valueText:'Own text'},{fieldId:'detail-area',valueText:'Own area'},{fieldId:'detail-number',valueNumber:0},{fieldId:'detail-boolean',valueBoolean:false},{fieldId:'detail-date',valueDate:'2026-10-29'},{fieldId:'detail-select',valueText:'Allowed'},{fieldId:'detail-user',valueUserId:'other'}]};
+ const richSub=(details=ownDetails)=>sub('t-details',{dueDate:'2026-10-30',details});
+ raw("UPDATE system_settings SET value='{\"title\":true,\"project\":true,\"dueDate\":true,\"assignee\":true,\"reviewer\":true,\"background\":true,\"requirement\":true,\"notes\":true,\"startDate\":true,\"gitlabUrl\":true,\"checks\":true,\"todos\":true,\"tags\":true,\"deployments\":true}' WHERE key='required_fields';");
+ for(const who of ['member','admin','super']){
+  member(who);error(who+' cannot call child details helper directly',"SELECT public.livo_task_work_subtask_details_apply('t-details','{}')",'permission denied');
+  service();const c=richSub();save('details-'+who,c,who);const id=data('details-'+who)+"#>>'{record,id}'";
+  check(who+' atomically creates child own spec and relation rows',"(SELECT parent_task_id='t-details' AND creator_id="+q(who)+" AND started_at='2026-10-27' AND gitlab_url='https://example.com/repository' FROM tasks WHERE id="+id+") AND (SELECT background="+q(ownDetails.background)+" AND requirement='<p>Own requirement</p>' AND notes='Own notes' FROM task_specs WHERE task_id="+id+") AND (SELECT count(*)=1 FROM task_checks WHERE task_id="+id+") AND (SELECT count(*)=1 FROM task_todos WHERE task_id="+id+") AND (SELECT count(*)=1 FROM task_tags WHERE task_id="+id+") AND (SELECT count(*)=1 FROM task_deployments WHERE task_id="+id+" AND environment='Stage' AND status::text='scheduled') AND (SELECT count(*)=7 FROM task_custom_field_values WHERE task_id="+id+")");
+  check(who+' required zero and false are saved as values',"(SELECT value_number=0 FROM task_custom_field_values WHERE task_id="+id+" AND field_id='detail-number') AND (SELECT value_boolean=false FROM task_custom_field_values WHERE task_id="+id+" AND field_id='detail-boolean')");
+  save('details-replay-'+who,c,who);check(who+' detail replay creates no second logical effect',data('details-replay-'+who)+"->>'replayed'='true' AND (SELECT count(*)=1 FROM task_work_receipts WHERE command_id="+q(c.commandId)+") AND (SELECT count(*)=1 FROM task_work_events WHERE command_id="+q(c.commandId)+")");
+  error(who+' cannot reuse changed own details under same command hash',call({...c,details:{...ownDetails,notes:'Changed own notes'}},who),'work_command_reused');
+ }
+ const changeCustom=(fieldId,patch)=>({...ownDetails,customFields:ownDetails.customFields.map(v=>v.fieldId===fieldId?{...v,...patch}:v)});
+ service();
+ for(const key of ['background','requirement','notes'])error('required '+key+' rejects empty rich text even if parent filled it',call(richSub({...ownDetails,[key]:'<p><br>&nbsp;</p>'})),'work_required_fields');
+ for(const key of ['startDate','gitlabUrl','checks','todos','tagIds','deployments'])error('required supplementary '+key+' missing is atomic',call(richSub({...ownDetails,[key]:['checks','todos','tagIds','deployments'].includes(key)?[]:null})),'work_required_fields');
+ error('required custom absent remains blocked',call(richSub({...ownDetails,customFields:ownDetails.customFields.filter(v=>v.fieldId!=='detail-number')})),'work_required_fields');
+ error('required custom whitespace remains blocked',call(richSub(changeCustom('detail-text',{valueText:' \t\n '}))),'work_required_fields');
+ error('custom select enforces current choices',call(richSub(changeCustom('detail-select',{valueText:'Not offered'}))),'work_invalid_input');
+ error('custom value rejects wrong typed column',call(richSub(changeCustom('detail-number',{valueText:'Bypass'}))),'work_invalid_input');
+ error('custom number string is not numeric zero',call(richSub(changeCustom('detail-number',{valueNumber:'0'}))),'work_invalid_input');
+ error('custom date rejects invalid calendar day',call(richSub(changeCustom('detail-date',{valueDate:'2026-02-30'}))),'work_invalid_input');
+ error('custom user must be active',call(richSub(changeCustom('detail-user',{valueUserId:'inactive'}))),'work_member_unavailable');
+ error('foreign project custom field is rejected',call(richSub({...ownDetails,customFields:[...ownDetails.customFields,{fieldId:'detail-foreign',valueText:'Foreign'}]})),'work_invalid_input');
+ error('duplicate custom field rejected',call(richSub({...ownDetails,customFields:[...ownDetails.customFields,ownDetails.customFields[0]]})),'work_invalid_input');
+ error('unrecognized details cannot set project or identity',call(richSub({...ownDetails,projectId:'q'})),'work_invalid_input');
+ error('unknown tag rejected',call(richSub({...ownDetails,tagIds:['missing-tag']})),'work_invalid_input');
+ error('deployment keeps exact configured/default environment spelling',call(richSub({...ownDetails,deployments:[{environment:'Staging',status:'scheduled'}]})),'work_invalid_input');
+ check('all rejected supplementary commands leave exactly three children',"(SELECT count(*)=3 FROM tasks WHERE parent_task_id='t-details') AND NOT EXISTS(SELECT 1 FROM task_work_contexts)");
+ root();raw("CREATE FUNCTION work_test.fail_custom_details() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.field_id='detail-boolean' THEN RAISE EXCEPTION 'forced_details_failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER fail_custom_details BEFORE INSERT ON task_custom_field_values FOR EACH ROW EXECUTE FUNCTION work_test.fail_custom_details();");
+ service();error('failure after child spec lists tags deployment writes rolls back the whole command',call(richSub()),'forced_details_failure');
+ root();raw('DROP TRIGGER fail_custom_details ON task_custom_field_values;');check('forced failure leaves no partial child or relation rows',"(SELECT count(*)=3 FROM tasks WHERE parent_task_id='t-details') AND (SELECT count(*)=3 FROM task_specs WHERE task_id IN(SELECT id FROM tasks WHERE parent_task_id='t-details')) AND (SELECT count(*)=21 FROM task_custom_field_values WHERE task_id IN(SELECT id FROM tasks WHERE parent_task_id='t-details')) AND NOT EXISTS(SELECT 1 FROM task_work_contexts) AND (SELECT count(*) FROM task_work_events)=(SELECT count(*) FROM task_work_receipts)");
+ raw("UPDATE system_settings SET value='{}' WHERE key='required_fields'; UPDATE custom_fields SET is_required=false WHERE id LIKE 'detail-%';");service();save('legacy-no-details',sub('t-details'));
+ check('old payload still creates blank child spec without copying parent',"(SELECT background='' AND requirement='' AND notes='' FROM task_specs WHERE task_id="+data('legacy-no-details')+"#>>'{record,id}') AND (SELECT background='Parent background must not copy' AND requirement='Parent requirement' AND notes='Parent notes' FROM task_specs WHERE task_id='t-details')");
  root();
+ // A missing settings row and the environment list must be read from one stable configuration.
+ raw("DELETE FROM system_settings WHERE key IN('required_fields','deployment_environments');");
+ const metadataChild=sub('t-details',{title:'Synthetic metadata snapshot child',details:{tagIds:['detail-tag'],deployments:[{environment:'NewEnv',status:'scheduled'}]}});
+ runPair('details-settings',[
+  'BEGIN;', 'LOCK TABLE system_settings IN ROW EXCLUSIVE MODE;', "SELECT id FROM tags WHERE id='detail-tag' FOR UPDATE;",
+  "COPY(SELECT 'ready') TO '/tmp/work-details-settings-ready';", 'SELECT pg_sleep(0.8);',
+  "INSERT INTO system_settings(key,value) VALUES('required_fields','{\"notes\":true}'),('deployment_environments','{\"version\":1,\"values\":[\"NewEnv\"]}');",
+  "INSERT INTO work_test.races VALUES('details-settings-a',jsonb_build_object('status','ok','pid',pg_backend_pid()));", 'COMMIT;'
+ ],['SET ROLE service_role;',"INSERT INTO work_test.races VALUES('details-settings-b',work_test.race("+q(call(metadataChild))+"));"],true);
+ check('atomic metadata update cannot mix an old required default with a new environment',"(SELECT result->>'message'='work_required_fields' FROM work_test.races WHERE label='details-settings-b') AND NOT EXISTS(SELECT 1 FROM task_work_receipts WHERE command_id="+q(metadataChild.commandId)+") AND NOT EXISTS(SELECT 1 FROM tasks WHERE title='Synthetic metadata snapshot child')");
+ check('metadata race actually committed both new settings',"(SELECT value->>'notes'='true' FROM system_settings WHERE key='required_fields') AND 'NewEnv'=ANY(public.livo_deployment_environment_values())");
  raw("INSERT INTO comments(id,task_id,user_id,content) VALUES('preserved-work-comment','t-1','member','Synthetic comment to preserve');");
  service();error('Jira clear refuses TaskWork history before child deletion','SELECT public.livo_jira_clear_tasks()','work_history_requires_restore');
  root();check('blocked Jira clear preserves task comment and history',"(SELECT count(*)=1 FROM comments WHERE id='preserved-work-comment') AND EXISTS(SELECT 1 FROM tasks WHERE id='t-1') AND EXISTS(SELECT 1 FROM task_work_events) AND EXISTS(SELECT 1 FROM task_work_receipts)");

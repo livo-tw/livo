@@ -34,7 +34,7 @@ const CreateTaskModal = () => {
   const { t } = useTranslation();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const {
-    showCreateTask,
+    showCreateTask, isSubtask, parentTask, subtasksRequireFullForm, uncertainSubtask,
     title, setTitle,
     background, setBackground,
     requirement, setRequirement,
@@ -62,6 +62,7 @@ const CreateTaskModal = () => {
     const req: AdvancedFieldKey[] = [];
     const opt: AdvancedFieldKey[] = [];
     for (const def of ADVANCED_FIELD_DEFS) {
+      if (isSubtask && (def.key === 'subtasks' || def.key === 'fileUpload')) continue;
       // subtasks need feature gate check
       if (def.key === 'subtasks' && !hasFeature('subtasks')) continue;
       if (def.requiredKey && (requiredFields as Record<string, boolean>)[def.requiredKey]) {
@@ -71,7 +72,7 @@ const CreateTaskModal = () => {
       }
     }
     return { requiredAdvanced: req, optionalAdvanced: opt };
-  }, [requiredFields, hasFeature]);
+  }, [requiredFields, hasFeature, isSubtask]);
 
   const advancedFieldCount = optionalAdvanced.length;
 
@@ -84,7 +85,7 @@ const CreateTaskModal = () => {
             <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
               <BookOpen size={14} /> {t('taskCreate.backgroundLabel')}{requiredFields.background && <span className="text-destructive"> *</span>}
             </label>
-            <RichTextEditor content={background} onChange={setBackground} placeholder={t('taskCreate.backgroundPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
+            <RichTextEditor content={background} onChange={setBackground} placeholder={t('taskCreate.backgroundPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation && !uncertainSubtask} />
           </div>
         );
       case 'notes':
@@ -93,7 +94,7 @@ const CreateTaskModal = () => {
             <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
               <StickyNote size={14} /> {t('taskCreate.notesLabel')}{requiredFields.notes && <span className="text-destructive"> *</span>}
             </label>
-            <RichTextEditor content={notes} onChange={setNotes} placeholder={t('taskCreate.notesPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
+            <RichTextEditor content={notes} onChange={setNotes} placeholder={t('taskCreate.notesPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation && !uncertainSubtask} />
           </div>
         );
       case 'todos':
@@ -113,13 +114,15 @@ const CreateTaskModal = () => {
           />
         );
       case 'subtasks':
+        if (isSubtask) return null;
         return (
           <TaskFormSubtasks key={key}
-            subtaskItems={subtaskItems} setSubtaskItems={setSubtaskItems}
+            subtaskItems={subtaskItems} setSubtaskItems={setSubtaskItems} requiresFullForm={subtasksRequireFullForm}
             newSubtaskText={newSubtaskText} setNewSubtaskText={setNewSubtaskText}
           />
         );
       case 'fileUpload':
+        if (isSubtask) return null;
         return (
           <TaskFormFileUpload key={key}
             pendingFiles={pendingFiles} fileInputRef={fileInputRef}
@@ -141,8 +144,8 @@ const CreateTaskModal = () => {
   // Reset advanced section when dialog closes
   useEffect(() => {
     if (!showCreateTask) setShowAdvanced(false);
-    else if (partialCreation) setShowAdvanced(true);
-  }, [showCreateTask, partialCreation]);
+    else if (partialCreation || isSubtask) setShowAdvanced(true);
+  }, [showCreateTask, partialCreation, isSubtask]);
 
   if (!showCreateTask) return null;
 
@@ -169,13 +172,16 @@ const CreateTaskModal = () => {
           {/* Header */}
           <div className="px-4 md:px-6 pt-4 md:pt-5 pb-3 border-b border-border flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-bold text-foreground">{t('taskCreate.title')}</h2>
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-foreground">{t(isSubtask ? 'taskCreate.subtaskTitle' : 'taskCreate.title')}</h2>
+                {isSubtask && <p className="mt-1 text-xs text-muted-foreground">{parentTask ? t('taskCreate.subtaskContext', { key:parentTask.taskKey }) : t('taskWork.errors.work_invalid_parent')}</p>}
+              </div>
               {taskTemplates.length > 0 && (
                 <div className="flex items-center gap-1.5">
                   <FileInput size={14} className="text-muted-foreground" />
                   <SearchableSelect
                     defaultValue=""
-                    disabled={isSubmitting || !!partialCreation}
+                    disabled={isSubmitting || !!partialCreation || uncertainSubtask}
                     onChange={e => { if (e.target.value) applyTemplate(e.target.value); e.target.value = ''; }}
                     className="text-xs border border-border rounded px-2 py-1 bg-card text-foreground outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                   >
@@ -217,6 +223,7 @@ const CreateTaskModal = () => {
             </button>
           </div>
 
+          {uncertainSubtask && <div role="alert" className="mx-4 my-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">{t('taskCreate.subtaskResultUnknown')}</div>}
           {partialCreation && <div role="alert" className="mx-4 my-3 space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             <p className="font-medium">{t('taskCreate.recovery.createdPartial', { key: partialCreation.task.taskKey })}</p>
             <p>{t('taskCreate.recovery.unsaved', { sections: partialCreation.sections.map(section => t(`taskCreate.recovery.sections.${section}`)).join('、') })}</p>
@@ -224,7 +231,7 @@ const CreateTaskModal = () => {
           </div>}
           {/* Scrollable form area */}
           <div className="flex-1 overflow-y-auto min-h-0">
-            <fieldset disabled={isSubmitting || !!partialCreation} className={`min-w-0 ${isMobile ? 'flex flex-col' : 'flex gap-0 divide-x divide-border'}`}>
+            <fieldset disabled={isSubmitting || !!partialCreation || uncertainSubtask} className={`min-w-0 ${isMobile ? 'flex flex-col' : 'flex gap-0 divide-x divide-border'}`}>
               {/* Left: Main content */}
               <div className={`${isMobile ? '' : 'flex-1'} px-4 md:px-6 py-4 md:py-5 space-y-4 min-w-0`}>
                 {/* Title (always visible) */}
@@ -246,7 +253,7 @@ const CreateTaskModal = () => {
                   <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
                     <FileText size={14} /> {t('taskCreate.requirementLabel')}{requiredFields.requirement && <span className="text-destructive"> *</span>}
                   </label>
-                  <RichTextEditor content={requirement} onChange={setRequirement} placeholder={t('taskCreate.requirementPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
+                  <RichTextEditor content={requirement} onChange={setRequirement} placeholder={t('taskCreate.requirementPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation && !uncertainSubtask} />
                 </div>
 
                 {/* Mobile: show properties panel before advanced */}
@@ -300,7 +307,7 @@ const CreateTaskModal = () => {
           <div className="px-4 md:px-6 py-3 border-t border-border flex flex-wrap justify-end gap-2 flex-shrink-0 bg-card rounded-b-lg">
             <button onClick={() => void requestClose()}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-muted">
-              {t(partialCreation ? 'taskCreate.recovery.keep' : 'common.cancel')}
+              {t(partialCreation || uncertainSubtask ? 'taskCreate.recovery.keep' : 'common.cancel')}
             </button>
             {partialCreation ? <>
               <button onClick={() => void discardPartialDraft()} className="rounded px-3 py-2 text-sm text-destructive hover:bg-destructive/10">{t('taskCreate.recovery.discard')}</button>
@@ -315,7 +322,7 @@ const CreateTaskModal = () => {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
               )}
-              {uploading ? t('common.uploading') : isSubmitting ? t('common.processing') : t('common.create')}
+              {uploading ? t('common.uploading') : isSubmitting ? t('common.processing') : uncertainSubtask ? t('common.retry') : t('common.create')}
             </button>}
           </div>
         </div>

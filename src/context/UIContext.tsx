@@ -5,6 +5,7 @@ import type { FeatureKey, FeatureToggles } from '@/lib/featureToggles';
 
 export type ViewType = 'deployment-queue' | 'releases' | 'qa' | 'my-qa' | 'knowledge-base' | 'board' | 'backlog' | 'dashboard' | 'gantt' | 'all-list' | 'my-tasks' | 'work-report' | 'status-manage' | 'member-manage' | 'team-manage' | 'team-intro' | 'system-admin' | 'activity-log' | 'my-settings' | 'team-settings' | 'template-manage' | 'integrations' | 'approvals';
 export type TaskDisplayMode = 'modal' | 'side' | 'page';
+export type CreateTaskSeed = { parentTaskId: string; title: string };
 
 export interface RequiredFieldsConfig {
   title: boolean;
@@ -63,6 +64,8 @@ export interface UIContextType {
   setShowCreateProject: (v: boolean) => void;
   showCreateTask: boolean;
   setShowCreateTask: (v: boolean) => void;
+  createTaskSeed: CreateTaskSeed | null;
+  openCreateSubtask: (parentTaskId: string, title?: string) => boolean;
   editingProject: Project | null;
   setEditingProject: (p: Project | null) => void;
   taskDisplayMode: TaskDisplayMode;

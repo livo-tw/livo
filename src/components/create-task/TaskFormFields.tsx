@@ -29,6 +29,8 @@ const priorities: { value: Priority; color: string }[] = [
 
 export interface TaskFormFieldsProps {
   projectId: string;
+  projectLocked?: boolean;
+  lockedProjectName?: string;
   setProjectId: (id: string) => void;
   statusId: string;
   setStatusId: (id: string) => void;
@@ -74,7 +76,7 @@ export interface TaskFormFieldsProps {
 }
 
 const TaskFormFields = ({
-  projectId, setProjectId, statusId, setStatusId, priority, setPriority,
+  projectId, setProjectId, projectLocked = false, lockedProjectName, statusId, setStatusId, priority, setPriority,
   assigneeId, setAssigneeId, reviewerId, setReviewerId,
   startDate, setStartDate, dueDate, setDueDate,
   gitlabUrl, setGitlabUrl, deployments, setDeployments,
@@ -101,10 +103,13 @@ const TaskFormFields = ({
     <div className="space-y-3">
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.projectLabel')}</label>
-        <SearchableSelect value={projectId} onChange={e => setProjectId(e.target.value)}
+        {projectLocked ? <>
+          <div className="rounded bg-muted px-2.5 py-1.5 text-sm text-foreground">{lockedProjectName || t('common.unknown')}</div>
+          <p className="mt-1 text-xs text-muted-foreground">{t('taskDetail.sidebar.projectInherited')}</p>
+        </> : <SearchableSelect value={projectId} onChange={e => setProjectId(e.target.value)}
           className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-card text-foreground outline-none focus:ring-1 focus:ring-primary">
           <ProjectSelectOptions groups={groupedProjects} />
-        </SearchableSelect>
+        </SearchableSelect>}
       </div>
       <div>
         <label className="text-sm font-medium text-muted-foreground mb-1 block">{t('taskCreate.statusLabel')}{requiredFields.status && <span className="text-destructive"> *</span>}</label>

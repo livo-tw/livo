@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Task, Project } from '@/types';
-import { DEFAULT_REQUIRED_FIELDS, type RequiredFieldsConfig, type ViewType, type TaskDisplayMode } from '../UIContext';
+import { DEFAULT_REQUIRED_FIELDS, type RequiredFieldsConfig, type ViewType, type TaskDisplayMode, type CreateTaskSeed } from '../UIContext';
 import { canManageFeatureToggles, resolveFeatureToggles, type FeatureKey, type FeatureToggles } from '@/lib/featureToggles';
 import { loadFeatureToggles, persistFeatureToggle } from '@/lib/featureToggleQueries';
 import { clearQaNavigationGuards, hasQaNavigationGuard, notifyQaNavigationBlocked } from '@/lib/qa/navigationGuard';
@@ -85,7 +85,20 @@ export function useUIState(role?: string) {
   const [standupMode, setStandupMode] = useState(false);
   const [standupUserId, setStandupUserId] = useState<string | null>(null);
   const [showCreateProject, setShowCreateProject] = useState(false);
-  const [showCreateTask, setShowCreateTask] = useState(false);
+  const [showCreateTask, setShowCreateTaskState] = useState(false);
+  const [createTaskSeed, setCreateTaskSeed] = useState<CreateTaskSeed | null>(null);
+  const setShowCreateTask = useCallback((visible: boolean) => {
+    if (!visible) setCreateTaskSeed(null);
+    setShowCreateTaskState(visible);
+  }, []);
+  const openCreateSubtask = useCallback((parentTaskId: string, title = '') => {
+    if (!confirmDiscardDrafts('task')) return false;
+    taskNavigation.current.selectedTask = null;
+    setSelectedTaskState(null);
+    setCreateTaskSeed({ parentTaskId, title });
+    setShowCreateTaskState(true);
+    return true;
+  }, []);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [requiredFields, setRequiredFields] = useState<RequiredFieldsConfig>(DEFAULT_REQUIRED_FIELDS);
   const [isLoading, setIsLoading] = useState(true);
@@ -103,7 +116,7 @@ export function useUIState(role?: string) {
     standupMode, setStandupMode,
     standupUserId, setStandupUserId,
     showCreateProject, setShowCreateProject,
-    showCreateTask, setShowCreateTask,
+    showCreateTask, setShowCreateTask, createTaskSeed, openCreateSubtask,
     editingProject, setEditingProject,
     taskDisplayMode, setTaskDisplayMode,
     requiredFields, setRequiredFields, saveRequiredFields,

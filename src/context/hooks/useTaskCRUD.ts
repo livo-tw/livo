@@ -7,7 +7,7 @@ import type { Task, Status, StatusLog, User, Project } from '@/types';
 import { randomUUID } from '@/lib/generateId';
 import { deadlineTaskFields, planningErrorCode, setTaskDeadline } from '@/lib/taskPlanning/client';
 import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/client';
-import { subtaskQuickCreateFields, type SubtaskRequiredFields } from '@/lib/taskWork/subtaskDefaults';
+import { subtaskQuickCreateFields, type SubtaskRequiredFields, type SubtaskCreateValues } from '@/lib/taskWork/subtaskDefaults';
 import { mapTask, type TaskRow } from '@/context/mappers';
 import { taskWriteErrorText } from '@/lib/approval/feedback';
 
@@ -221,7 +221,7 @@ export function useTaskCRUD({
       subtaskActor.current = currentMemberId;
       let run = subtaskRunners.current.get(currentMemberId);
       if (!run) { run = createTaskWorkCommandRunner(supabase); subtaskRunners.current.set(currentMemberId, run); }
-      return async (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task): Promise<Task | null> => {
+      return async (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task, values?: SubtaskCreateValues): Promise<Task | null> => {
         const parent = parentTaskOverride ?? allTasks.find(t => t.id === parentTaskId);
         if (!parent || !currentMemberId || subtaskActor.current !== currentMemberId || !title.trim() || parent.projectId !== projectId) return null;
         if (parent.parentTaskId) {
@@ -231,13 +231,23 @@ export function useTaskCRUD({
         const project = allProjects.find(p => p.id === projectId);
         if (!project) return null;
         try {
-          const result = await run!({ operation: 'create_subtask', taskId: parentTaskId, title: title.trim(), statusId, priority: 'medium',
-            ...subtaskQuickCreateFields(parent, requiredFields) });
+          const result = await run!({ operation: 'create_subtask', taskId: parentTaskId, title: title.trim(), statusId, priority: values?.priority ?? 'medium',
+            ...subtaskQuickCreateFields(parent, requiredFields),
+            ...(values?.dueDate !== undefined ? { dueDate: values.dueDate } : {}),
+            ...(values?.assigneeId !== undefined ? { assigneeId: values.assigneeId } : {}),
+            ...(values?.reviewerId !== undefined ? { reviewerId: values.reviewerId } : {}),
+            ...(values?.details !== undefined ? { details: values.details } : {}) });
           if (subtaskActor.current !== currentMemberId) return null;
           const newTask = mapTask(result.record as TaskRow);
           setAllTasks(prev => [...prev.filter(item => item.id !== newTask.id), newTask]);
           return newTask;
-        } catch (error) { if (subtaskActor.current === currentMemberId) toast.error(i18n.t(`taskWork.errors.${taskWorkErrorCode(error)}`)); return null; }
+        } catch (error) {
+          if (subtaskActor.current === currentMemberId) toast.error(i18n.t(`taskWork.errors.${taskWorkErrorCode(error)}`));
+          // Complete forms distinguish a rejected command from an uncertain transport
+          // result so they can reconcile the original intent before editing/retrying.
+          if (values) throw error;
+          return null;
+        }
       };
     },
     [allTasks, setAllTasks],

@@ -12,6 +12,8 @@ import { announceStatusChange } from '@/lib/taskAnnouncements';
 import { useTaskAnnouncements } from '@/hooks/useTaskAnnouncements';
 import type { Task } from '@/types';
 import { canDeleteTaskRecord } from '@/lib/permissions';
+import { useUIContext } from '@/context/UIContext';
+import { subtaskNeedsFullForm } from '@/lib/taskWork/subtaskDefaults';
 
 type Props = { detail: TaskDetailState };
 
@@ -20,6 +22,7 @@ const TaskSubtasksTab = ({ detail }: Props) => {
   const { confirm, ConfirmDialog } = usePortalConfirmDialog();
   const statusGate = useStatusChangeGate();
   const announcements = useTaskAnnouncements();
+  const { requiredFields, openCreateSubtask } = useUIContext();
   const {
     task, allTasks, setAllTasks, statuses, users,
     newSubtaskTitle, setNewSubtaskTitle,
@@ -29,6 +32,17 @@ const TaskSubtasksTab = ({ detail }: Props) => {
   } = detail;
 
   if (!task) return null;
+
+  const needsFullForm = subtaskNeedsFullForm(requiredFields,
+    (detail.customFields || []).some(field => field.projectId === task.projectId && field.isRequired), task)
+    || !!(requiredFields?.assignee && task.assigneeId && !users.find(user => user.id === task.assigneeId)?.isActive)
+    || !!(requiredFields?.reviewer && task.reviewerId && !users.find(user => user.id === task.reviewerId)?.isActive);
+  const submitSubtask = () => {
+    if (task.parentTaskId || !newSubtaskTitle.trim()) return;
+    if (needsFullForm) openCreateSubtask(task.id, newSubtaskTitle.trim());
+    else void handleCreateSubtask();
+  };
+
 
   // Same rules as the board and the detail view; a sub-task that needs approval is opened to submit it there.
   const changeSubtaskStatus = async (sub: Task, statusId: string) => {
@@ -147,25 +161,27 @@ const TaskSubtasksTab = ({ detail }: Props) => {
         })}
       </div>
 
-      <div className="flex gap-1.5">
+      {!task.parentTaskId && <div className="flex gap-1.5">
         <input
           ref={subtaskInputRef}
           type="text"
           value={newSubtaskTitle}
           onChange={e => setNewSubtaskTitle(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleCreateSubtask(); if (e.key === 'Escape') setNewSubtaskTitle(''); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitSubtask(); } if (e.key === 'Escape') setNewSubtaskTitle(''); }}
           placeholder={t('taskDetail.subtasks.newPlaceholder')}
           className="flex-1 text-sm border border-border rounded px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-primary bg-card text-foreground placeholder:text-muted-foreground/50"
         />
         <button
           type="button"
-          onClick={handleCreateSubtask}
+          onClick={submitSubtask}
+          aria-label={t('taskCreate.subtaskTitle')}
           disabled={!newSubtaskTitle.trim()}
           className={`px-3 py-1.5 rounded text-sm font-medium transition-colors flex-shrink-0 ${newSubtaskTitle.trim() ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-muted text-muted-foreground cursor-not-allowed'}`}
         >
           <Plus size={14} />
         </button>
-      </div>
+      </div>}
+      {!task.parentTaskId && needsFullForm && <p className="mt-2 text-xs text-muted-foreground">{t('taskDetail.subtasks.completeFormHint')}</p>}
 
       {isMobile && (
         <div className="border-t border-border pt-4 mt-4">

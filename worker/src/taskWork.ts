@@ -5,7 +5,7 @@ import { commandAuthId, liveMemberSql } from './liveMember';
 import { notifyChanges } from './notify';
 import { qaReadBody } from './qa';
 import { QaError } from './qa/domain';
-import { canonicalTaskWorkPayload, parseTaskWorkCommand, taskWorkError, TaskWorkError, type TaskWorkResult } from './taskWorkCore';
+import { TASK_WORK_MAX_BODY_BYTES, canonicalTaskWorkPayload, parseTaskWorkCommand, taskWorkError, TaskWorkError, type TaskWorkResult } from './taskWorkCore';
 import type { ChangeEvent } from './protocol';
 import { withFullTaskRows } from './taskEvents';
 
@@ -60,7 +60,7 @@ export function taskWorkGenericPatch(table: string, value: Record<string,unknown
 }
 export async function handleTaskWorkCommand(c: Context<AppContext>): Promise<Response> {
   try {
-    const input=JSON.parse(new TextDecoder().decode(await qaReadBody(c,32768)));
+    const input=JSON.parse(new TextDecoder().decode(await qaReadBody(c,TASK_WORK_MAX_BODY_BYTES)));
     const command=parseTaskWorkCommand(input), result=await executeTaskWorkCommand(c.env,c.get('auth'),command);
     if (!result.replayed) {
       const table=command.operation==='create_subtask'?'tasks':command.operation.includes('dependency')?'task_dependencies'

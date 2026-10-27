@@ -11,6 +11,7 @@ CREATE FUNCTION auth.email() RETURNS text LANGUAGE sql STABLE AS $$ SELECT auth.
 GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon,authenticated,service_role;
 CREATE TYPE task_priority AS ENUM('highest','high','medium','low','lowest');
+CREATE TYPE deploy_status AS ENUM('deployed','scheduled');
 -- members.role is the app_member_role enum, as in the delivery baseline
 -- (20260308173019_*.sql plus super_admin). A text column here hid enum/text
 -- comparison bugs that failed on real installs.
@@ -21,7 +22,7 @@ CREATE TABLE statuses(id text PRIMARY KEY,name text,is_done boolean DEFAULT fals
 CREATE TABLE tasks(
  id text PRIMARY KEY,task_key text NOT NULL,project_id text REFERENCES projects(id),title text NOT NULL,status_id text REFERENCES statuses(id),
  priority task_priority DEFAULT 'medium',creator_id text REFERENCES members(id),assignee_id text REFERENCES members(id),reviewer_id text REFERENCES members(id),
- due_date text,started_at text,completed_at text,sprint_id text,requires_approval boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0,
+ due_date text,started_at text,completed_at text,sprint_id text,gitlab_url text,requires_approval boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0,
  parent_task_id text REFERENCES tasks(id) ON DELETE SET NULL);
 CREATE TABLE task_checks(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,text text NOT NULL,is_done boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0);
 CREATE TABLE task_todos(LIKE task_checks INCLUDING ALL);
@@ -32,7 +33,10 @@ CREATE TABLE task_specs(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tas
 CREATE TABLE status_logs(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE,from_status_id text,to_status_id text,changed_by text,changed_at text);
 CREATE TABLE activity_logs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id text,action text,task_id text,task_key text,detail text);
 CREATE TABLE comments(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE,user_id text,content text,source text);
-CREATE TABLE custom_fields(id text PRIMARY KEY,project_id text,is_required boolean DEFAULT false);
+CREATE TABLE custom_fields(id text PRIMARY KEY,project_id text REFERENCES projects(id),field_name text NOT NULL,field_type text NOT NULL CHECK(field_type IN('text','textarea','number','select','date','boolean','user')),options jsonb,is_required boolean DEFAULT false,default_value text,sort_order integer DEFAULT 0,created_at timestamptz DEFAULT now());
+CREATE TABLE task_custom_field_values(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,field_id text NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,value_text text,value_number numeric,value_date date,value_boolean boolean,value_user_id text,updated_at timestamptz DEFAULT now(),UNIQUE(task_id,field_id));
+CREATE TABLE tags(id text PRIMARY KEY,name text NOT NULL,color text NOT NULL DEFAULT '#6B778C');
+CREATE TABLE task_tags(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,tag_id text NOT NULL REFERENCES tags(id) ON DELETE CASCADE);
 CREATE TABLE system_settings(key text PRIMARY KEY,value jsonb);
 CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),recipient_id text,sender_id text,task_id text,type text,content text,is_read boolean NOT NULL DEFAULT false);
 CREATE TABLE status_transition_rules(id text PRIMARY KEY,target_status_id text,required_status_id text);
@@ -41,7 +45,7 @@ CREATE TABLE external_account_bindings(id uuid PRIMARY KEY DEFAULT gen_random_uu
 CREATE TABLE slack_thread_mappings(slack_team_id text,slack_channel_id text,slack_thread_ts text,task_id text,notification_type text,UNIQUE(slack_channel_id,slack_thread_ts));
 CREATE TABLE external_action_logs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),member_id text,action_payload jsonb);
 CREATE TABLE sprints(id text PRIMARY KEY);
-CREATE TABLE task_deployments(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE);
+CREATE TABLE task_deployments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text REFERENCES tasks(id) ON DELETE CASCADE,environment text NOT NULL,status deploy_status NOT NULL DEFAULT 'scheduled',deploy_date text);
 CREATE TABLE task_attachments(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE);
 CREATE FUNCTION current_member_id() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$ SELECT id FROM members WHERE auth_id=auth.uid() AND is_active LIMIT 1 $$;
 CREATE FUNCTION livo_slack_session() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT COALESCE(auth.jwt()->>'livo_slack','false')='true' $$;
@@ -57,7 +61,7 @@ INSERT INTO tasks(id,task_key,project_id,title,status_id,creator_id,assignee_id,
 INSERT INTO external_account_bindings VALUES('00000000-0000-0000-0000-000000000010','member','slack','TTEST','UTEST',true,'admin');
 INSERT INTO system_settings VALUES('feature_toggles','{"slackActions":true,"approvals":true}'),('required_fields','{}');
 DO $$ DECLARE n text; BEGIN
- FOREACH n IN ARRAY ARRAY['members','projects','statuses','tasks','task_checks','task_todos','task_dependencies','task_specs','status_logs','activity_logs','comments','custom_fields','system_settings','notifications','external_account_bindings'] LOOP
+ FOREACH n IN ARRAY ARRAY['members','projects','statuses','tasks','task_checks','task_todos','task_dependencies','task_specs','status_logs','activity_logs','comments','custom_fields','task_custom_field_values','tags','task_tags','system_settings','notifications','external_account_bindings'] LOOP
   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',n);
   EXECUTE format('GRANT ALL ON public.%I TO authenticated,service_role',n);
   EXECUTE format('CREATE POLICY fixture_read ON public.%I FOR SELECT TO authenticated USING (true)',n);

@@ -91,7 +91,6 @@ src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'ChevronRight' is decl
 src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'customFieldValues' is declared but its value is never read.
 src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'dragFieldIdx' is declared but its value is never read.
 src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'hasFeature' is declared but its value is never read.
-src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'project' is declared but its value is never read.
 src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'setSidebarFieldOrder' is declared but its value is never read.
 src/components/task-detail/TaskSidebarFields.tsx: TS6133: 'upsertCustomFieldValue' is declared but its value is never read.
 src/components/task-detail/TaskSpecTab.tsx: TS6133: 'useIsMobile' is declared but its value is never read.

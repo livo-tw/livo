@@ -1,4 +1,5 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from 'react';
+import type { SubtaskCreateValues } from '@/lib/taskWork/subtaskDefaults';
 import type { Task, Status, Tag, TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog, CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency } from '@/types';
 
 export interface TaskContextType {
@@ -22,7 +23,7 @@ export interface TaskContextType {
   updateTaskInDb: (taskId: string, updates: Partial<Task>) => Promise<boolean | void>;
   /** The stored task (database key), or null when the insert failed. */
   createTaskInDb: (task: Task) => Promise<Task | null>;
-  createSubtask: (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task) => Promise<Task | null>;
+  createSubtask: (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task, values?: SubtaskCreateValues) => Promise<Task | null>;
   customFields: CustomField[];
   customFieldValues: TaskCustomFieldValue[];
   refreshCustomFields: () => Promise<void>;
