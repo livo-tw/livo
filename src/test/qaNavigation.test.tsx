@@ -189,3 +189,38 @@ describe('QA navigation preserves pending work', () => {
     fireEvent.click(back); expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe('QA open detail external refresh preserves drafts', () => {
+  it('refreshes the already open issue after focus without dismissing it', async () => {
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<QaWorkspace />);
+    await screen.findByRole('heading', { name: input.title, level: 1 });
+    mocks.get.mockResolvedValue({ ...detail, issue: { ...issue, version: issue.version + 1, title: 'Updated externally' } });
+    fireEvent.focus(window);
+    await screen.findByRole('heading', { name: 'Updated externally', level: 1 });
+    expect(window.location.search).toContain('existing-bug'); expect(mocks.command).not.toHaveBeenCalled();
+  });
+  it('retains an unsent comment and refreshes only after it is cleared', async () => {
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<QaWorkspace />);
+    await screen.findByRole('heading', { name: input.title, level: 1 }); fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
+    const comment = screen.getByLabelText(/qa.commentBody/); fireEvent.change(comment, { target: { value: 'Unsent example draft' } });
+    const calls = mocks.get.mock.calls.length;
+    mocks.get.mockResolvedValue({ ...detail, issue: { ...issue, version: issue.version + 1, title: 'Closed externally' } });
+    fireEvent(window, new Event('online')); await screen.findByText('qa.externalRefreshDeferred');
+    await new Promise(resolve => setTimeout(resolve, 80)); expect(mocks.get).toHaveBeenCalledTimes(calls);
+    expect(comment).toHaveValue('Unsent example draft'); expect(screen.getByRole('heading', { name: input.title, level: 1 })).toBeTruthy();
+    fireEvent.change(comment, { target: { value: '' } }); await screen.findByRole('heading', { name: 'Closed externally', level: 1 });
+  });
+  it('retains deployment evidence across invalidation and manual refresh', async () => {
+    const target: QaDetail['issue']['targets'][number] = { id: 'example-target', environment: 'Stage', component: 'Example API', build: '', required: true, deployedAt: null, deployedBy: null, deploymentEvidence: '' };
+    const current = { ...issue, state: 'verification' as const, assigneeId: 'admin', qaOwnerId: 'admin', fixCycle: 1, targets: [target] };
+    mocks.get.mockResolvedValue({ ...detail, issue: current });
+    window.history.replaceState({}, '', '/?qa=existing-bug'); render(<QaWorkspace />); await screen.findByRole('heading', { name: input.title, level: 1 });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verification/ }));
+    const evidence = screen.getByLabelText(/qa.deploymentEvidence/); fireEvent.change(evidence, { target: { value: 'Unsent deployment evidence' } });
+    mocks.get.mockResolvedValue({ ...detail, issue: { ...current, version: current.version + 1, title: 'Changed externally' } });
+    fireEvent.focus(window); await screen.findByText('qa.externalRefreshDeferred'); expect(evidence).toHaveValue('Unsent deployment evidence');
+    fireEvent.click(screen.getByRole('button', { name: 'qa.refresh' })); await screen.findByRole('heading', { name: 'Changed externally', level: 1 });
+    expect(evidence).toHaveValue('Unsent deployment evidence'); expect(mocks.command).not.toHaveBeenCalled();
+  });
+});

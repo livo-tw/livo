@@ -3492,6 +3492,7 @@
     "failed": "操作失败，输入内容已保留，可以重试。",
     "conflict": "此 Bug 已被其他操作更新。输入内容已保留，请刷新最新记录、核对后再提交。",
     "refreshKept": "已加载最新记录，尚未提交的输入仍保留。",
+    "externalRefreshDeferred": "为保留尚未送出的内容，已暂缓自动更新。完成或取消编辑后会重新整理。",
     "requiredFields": "请填写必填字段。",
     "errorCode": "错误：{{code}}",
     "noPermission": "当前阶段没有你可执行的流程操作。",

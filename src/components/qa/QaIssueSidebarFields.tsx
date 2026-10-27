@@ -1,6 +1,6 @@
 import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
 import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import UserSelect from '@/components/UserSelect';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
@@ -12,6 +12,7 @@ import { groupProjectsByLine } from '@/lib/projectGroups';
 import type { QaCommand, QaIssue, QaSeverity } from '@/lib/qa/domain';
 import { QaField, QaSelect } from './QaFields';
 import { qaPriorities } from './QaBadges';
+import { useQaDetailDraft } from './QaDetailDraftContext';
 
 type Fields = Pick<QaIssue, 'projectId' | 'assigneeId' | 'qaOwnerId' | 'severity' | 'priority' | 'dueDate'>;
 
@@ -24,7 +25,13 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand }: {
   const { allProjects, productLines } = useProjectContext();
   const { allTasks } = useTaskContext();
   const [dueDate, setDueDate] = useState(issue.dueDate || '');
-  useEffect(() => setDueDate(issue.dueDate || ''), [issue.id, issue.version, issue.dueDate]);
+  useQaDetailDraft(dueDate !== (issue.dueDate || ''));
+  const dateBaseline = useRef({ id: issue.id, value: issue.dueDate || '' });
+  useEffect(() => {
+    const prior = dateBaseline.current, next = issue.dueDate || '';
+    setDueDate(draft => prior.id !== issue.id || draft === prior.value ? next : draft);
+    dateBaseline.current = { id: issue.id, value: next };
+  }, [issue.id, issue.version, issue.dueDate]);
   const update = (patch: Partial<Fields>) => {
     if (disabled || ('priority' in patch && !configuration)) return Promise.resolve(false);
     if (Object.entries(patch).every(([key, value]) => issue[key as keyof Fields] === value)) return Promise.resolve(true);

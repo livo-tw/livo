@@ -3492,6 +3492,7 @@
     "failed": "The request failed. Your input is kept; you can retry.",
     "conflict": "This bug changed while you were editing. Your input is kept. Refresh the latest record, review it, then submit again.",
     "refreshKept": "The record was refreshed. Your unsent input is still here.",
+    "externalRefreshDeferred": "Automatic refresh is paused to keep your unsent input. Finish or cancel editing to refresh.",
     "requiredFields": "Complete the required fields.",
     "errorCode": "Error: {{code}}",
     "noPermission": "No workflow action is available for your role at this stage.",

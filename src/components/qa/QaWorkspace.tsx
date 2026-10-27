@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useQa } from '@/hooks/useQa';
+import { useQaDetailInvalidation } from '@/hooks/useQaDetailInvalidation';
 import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { QA_SEVERITIES, type QaCommand, type QaCoordination, type QaDetail, type QaListInput, type QaListResult, type QaSeverity, type QaState } from '@/lib/qa/domain';
 import type { QaWorkflow } from '@/lib/qa/workflow';
@@ -56,7 +57,26 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const [issueId, setIssueId] = useState(() => new URLSearchParams(window.location.search).get('qa') || '');
   const [creating, setCreating] = useState(false);
   const background = useRef<HTMLDivElement>(null);
-  const [detail, setDetail] = useState<QaDetail | null>(null);
+  // A visit token changes even across A -> B -> A, including actor/permission changes.
+  const scopeKey = `${baseActor.id}:${baseActor.role}:${baseActor.qaAdmin}:${baseActor.deploymentOperator}:${issueId}`;
+  const visit = useRef({ key: scopeKey, client, token: 0 });
+  if (visit.current.key !== scopeKey || visit.current.client !== client) visit.current = { key: scopeKey, client, token: visit.current.token + 1 };
+  const detailScope = visit.current.token;
+  const [snapshot, setSnapshot] = useState<{ scope: number; detail: QaDetail } | null>(null);
+  const detail = snapshot?.scope === detailScope ? snapshot.detail : null;
+  const setDetail = useCallback((value: QaDetail | null) => {
+    if (visit.current.token !== detailScope) return;
+    setSnapshot(previous => value ? previous?.scope === detailScope && previous.detail.issue.version > value.issue.version ? previous : { scope: detailScope, detail: value } : null);
+  }, [detailScope]);
+  const protection = useRef({ scope: detailScope, blocked: false });
+  if (protection.current.scope !== detailScope) protection.current = { scope: detailScope, blocked: false };
+  const [refreshBlocked, setRefreshBlocked] = useState(false);
+  const onRefreshBlockedChange = useCallback((blocked: boolean) => {
+    if (visit.current.token !== detailScope) return;
+    protection.current = { scope: detailScope, blocked }; setRefreshBlocked(blocked);
+  }, [detailScope]);
+  const externalRefresh = useQaDetailInvalidation({ issueId, scope: detailScope, blocked: refreshBlocked,
+    isBlocked: () => protection.current.blocked, load: signal => client.get(issueId, signal), apply: setDetail });
   const [list, setList] = useState<QaListResult>({ issues: [], total: 0, hasMore: false });
   const [loading, setLoading] = useState(false);
   // The open bug or report form, and the board's own drops and reloads, report work separately.
@@ -202,13 +222,13 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       .catch(failure => { if (!controller.signal.aborted) setError(failure); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [client, issueId, revision]);
+  }, [client, issueId, revision, setDetail]);
   const refreshDetail = useCallback(async () => {
     if (!issueId) return;
     setBoardRevision(value => value + 1);
     const value = await client.get(issueId);
-    if (currentId.current === issueId) setDetail(value);
-  }, [client, issueId]);
+    if (visit.current.token === detailScope) { setDetail(value); externalRefresh.acknowledge(); }
+  }, [client, issueId, detailScope, setDetail, externalRefresh.acknowledge]);
   // Closing a bug or the report form shows the board again with what was just saved.
   const recordOpen = !!issueId || creating;
   const wasRecordOpen = useRef(recordOpen);
@@ -269,7 +289,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
       </>}
     </div>
     {(creating || !!issueId) && <QaRecordView title={creating ? t('qa.reportTitle') : detail?.issue.title || t('qa.details')} creating={creating} busy={busy} suspended={recordSuspended} onClose={() => { if (recordBusy || hasQaNavigationGuard()) return; creatingRef.current = false; setCreating(false); openIssue(''); }}>
-      {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={issueId} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} onDeleted={() => { setBoardRevision(value => value + 1); window.dispatchEvent(new Event('livo:qa-changed')); openIssue('', undefined, undefined, true); }} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
+      {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={`${issueId}:${detailScope}`} externalUpdatePending={externalRefresh.pending} externalRefreshError={externalRefresh.error} onRefreshBlockedChange={onRefreshBlockedChange} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} onDeleted={() => { setBoardRevision(value => value + 1); window.dispatchEvent(new Event('livo:qa-changed')); openIssue('', undefined, undefined, true); }} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
     </QaRecordView>}
   </div></QaDisplaySettingsContext.Provider>;
 }

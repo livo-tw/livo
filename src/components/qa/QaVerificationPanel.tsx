@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { QaCommand, QaResult, QaTarget } from '@/lib/qa/domain';
 import { QaField, QaSelect, qaPrimary } from './QaFields';
+import { useQaDetailDraft } from './QaDetailDraftContext';
 
 export default function QaVerificationPanel({ targets, initialResult, canDeploy, canVerify, busy, onCommand }: {
   targets: QaTarget[];
@@ -30,6 +31,7 @@ function QaVerificationTarget({ target, initialResult, canDeploy, canVerify, bus
   const [evidence, setEvidence] = useState('');
   const [result, setResult] = useState<QaResult>(initialResult || 'pass');
   const [note, setNote] = useState('');
+  useQaDetailDraft((canDeploy && !target.deployedAt && evidence !== '') || (canVerify && !!target.deployedAt && (note !== '' || result !== (initialResult || 'pass'))));
   return <article className="min-w-0 space-y-3 rounded-lg border border-border p-3">
     <div><h3 className="break-words text-sm font-semibold">{[target.environment, target.component, target.build].filter(Boolean).join(' / ')}</h3>
       <p className="mt-1 text-xs text-muted-foreground">{t(target.deployedAt ? 'qa.deployed' : 'qa.notDeployed')}{target.deployedAt && ` · ${new Date(target.deployedAt).toLocaleString()}`}{target.required && ` · ${t('qa.required')}`}</p>

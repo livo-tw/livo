@@ -1,4 +1,5 @@
 import { getQaNextAction } from './QaIssueCard';
+import { QaDetailDraftContext } from './QaDetailDraftContext';
 import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { useProjectColor } from '@/hooks/useProjectColor';
@@ -14,7 +15,7 @@ import QaTargetEditor, { type QaTargetDraft } from './QaTargetEditor';
 import QaVerificationPanel from './QaVerificationPanel';
 import QaIssueSidebarFields from './QaIssueSidebarFields';
 import { QaText } from './QaText';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -58,7 +59,7 @@ export function QaFailure({ error }: { error: unknown }) {
   return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p>{message}</p>{code && <p className="mt-1 font-mono text-xs">{t('qa.errorCode', { code })}</p>}</div>
 }
 
-export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onDeleted, onBusyChange }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onDeleted?: () => void; onBusyChange?: (busy: boolean) => void }) {
+export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onDeleted, onBusyChange, onRefreshBlockedChange, externalUpdatePending, externalRefreshError }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onDeleted?: () => void; onBusyChange?: (busy: boolean) => void; onRefreshBlockedChange?: (blocked: boolean) => void; externalUpdatePending?: boolean; externalRefreshError?: unknown }) {
   const { t } = useTranslation();
   const environments = useDeploymentEnvironments();
   const isMobile = useIsMobile();
@@ -95,12 +96,32 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const focusOwnerAfterClose = useRef(false);
   const focusOwnerAfterMenuClose = useRef(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
+  const [drafts, setDrafts] = useState<Set<string>>(() => new Set());
+  const reportDraft = useCallback((id: string, dirty: boolean) => setDrafts(previous => {
+    if (previous.has(id) === dirty) return previous;
+    const next = new Set(previous); if (dirty) next.add(id); else next.delete(id); return next;
+  }), []);
+  const refreshBlocked = busy || !!action || handoffOpen || comment !== '' || drafts.size > 0;
+  useLayoutEffect(() => { onRefreshBlockedChange?.(refreshBlocked); return () => onRefreshBlockedChange?.(false); }, [onRefreshBlockedChange, refreshBlocked]);
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
   const projectTasks = allTasks.filter(task => task.projectId === issue.projectId);
   const unavailableLinks = links.filter(id => !projectTasks.some(task => task.id === id));
   const [targets, setTargets] = useState<QaTargetDraft[]>(() => issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
   const [fixSummary, setFixSummary] = useState('');
+  const actionBaseline = useRef({ links, targets });
+  useEffect(() => {
+    // Only untouched defaults follow a new server revision. Closing an action
+    // keeps its draft, just as the existing manual-refresh flow does.
+    if (action) return;
+    const nextTargets = issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }];
+    const previous = actionBaseline.current;
+    setLinks(draft => JSON.stringify(draft) === JSON.stringify(previous.links) ? issue.taskIds : draft);
+    setTargets(draft => JSON.stringify(draft) === JSON.stringify(previous.targets) ? nextTargets : draft);
+    actionBaseline.current = { links: issue.taskIds, targets: nextTargets };
+    // An action opening/closing must not reinitialize its saved draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue.id, issue.version]);
   const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
   const commandSending = useRef(false);
@@ -279,8 +300,10 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {(moreActions.length > 0 || canDelete || canOpenHandoff) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48" onCloseAutoFocus={event => { if (focusOwnerAfterMenuClose.current) { event.preventDefault(); focusOwnerAfterMenuClose.current = false; focusOwners(); } }}>{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => { if (['start_fix', 'submit_fix'].includes(type) && unavailableOwnerField) focusOwnerAfterMenuClose.current = true; openAction(type); }}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canOpenHandoff && <DropdownMenuItem onSelect={() => setHandoffOpen(true)}>{t('qaHandoff.title')}</DropdownMenuItem>}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
           {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>;
-  return <QaDisplaySettingsContext.Provider value={display.configuration}><div className="w-full min-w-0 space-y-4 p-3 md:p-5">
+  return <QaDetailDraftContext.Provider value={reportDraft}><QaDisplaySettingsContext.Provider value={display.configuration}><div className="w-full min-w-0 space-y-4 p-3 md:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2"><button className={qaButton} onClick={onBack} disabled={busy}><ArrowLeft size={15} aria-hidden="true" />{t('qa.back')}</button><button className={qaButton} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} aria-hidden="true" />{t('qa.refresh')}</button></div>
+    {externalUpdatePending && refreshBlocked && <p role="status" className="rounded-lg border border-border p-3 text-sm text-muted-foreground">{t('qa.externalRefreshDeferred')}</p>}
+    {externalRefreshError != null && <QaFailure error={externalRefreshError} />}
     <header className="rounded-xl border border-border/80 bg-card p-4 shadow-sm md:p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2"><Bug size={15} className="text-muted-foreground" aria-hidden="true" /><ProjectBadge name={allProjects.find(p => p.id === issue.projectId)?.name} color={getProjectColor(issue.projectId)} /><span title={issue.id} className="font-mono text-xs text-muted-foreground">{qaShortId(issue.id)}</span>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline">{t('qa.slackSource')}<ExternalLink size={12} aria-hidden="true" /></a>}</div>
       <h1 className="break-words text-xl font-bold leading-relaxed md:text-2xl">{issue.title}</h1>
@@ -391,5 +414,5 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       </DialogContent>
     </Dialog>
     {ConfirmDialog}
-  </div></QaDisplaySettingsContext.Provider>;
+  </div></QaDisplaySettingsContext.Provider></QaDetailDraftContext.Provider>;
 }
