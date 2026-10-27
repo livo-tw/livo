@@ -1,4 +1,5 @@
 import { safeLinkHref } from '@/lib/safeLink';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useEffect, useLayoutEffect, useRef, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -14,7 +15,7 @@ export function ReleaseField({ label, ...props }: InputHTMLAttributes<HTMLInputE
   return <label className="grid gap-1.5 text-sm"><span>{label}</span><input className={fieldClass} {...props} /></label>;
 }
 export function ReleaseSelect({ label, children, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5 text-sm"><span>{label}</span><select className={fieldClass} {...props}>{children}</select></label>;
+  return <label className="grid gap-1.5 text-sm"><span>{label}</span><SearchableSelect className={fieldClass} {...props}>{children}</SearchableSelect></label>;
 }
 export function ReleaseText({ label, value, onChange, maxLength = 2000, required = true }: { label: string; value: string; onChange: (value: string) => void; maxLength?: number; required?: boolean }) {
   return <label className="grid gap-1.5 text-sm"><span>{label}</span><textarea className={`${fieldClass} min-h-24`} value={value} maxLength={maxLength} required={required} onChange={e => onChange(e.target.value)} /></label>;

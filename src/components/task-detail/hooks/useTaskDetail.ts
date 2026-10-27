@@ -273,7 +273,7 @@ export const useTaskDetail = () => {
 
   return {
     // Context passthrough (needed by sidebar / tabs)
-    allTasks, setAllTasks, allProjects, users, statuses, productLines, tags,
+    allTasks, setAllTasks, updateTaskInDb, allProjects, users, statuses, productLines, tags,
     permissions, currentMemberId, currentMember, taskDisplayMode, setTaskDisplayMode,
     customFields, customFieldValues, upsertCustomFieldValue,
     taskDependencies, addTaskDependency, removeTaskDependency,

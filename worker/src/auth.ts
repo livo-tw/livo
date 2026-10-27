@@ -152,14 +152,15 @@ async function signAccessToken(env: Env, userId: string, email: string): Promise
   return { token, exp };
 }
 
-export async function verifyAccessToken(env: Env, token: string): Promise<{ sub: string; email: string } | null> {
+export async function verifyAccessToken(env: Env, token: string): Promise<{ sub: string; email: string; exp?: number } | null> {
   if (!token) return null;
   try {
     const payload = await verify(token, env.JWT_SECRET, 'HS256');
     const sub = (payload as Record<string, unknown>).sub;
     const email = (payload as Record<string, unknown>).email;
+    const exp = (payload as Record<string, unknown>).exp;
     if (typeof sub !== 'string' || sub === '' || typeof email !== 'string') return null;
-    return { sub, email };
+    return { sub, email, ...(typeof exp === 'number' && Number.isSafeInteger(exp) ? { exp } : {}) };
   } catch {
     return null; // invalid signature / malformed / expired
   }

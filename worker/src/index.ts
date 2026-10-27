@@ -238,7 +238,7 @@ app.get('/api/realtime', async (c) => {
   }
   const token = c.req.query('token') || '';
   const claims = await verifyAccessToken(c.env, token);
-  if (!claims) return c.text('Unauthorized', 401);
+  if (!claims || !claims.exp) return c.text('Unauthorized', 401);
 
   // Tenancy isolation: each workspace gets its OWN hub instance, so client-
   // declared channel bindings can only ever see same-workspace events.
@@ -249,6 +249,9 @@ app.get('/api/realtime', async (c) => {
   const headers = new Headers(c.req.raw.headers);
   headers.set('x-auth-user', claims.sub);
   headers.set('x-auth-email', claims.email);
+  headers.set('x-auth-member', resolved.member.id);
+  headers.set('x-auth-workspace', ws);
+  headers.set('x-auth-exp', String(claims.exp));
   const stub = c.env.REALTIME.get(c.env.REALTIME.idFromName(hubName(ws)));
   return stub.fetch(new Request('https://do/ws', { method: 'GET', headers }));
 });

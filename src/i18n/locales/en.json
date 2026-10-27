@@ -949,6 +949,28 @@
     "deleteNotAllowed": "The task was not deleted. Someone may have started it, or you did not create it; only an admin can delete it now."
   },
   "taskCreate": {
+    "recovery": {
+      "createdPartial": "Task {{key}} was created, but some details were not fully saved.",
+      "unsaved": "Saving is not confirmed for: {{sections}}.",
+      "retained": "Your original input stays in this form. Open the existing task to restore the missing details; choosing Create task again returns to this draft. Keep the draft and avoid reloading until recovery is complete.",
+      "open": "Keep draft and open task",
+      "keep": "Keep draft for later",
+      "discard": "Clear this draft",
+      "discardConfirm": "This clears only the input retained in this form; it does not delete the created task. Have you restored the unsaved details and want to clear the draft?",
+      "refreshFailed": "The task and details were saved, but the list could not refresh. Please reload the list.",
+      "sections": {
+        "spec": "background, requirements and notes",
+        "checks": "acceptance checklist",
+        "todos": "to-do list",
+        "deployments": "deployments",
+        "files": "attachments",
+        "custom": "custom fields",
+        "history": "creation history",
+        "tags": "tags",
+        "subtasks": "subtasks",
+        "details": "additional details"
+      }
+    },
     "title": "Create Task",
     "applyTemplate": "Apply template...",
     "currentProjectTemplates": "Current Project Templates",
@@ -1025,6 +1047,8 @@
   },
   "taskDetail": {
     "spec": {
+      "loadFailed": "The requirements for this task could not be loaded. Retry before editing.",
+      "retry": "Reload",
       "confirmEdit": "✓ Done Editing",
       "cancelEdit": "✕ Cancel",
       "beingEdited": "{{name}} is editing",
@@ -1182,6 +1206,7 @@
       "savingLayout": "Saving...",
       "layoutButton": "Layout",
       "layoutSaved": "Layout saved",
+      "layoutSaveFailed": "Layout could not be saved. Your changes are retained; please retry.",
       "tagBeingEditedError": "{{name}} is editing tags, please try again later",
       "addTagFailed": "Failed to add tag: ",
       "removeTagFailed": "Failed to remove tag: ",

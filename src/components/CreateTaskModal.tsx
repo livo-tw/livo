@@ -52,7 +52,7 @@ const CreateTaskModal = () => {
     pendingFiles, handleFileSelect, removePendingFile, handleDrop,
     fieldsProps, customFieldsProps, isMobile,
     hasFeature,
-    handleSubmitAttempt, requestClose,
+    handleSubmitAttempt, requestClose, partialCreation, openCreatedTask, discardPartialDraft,
     ConfirmDialog,
   } = useCreateTaskForm();
   const focusTrapRef = useFocusTrap(showCreateTask);
@@ -84,7 +84,7 @@ const CreateTaskModal = () => {
             <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
               <BookOpen size={14} /> {t('taskCreate.backgroundLabel')}{requiredFields.background && <span className="text-destructive"> *</span>}
             </label>
-            <RichTextEditor content={background} onChange={setBackground} placeholder={t('taskCreate.backgroundPlaceholder')} members={users} minimal />
+            <RichTextEditor content={background} onChange={setBackground} placeholder={t('taskCreate.backgroundPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
           </div>
         );
       case 'notes':
@@ -93,7 +93,7 @@ const CreateTaskModal = () => {
             <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
               <StickyNote size={14} /> {t('taskCreate.notesLabel')}{requiredFields.notes && <span className="text-destructive"> *</span>}
             </label>
-            <RichTextEditor content={notes} onChange={setNotes} placeholder={t('taskCreate.notesPlaceholder')} members={users} minimal />
+            <RichTextEditor content={notes} onChange={setNotes} placeholder={t('taskCreate.notesPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
           </div>
         );
       case 'todos':
@@ -141,7 +141,8 @@ const CreateTaskModal = () => {
   // Reset advanced section when dialog closes
   useEffect(() => {
     if (!showCreateTask) setShowAdvanced(false);
-  }, [showCreateTask]);
+    else if (partialCreation) setShowAdvanced(true);
+  }, [showCreateTask, partialCreation]);
 
   if (!showCreateTask) return null;
 
@@ -174,6 +175,7 @@ const CreateTaskModal = () => {
                   <FileInput size={14} className="text-muted-foreground" />
                   <SearchableSelect
                     defaultValue=""
+                    disabled={isSubmitting || !!partialCreation}
                     onChange={e => { if (e.target.value) applyTemplate(e.target.value); e.target.value = ''; }}
                     className="text-xs border border-border rounded px-2 py-1 bg-card text-foreground outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                   >
@@ -215,9 +217,14 @@ const CreateTaskModal = () => {
             </button>
           </div>
 
+          {partialCreation && <div role="alert" className="mx-4 my-3 space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <p className="font-medium">{t('taskCreate.recovery.createdPartial', { key: partialCreation.task.taskKey })}</p>
+            <p>{t('taskCreate.recovery.unsaved', { sections: partialCreation.sections.map(section => t(`taskCreate.recovery.sections.${section}`)).join('、') })}</p>
+            <p>{t('taskCreate.recovery.retained')}</p>
+          </div>}
           {/* Scrollable form area */}
           <div className="flex-1 overflow-y-auto min-h-0">
-            <div className={`${isMobile ? 'flex flex-col' : 'flex gap-0 divide-x divide-border'}`}>
+            <fieldset disabled={isSubmitting || !!partialCreation} className={`min-w-0 ${isMobile ? 'flex flex-col' : 'flex gap-0 divide-x divide-border'}`}>
               {/* Left: Main content */}
               <div className={`${isMobile ? '' : 'flex-1'} px-4 md:px-6 py-4 md:py-5 space-y-4 min-w-0`}>
                 {/* Title (always visible) */}
@@ -239,7 +246,7 @@ const CreateTaskModal = () => {
                   <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
                     <FileText size={14} /> {t('taskCreate.requirementLabel')}{requiredFields.requirement && <span className="text-destructive"> *</span>}
                   </label>
-                  <RichTextEditor content={requirement} onChange={setRequirement} placeholder={t('taskCreate.requirementPlaceholder')} members={users} minimal />
+                  <RichTextEditor content={requirement} onChange={setRequirement} placeholder={t('taskCreate.requirementPlaceholder')} members={users} minimal editable={!isSubmitting && !partialCreation} />
                 </div>
 
                 {/* Mobile: show properties panel before advanced */}
@@ -286,16 +293,19 @@ const CreateTaskModal = () => {
                   <div className="mt-4"><TaskFormCustomFields {...customFieldsProps} /></div>
                 </div>
               )}
-            </div>
+            </fieldset>
           </div>
 
           {/* Footer */}
-          <div className="px-4 md:px-6 py-3 border-t border-border flex justify-end gap-2 flex-shrink-0 bg-card rounded-b-lg">
+          <div className="px-4 md:px-6 py-3 border-t border-border flex flex-wrap justify-end gap-2 flex-shrink-0 bg-card rounded-b-lg">
             <button onClick={() => void requestClose()}
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-muted">
-              {t('common.cancel')}
+              {t(partialCreation ? 'taskCreate.recovery.keep' : 'common.cancel')}
             </button>
-            <button onClick={(uploading || isSubmitting) ? undefined : handleSubmitAttempt} disabled={uploading || isSubmitting}
+            {partialCreation ? <>
+              <button onClick={() => void discardPartialDraft()} className="rounded px-3 py-2 text-sm text-destructive hover:bg-destructive/10">{t('taskCreate.recovery.discard')}</button>
+              <button onClick={openCreatedTask} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">{t('taskCreate.recovery.open')}</button>
+            </> : <button onClick={(uploading || isSubmitting) ? undefined : handleSubmitAttempt} disabled={uploading || isSubmitting}
               aria-busy={uploading || isSubmitting}
               className={cn("px-5 py-2 text-sm font-medium rounded transition-colors flex items-center gap-1.5",
                 (uploading || isSubmitting) ? "bg-muted text-muted-foreground cursor-not-allowed" : isValid ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-primary/60 text-primary-foreground hover:bg-primary/70 cursor-pointer")}>
@@ -306,7 +316,7 @@ const CreateTaskModal = () => {
                 </svg>
               )}
               {uploading ? t('common.uploading') : isSubmitting ? t('common.processing') : t('common.create')}
-            </button>
+            </button>}
           </div>
         </div>
       </div>

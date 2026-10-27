@@ -949,6 +949,28 @@
     "deleteNotAllowed": "沒有刪除這張任務。它可能已經開始處理，或不是你建立的；這時只有管理員能刪除。"
   },
   "taskCreate": {
+    "recovery": {
+      "createdPartial": "任務 {{key}} 已建立，部分資料尚未完整儲存。",
+      "unsaved": "尚未確認儲存：{{sections}}。",
+      "retained": "原始輸入保留在此表單。可開啟已建立的任務補回；再點「建立任務」會回到這份草稿。補回前請勿清除草稿或重新整理頁面。",
+      "open": "保留草稿並開啟任務",
+      "keep": "保留草稿，稍後處理",
+      "discard": "清除這份草稿",
+      "discardConfirm": "只會清除此表單保留的內容，不會刪除已建立的任務。請先確認未儲存的內容已補回，確定清除嗎？",
+      "refreshFailed": "任務與資料已儲存，但清單未能更新，請重新讀取。",
+      "sections": {
+        "spec": "背景、需求與備註",
+        "checks": "驗收標準",
+        "todos": "待辦事項",
+        "deployments": "部署資料",
+        "files": "附件",
+        "custom": "自訂欄位",
+        "history": "建立紀錄",
+        "tags": "標籤",
+        "subtasks": "子任務",
+        "details": "補充資料"
+      }
+    },
     "title": "建立任務",
     "applyTemplate": "套用模板...",
     "currentProjectTemplates": "目前專案模板",
@@ -1025,6 +1047,8 @@
   },
   "taskDetail": {
     "spec": {
+      "loadFailed": "無法讀取這張任務的需求內容，請重試後再編輯。",
+      "retry": "重新讀取",
       "confirmEdit": "✓ 完成編輯",
       "cancelEdit": "✕ 取消",
       "beingEdited": "{{name}} 編輯中",
@@ -1182,6 +1206,7 @@
       "savingLayout": "儲存中...",
       "layoutButton": "排版",
       "layoutSaved": "排版已儲存",
+      "layoutSaveFailed": "排版未能儲存，調整仍保留，請重試。",
       "tagBeingEditedError": "{{name}} 正在編輯標籤，請稍後再試",
       "addTagFailed": "新增標籤失敗：",
       "removeTagFailed": "移除標籤失敗：",

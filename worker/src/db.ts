@@ -26,6 +26,7 @@ import { knowledgePermissionSql } from './knowledgeSql';
 import { rowToWire, valueToDb, nowIso } from './meta';
 import type { TableMeta, WriteRule } from './meta';
 import { notifyChanges } from './notify';
+import { liveMember } from './liveMember';
 import { sendNotificationEmails } from './functions/emailNotify';
 import { dispatchWebhooks } from './functions/webhooks';
 import { deadlinePatch, deadlineVersionSql, livePlanningMember } from './taskPlanning';
@@ -660,8 +661,17 @@ export async function runQuery(
     // holding); inserts/upserts get workspace_id forced per-row in
     // prepareRows. Self-host/local installs live entirely in 'default'.
     const ws = auth?.member?.workspaceId || DEFAULT_WORKSPACE;
+    // Ordinary inbox reads are recipient-scoped on the server. The existing
+    // super-admin full JSON backup remains a privileged read of every inbox.
+    let ownInbox = false;
+    if (table === 'notifications' && req.op === 'select') {
+      const current = await liveMember(env, auth, { strict: true });
+      if (!current) return permissionDenied(table);
+      ownInbox = current.role !== 'super_admin';
+    }
     const withWs = (filters?: QueryFilter[]): QueryFilter[] => [
       { col: 'workspace_id', op: 'eq', val: ws },
+      ...(ownInbox ? [{ col: 'recipient_id', op: 'eq', val: auth.member.id } as QueryFilter] : []),
       ...(table==='external_account_bindings'&&req.op!=='select'?[{col:'platform',op:'neq' as const,val:'slack'}]:[]),
       ...(table === 'task_reminder_preferences' ? [{ col: 'member_id', op: 'eq', val: auth.member.id } as QueryFilter] : []),
       ...(filters || []),

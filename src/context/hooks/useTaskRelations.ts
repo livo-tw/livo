@@ -84,7 +84,7 @@ export function useTaskRelations({
       value_user_id: value.valueUserId ?? null,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await supabase.from('task_custom_field_values').upsert(row as Record<string, unknown>, { onConflict: 'task_id,field_id' });
+    const { error } = await supabase.from('task_custom_field_values').upsert(row, { onConflict: 'task_id,field_id' });
     if (error) { toast.error(i18n.t('error.saveFailed') + error.message); return; }
     const mapped: TaskCustomFieldValue = { id, taskId, fieldId, ...value };
     setCustomFieldValues(prev => {

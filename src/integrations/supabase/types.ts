@@ -631,6 +631,54 @@ export type Database = {
           },
         ]
       }
+      task_custom_field_values: {
+        Row: {
+          id: string
+          task_id: string
+          field_id: string
+          value_text: string | null
+          value_number: number | null
+          value_date: string | null
+          value_boolean: boolean | null
+          value_user_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          task_id: string
+          field_id: string
+          value_text?: string | null
+          value_number?: number | null
+          value_date?: string | null
+          value_boolean?: boolean | null
+          value_user_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          task_id?: string
+          field_id?: string
+          value_text?: string | null
+          value_number?: number | null
+          value_date?: string | null
+          value_boolean?: boolean | null
+          value_user_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          { foreignKeyName: "task_custom_field_values_task_id_fkey"; columns: ["task_id"]; isOneToOne: false; referencedRelation: "tasks"; referencedColumns: ["id"] },
+          { foreignKeyName: "task_custom_field_values_field_id_fkey"; columns: ["field_id"]; isOneToOne: false; referencedRelation: "custom_fields"; referencedColumns: ["id"] },
+        ]
+      }
+      task_tags: {
+        Row: { id: string; task_id: string; tag_id: string }
+        Insert: { id?: string; task_id: string; tag_id: string }
+        Update: { id?: string; task_id?: string; tag_id?: string }
+        Relationships: [
+          { foreignKeyName: "task_tags_task_id_fkey"; columns: ["task_id"]; isOneToOne: false; referencedRelation: "tasks"; referencedColumns: ["id"] },
+          { foreignKeyName: "task_tags_tag_id_fkey"; columns: ["tag_id"]; isOneToOne: false; referencedRelation: "tags"; referencedColumns: ["id"] },
+        ]
+      }
       task_specs: {
         Row: {
           background: string

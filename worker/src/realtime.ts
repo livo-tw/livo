@@ -19,6 +19,7 @@
 
 import type { ChangeBinding, ChangeEvent, ClientMsg, ServerMsg } from './protocol';
 import type { Env } from './env';
+import { realtimeEventForMember, realtimeIdentity, realtimeIdentityActive, type RealtimeIdentity } from './realtimeAccess';
 
 const SWEEP_INTERVAL_MS = 10_000;
 const STALE_AFTER_MS = 30_000;
@@ -28,10 +29,10 @@ interface ChannelSub {
   presenceKey?: string;
 }
 
-interface SocketState {
-  memberId: string;
+interface SocketState extends RealtimeIdentity {
   lastSeen: number;
   channels: Map<string, ChannelSub>;
+  messageTail?: Promise<void>;
 }
 
 interface PresenceEntry {
@@ -88,9 +89,11 @@ export class RealtimeHub {
   private sockets = new Map<WebSocket, SocketState>();
   /** Per channel: this socket's single presence entry (track() replaces it). */
   private presence = new Map<string, Map<WebSocket, PresenceEntry>>();
+  private pendingPresence = new Set<string>();
+  private presenceFlush: Promise<void> | null = null;
   private sweeper: number | undefined;
 
-  constructor(_state: DurableObjectState, _env: Env) {}
+  constructor(_state: DurableObjectState, private readonly env: Env) {}
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -104,20 +107,22 @@ export class RealtimeHub {
 
   // ── WebSocket lifecycle ─────────────────────────────────────────────────
 
-  private handleWs(req: Request): Response {
+  private async handleWs(req: Request): Promise<Response> {
     if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Expected WebSocket upgrade', { status: 426 });
     }
-    const memberId = req.headers.get('x-auth-user') || '';
-    if (!memberId) return new Response('Unauthorized', { status: 401 });
+    const identity = realtimeIdentity(req.headers);
+    if (!identity || !await realtimeIdentityActive(this.env, identity).catch(() => false)) {
+      return new Response('Unauthorized', { status: 401 });
+    }
 
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
     server.accept();
 
-    this.sockets.set(server, { memberId, lastSeen: Date.now(), channels: new Map() });
-    server.addEventListener('message', (ev) => this.onMessage(server, ev));
+    this.sockets.set(server, { ...identity, lastSeen: Date.now(), channels: new Map() });
+    server.addEventListener('message', (ev) => { void this.onMessage(server, ev); });
     server.addEventListener('close', () => this.dropSocket(server, false));
     server.addEventListener('error', () => this.dropSocket(server));
     this.ensureSweeper();
@@ -125,9 +130,23 @@ export class RealtimeHub {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private onMessage(ws: WebSocket, ev: MessageEvent): void {
+  private onMessage(ws: WebSocket, ev: MessageEvent): Promise<void> {
+    const st = this.sockets.get(ws);
+    if (!st) return Promise.resolve();
+    // Live identity reads are asynchronous; keep the socket's original wire
+    // order while allowing every other connection to progress independently.
+    const next = (st.messageTail ?? Promise.resolve()).then(async () => {
+      if (this.sockets.get(ws) !== st) return;
+      await this.processMessage(ws, ev);
+    }).catch(() => { this.dropSocket(ws); });
+    st.messageTail = next;
+    return next;
+  }
+
+  private async processMessage(ws: WebSocket, ev: MessageEvent): Promise<void> {
     const st = this.sockets.get(ws);
     if (!st) return;
+    if (!await this.authorizeSocket(ws, st)) return;
     st.lastSeen = Date.now();
 
     if (typeof ev.data !== 'string') {
@@ -155,6 +174,13 @@ export class RealtimeHub {
     }
   }
 
+  /** Heartbeats and subscriptions cannot keep revoked or expired credentials alive. */
+  private async authorizeSocket(ws: WebSocket, st: SocketState): Promise<boolean> {
+    const active = await realtimeIdentityActive(this.env, st).catch(() => false);
+    if (!active) this.dropSocket(ws);
+    return active && this.sockets.get(ws) === st;
+  }
+
   private handleClientMsg(ws: WebSocket, st: SocketState, msg: ClientMsg): void {
     switch (msg.t) {
       case 'join': {
@@ -170,13 +196,13 @@ export class RealtimeHub {
         if (presenceKey) {
           // Joiner (and everyone else in ch) gets the current snapshot so the
           // 'sync'-only consumers render existing viewers immediately.
-          this.broadcastPresence(msg.ch);
+          this.queuePresenceBroadcast(msg.ch);
         } else {
           // Re-join without presence config: drop any stale presence entry.
           const pm = this.presence.get(msg.ch);
           if (pm && pm.delete(ws)) {
             if (pm.size === 0) this.presence.delete(msg.ch);
-            this.broadcastPresence(msg.ch);
+            this.queuePresenceBroadcast(msg.ch);
           }
         }
         return;
@@ -212,7 +238,7 @@ export class RealtimeHub {
         }
         // Full-state replacement for THIS socket (supabase track() parity).
         pm.set(ws, { key, payload });
-        this.broadcastPresence(msg.ch);
+        this.queuePresenceBroadcast(msg.ch);
         return;
       }
 
@@ -221,7 +247,7 @@ export class RealtimeHub {
         const pm = this.presence.get(msg.ch);
         if (pm && pm.delete(ws)) {
           if (pm.size === 0) this.presence.delete(msg.ch);
-          this.broadcastPresence(msg.ch);
+          this.queuePresenceBroadcast(msg.ch);
         }
         return;
       }
@@ -262,7 +288,7 @@ export class RealtimeHub {
     }
     // Broadcast AFTER removal so remaining viewers see the departure (implicit
     // untrack on disconnect — supabase presence-leave parity).
-    for (const ch of affected) this.broadcastPresence(ch);
+    for (const ch of affected) this.queuePresenceBroadcast(ch);
     if (this.sockets.size === 0) this.clearSweeper();
   }
 
@@ -291,11 +317,34 @@ export class RealtimeHub {
     return out;
   }
 
-  /** Push the full snapshot to every socket joined to `ch` (including the actor). */
-  private broadcastPresence(ch: string): void {
-    const msg: ServerMsg = { t: 'presence', ch, state: this.presenceSnapshot(ch) };
+  /** Dropping several revoked sockets coalesces into one flush, never recursive fan-out. */
+  private queuePresenceBroadcast(ch: string): void {
+    this.pendingPresence.add(ch);
+    if (this.presenceFlush) return;
+    this.presenceFlush = this.flushPresenceBroadcasts().finally(() => {
+      this.presenceFlush = null;
+      const next = this.pendingPresence.values().next().value as string | undefined;
+      if (next !== undefined) this.queuePresenceBroadcast(next);
+    });
+  }
+
+  private async flushPresenceBroadcasts(): Promise<void> {
+    while (this.pendingPresence.size) {
+      const channels = [...this.pendingPresence];
+      this.pendingPresence.clear();
+      for (const ch of channels) await this.broadcastPresence(ch);
+    }
+  }
+
+  /** Push the current snapshot only to still-authorized sockets joined to `ch`. */
+  private async broadcastPresence(ch: string): Promise<void> {
+    const recipients: Array<[WebSocket, SocketState]> = [];
     for (const [ws, st] of [...this.sockets]) {
-      if (st.channels.has(ch)) this.send(ws, msg);
+      if (st.channels.has(ch) && await this.authorizeSocket(ws, st)) recipients.push([ws, st]);
+    }
+    const msg: ServerMsg = { t: 'presence', ch, state: this.presenceSnapshot(ch) };
+    for (const [ws, st] of recipients) {
+      if (this.sockets.get(ws) === st) this.send(ws, msg);
     }
   }
 
@@ -318,11 +367,14 @@ export class RealtimeHub {
       });
     }
 
-    for (const raw of body) {
-      if (!isChangeEvent(raw)) continue;
-      // Defense in depth: KB changes only invalidate queries. Never distribute row bodies.
-      const ev: ChangeEvent = raw.table.startsWith('kb_') ? { ...raw, new: {}, old: null } : raw;
-      for (const [ws, st] of [...this.sockets]) {
+    const workspaceId = req.headers.get('x-workspace-id');
+    if (!workspaceId) return new Response('Workspace required', { status: 400 });
+    for (const [ws, st] of [...this.sockets]) {
+      if (st.workspaceId !== workspaceId || !await this.authorizeSocket(ws, st)) continue;
+      for (const raw of body) {
+        if (!isChangeEvent(raw)) continue;
+        const ev = realtimeEventForMember(raw, st);
+        if (!ev) continue;
         for (const [ch, sub] of [...st.channels]) {
           if (!this.sockets.has(ws)) break; // dropped mid-loop by a failed send
           // One message per matching channel, even if several bindings match.
@@ -362,7 +414,7 @@ export class RealtimeHub {
   private sweep(): void {
     const now = Date.now();
     for (const [ws, st] of [...this.sockets]) {
-      if (now - st.lastSeen > STALE_AFTER_MS) this.dropSocket(ws);
+      if (now - st.lastSeen > STALE_AFTER_MS || st.expiresAt <= Math.floor(now / 1000)) this.dropSocket(ws);
     }
     if (this.sockets.size === 0) this.clearSweeper();
   }

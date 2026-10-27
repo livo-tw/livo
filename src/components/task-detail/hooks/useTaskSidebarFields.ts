@@ -102,15 +102,21 @@ export const useTaskSidebarFields = ({
   // ── Sidebar layout handlers ─────────────────────────────────────────────
   const saveSidebarFieldOrder = async () => {
     setLayoutSaving(true);
-    await supabase.from('team_settings').upsert({
-      key: 'sidebar_field_order',
-      value: sidebarFieldOrder as unknown,
-      updated_by: currentMemberId,
-      updated_at: new Date().toISOString(),
-    } as Record<string, unknown>);
-    setIsLayoutMode(false);
-    setLayoutSaving(false);
-    toast.success(i18n.t('taskDetail.sidebar.layoutSaved'));
+    try {
+      const { error } = await supabase.from('team_settings').upsert({
+        key: 'sidebar_field_order',
+        value: sidebarFieldOrder as unknown,
+        updated_by: currentMemberId,
+        updated_at: new Date().toISOString(),
+      } as Record<string, unknown>);
+      if (error) throw error;
+      setIsLayoutMode(false);
+      toast.success(i18n.t('taskDetail.sidebar.layoutSaved'));
+    } catch {
+      toast.error(i18n.t('taskDetail.sidebar.layoutSaveFailed'));
+    } finally {
+      setLayoutSaving(false);
+    }
   };
 
   const handleFieldDragStart = (e: React.DragEvent, idx: number) => {

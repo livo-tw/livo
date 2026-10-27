@@ -19,7 +19,8 @@ function setup() {
   const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     if (String(url).endsWith('/auth.test')) return Response.json({ ok: true, team_id: 'TEXAMPLE' });
     sent.push(JSON.parse(String(init?.body)));
-    return Response.json({ ok: true, ts: `${Math.floor(Date.now() / 1000)}.00000${sent.length}` });
+    // A Slack receipt must not be newer than the millisecond clock at an exact second.
+    return Response.json({ ok: true, ts: `${Math.floor(Date.now() / 1000) - 1}.00000${sent.length}` });
   }) as unknown as typeof fetch;
   return { store, sent, results, fetcher };
 }
@@ -66,6 +67,17 @@ describe('durable Slack notification delivery', () => {
     expect(t.sent[1].thread_ts).toBe(t.results[0].messageTs);
     expect(t.results.every(r => r.status === 'sent')).toBe(true);
     expect(t.sent[1]).toMatchObject({ unfurl_links: false, unfurl_media: false });
+  });
+  it('keeps the current card thread when the clock is an exact second', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1793095770000);
+    try {
+      const t = setup();
+      await deliverJob(job, 'owner', t.store, 'https://example.com', t.fetcher);
+      await deliverJob({ ...job, id: 2, payload: { ...job.payload, kind: 'comment', content: '<p>Example comment</p>' } }, 'owner', t.store, 'https://example.com', t.fetcher);
+      expect(t.sent[0]).not.toHaveProperty('thread_ts');
+      expect(t.sent[1].thread_ts).toBe(t.results[0].messageTs);
+      expect(t.results.every(r => r.status === 'sent')).toBe(true);
+    } finally { clock.mockRestore(); }
   });
   it('rechecks the route before posting, including a project moved to another line', async () => {
     const t = setup(); t.store.project = async () => ({ ...project, line_id: 'other-line' });

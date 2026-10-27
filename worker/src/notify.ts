@@ -26,7 +26,7 @@ export function notifyChanges(
   const stub = env.REALTIME.get(env.REALTIME.idFromName(hubName(workspaceId)));
   ctx.waitUntil(
     stub
-      .fetch('https://do/notify', { method: 'POST', body: JSON.stringify(events) })
+      .fetch('https://do/notify', { method: 'POST', headers: { 'x-workspace-id': workspaceId }, body: JSON.stringify(events) })
       .catch(() => { /* realtime is best-effort; writes must not fail on notify */ })
   );
 }

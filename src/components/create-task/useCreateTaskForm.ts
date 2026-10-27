@@ -34,7 +34,7 @@ export function useCreateTaskForm() {
   const environmentConfig = useDeploymentEnvironments();
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { showCreateTask, setShowCreateTask, requiredFields, currentView } = useUIContext();
+  const { showCreateTask, setShowCreateTask, setSelectedTask, requiredFields, currentView } = useUIContext();
   // Visible in the form: a task made from the backlog stays in the backlog unless the member ticks it.
   const [joinSprint, setJoinSprint] = useState(true);
   const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
@@ -72,6 +72,14 @@ export function useCreateTaskForm() {
   const [newSubtaskText, setNewSubtaskText] = useState('');
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const creationInFlight = useRef<string | null>(null);
+  const createdTask = useRef<Task | null>(null);
+  const draftOwner = useRef(currentMemberId);
+  const actorVisit = useRef({ memberId: currentMemberId, generation: 0 });
+  if (actorVisit.current.memberId !== currentMemberId) actorVisit.current = { memberId: currentMemberId, generation: actorVisit.current.generation + 1 };
+  const creationScope = `${currentMemberId}:${actorVisit.current.generation}`;
+  const activeCreationScope = useRef(creationScope); activeCreationScope.current = creationScope;
+  const [partialCreation, setPartialCreation] = useState<{ task: Task; sections: string[] } | null>(null);
   const tagPickerRef = useRef<HTMLDivElement>(null);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#6554C0');
@@ -86,13 +94,27 @@ export function useCreateTaskForm() {
     return () => document.removeEventListener('pointerdown', handler);
   }, []);
 
+  useEffect(() => {
+    activeCreationScope.current = creationScope;
+    return () => { if (activeCreationScope.current === creationScope) activeCreationScope.current = ''; };
+  }, [creationScope]);
+
+  useEffect(() => {
+    if (draftOwner.current === currentMemberId) return;
+    draftOwner.current = currentMemberId;
+    createdTask.current = null; setPartialCreation(null);
+    creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
+    setShowCreateTask(false);
+  }, [currentMemberId, setShowCreateTask]);
+
   // Reset only when the form opens: a project or line changing elsewhere (realtime)
   // while it is open must not wipe what was typed.
   const wasOpen = useRef(false);
   useEffect(() => {
     const opening = showCreateTask && !wasOpen.current;
     wasOpen.current = showCreateTask;
-    if (opening) {
+    if (opening && !partialCreation) {
+      createdTask.current = null;
       setJoinSprint(currentView !== 'backlog');
       setProjectId(defaultTaskProject(groupProjectsByLine(productLines, allProjects), selectedProjectId, selectedLineId));
       setTitle(''); setStatusId(statuses[0]?.id || ''); setPriority('medium');
@@ -105,7 +127,7 @@ export function useCreateTaskForm() {
       setSubtaskItems([]); setNewSubtaskText('');
       setTimeout(() => titleRef.current?.focus(), 100);
     }
-  }, [showCreateTask, selectedProjectId, selectedLineId, allProjects, productLines, currentView]);
+  }, [showCreateTask, selectedProjectId, selectedLineId, allProjects, productLines, currentView, partialCreation]);
 
   const projectCustomFields = useMemo(() => (customFields || []).filter(field => field.projectId === projectId).sort((a, b) => a.sortOrder - b.sortOrder), [customFields, projectId]);
   const customFieldsRef = useRef(projectCustomFields); customFieldsRef.current = projectCustomFields;
@@ -119,6 +141,7 @@ export function useCreateTaskForm() {
   const missingCustomFields = projectCustomFields.filter(field => field.isRequired && !customFieldFilled(field, customValues[field.id]));
 
   const applyTemplate = (templateId: string) => {
+    if (isSubmitting || partialCreation) return;
     const tmpl = taskTemplates.find(t => t.id === templateId);
     if (!tmpl) return;
     if (tmpl.projectId) setProjectId(tmpl.projectId);
@@ -175,6 +198,7 @@ export function useCreateTaskForm() {
   // Reject oversized files as soon as they're picked, instead of after the task
   // has been created and the whole file has been sent to the server.
   const addPendingFiles = (files: FileList) => {
+    if (isSubmitting || partialCreation) return;
     const all = Array.from(files);
     const oversized = all.filter(f => f.size > MAX_UPLOAD_BYTES);
     if (oversized.length > 0) {
@@ -209,15 +233,17 @@ export function useCreateTaskForm() {
     addPendingFiles(files);
   };
 
-  const uploadFiles = async (taskId: string) => {
+  const uploadFiles = async (taskId: string, assertCurrentScope: () => void) => {
     if (pendingFiles.length === 0) return;
     const rows: { task_id: string; file_name: string; file_size: number; file_type: string; storage_path: string; uploaded_by: string }[] = [];
     const failed: { name: string; message: string }[] = [];
     for (const pf of pendingFiles) {
+      assertCurrentScope();
       const ext = pf.file.name.split('.').pop() || '';
       const storagePath = `${taskId}/${randomUUID()}.${ext}`;
       // Store the SERVER's effective path — cloud workspaces get a ws/ prefix.
       const { data: up, error } = await supabase.storage.from('task-images').upload(storagePath, pf.file);
+      assertCurrentScope();
       if (error) {
         console.error('Upload error:', error);
         failed.push({ name: pf.file.name, message: error.message });
@@ -225,16 +251,21 @@ export function useCreateTaskForm() {
       }
       rows.push({ task_id: taskId, file_name: pf.file.name, file_size: pf.file.size, file_type: pf.file.type, storage_path: up?.path || storagePath, uploaded_by: currentMemberId });
     }
-    if (rows.length > 0) await supabase.from('task_attachments').insert(rows);
+    if (rows.length > 0) {
+      assertCurrentScope();
+      const { error } = await supabase.from('task_attachments').insert(rows);
+      assertCurrentScope();
+      if (error) throw error;
+    }
     // The task itself was created — but silently dropping attachments (e.g.
     // beta 空間已滿 413) reads as data loss. Surface the server's reason.
     if (failed.length > 0) {
-      toast.error(`${failed[0].message}（${failed.map((f) => f.name).join('、')}）`);
+      throw new Error(`${failed[0].message}（${failed.map((f) => f.name).join('、')}）`);
     }
   };
 
   const handleSubmitAttempt = () => {
-    if (isSubmitting) return;
+    if (isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
     if (isValid) { setShowValidationErrors(false); handleSubmit(); return; }
     setShowValidationErrors(true);
     const missing: string[] = [];
@@ -257,8 +288,9 @@ export function useCreateTaskForm() {
   };
 
   const handleSubmit = async () => {
-    if (!isValid || isSubmitting) return;
+    if (!isValid || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
     if (deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
+    creationInFlight.current = creationScope;
     setIsSubmitting(true);
     const status = statuses.find(s => s.id === statusId);
     const now = new Date().toISOString().split('T')[0];
@@ -276,14 +308,38 @@ export function useCreateTaskForm() {
       deployments, sprintId: joinSprint && currentSprint ? currentSprint.id : undefined,
       tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     };
+    const sections = [
+      ...(background || requirement || notes ? ['spec'] : []),
+      ...(checkItems.length ? ['checks'] : []), ...(todoItems.length ? ['todos'] : []),
+      ...(deployments.length ? ['deployments'] : []), ...(pendingFiles.length ? ['files'] : []),
+      ...(projectCustomFields.some(field => customFieldHasValue(customValues[field.id])) ? ['custom'] : []),
+      'history', ...(selectedTagIds.length ? ['tags'] : []), ...(subtaskItems.length ? ['subtasks'] : []),
+    ];
+    const assertCurrentScope = () => {
+      if (activeCreationScope.current !== creationScope) throw new Error('creation_scope_changed');
+    };
+    const saveSection = async (section: string, action: () => PromiseLike<{ error?: { message: string } | null }>) => {
+      assertCurrentScope();
+      const result = await action();
+      assertCurrentScope();
+      if (result.error) throw result.error;
+      sections.splice(sections.indexOf(section), 1);
+    };
     try {
       setAllTasks(prev => [...prev, newTask]);
       const created = await createTaskInDb(newTask);
+      if (activeCreationScope.current !== creationScope) {
+        // Do not compensate or continue writes with a different login/session.
+        if (created) console.info('[LIVO] Task created for a previous form session', { taskId: created.id });
+        return;
+      }
       // The insert failed (already explained): keep the form open with what was typed.
       if (!created) { setAllTasks(prev => prev.filter(task => task.id !== taskId)); return; }
       // The database may have kept a different key; notifications use the stored one.
+      createdTask.current = created;
       const storedKey = created.taskKey;
       await logActivity(currentMemberId, 'create_task', title.trim(), taskId, storedKey);
+      assertCurrentScope();
       const proj = allProjects.find(p => p.id === projectId);
       sendSlackNotify({
         type: 'task_created', taskKey: storedKey, taskTitle: title.trim(), taskId,
@@ -293,44 +349,71 @@ export function useCreateTaskForm() {
         dueDate: dueDate ? format(dueDate, 'yyyy-MM-dd') : undefined,
       });
       if (background || requirement || notes) {
-        await supabase.from('task_specs').insert({ id: `ts_${randomUUID()}`, task_id: taskId, background, requirement, notes });
+        await saveSection('spec', () => supabase.from('task_specs').insert({ id: `ts_${randomUUID()}`, task_id: taskId, background, requirement, notes }));
       }
       if (checkItems.length > 0) {
-        await supabase.from('task_checks').insert(checkItems.map((text, i) => ({ id: `tc_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
+        await saveSection('checks', () => supabase.from('task_checks').insert(checkItems.map((text, i) => ({ id: `tc_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 }))));
       }
       if (todoItems.length > 0) {
-        await supabase.from('task_todos').insert(todoItems.map((text, i) => ({ id: `td_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 })));
+        await saveSection('todos', () => supabase.from('task_todos').insert(todoItems.map((text, i) => ({ id: `td_${randomUUID()}`, task_id: taskId, text, is_done: false, sort_order: i + 1 }))));
       }
       if (deployments.length > 0) {
-        const result = await supabase.from('task_deployments').insert(deployments.map(d => ({ task_id: taskId, environment: d.environment, status: d.status, deploy_date: d.deployDate || null })));
-        if (result.error) {
-          setAllTasks(prev => prev.map(task => task.id === taskId ? { ...task, deployments: [] } : task));
-          toast.warning(t('deploymentEnvironments.taskCreatedWithoutDeployments'));
+        await saveSection('deployments', () => supabase.from('task_deployments').insert(deployments.map(d => ({ task_id: taskId, environment: d.environment, status: d.status, deploy_date: d.deployDate || null }))));
+      }
+      if (pendingFiles.length > 0) {
+        setUploading(true); await uploadFiles(taskId, assertCurrentScope);
+        assertCurrentScope();
+        sections.splice(sections.indexOf('files'), 1);
+      }
+      for (const field of projectCustomFields) {
+        assertCurrentScope();
+        const value = customValues[field.id];
+        if (customFieldHasValue(value)) {
+          await upsertCustomFieldValue(taskId, field.id, value!);
+          assertCurrentScope();
+          // The shared field editor reports errors itself but returns void. Confirm
+          // this new task actually has the value before treating its draft as saved.
+          const stored = await supabase.from('task_custom_field_values').select('*').eq('task_id', taskId).eq('field_id', field.id).maybeSingle();
+          assertCurrentScope();
+          if (stored.error || !stored.data) throw stored.error || new Error(t('error.saveFailed'));
         }
       }
-      if (pendingFiles.length > 0) { setUploading(true); await uploadFiles(taskId); setUploading(false); }
-      for (const field of projectCustomFields) {
-        const value = customValues[field.id];
-        if (customFieldHasValue(value)) await upsertCustomFieldValue(taskId, field.id, value!);
-      }
-      await supabase.from('status_logs').insert({ id: `sl_${randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId });
+      if (sections.includes('custom')) sections.splice(sections.indexOf('custom'), 1);
+      await saveSection('history', () => supabase.from('status_logs').insert({ id: `sl_${randomUUID()}`, task_id: taskId, from_status_id: null, to_status_id: statusId, changed_by: currentMemberId }));
       if (selectedTagIds.length > 0) {
-        await supabase.from('task_tags').insert(selectedTagIds.map(tagId => ({ id: `tt_${randomUUID()}`, task_id: taskId, tag_id: tagId })) as unknown as Record<string, unknown>[]);
+        await saveSection('tags', () => supabase.from('task_tags').insert(selectedTagIds.map(tagId => ({ id: `tt_${randomUUID()}`, task_id: taskId, tag_id: tagId }))));
       }
       if (subtaskItems.length > 0) {
         for (const subtaskTitle of subtaskItems) {
-          await createSubtask(taskId, subtaskTitle, projectId, statusId, created);
+          assertCurrentScope();
+          const subtask = await createSubtask(taskId, subtaskTitle, projectId, statusId, created);
+          assertCurrentScope();
+          if (!subtask) throw new Error(t('task.createFailed'));
         }
       }
+      if (sections.includes('subtasks')) sections.splice(sections.indexOf('subtasks'), 1);
+      await Promise.all([refreshTaskSpecs(), refreshTaskChecks(), refreshTaskTodos(), refreshStatusLogs()])
+        .catch(() => { if (activeCreationScope.current === creationScope) toast.info(t('taskCreate.recovery.refreshFailed')); });
+      assertCurrentScope();
+      createdTask.current = null;
       toast.success(t('task.created'));
       setShowCreateTask(false);
-      await Promise.all([refreshTaskSpecs(), refreshTaskChecks(), refreshTaskTodos(), refreshStatusLogs()]);
     } catch (err) {
-      // Rollback optimistic update on failure
-      setAllTasks(prev => prev.filter(t => t.id !== newTask.id));
-      toast.error(t('task.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
+      if (activeCreationScope.current !== creationScope) return;
+      if (createdTask.current) {
+        // The card exists. Preserve its draft and identity; another Create would duplicate it.
+        setPartialCreation({ task: createdTask.current, sections: sections.length ? [...sections] : ['details'] });
+        toast.error(t('taskCreate.recovery.createdPartial', { key: createdTask.current.taskKey }));
+      } else {
+        setAllTasks(prev => prev.filter(task => task.id !== newTask.id));
+        toast.error(t('task.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
+      }
     } finally {
-      setIsSubmitting(false);
+      if (activeCreationScope.current === creationScope && creationInFlight.current === creationScope) {
+        creationInFlight.current = null;
+        setUploading(false);
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -341,7 +424,20 @@ export function useCreateTaskForm() {
     || checkItems.length > 0 || todoItems.length > 0 || subtaskItems.length > 0 || pendingFiles.length > 0 || deployments.length > 0 || !!gitlabUrl.trim() || customTouched;
   const requestClose = async () => {
     if (isSubmitting) return;
+    if (partialCreation) { setShowCreateTask(false); return; }
     if (dirty && !(await confirm({ title: t('taskCreate.discardTitle'), description: t('taskCreate.discardDesc'), destructive: true }))) return;
+    setShowCreateTask(false);
+  };
+
+  const openCreatedTask = () => {
+    if (!partialCreation) return;
+    setSelectedTask(partialCreation.task);
+    setShowCreateTask(false);
+  };
+  const discardPartialDraft = async () => {
+    if (!(await confirm({ title: t('taskCreate.recovery.discard'), description: t('taskCreate.recovery.discardConfirm'), destructive: true }))) return;
+    createdTask.current = null;
+    setPartialCreation(null);
     setShowCreateTask(false);
   };
 
@@ -361,7 +457,7 @@ export function useCreateTaskForm() {
   const customFieldsProps = { fields: projectCustomFields, values: customValues, onChange: setCustomValue, showValidationErrors };
 
   return {
-    showCreateTask, setShowCreateTask,
+    showCreateTask: showCreateTask && draftOwner.current === currentMemberId, setShowCreateTask,
     title, setTitle,
     background, setBackground,
     requirement, setRequirement,
@@ -379,7 +475,7 @@ export function useCreateTaskForm() {
     pendingFiles, handleFileSelect, removePendingFile, handleDrop,
     fieldsProps, customFieldsProps, isMobile,
     hasFeature,
-    handleSubmitAttempt, requestClose,
+    handleSubmitAttempt, requestClose, partialCreation, openCreatedTask, discardPartialDraft,
     ConfirmDialog,
   };
 }

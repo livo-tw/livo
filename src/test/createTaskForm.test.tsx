@@ -25,7 +25,12 @@ vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: ()
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: vi.fn(), ConfirmDialog: null as null }) }));
 vi.mock('@/lib/slackNotify', () => ({ sendSlackNotify: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => {
+  const chain = { select: () => chain, eq: () => chain,
+    maybeSingle: async () => ({ data: { id: 'stored-custom-value' }, error: null as null }),
+    insert: async () => ({ data: null as null, error: null as null }) };
+  return chain;
+} } }));
 import { useCreateTaskForm } from '@/components/create-task/useCreateTaskForm';
 
 const project = (id: string, name: string) => ({ id, name, lineId: 'l' }) as Project;

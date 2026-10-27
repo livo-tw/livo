@@ -22,19 +22,20 @@ type RichFieldEditorProps = {
   onMention: (userId: string) => void;
   onConfirm: (onChange: (v: string) => void, draft: string) => void;
   onCancel: (onChange: (v: string) => void) => void;
+  disabled?: boolean;
 };
 
-const RichFieldEditor = memo(({ value, onChange, placeholder, users, onMention, onConfirm, onCancel }: RichFieldEditorProps) => {
+const RichFieldEditor = memo(({ value, onChange, placeholder, users, onMention, onConfirm, onCancel, disabled }: RichFieldEditorProps) => {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(value);
   const empty = (html: string) => !html || html === '<p></p>';
   useUnsavedDraft('task', draft !== value && !(empty(draft) && empty(value)), t('taskDetail.spec.discardDraft'));
   return (
     <div>
-      <RichTextEditor content={draft} onChange={setDraft} placeholder={placeholder} members={users} onMention={onMention} />
+      <RichTextEditor content={draft} onChange={setDraft} placeholder={placeholder} members={users} onMention={onMention} editable={!disabled} />
       <div className="flex gap-1.5 mt-1.5">
-        <button onClick={() => onConfirm(onChange, draft)} className="px-2.5 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90">{t('taskDetail.spec.confirmEdit')}</button>
-        <button onClick={() => onCancel(onChange)} className="px-2.5 py-1 text-xs rounded border border-border text-muted-foreground hover:bg-accent">{t('taskDetail.spec.cancelEdit')}</button>
+        <button disabled={disabled} onClick={() => onConfirm(onChange, draft)} className="px-2.5 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90">{t('taskDetail.spec.confirmEdit')}</button>
+        <button disabled={disabled} onClick={() => onCancel(onChange)} className="px-2.5 py-1 text-xs rounded border border-border text-muted-foreground hover:bg-accent">{t('taskDetail.spec.cancelEdit')}</button>
       </div>
     </div>
   );
@@ -57,9 +58,10 @@ type RichFieldProps = {
   onStartEdit: (fieldKey: string, value: string) => void;
   onConfirm: (onChange: (v: string) => void, draft: string) => void;
   onCancel: (onChange: (v: string) => void) => void;
+  disabled?: boolean;
 };
 
-const RichField = memo(({ label, value, onChange, placeholder, icon, editingField, getFieldLocker, users, onMention, onStartEdit, onConfirm, onCancel }: RichFieldProps) => {
+const RichField = memo(({ label, value, onChange, placeholder, icon, editingField, getFieldLocker, users, onMention, onStartEdit, onConfirm, onCancel, disabled }: RichFieldProps) => {
   const { t } = useTranslation();
   const fieldKey = label;
   const isEditing = editingField === fieldKey;
@@ -77,11 +79,12 @@ const RichField = memo(({ label, value, onChange, placeholder, icon, editingFiel
       {isEditing ? (
         <RichFieldEditor
           value={value} onChange={onChange} placeholder={placeholder} fieldKey={fieldKey}
-          users={users} onMention={onMention} onConfirm={onConfirm} onCancel={onCancel}
+          users={users} onMention={onMention} onConfirm={onConfirm} onCancel={onCancel} disabled={disabled}
         />
       ) : (
         <div
-          onClick={() => onStartEdit(fieldKey, value)}
+          onClick={() => { if (!disabled) onStartEdit(fieldKey, value); }}
+          aria-disabled={disabled || undefined}
           className={`w-full text-sm leading-relaxed border rounded px-3 py-2.5 min-h-[52px] rich-content bg-muted ${locker ? 'cursor-not-allowed opacity-60' : 'cursor-text'} ${value && value !== '<p></p>' ? 'text-foreground' : 'text-muted-foreground'}`}
           style={{ borderColor: locker ? 'hsl(var(--destructive))' : 'hsl(var(--border))' }}
           dangerouslySetInnerHTML={{ __html: value && value !== '<p></p>' ? fixHtml(value) : placeholder }}
@@ -103,7 +106,7 @@ const TaskSpecTab = ({ detail }: Props) => {
     task, users,
     specBackground, setSpecBackground,
     specRequirement, setSpecRequirement,
-    specNotes, setSpecNotes,
+    specNotes, setSpecNotes, specLoading, specLoadError, specSaving, loadSpecFromDb,
     editingField, getFieldLocker,
     handleSpecMention, richFieldStartEdit, richFieldConfirm, richFieldCancel,
     todos, newTodoText, setNewTodoText,
@@ -129,10 +132,16 @@ const TaskSpecTab = ({ detail }: Props) => {
     onStartEdit: richFieldStartEdit,
     onConfirm: richFieldConfirm,
     onCancel: richFieldCancel,
+    disabled: specLoading || specLoadError || specSaving,
   };
 
   return (
     <div className="space-y-4 md:space-y-5">
+      {specLoading && <p role="status" className="text-sm text-muted-foreground">{t('common.loading')}</p>}
+      {specLoadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+        <span>{t('taskDetail.spec.loadFailed')}</span>
+        <button type="button" onClick={() => void loadSpecFromDb(task.id)} className="min-h-11 rounded px-2 underline">{t('taskDetail.spec.retry')}</button>
+      </div>}
       <RichField label={t('taskDetail.spec.background')} icon={<BookOpen size={16} />} value={specBackground} onChange={setSpecBackground} placeholder={t('taskDetail.spec.backgroundPlaceholder')} {...richFieldProps} />
       <RichField label={t('taskDetail.spec.requirement')} icon={<FileText size={16} />} value={specRequirement} onChange={setSpecRequirement} placeholder={t('taskDetail.spec.requirementPlaceholder')} {...richFieldProps} />
       <RichField label={t('taskDetail.spec.notes')} icon={<StickyNote size={16} />} value={specNotes} onChange={setSpecNotes} placeholder={t('taskDetail.spec.notesPlaceholder')} {...richFieldProps} />

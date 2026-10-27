@@ -949,6 +949,28 @@
     "deleteNotAllowed": "没有删除这张任务。它可能已经开始处理，或不是你建立的；这时只有管理员能删除。"
   },
   "taskCreate": {
+    "recovery": {
+      "createdPartial": "任务 {{key}} 已建立，部分资料尚未完整保存。",
+      "unsaved": "尚未确认保存：{{sections}}。",
+      "retained": "原始输入保留在此表单。可打开已建立的任务补回；再点“建立任务”会回到这份草稿。补回前请勿清除草稿或刷新页面。",
+      "open": "保留草稿并打开任务",
+      "keep": "保留草稿，稍后处理",
+      "discard": "清除这份草稿",
+      "discardConfirm": "只会清除此表单保留的内容，不会删除已建立的任务。请先确认未保存的内容已补回，确定清除吗？",
+      "refreshFailed": "任务与资料已保存，但列表未能更新，请重新读取。",
+      "sections": {
+        "spec": "背景、需求与备注",
+        "checks": "验收标准",
+        "todos": "待办事项",
+        "deployments": "部署资料",
+        "files": "附件",
+        "custom": "自定义字段",
+        "history": "建立记录",
+        "tags": "标签",
+        "subtasks": "子任务",
+        "details": "补充资料"
+      }
+    },
     "title": "建立任务",
     "applyTemplate": "套用模板...",
     "currentProjectTemplates": "目前专案模板",
@@ -1025,6 +1047,8 @@
   },
   "taskDetail": {
     "spec": {
+      "loadFailed": "无法读取这张任务的需求内容，请重试后再编辑。",
+      "retry": "重新读取",
       "confirmEdit": "✓ 完成编辑",
       "cancelEdit": "✕ 取消",
       "beingEdited": "{{name}} 编辑中",
@@ -1182,6 +1206,7 @@
       "savingLayout": "储存中...",
       "layoutButton": "排版",
       "layoutSaved": "排版已储存",
+      "layoutSaveFailed": "排版未能保存，调整仍保留，请重试。",
       "tagBeingEditedError": "{{name}} 正在编辑标签，请稍后再试",
       "addTagFailed": "新增标签失败：",
       "removeTagFailed": "移除标签失败：",
