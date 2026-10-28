@@ -630,7 +630,7 @@
     "noTasks": "No tasks on the board yet",
     "noTasksDesc": "Create your first task to start managing your workflow",
     "noTasksInSprint": "No tasks here in the current sprint",
-    "tasksInOtherSprints": "{{count}} task(s) here belong to other sprints, such as finished ones. The board shows only the current sprint and unscheduled tasks; the sidebar counts every task.",
+    "tasksInOtherSprints": "{{count}} tasks belong to other sprints or are not in a sprint yet. The board shows only the current sprint; sidebar counts include all tasks.",
     "otherSprintsShort": "+{{count}} in other sprints",
     "viewAllInList": "View all tasks in the List view",
     "dropOtherProject": "Cards move only within their own project row. To change the project, edit it in the task details."
@@ -672,14 +672,19 @@
       "keepLabel": "Keep in current sprint",
       "keepDesc": "Retain in the completed sprint records",
       "pendingList": "Incomplete task list",
-      "moreItems": "...and {{count}} more tasks"
+      "moreItems": "...and {{count}} more tasks",
+      "cancelledSummary": "{{count}} cancelled cards are counted separately, not as completed.",
+      "historyHint": "Completed and cancelled cards remain in this sprint’s history. Unfinished cards return to the backlog."
     },
     "start": {
       "title": "Start New Sprint",
       "nameLabel": "Sprint Name",
-      "includeBacklog": "Auto-include all backlog tasks",
+      "includeBacklog": "Also include all open backlog cards",
       "carryOverHint": "{{count}} tasks will be carried over from the previous sprint",
-      "includeBacklogCount": "Also add the {{count}} open backlog tasks"
+      "includeBacklogCount": "Also include all open backlog cards ({{count}} additional)",
+      "scopeHint": "Leave unchecked to include only selected carry-over cards. Other backlog cards stay in the backlog. Finished, cancelled, and other-sprint cards are not added automatically.",
+      "selectedCount": "{{count}} cards will be included",
+      "archivedCarryHint": "{{count}} cards in archived projects stay in the backlog and will not join the new sprint."
     },
     "prompt": {
       "title": "Sprint Complete!",
@@ -693,7 +698,45 @@
     "completed": "Sprint completed!",
     "renameFailed": "Failed to rename sprint: ",
     "renamed": "Sprint name updated",
-    "moveTasksFailed": "{{count}} tasks could not be moved. Refresh and try again."
+    "moveTasksFailed": "{{count}} tasks could not be moved. Refresh and try again.",
+    "operationFailed": "The sprint operation was not completed. Check its current state and try again.",
+    "commandUncertain": "The outcome is not confirmed. Retry this operation to confirm it; your selections have been kept.",
+    "processing": "Processing…",
+    "retryOriginal": "Confirm outcome and retry",
+    "savedRefreshFailed": "The operation was saved, but the view could not refresh. Please reload.",
+    "errors": {
+      "sprint_invalid_input": "Some cards changed or are no longer eligible. Check the backlog again.",
+      "sprint_unauthorized": "Please sign in again.",
+      "sprint_forbidden": "You cannot manage this sprint.",
+      "sprint_conflict": "Someone else updated the sprint. Check its current state.",
+      "sprint_command_reused": "This operation changed. Confirm its previous outcome first.",
+      "sprint_not_found": "The sprint or card could not be found. Please refresh."
+    },
+    "history": {
+      "view": "View cards",
+      "open": "View sprint history for {{name}}",
+      "title": "{{name}} · Sprint history",
+      "legacyNotice": "This older sprint has no complete closure snapshot. Only known associations are retained; its cancellation split and some past outcomes are unknown.",
+      "legacyFinished": "Legacy terminal total {{count}} (includes cancellations)",
+      "unknown": "Unknown",
+      "cancelled": "Cancelled",
+      "cancelledCount": "Cancelled {{count}}",
+      "cancelledUnknown": "Cancelled count unknown",
+      "rateHint": "Completion rate = completed / (completed + cancelled + unfinished). Cancellations do not count as completed.",
+      "readScope": "Only cards you can currently view are listed. Historical records are retained independently of later card edits.",
+      "loadFailed": "Sprint history could not be loaded. Please retry.",
+      "retry": "Retry loading",
+      "loading": "Loading sprint history…",
+      "empty": "No card records are currently available to you.",
+      "outcomes": {
+        "completed": "Completed",
+        "cancelled": "Cancelled",
+        "pending": "Unfinished",
+        "removed": "Removed during sprint",
+        "unknown": "Outcome unknown"
+      }
+    },
+    "refreshFailed": "Could not reload sprints. Please try again."
   },
   "backlog": {
     "touchHint": "Swipe sideways to view columns. Hold a task, then drag it to move it to the current sprint or backlog.",
@@ -1385,8 +1428,8 @@
     "namePlaceholder": "e.g., Pending Review",
     "colorLabel": "Color",
     "optionsLabel": "Options",
-    "isDone": "Done",
-    "isDoneHint": "This status is considered \"completed\"",
+    "isDone": "Terminal state",
+    "isDoneHint": "Completed or cancelled cards leave the open backlog.",
     "autoStart": "Auto Start",
     "autoStartHint": "Automatically set \"Start Date\" when entering this status",
     "autoDone": "Auto Complete",
@@ -1400,7 +1443,9 @@
     "activityCreated": "Created status \"{{name}}\"",
     "editingStatus": "{{name}} is editing",
     "deleteHasTasks": "{{count}} tasks are in \"{{name}}\". Move them to another status before deleting it.",
-    "deleteInHistory": "Tasks have passed through \"{{name}}\", so it stays in their history and cannot be deleted. You can rename or reorder it."
+    "deleteInHistory": "Tasks have passed through \"{{name}}\", so it stays in their history and cannot be deleted. You can rename or reorder it.",
+    "isCancelled": "Cancelled",
+    "isCancelledHint": "For example, Won’t do. This is terminal, but sprint statistics count it separately from completed work."
   },
   "transitionRule": {
     "title": "Transition Rules",

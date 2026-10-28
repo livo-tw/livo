@@ -172,7 +172,7 @@ describe('D1 deployment schema upgrade probes', () => {
     return {
       queryRows: (sql: string) => db.prepare(sql).all(),
       applyFile: (name: string) => {
-        expect(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']).toContain(name);
+        expect(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql','sprint-lifecycle.sql']).toContain(name);
         db.exec('BEGIN');
         try { db.exec(readFileSync(new URL(`../migrate/${name}`,import.meta.url),'utf8')); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
       },
@@ -180,9 +180,9 @@ describe('D1 deployment schema upgrade probes', () => {
   }
   it('upgrades all rows unchanged, retains FK/index/status checks and safely skips reruns', async () => {
     const before = rows();
-    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']);
+    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['deployment-environments.sql','approval-commands.sql','task-reminder-alters.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql','sprint-lifecycle.sql']);
     expect(rows()).toEqual(before);
-    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['approval-commands.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql']);
+    expect(await applyPostTenantSchemaUpgrades(adapter())).toEqual(['approval-commands.sql','task-reminder-preferences.sql','task-work-commands.sql','task-work-subtask-details.sql','qa-coordination.sql','knowledge-work.sql','release-workspace.sql','sprint-lifecycle.sql']);
     expect(db.prepare('PRAGMA table_info(tasks)').all().map(column=>column.name)).toEqual(expect.arrayContaining(['due_date_kind','due_date_version','due_date_change_reason','due_date_changed_by']));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='task_work_receipts'").get()).toBeTruthy();
     db.exec("INSERT INTO task_deployments VALUES('a','custom','task-a','Canary','scheduled',NULL)");

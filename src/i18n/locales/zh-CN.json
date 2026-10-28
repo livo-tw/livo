@@ -630,7 +630,7 @@
     "noTasks": "看板上还没有任务",
     "noTasksDesc": "创建第一个任务，开始管理你的工作流程",
     "noTasksInSprint": "当前冲刺里没有这里的任务",
-    "tasksInOtherSprints": "这里有 {{count}} 个任务属于其他冲刺（例如已结束的冲刺）。看板只显示当前冲刺和还没排进冲刺的任务，左侧数字则包含全部任务。",
+    "tasksInOtherSprints": "这里有 {{count}} 个任务属于其他冲刺或尚未排入冲刺。看板只显示当前冲刺的任务，左侧数字则包含全部任务。",
     "otherSprintsShort": "另 {{count}} 个在其他冲刺",
     "viewAllInList": "到「列表」查看全部任务",
     "dropOtherProject": "卡片只能在自己的项目行内移动。要换项目，请在任务详情修改。"
@@ -679,21 +679,64 @@
       "keepLabel": "保留在当前冲刺",
       "keepDesc": "留存于已完成冲刺的纪录中",
       "pendingList": "未完成任务列表",
-      "moreItems": "…还有 {{count}} 个任务"
+      "moreItems": "…还有 {{count}} 个任务",
+      "cancelledSummary": "另有 {{count}} 张取消卡片，不计入完成数。",
+      "historyHint": "完成与取消卡片保留在本轮历史；未完成卡片会回到待办。"
     },
     "start": {
       "title": "开始新冲刺",
       "nameLabel": "冲刺名称",
-      "includeBacklog": "自动纳入所有待办任务",
+      "includeBacklog": "同时并入全部未完成待办",
       "carryOverHint": "有 {{count}} 个任务将从上一个冲刺带入",
-      "includeBacklogCount": "自动纳入待办清单中未完成的 {{count}} 个任务"
+      "includeBacklogCount": "同时并入全部未完成待办（另 {{count}} 张）",
+      "scopeHint": "不勾选时，只纳入已选定延续的卡片；其他待办留在待办列表。已完成、取消与其他冲刺的卡片不会自动加入。",
+      "selectedCount": "本次将纳入 {{count}} 张卡片",
+      "archivedCarryHint": "归档项目的 {{count}} 张卡片保留在待办，不加入新冲刺。"
     },
     "prompt": {
       "title": "Sprint 完成！",
       "description": "所有成员已完成站会报告。是否要结束当前 Sprint？",
       "endSprint": "结束 Sprint"
     },
-    "moveTasksFailed": "有 {{count}} 张任务没有移动成功，请重新整理后再试。"
+    "moveTasksFailed": "有 {{count}} 张任务没有移动成功，请重新整理后再试。",
+    "operationFailed": "冲刺操作未完成，请确认当前状态后重试。",
+    "commandUncertain": "尚未确认操作结果，请重试本次操作以确认结果；当前选择已保留。",
+    "processing": "处理中…",
+    "retryOriginal": "确认结果并重试",
+    "savedRefreshFailed": "操作已保存，但页面更新失败，请刷新。",
+    "errors": {
+      "sprint_invalid_input": "部分卡片已变化或无法加入，请重新确认待办列表。",
+      "sprint_unauthorized": "请重新登录后再操作。",
+      "sprint_forbidden": "你当前无法管理此冲刺。",
+      "sprint_conflict": "冲刺已被其他人更新，请重新确认当前状态。",
+      "sprint_command_reused": "本次操作内容已变化，请重新确认结果。",
+      "sprint_not_found": "找不到此冲刺或卡片，请刷新。"
+    },
+    "history": {
+      "view": "查看任务",
+      "open": "查看“{{name}}”的冲刺历史",
+      "title": "{{name}}・冲刺历史",
+      "legacyNotice": "这是旧版冲刺，未保存完整的结束快照。仅保留仍可确认的任务关联，当时的取消分类与部分历史未知。",
+      "legacyFinished": "旧结束数 {{count}}（含取消）",
+      "unknown": "未知",
+      "cancelled": "取消",
+      "cancelledCount": "取消 {{count}}",
+      "cancelledUnknown": "取消数未知",
+      "rateHint": "完成率＝完成数 ÷ 本轮完成、取消与未完成总数。取消不计入完成数。",
+      "readScope": "只列出当前可查看的任务；内容保留当时的记录，不会随卡片后续修改重写。",
+      "loadFailed": "无法读取冲刺历史，请重试。",
+      "retry": "重新读取",
+      "loading": "正在读取冲刺历史…",
+      "empty": "没有当前可查看的任务记录。",
+      "outcomes": {
+        "completed": "完成",
+        "cancelled": "取消",
+        "pending": "未完成",
+        "removed": "本轮中途移出",
+        "unknown": "当时状态未知"
+      }
+    },
+    "refreshFailed": "无法重新加载冲刺，请稍后重试。"
   },
   "backlog": {
     "touchHint": "左右滑动查看栏位，长按任务后拖动，可移至当前冲刺或待办清单。",
@@ -1385,8 +1428,8 @@
     "namePlaceholder": "例如：待审核",
     "colorLabel": "颜色",
     "optionsLabel": "选项说明",
-    "isDone": "完成",
-    "isDoneHint": "此状态视为「已完成」",
+    "isDone": "结束状态",
+    "isDoneHint": "完成或取消的状态，卡片不再列入未完成待办。",
     "autoStart": "自动开始",
     "autoStartHint": "移入时自动填入「开始日期」",
     "autoDone": "自动完成",
@@ -1400,7 +1443,9 @@
     "activityCreated": "新增状态「{{name}}」",
     "editingStatus": "{{name}} 编辑中",
     "deleteHasTasks": "还有 {{count}} 张任务在「{{name}}」，请先把它们移到其他状态再删除。",
-    "deleteInHistory": "有任务曾经经过「{{name}}」，这个状态留在它们的历史记录里，无法删除。可以改名或调整顺序。"
+    "deleteInHistory": "有任务曾经经过「{{name}}」，这个状态留在它们的历史记录里，无法删除。可以改名或调整顺序。",
+    "isCancelled": "取消",
+    "isCancelledHint": "例如“不做了”。属于结束状态，但冲刺统计另列取消，不计入完成数。"
   },
   "transitionRule": {
     "title": "流转规则",

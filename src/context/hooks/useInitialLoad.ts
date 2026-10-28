@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import i18n from '@/i18n';
 import { fetchComments } from '@/lib/commentQueries';
 import { applyTheme, type ThemeKey } from '@/lib/themes';
 import type {
@@ -59,7 +61,8 @@ export function useInitialLoad(deps: InitialLoadDeps) {
 
     const loadAll = async () => {
       deps.setIsLoading(true);
-      const sprintsPromise = deps.refreshSprints();
+      // Attach rejection handling immediately while the other reads are running.
+      const sprintsPromise = Promise.allSettled([deps.refreshSprints()]);
       const featureTogglesPromise = deps.refreshFeatureToggles();
       const [
         { data: memberRows },
@@ -82,7 +85,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         { data: taskDepRows },
         authRes,
         { data: settingsRows },
-        { data: activeCheck },
       ] = await Promise.all([
         supabase.from('members').select('*'),
         supabase.from('statuses').select('*').order('sort_order'),
@@ -107,7 +109,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
           return { data: { user: null } };
         }),
         safe(supabase.from('system_settings').select('*').eq('key', 'required_fields').maybeSingle(), 'required_fields'),
-        supabase.from('sprints').select('id').eq('is_active', true).limit(1),
       ]);
 
       if (cfRows) deps.setCustomFields(cfRows.map(mapCustomField));
@@ -168,18 +169,13 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         deps.setAllTasks(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: attCounts.get(r.id) || 0, tagIds: tagMap.get(r.id) || undefined })));
       }
 
-      await Promise.all([sprintsPromise, featureTogglesPromise]);
-      // memberRows is empty when this login sees no data (Docker: not an active
-      // member); it is about to be signed out, so do not try to write.
-      if ((!activeCheck || activeCheck.length === 0) && (memberRows?.length ?? 0) > 0) {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const defaultName = `${y}${m}W1`;
-        await supabase.from('sprints').insert({ name: defaultName, is_active: true });
-        await deps.refreshSprints();
+      const [sprintReads] = await Promise.all([sprintsPromise, featureTogglesPromise]);
+      if (sprintReads[0].status === 'rejected') {
+        toast.error(i18n.t('sprint.refreshFailed'));
+        throw sprintReads[0].reason;
       }
-      deps.setSprintActive(true);
+      // Starting a sprint is an explicit lifecycle command. A read or reload
+      // must never create a new sprint or move backlog cards implicitly.
 
 
       deps.setIsLoading(false);

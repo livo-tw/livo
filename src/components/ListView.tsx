@@ -62,7 +62,7 @@ const ListView = () => {
       const lineProjectIds = allProjects.filter(p => p.lineId === selectedLineId).map(p => p.id);
       tasks = tasks.filter(t => lineProjectIds.includes(t.projectId));
     }
-    if (sprintActive && currentSprint) tasks = tasks.filter(t => t.sprintId === currentSprint.id || !t.sprintId);
+    if (sprintActive && currentSprint) tasks = tasks.filter(t => t.sprintId === currentSprint.id);
     if (filterDept.length > 0) tasks = tasks.filter(t => filterDept.includes(taskDepartment(t, userMap) as Department));
     if (filterAssignees.length > 0) tasks = tasks.filter(t => t.assigneeId && filterAssignees.includes(t.assigneeId));
     if (filterStatuses.length > 0) tasks = tasks.filter(t => filterStatuses.includes(t.statusId));

@@ -1,3 +1,4 @@
+import { sprintSummary } from '@/lib/sprintLifecycle';
 import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -151,13 +152,13 @@ const BacklogView = () => {
   }, [allTasks, currentSprint, applyFilters]);
 
   const backlogTasks = useMemo(() =>
-    applyFilters(allTasks.filter(t => !t.sprintId)),
-    [allTasks, applyFilters]
+    applyFilters(allTasks.filter(t => !t.sprintId && !doneIds.includes(t.statusId))),
+    [allTasks, applyFilters, doneIds]
   );
 
   const completedCount = useMemo(() =>
-    sprintTasks.filter(t => doneIds.includes(t.statusId)).length,
-    [sprintTasks, doneIds]
+    sprintSummary(sprintTasks, statuses).completed.length,
+    [sprintTasks, statuses]
   );
 
 
@@ -218,7 +219,9 @@ const BacklogView = () => {
   const handleStartNewSprint = sprintFlow.openStart;
   // Completing moves every unfinished task of the sprint, not only the ones the filters show.
   const sprintPendingTasks = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id && !doneIds.includes(t.statusId)) : [], [allTasks, currentSprint, doneIds]);
-  const sprintCompletedCount = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id && doneIds.includes(t.statusId)).length : 0, [allTasks, currentSprint, doneIds]);
+  const closure = useMemo(() => sprintSummary(currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id) : [], statuses), [allTasks, currentSprint, statuses]);
+  const sprintCompletedCount = closure.completed.length;
+  const sprintCancelledCount = closure.cancelled.length;
 
   const selectedInSprint = useMemo(() => {
     const sprintIdSet = new Set(sprintTasks.map(t => t.id));
@@ -408,15 +411,21 @@ const BacklogView = () => {
           currentSprint={currentSprint}
           completedCount={sprintCompletedCount}
           pendingTasks={sprintPendingTasks}
+          cancelledCount={sprintCancelledCount}
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           onClose={sprintFlow.closeComplete}
           onComplete={action => void sprintFlow.complete(action)}
         />
       )}
       {sprintFlow.showStartModal && (
         <SprintStartModal
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           defaultName={getDefaultSprintName()}
           carryOverCount={sprintFlow.carryOverTaskIds.length}
-          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
+          excludedCarryCount={sprintFlow.skippedCarryCount}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses, allProjects, sprintFlow.carryOverTaskIds).length}
           onClose={sprintFlow.cancelStart}
           onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
         />

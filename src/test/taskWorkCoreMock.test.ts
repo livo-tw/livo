@@ -5,6 +5,7 @@ import {DEFAULT_REQUIRED_FIELDS} from '../context/UIContext';
 type Row=Record<string,any>;
 const command={commandId:'command-example',taskId:'t1',operation:'acknowledge',role:'assignee',expectedRevision:0};
 const fixture=():Record<string,Row[]>=>({members:[{id:'m1',auth_id:'auth1',is_active:true},{id:'m2',auth_id:'auth2',is_active:true}],
+  sprints:[{id:'sprint1',is_active:true}],
   projects:[{id:'p1',key:'EXAMPLE',is_archived:false},{id:'p2',key:'OTHER',is_archived:false}],statuses:[{id:'s1'}],
   tasks:[{id:'t1',task_key:'EXAMPLE-4',project_id:'p1',title:'Parent',status_id:'s1',priority:'medium',sprint_id:'sprint1',assignee_id:'m1',reviewer_id:'m1'},
     {id:'t2',task_key:'OTHER-1',project_id:'p2',title:'Other',status_id:'s1'}]});
@@ -45,6 +46,14 @@ describe('TaskWork input and Mock transaction contract',()=>{
     expect(()=>taskWorkMockCommand(db,'auth1',{...child,title:'Changed'})).toThrow('work_command_reused');
     db.custom_fields=[{project_id:'p1',is_required:true}];const before=JSON.stringify(db);
     expect(()=>taskWorkMockCommand(db,'auth1',{...child,commandId:'new-child-command'})).toThrow('work_required_fields');expect(JSON.stringify(db)).toBe(before);
+  });
+  it('puts a new child of a completed-sprint parent in the backlog without altering retained history',()=>{
+    const db=fixture();db.sprints[0].is_active=false;
+    db.sprint_task_history=[{id:'snapshot-parent',sprint_id:'sprint1',task_id:'t1',outcome:'completed',title:'Historical title'}];
+    const history=JSON.stringify(db.sprint_task_history);
+    const result=taskWorkMockCommand(db,'auth1',{commandId:'closed-parent-child',taskId:'t1',operation:'create_subtask',title:'Example child',statusId:'s1',priority:'medium'});
+    expect(result.record).toMatchObject({parent_task_id:'t1',sprint_id:null});
+    expect(JSON.stringify(db.sprint_task_history)).toBe(history);
   });
   it('applies the shipped required_fields default like the database: title and project are always supplied',()=>{
     const db=fixture(),child:Row={taskId:'t1',operation:'create_subtask',title:'Child',statusId:'s1',priority:'medium',assigneeId:null,reviewerId:null};

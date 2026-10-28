@@ -11,7 +11,12 @@ export interface Sprint {
   completedCount: number;
   pendingCount: number;
   isActive: boolean;
+  cancelledCount?: number | null;
+  historyCapturedAt?: string | null;
+  version?: number;
 }
+
+export interface SprintCommandState { busy: boolean; unresolved: boolean; operation?: 'start' | 'complete' }
 
 export interface SprintContextType {
   sprintActive: boolean;
@@ -23,9 +28,10 @@ export interface SprintContextType {
   startSprint: (name: string, carryOverTaskIds?: string[], includeBacklog?: boolean) => Promise<boolean>;
   getDefaultSprintName: () => string;
   /** Resolves null when the sprint was not completed (the reason is shown); otherwise its unfinished tasks. */
-  completeSprint: (pendingAction?: PendingTaskAction) => Promise<{ pendingIds: string[] } | null>;
+  completeSprint: (pendingAction?: PendingTaskAction) => Promise<{ pendingIds: string[]; carryIds?: string[] } | null>;
   renameSprint: (sprintId: string, newName: string) => Promise<void>;
   refreshSprints: () => Promise<void>;
+  commandState?: SprintCommandState;
 }
 
 export const SprintContext = createContext<SprintContextType | null>(null);

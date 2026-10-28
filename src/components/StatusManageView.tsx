@@ -125,8 +125,9 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
     }
   };
 
-  const toggleBool = async (id: string, field: 'is_done' | 'auto_start' | 'auto_done', current: boolean) => {
-    const { error } = await supabase.from('statuses').update({ [field]: !current }).eq('id', id);
+  const toggleBool = async (id: string, field: 'is_done' | 'is_cancelled' | 'auto_start' | 'auto_done', current: boolean) => {
+    const patch = field === 'is_cancelled' ? { is_cancelled: !current, ...(!current ? { is_done: true } : {}) } : field === 'is_done' && current ? { is_done: false, is_cancelled: false } : { [field]: !current };
+    const { error } = await supabase.from('statuses').update(patch).eq('id', id);
     if (error) toast.error(t('error.updateFailed'));
     else await refreshStatuses();
   };
@@ -187,6 +188,7 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
           <p className="text-sm font-semibold text-foreground mb-1">{t('statusManage.optionsLabel')}</p>
           <p className="text-[13px] text-muted-foreground"><strong>{t('statusManage.isDone')}</strong> — {t('statusManage.isDoneHint')}</p>
           <p className="text-[13px] text-muted-foreground"><strong>{t('statusManage.autoStart')}</strong> — {t('statusManage.autoStartHint')}</p>
+          <p className="text-[13px] text-muted-foreground"><strong>{t('statusManage.isCancelled')}</strong> — {t('statusManage.isCancelledHint')}</p>
           <p className="text-[13px] text-muted-foreground"><strong>{t('statusManage.autoDone')}</strong> — {t('statusManage.autoDoneHint')}</p>
         </div>
 
@@ -227,10 +229,13 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
                         </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                       <label className="flex items-center gap-1 text-[13px] text-muted-foreground">
                         <input type="checkbox" checked={s.isDone} onChange={() => toggleBool(s.id, 'is_done', s.isDone)} className="rounded" />
                         {t('statusManage.isDone')}
+                      </label>
+                      <label className="flex items-center gap-1 text-[13px] text-muted-foreground" title={t('statusManage.isCancelledHint')}>
+                        <input type="checkbox" checked={!!s.isCancelled} onChange={() => toggleBool(s.id, 'is_cancelled', !!s.isCancelled)} className="rounded" /> {t('statusManage.isCancelled')}
                       </label>
                       <label className="flex items-center gap-1 text-[13px] text-muted-foreground">
                         <input type="checkbox" checked={s.autoStart} onChange={() => toggleBool(s.id, 'auto_start', s.autoStart)} className="rounded" />
@@ -261,7 +266,7 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
               ) : (
                 // Desktop: row layout
                 <>
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <GripVertical size={14} className="text-muted-foreground/40" />
                     <span className="text-xs text-muted-foreground w-5">{i + 1}</span>
                     {editingId === s.id ? (
@@ -285,6 +290,9 @@ const StatusManageView = ({ embedded }: { embedded?: boolean }) => {
                         <label className="flex items-center gap-1 text-[13px] text-muted-foreground">
                           <input type="checkbox" checked={s.isDone} onChange={() => toggleBool(s.id, 'is_done', s.isDone)} className="rounded" /> {t('statusManage.isDone')}
                           <Tooltip><TooltipTrigger asChild><Info size={12} className="text-muted-foreground/50 cursor-help" /></TooltipTrigger><TooltipContent side="top"><p className="text-xs max-w-[200px]">{t('statusManage.isDoneHint')}</p></TooltipContent></Tooltip>
+                        </label>
+                        <label className="flex items-center gap-1 text-[13px] text-muted-foreground" title={t('statusManage.isCancelledHint')}>
+                          <input type="checkbox" checked={!!s.isCancelled} onChange={() => toggleBool(s.id, 'is_cancelled', !!s.isCancelled)} className="rounded" /> {t('statusManage.isCancelled')}
                         </label>
                         <label className="flex items-center gap-1 text-[13px] text-muted-foreground">
                           <input type="checkbox" checked={s.autoStart} onChange={() => toggleBool(s.id, 'auto_start', s.autoStart)} className="rounded" /> {t('statusManage.autoStart')}

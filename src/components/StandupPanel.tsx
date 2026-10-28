@@ -1,3 +1,4 @@
+import { sprintSummary } from '@/lib/sprintLifecycle';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useUIContext } from '@/context/UIContext';
@@ -128,7 +129,8 @@ const StandupPanel = () => {
   // Sprint task stats
   const doneIds        = statuses.filter(s => s.isDone).map(s => s.id);
   const sprintTaskList = currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id) : [];
-  const completedCount = sprintTaskList.filter(t => doneIds.includes(t.statusId)).length;
+  const completedCount = sprintSummary(sprintTaskList, statuses).completed.length;
+  const cancelledCount = sprintSummary(sprintTaskList, statuses).cancelled.length;
   const pendingTasks   = sprintTaskList.filter(t => !doneIds.includes(t.statusId));
 
   // Timer display values
@@ -340,6 +342,9 @@ const StandupPanel = () => {
           currentSprint={currentSprint}
           completedCount={completedCount}
           pendingTasks={pendingTasks}
+          cancelledCount={cancelledCount}
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           onClose={() => { sprintFlow.closeComplete(); leaveStandup(); }}
           onComplete={action => void sprintFlow.complete(action)}
         />
@@ -348,11 +353,14 @@ const StandupPanel = () => {
       {/* ── New Sprint start modal ──────────────────────────────────── */}
       {sprintFlow.showStartModal && (
         <SprintStartModal
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           defaultName={getDefaultSprintName()}
           onClose={sprintFlow.cancelStart}
           onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
           carryOverCount={sprintFlow.carryOverTaskIds.length}
-          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
+          excludedCarryCount={sprintFlow.skippedCarryCount}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses, allProjects, sprintFlow.carryOverTaskIds).length}
         />
       )}
     </>

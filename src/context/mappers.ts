@@ -53,7 +53,7 @@ export function mapUser(row: MemberRow): User {
 }
 
 export function mapStatus(row: Tables<'statuses'>): Status {
-  return { id: row.id, name: row.name, color: row.color, sortOrder: row.sort_order, isDone: row.is_done, autoStart: row.auto_start, autoDone: row.auto_done };
+  return { id: row.id, name: row.name, color: row.color, sortOrder: row.sort_order, isDone: row.is_done, isCancelled: row.is_cancelled ?? false, autoStart: row.auto_start, autoDone: row.auto_done };
 }
 
 export function mapProductLine(row: Tables<'product_lines'>): ProductLine {

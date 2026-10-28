@@ -18,7 +18,7 @@ const BACKUP_TABLES = [
   'release_batches', 'release_commands', 'release_events', 'release_batch_projects', 'release_batch_tasks', 'release_outbox', 'release_slack_links', 'release_publications',
   'approval_rules', 'approval_rule_steps', 'approval_requests', 'approval_actions', 'approval_events', 'approval_command_receipts',
   'tasks', 'members', 'projects', 'statuses', 'sprints',
-      'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts',
+      'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts', 'sprint_task_history', 'sprint_command_receipts',
   'product_lines', 'comments', 'task_specs', 'task_checks',
   'task_todos', 'status_logs', 'task_deployments',
   'member_manuals', 'notifications', 'backup_settings',

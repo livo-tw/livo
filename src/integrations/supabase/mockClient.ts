@@ -11,6 +11,7 @@ import { knowledgeWorkMock, knowledgeMockVisible, knowledgeMockWriteGuard, knowl
 import { KnowledgeWorkError, knowledgeWorkError } from '@/lib/knowledgeWork/core';
 import { planningMockActor, planningMockRpc, planningMockUpdate, planningMockSuppressed } from './taskPlanningMock';
 import { TaskPlanningError, calendarDate, dueDateKind } from '@/lib/taskPlanning/core';
+import { sprintMockCommand, sprintMockTaskChange } from './sprintMock';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ function initializeData() {
     { id: 's4', name: '待討論確認', color: '#6554C0', sort_order: 4, is_done: false, auto_start: false, auto_done: false },
     { id: 's5', name: '等待部署', color: '#00B8D9', sort_order: 5, is_done: false, auto_start: false, auto_done: false },
     { id: 's6', name: '完成',     color: '#36B37E', sort_order: 6, is_done: true,  auto_start: false, auto_done: true  },
-    { id: 's7', name: '不做了',   color: '#97A0AF', sort_order: 7, is_done: true,  auto_start: false, auto_done: true  },
+    { id: 's7', name: '不做了',   color: '#97A0AF', sort_order: 7, is_done: true, is_cancelled: true, auto_start: false, auto_done: true  },
   ];
 
   // ── Members (20 people) ──
@@ -97,7 +98,7 @@ function initializeData() {
   for (const t of [
     'product_lines','projects','tasks','task_deployments','task_specs',
     'task_checks','task_todos','comments','status_logs','notifications',
-    'sprints','activity_logs','member_manuals','backup_settings',
+    'sprints','sprint_task_history','sprint_commands','activity_logs','member_manuals','backup_settings',
     'backup_history','task_attachments','user_column_configs','profiles',
     'tags','task_tags','task_dependencies','task_reminder_preferences','task_deadline_history',
   ]) {
@@ -222,7 +223,12 @@ function withInsertDefaults(t: string, row: DbRow): DbRow {
   if (!row.created_at) row.created_at = new Date().toISOString();
   if (!row.started_at && t === 'sprints') row.started_at = new Date().toISOString();
   if (t==='tasks') { row.due_date=calendarDate(row.due_date??null); row.due_date_kind=dueDateKind(row.due_date_kind??null); if(!row.due_date && row.due_date_kind) throw new TaskPlanningError('planning_date_required'); row.due_date_kind ??= null; row.due_date_version=0; row.due_date_change_reason=null; row.due_date_changed_by=null; }
-  return knowledgeMockDefaults(t, workMockPatch(db,t,null,row));
+  const prepared = knowledgeMockDefaults(t, workMockPatch(db,t,null,row));
+  if (t === 'tasks' && prepared.parent_task_id) {
+    const parent = tbl('tasks').find(task => task.id === prepared.parent_task_id);
+    prepared.sprint_id = parent?.sprint_id && tbl('sprints').some(sprint => sprint.id === parent.sprint_id && sprint.is_active) ? parent.sprint_id : null;
+  }
+  return prepared;
 }
 
 function withWorkTaskUpdate(before:DbRow,patch:DbRow,actor:string) {
@@ -292,6 +298,7 @@ class InsertBuilder extends MockQuery {
       const row = withInsertDefaults(this.t, clone(r));
       if(this.t==='notifications' && planningMockSuppressed(db,row)) continue;
       arr.push(row);
+      if (this.t === 'tasks') sprintMockTaskChange(db, null, row);
       inserted.push(row);
     }
     return inserted;
@@ -397,6 +404,7 @@ class UpdateBuilder extends FilterBuilder {
       try { for(const change of prepared) arr[change.i]=change.row; for(const change of prepared) workMockMoveSubtasks(db,before[change.i],change.row); }
       catch(error) { arr.splice(0,arr.length,...before); throw error; }
       for(const change of prepared) { updated.push(change.row); if(change.history) tbl('task_deadline_history').push(change.history); }
+      for (const row of arr) sprintMockTaskChange(db, before.find(old => old.id === row.id) ?? null, row);
       return updated;
     }
     arr.forEach((row, i) => {
@@ -427,7 +435,7 @@ class DeleteBuilder extends FilterBuilder {
     if(['tasks','members','projects','comments','checks','todos','task_specs','task_attachments','qa_issues'].includes(this.t) && !this.filters.some(f=>f.op==='eq'||f.op==='in') && knowledgeMockHasData(db)) throw new KnowledgeWorkError('knowledge_requires_server_restore',409);
     const deleted: DbRow[] = [];
     for (let i = arr.length - 1; i >= 0; i--) {
-      if (matches(arr[i], this.filters)) {knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,arr[i],{});const [row]=arr.splice(i, 1);deleted.push(row);knowledgeMockForgetDeleted(db,this.t,row);}
+      if (matches(arr[i], this.filters)) {knowledgeMockWriteGuard(db,currentSession?.user.id,this.t,arr[i],{});const [row]=arr.splice(i, 1);deleted.push(row);if(this.t==='tasks')sprintMockTaskChange(db,row,{...row,sprint_id:null});knowledgeMockForgetDeleted(db,this.t,row);}
     }
     return deleted;
   }
@@ -489,12 +497,15 @@ class TableRef {
         ? arr.findIndex(x => keys.every(k => x[k] === row[k]))
         : -1;
       if (idx < 0) {
-        arr.push(withInsertDefaults(this.t, row));
-        result.push(row);
+        const inserted = withInsertDefaults(this.t, row);
+        arr.push(inserted);
+        if (this.t === 'tasks') sprintMockTaskChange(db, null, inserted);
+        result.push(inserted);
       } else if (!opts?.ignoreDuplicates) {
         if(this.t==='tasks') {
           const change=withWorkTaskUpdate(arr[idx],row,planningMockActor(db,currentSession?.user.id)),before=arr.slice();
           try { arr[idx]=change.row; workMockMoveSubtasks(db,before[idx],change.row); } catch(error) { arr.splice(0,arr.length,...before); throw error; }
+          for (const updated of arr) sprintMockTaskChange(db, before.find(old => old.id === updated.id) ?? null, updated);
           if(change.history) tbl('task_deadline_history').push(change.history);
         }
         else arr[idx] = workMockPatch(db,this.t,arr[idx],{...row,id:arr[idx].id});
@@ -719,6 +730,10 @@ export class MockSupabaseClient {
   // granted by LicenseContext's demo path, NOT by faking activation,
   // so the real HMAC path stays completely untouched.
   async rpc(fnName: string, _params?: Record<string, unknown>): Promise<ThenableResult> {
+    if (fnName === 'livo_sprint_command') {
+      try { return { data: sprintMockCommand(db, currentSession?.user.id, _params?.p_command), error: null }; }
+      catch (error) { return { data: null, error: { message: error instanceof Error ? error.message : 'sprint_invalid_input' } }; }
+    }
     if (['livo_set_task_reminder','livo_set_task_deadline'].includes(fnName)) {
       try { return {data:planningMockRpc(db,currentSession?.user.id,fnName,_params||{}),error:null}; }
       catch(e) { return {data:null,error:{message:e instanceof TaskPlanningError?e.code:'planning_failed'}}; }

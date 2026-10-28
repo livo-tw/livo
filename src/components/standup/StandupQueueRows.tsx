@@ -54,7 +54,7 @@ export function QueueMemberRow({ member, groupKey, index, first, last, compact, 
     ? active ? 'bg-sidebar-active' : 'bg-sidebar-accent/30'
     : active ? 'bg-primary/10' : 'bg-accent/30';
   return (
-    <div ref={sortable.setNodeRef} role={topLevel ? 'listitem' : undefined}
+    <div ref={sortable.setNodeRef} role={topLevel ? 'listitem' : undefined} data-standup-member-id={member.id}
       style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}
       className={`min-w-0 rounded-md ${!compact ? 'sm:flex sm:items-center' : ''} ${surface} ${sortable.isDragging ? 'opacity-30' : ''}`}>
       <div className={`flex min-w-0 items-center gap-1 pr-2 ${!compact ? 'sm:flex-1' : ''}`}>
@@ -76,7 +76,7 @@ export function QueueMemberRow({ member, groupKey, index, first, last, compact, 
       </div>
       <div className={`flex flex-wrap items-center justify-between gap-x-1 border-t px-1 ${compact ? 'border-sidebar-border/40' : 'border-border/40 sm:shrink-0 sm:flex-nowrap sm:border-t-0'}`}>
         <MoveButtons name={member.name} first={first} last={last} compact={compact} onMove={onMove} />
-        <button type="button" aria-label={t('standup.queue.excludeNamed', { name: member.name })} onClick={onExclude}
+        <button type="button" data-standup-exclude-id={member.id} aria-label={t('standup.queue.excludeNamed', { name: member.name })} onClick={onExclude}
           className={`min-h-11 rounded px-2 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${compact ? 'text-sidebar-foreground/80 hover:bg-sidebar-hover' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}>
           {t('standup.queue.exclude')}
         </button>

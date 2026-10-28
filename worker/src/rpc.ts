@@ -1,3 +1,4 @@
+import { handleSprintRpc } from './sprintLifecycle';
 // RPC handlers — POST /api/rpc/:fn (and legacy /rest/v1/rpc/:fn).
 //
 // License functions (check_license / activate_license / reset_license) are
@@ -152,6 +153,11 @@ async function releaseAllLocks(env: Env, ctx: Ctx, ws: string, memberId: string)
 const LOCK_FNS = new Set(['acquire_field_lock', 'release_field_lock', 'release_all_locks']);
 
 export async function handleRpc(c: Context<AppContext>, fn: string): Promise<Response> {
+  if(fn==='livo_sprint_command'){
+    let authed=false;const failure=await requireMember(c,async()=>{authed=true;});
+    if(!authed)return failure instanceof Response?failure:c.json({data:null,error:{message:'sprint_unauthorized'}},401);
+    return handleSprintRpc(c);
+  }
   let args: Record<string, unknown> = {};
   try {
     const body = (await c.req.json()) as unknown;

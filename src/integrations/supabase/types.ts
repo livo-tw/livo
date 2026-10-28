@@ -390,6 +390,9 @@ export type Database = {
           name: string
           pending_count: number
           started_at: string
+          cancelled_count: number | null
+          history_captured_at: string | null
+          version: number
         }
         Insert: {
           completed_at?: string | null
@@ -399,6 +402,9 @@ export type Database = {
           name?: string
           pending_count?: number
           started_at?: string
+          cancelled_count?: number | null
+          history_captured_at?: string | null
+          version?: number
         }
         Update: {
           completed_at?: string | null
@@ -408,7 +414,30 @@ export type Database = {
           name?: string
           pending_count?: number
           started_at?: string
+          cancelled_count?: number | null
+          history_captured_at?: string | null
+          version?: number
         }
+        Relationships: []
+      }
+      sprint_task_history: {
+        Row: {
+          id: string
+          sprint_id: string
+          task_id: string
+          task_key: string
+          title: string
+          project_id: string
+          status_id: string
+          status_name: string
+          assignee_id: string | null
+          parent_task_id: string | null
+          outcome: 'completed' | 'cancelled' | 'pending' | 'removed' | 'unknown'
+          source: 'snapshot' | 'observed' | 'legacy'
+          recorded_at: string
+        }
+        Insert: never
+        Update: never
         Relationships: []
       }
       status_logs: {
@@ -510,6 +539,7 @@ export type Database = {
           color: string
           id: string
           is_done: boolean
+          is_cancelled: boolean
           name: string
           sort_order: number
         }
@@ -519,6 +549,7 @@ export type Database = {
           color?: string
           id: string
           is_done?: boolean
+          is_cancelled?: boolean
           name: string
           sort_order?: number
         }
@@ -528,6 +559,7 @@ export type Database = {
           color?: string
           id?: string
           is_done?: boolean
+          is_cancelled?: boolean
           name?: string
           sort_order?: number
         }
@@ -903,6 +935,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      livo_sprint_command: { Args: { p_command: Json }; Returns: Json }
       livo_set_task_reminder: {
         Args: { p_task_id: string; p_expected_version: number; p_until: string | null }
         Returns: { id: string; task_id: string; member_id: string; snoozed_until: string | null; version: number; updated_at: string }

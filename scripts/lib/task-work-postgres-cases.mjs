@@ -85,10 +85,10 @@ export function buildTaskWorkPostgresCases({shippedRequired}={}){
  save('fresh-ack',ack('t-6','assignee',2));
  check('current new assignment revision accepted',data('fresh-ack')+"#>>'{task,assignee_revision}'='2'");
  check('ack does not change status approval or reviewer revision',"(SELECT status_id='todo' AND approval_status IS NULL AND current_approval_id IS NULL AND reviewer_revision=0 FROM tasks WHERE id='t-6')");
- root();raw("INSERT INTO sprints(id) VALUES('parent-sprint'); UPDATE tasks SET sprint_id='parent-sprint' WHERE id='t-8';");service();
+ root();raw("UPDATE tasks SET sprint_id='10000000-0000-0000-0000-000000000001' WHERE id='t-8';");service();
  save('child',sub('t-8'));
  check('child inherits project parent and authenticated creator',data('child')+"#>>'{record,project_id}'='p' AND "+data('child')+"#>>'{record,parent_task_id}'='t-8' AND "+data('child')+"#>>'{record,creator_id}'='member'");
- check('child inherits parent sprint',"(SELECT sprint_id='parent-sprint' FROM tasks WHERE id=("+data('child')+"#>>'{record,id}'))");
+ check('child inherits parent sprint',"(SELECT sprint_id='10000000-0000-0000-0000-000000000001' FROM tasks WHERE id=("+data('child')+"#>>'{record,id}'))");
  save('child-auto-dates',sub('t-8',{statusId:'auto-both'}));
  check('child honors status auto_start and auto_done dates',"(SELECT started_at IS NOT NULL AND completed_at IS NOT NULL AND started_at::timestamptz=completed_at::timestamptz FROM tasks WHERE id=("+data('child-auto-dates')+"#>>'{record,id}'))");
  check('child adds one spec and initial status log',"(SELECT count(*)=1 FROM task_specs WHERE task_id=("+data('child')+"#>>'{record,id}')) AND (SELECT count(*)=1 FROM status_logs WHERE task_id=("+data('child')+"#>>'{record,id}'))");
@@ -294,8 +294,8 @@ export function buildTaskWorkPostgresCases({shippedRequired}={}){
  service();error('Jira clear refuses TaskWork history before child deletion','SELECT public.livo_jira_clear_tasks()','work_history_requires_restore');
  root();check('blocked Jira clear preserves task comment and history',"(SELECT count(*)=1 FROM comments WHERE id='preserved-work-comment') AND EXISTS(SELECT 1 FROM tasks WHERE id='t-1') AND EXISTS(SELECT 1 FROM task_work_events) AND EXISTS(SELECT 1 FROM task_work_receipts)");
  raw("DELETE FROM task_work_events; DELETE FROM task_work_receipts;");service();
- raw("INSERT INTO work_test.saved SELECT 'legacy-clear',public.livo_jira_clear_tasks();");
- root();check('legacy Jira clear still succeeds with no protected history',data('legacy-clear')+"->>'cleared'='true' AND NOT EXISTS(SELECT 1 FROM tasks) AND NOT EXISTS(SELECT 1 FROM comments)");
+ error('Jira clear refuses retained sprint history too','SELECT public.livo_jira_clear_tasks()','work_history_requires_restore');
+ root();check('Jira clear preserves sprint snapshots task and comment',"EXISTS(SELECT 1 FROM sprint_task_history) AND EXISTS(SELECT 1 FROM tasks WHERE id='t-1') AND EXISTS(SELECT 1 FROM comments WHERE id='preserved-work-comment')");
  raw("SELECT jsonb_build_object('status',CASE WHEN bool_and(ok) THEN 'passed' ELSE 'failed' END,'assertions',count(*),'failed',COALESCE(jsonb_agg(jsonb_build_object('label',label,'detail',detail)) FILTER(WHERE NOT ok),'[]'::jsonb),'realTwoSessionRaces',"+races+",'authorityRaceOutcomes',(SELECT jsonb_object_agg(label,result) FROM work_test.races WHERE label LIKE 'deactivate-%' OR label LIKE 'unbind-%')) FROM work_test.results;");
  return {sql:sql.join('\n'),labels,races};
 }

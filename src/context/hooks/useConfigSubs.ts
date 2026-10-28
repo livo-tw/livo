@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import i18n from '@/i18n';
 import type { TaskCustomFieldValue, TaskDependency, Project } from '@/types';
 import { mapCustomFieldValue, mapTaskDependency, mapProject } from '../mappers';
 
@@ -33,7 +35,7 @@ export function useConfigSubs(deps: ConfigSubsDeps) {
         debouncedRefreshTasks();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sprints' }, () => {
-        deps.refreshSprints();
+        void deps.refreshSprints().catch(() => toast.error(i18n.t('sprint.refreshFailed')));
         debouncedRefreshTasks();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'members' }, () => {

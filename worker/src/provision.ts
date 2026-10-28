@@ -75,8 +75,8 @@ export async function workspaceProvisionStatements(
   for (const [sid, name, color, sort, isDone, autoStart, autoDone] of STATUSES) {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO statuses (workspace_id, id, name, color, sort_order, is_done, auto_start, auto_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(wsId, `${short}-${sid}`, name, color, sort, isDone, autoStart, autoDone)
+        'INSERT INTO statuses (workspace_id, id, name, color, sort_order, is_done, auto_start, auto_done, is_cancelled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(wsId, `${short}-${sid}`, name, color, sort, isDone, autoStart, autoDone, sid === 's7' ? 1 : 0)
     );
   }
 

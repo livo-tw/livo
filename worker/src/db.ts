@@ -1,3 +1,4 @@
+import { sprintGenericPatch, sprintHistoryReadScope, sprintReadback } from './sprintLifecycle';
 import { taskWorkGenericPatch, taskWorkReadback } from './taskWork';
 // db.ts — the /api/query engine: translates QueryRequest (PostgREST-subset)
 // into D1 SQL. Every identifier interpolated into SQL is validated against
@@ -715,6 +716,10 @@ export async function runQuery(
       const prepare = (row: unknown) => deadlinePatch(row as Row,auth.member.id);
       req = { ...req, values: Array.isArray(req.values) ? req.values.map(prepare) : prepare(req.values) };
     }
+    if(table==='sprints'&&req.op==='update'){
+      const patch=(row:unknown)=>sprintGenericPatch(table,row as Row);
+      req={...req,values:Array.isArray(req.values)?req.values.map(patch):patch(req.values)};
+    }
     // A member may delete a task they created that nobody has picked up yet: never
     // started, not completed, still in the first open column (same rule as
     // canDeleteTaskRecord in the app and the Docker policy). The conditions go into
@@ -742,6 +747,7 @@ export async function runQuery(
           where.sql += `${where.sql ? ' AND ' : ' WHERE '}${permission.sql}`;
           where.params.push(...permission.params);
         }
+        if(table==='sprint_task_history'){const allowed=sprintHistoryReadScope(auth);where.sql+=`${where.sql?' AND ':' WHERE '}${allowed.sql}`;where.params.push(...allowed.params);}
         if (table === 'field_locks') {
           const permission = knowledgePermissionSql('substr(field_locks.lock_key,4)', 'view', auth);
           where.sql += `${where.sql ? ' AND ' : ' WHERE '}(lock_key NOT LIKE 'kb:%' OR ${permission.sql})`;
@@ -822,7 +828,7 @@ export async function runQuery(
               upsertOwnerColumns(table, meta, roleRank(auth?.member?.role)).map((c) => ` AND ${table}.${ident(c)} = excluded.${ident(c)}`).join('');
         const conflictSql = ` ON CONFLICT (${target.join(', ')})${doClause}`;
         const stmts = buildInsertStatements(env, table, rows, columns, meta, conflictSql);
-        const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
+        const returned = (await sprintReadback(env,table,ws,await taskWorkReadback(env,table,ws,await runStatements(env, stmts)))).map((r) => rowToWire(r, meta));
         // Insert-vs-update is indistinguishable post-hoc; UPDATE is the safe
         // choice for the app's handlers (idempotent overwrite / refetch).
         emitChanges(env, ctx, updateEvents(table, returned, meta.pk), ws);
@@ -874,7 +880,7 @@ export async function runQuery(
           withWs(req.filters),
           meta
         );
-        const returned = (await taskWorkReadback(env,table,ws,await runStatements(env, stmts))).map((r) => rowToWire(r, meta));
+        const returned = (await sprintReadback(env,table,ws,await taskWorkReadback(env,table,ws,await runStatements(env, stmts)))).map((r) => rowToWire(r, meta));
         if (returned.length) {
           emitChanges(env, ctx, updateEvents(table, returned, meta.pk), ws);
           // The work_task_move_subtasks trigger moved these parents' subtasks in the same

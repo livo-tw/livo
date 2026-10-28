@@ -134,7 +134,7 @@ export const TABLES: TableRegistry = {
   statuses: {
     pk: 'id',
     clientAccess: 'full',
-    boolCols: ['is_done', 'auto_start', 'auto_done'],
+    boolCols: ['is_done', 'is_cancelled', 'auto_start', 'auto_done'],
     write: { insert: 'admin', update: 'admin', delete: 'admin' },
   },
   sprints: {
@@ -143,8 +143,11 @@ export const TABLES: TableRegistry = {
     boolCols: ['is_active'],
     autoId: true,
     autoNowCols: ['started_at'],
-    write: { insert: 'all', update: 'all', delete: 'none' },
+    write: { insert: 'none', update: 'all', delete: 'none' },
   },
+  sprint_command_contexts: { pk:'id', clientAccess:'none' },
+  sprint_command_receipts: { pk:'id', clientAccess:'none' },
+  sprint_task_history: { pk:'id', clientAccess:'full', write:{insert:'none',update:'none',delete:'none'} },
   tasks: {
     pk: 'id',
     clientAccess: 'full',

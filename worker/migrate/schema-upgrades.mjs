@@ -124,5 +124,12 @@ export async function applyPostTenantSchemaUpgrades({ queryRows, applyFile, log 
     else{await applyFile('knowledge-work.sql');applied.push('knowledge-work.sql');}
   }
   await applyFile('release-workspace.sql');applied.push('release-workspace.sql');
+  const statusColumns=await queryRows('PRAGMA table_info(statuses)'), sprintColumns=await queryRows('PRAGMA table_info(sprints)');
+  if(statusColumns.length&&sprintColumns.length){
+    const flags=[statusColumns.some(c=>c.name==='is_cancelled'),...['version','cancelled_count','history_captured_at'].map(name=>sprintColumns.some(c=>c.name===name))];
+    if(flags.some(Boolean)&&!flags.every(Boolean))throw new Error('Partial sprint lifecycle schema; refusing to guess');
+    if(!flags.some(Boolean)){await applyFile('sprint-lifecycle-alters.sql');applied.push('sprint-lifecycle-alters.sql');}
+    await applyFile('sprint-lifecycle.sql');applied.push('sprint-lifecycle.sql');
+  }
   return applied;
 }

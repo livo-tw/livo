@@ -4,14 +4,14 @@
 -- team_settings, notification_templates), and Worker auth users (password: test1234).
 
 -- ── Statuses (mockClient.ts:72-80) ──────────────────────────────────────────
-INSERT OR IGNORE INTO statuses (id, name, color, sort_order, is_done, auto_start, auto_done) VALUES
-  ('s1', '待辦',       '#6B778C', 1, 0, 0, 0),
-  ('s2', '正在進行',   '#0065FF', 2, 0, 1, 0),
-  ('s3', '待驗收',     '#FF8B00', 3, 0, 0, 0),
-  ('s4', '待討論確認', '#6554C0', 4, 0, 0, 0),
-  ('s5', '等待部署',   '#00B8D9', 5, 0, 0, 0),
-  ('s6', '完成',       '#36B37E', 6, 1, 0, 1),
-  ('s7', '不做了',     '#97A0AF', 7, 1, 0, 1);
+INSERT OR IGNORE INTO statuses (id, name, color, sort_order, is_done, auto_start, auto_done, is_cancelled) VALUES
+  ('s1', '待辦',       '#6B778C', 1, 0, 0, 0, 0),
+  ('s2', '正在進行',   '#0065FF', 2, 0, 1, 0, 0),
+  ('s3', '待驗收',     '#FF8B00', 3, 0, 0, 0, 0),
+  ('s4', '待討論確認', '#6554C0', 4, 0, 0, 0, 0),
+  ('s5', '等待部署',   '#00B8D9', 5, 0, 0, 0, 0),
+  ('s6', '完成',       '#36B37E', 6, 1, 0, 1, 0),
+  ('s7', '不做了',     '#97A0AF', 7, 1, 0, 1, 1);
 
 -- ── Auth users (PBKDF2-SHA256, 100k iterations, password: test1234) ─────────
 INSERT OR IGNORE INTO auth_users (id, email, password_hash, banned) VALUES

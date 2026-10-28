@@ -201,15 +201,59 @@ describe('editing the standup report roster', () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it('keeps focus on the excluded person recovery control and restored report handle', async () => {
+  it('keeps focus on the next reporting action after exclusion and the report handle after restore', async () => {
     render(<StandupLaunchDialog open onOpenChange={() => {}} />);
     await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
     const exclude = control('excludeNamed', 'Blair');
     exclude.focus(); fireEvent.click(exclude);
     const restore = control('restoreNamed', 'Blair');
-    expect(restore).toHaveFocus();
+    expect(control('excludeNamed', 'Casey')).toHaveFocus();
+    expect(restore).not.toHaveFocus();
     fireEvent.click(restore);
     expect(screen.getByRole('button', { name: 'standup.queue.dragMember Blair' })).toHaveFocus();
+  });
+
+  it('preserves both scroll ancestors while consecutive exclusions keep the reporting actions focused', async () => {
+    const { container } = render(<div style={{ overflow: 'auto', maxHeight: 500 }}><StandupLaunchDialog open onOpenChange={() => {}} /></div>);
+    await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    const outer = container.firstElementChild as HTMLElement;
+    const scroller = screen.getByRole('dialog').querySelector<HTMLElement>('.overflow-y-auto')!;
+    outer.scrollTop = 65; scroller.scrollTop = 240; scroller.scrollLeft = 12;
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const alex = control('excludeNamed', 'Alex'); alex.focus(); fireEvent.click(alex);
+    expect(control('excludeNamed', 'Blair')).toHaveFocus();
+    expect(focus.mock.calls.at(-1)?.[0]).toEqual({ preventScroll: true });
+    expect([outer.scrollTop, scroller.scrollTop, scroller.scrollLeft]).toEqual([65, 240, 12]);
+    // Keyboard activation dispatches a click with detail=0 on the focused button.
+    fireEvent.click(control('excludeNamed', 'Blair'), { detail: 0 });
+    expect(control('excludeNamed', 'Casey')).toHaveFocus();
+    expect([outer.scrollTop, scroller.scrollTop, scroller.scrollLeft]).toEqual([65, 240, 12]);
+    expect(control('restoreNamed', 'Alex')).not.toHaveFocus();
+    expect(control('restoreNamed', 'Blair')).not.toHaveFocus();
+  });
+
+  it('uses the previous reporting action for the last row and the editor for the final person, then closes safely with Escape', async () => {
+    function DialogFlow() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>Open settings</button><StandupLaunchDialog open={open} onOpenChange={setOpen} /></>;
+    }
+    render(<DialogFlow />);
+    const opener = screen.getByRole('button', { name: 'Open settings' }); opener.focus(); fireEvent.click(opener);
+    await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    const scroller = screen.getByRole('dialog').querySelector<HTMLElement>('.overflow-y-auto')!;
+    scroller.scrollTop = 170;
+    const casey = control('excludeNamed', 'Casey'); casey.focus(); fireEvent.click(casey, { detail: 0 });
+    expect(control('excludeNamed', 'Blair')).toHaveFocus();
+    fireEvent.click(control('excludeNamed', 'Blair'), { detail: 0 });
+    expect(control('excludeNamed', 'Alex')).toHaveFocus();
+    fireEvent.click(control('excludeNamed', 'Alex'), { detail: 0 });
+    expect(screen.getByRole('region', { name: 'standup.queue.excluded 3' }).parentElement).toHaveFocus();
+    expect(scroller.scrollTop).toBe(170);
+    expect(screen.getByRole('button', { name: 'standup.startButton' })).toBeDisabled();
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await act(async () => { await Promise.resolve(); });
+    expect(opener).toHaveFocus();
   });
 
   it('updates estimated time and starts only the included report roster', async () => {

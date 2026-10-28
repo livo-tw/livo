@@ -34,6 +34,7 @@ export interface Status {
   color: string;
   sortOrder: number;
   isDone: boolean;
+  isCancelled?: boolean;
   autoStart: boolean;
   autoDone: boolean;
 }

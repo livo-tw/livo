@@ -37,7 +37,7 @@ const TABLES = [
   // ordered so FK parents import first
   'members', 'product_lines', 'projects', 'statuses', 'sprints', 'tags',
   ...KNOWLEDGE_IMPORT_SOURCE_TABLES,
-  'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts',
+  'task_deadline_history', 'task_reminder_preferences', 'task_work_events', 'task_work_receipts', 'sprint_task_history', 'sprint_command_receipts',
   'release_batches', 'release_commands', 'release_events', 'release_batch_projects', 'release_batch_tasks', 'release_outbox', 'release_slack_links', 'release_publications',
   'tasks', 'task_tags', 'task_specs', 'task_checks', 'task_todos',
   'task_deployments', 'task_attachments', 'task_dependencies', 'comments',

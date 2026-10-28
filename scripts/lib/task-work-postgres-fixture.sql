@@ -22,7 +22,7 @@ CREATE TABLE statuses(id text PRIMARY KEY,name text,is_done boolean DEFAULT fals
 CREATE TABLE tasks(
  id text PRIMARY KEY,task_key text NOT NULL,project_id text REFERENCES projects(id),title text NOT NULL,status_id text REFERENCES statuses(id),
  priority task_priority DEFAULT 'medium',creator_id text REFERENCES members(id),assignee_id text REFERENCES members(id),reviewer_id text REFERENCES members(id),
- due_date text,started_at text,completed_at text,sprint_id text,gitlab_url text,requires_approval boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0,
+ due_date text,started_at text,completed_at text,sprint_id uuid,gitlab_url text,requires_approval boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0,
  parent_task_id text REFERENCES tasks(id) ON DELETE SET NULL);
 CREATE TABLE task_checks(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,text text NOT NULL,is_done boolean NOT NULL DEFAULT false,sort_order integer NOT NULL DEFAULT 0);
 CREATE TABLE task_todos(LIKE task_checks INCLUDING ALL);
@@ -44,7 +44,8 @@ CREATE TABLE backup_settings(task_notify_types text[]);
 CREATE TABLE external_account_bindings(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),member_id text,platform text,platform_team_id text,platform_user_id text,is_verified boolean,verified_by text);
 CREATE TABLE slack_thread_mappings(slack_team_id text,slack_channel_id text,slack_thread_ts text,task_id text,notification_type text,UNIQUE(slack_channel_id,slack_thread_ts));
 CREATE TABLE external_action_logs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),member_id text,action_payload jsonb);
-CREATE TABLE sprints(id text PRIMARY KEY);
+CREATE TABLE sprints(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL DEFAULT '',started_at timestamptz NOT NULL DEFAULT now(),completed_at timestamptz,completed_count integer NOT NULL DEFAULT 0,pending_count integer NOT NULL DEFAULT 0,is_active boolean NOT NULL DEFAULT true);
+ALTER TABLE tasks ADD FOREIGN KEY(sprint_id) REFERENCES sprints(id) ON DELETE SET NULL;
 CREATE TABLE task_deployments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id text REFERENCES tasks(id) ON DELETE CASCADE,environment text NOT NULL,status deploy_status NOT NULL DEFAULT 'scheduled',deploy_date text);
 CREATE TABLE task_attachments(id text PRIMARY KEY,task_id text REFERENCES tasks(id) ON DELETE CASCADE);
 CREATE FUNCTION current_member_id() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$ SELECT id FROM members WHERE auth_id=auth.uid() AND is_active LIMIT 1 $$;
@@ -55,13 +56,15 @@ INSERT INTO members(id,auth_id,role,name,email) VALUES
  ('super','00000000-0000-0000-0000-000000000003','super_admin','Super','super@example.com'),
  ('other','00000000-0000-0000-0000-000000000004','member','Other','other@example.com');
 INSERT INTO projects VALUES('p','line','Project','P',false),('q','line','Other project','Q',false),('archived','line','Archived','AR',true);
-INSERT INTO statuses VALUES('todo','Todo',false,false,false),('doing','Doing',false,true,false),('done','Done',true,false,true),('auto-both','Auto dates',true,true,true);
+INSERT INTO statuses VALUES('todo','Todo',false,false,false),('doing','Doing',false,true,false),('done','Done',true,false,true),('auto-both','Auto dates',true,true,true),('s7','Cancelled',true,false,true),('aabbccdd-s7','Namespaced cancelled',true,false,true),('made-up-s7','Custom terminal',true,false,true);
 INSERT INTO tasks(id,task_key,project_id,title,status_id,creator_id,assignee_id,reviewer_id)
  SELECT 't-'||i,'P-'||i,CASE WHEN i=79 THEN 'archived' WHEN i=80 THEN 'q' ELSE 'p' END,'Synthetic task','todo','member','member','other' FROM generate_series(1,80)i;
+INSERT INTO sprints(id,name,is_active,completed_count,pending_count,completed_at) VALUES('10000000-0000-0000-0000-000000000001','Parent sprint',true,0,0,NULL),('10000000-0000-0000-0000-000000000002','Legacy completed',false,9,4,now()-interval '10 days');
+UPDATE tasks SET sprint_id='10000000-0000-0000-0000-000000000002' WHERE id='t-80';
 INSERT INTO external_account_bindings VALUES('00000000-0000-0000-0000-000000000010','member','slack','TTEST','UTEST',true,'admin');
 INSERT INTO system_settings VALUES('feature_toggles','{"slackActions":true,"approvals":true}'),('required_fields','{}');
 DO $$ DECLARE n text; BEGIN
- FOREACH n IN ARRAY ARRAY['members','projects','statuses','tasks','task_checks','task_todos','task_dependencies','task_specs','status_logs','activity_logs','comments','custom_fields','task_custom_field_values','tags','task_tags','system_settings','notifications','external_account_bindings'] LOOP
+ FOREACH n IN ARRAY ARRAY['members','projects','statuses','tasks','task_checks','task_todos','task_dependencies','task_specs','status_logs','activity_logs','comments','custom_fields','task_custom_field_values','tags','task_tags','system_settings','notifications','external_account_bindings','sprints'] LOOP
   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',n);
   EXECUTE format('GRANT ALL ON public.%I TO authenticated,service_role',n);
   EXECUTE format('CREATE POLICY fixture_read ON public.%I FOR SELECT TO authenticated USING (true)',n);

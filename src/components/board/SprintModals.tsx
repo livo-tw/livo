@@ -10,22 +10,25 @@ export type { PendingTaskAction } from '@/context/SprintContext';
 interface SprintCompleteModalProps {
   currentSprint: Sprint | null;
   completedCount: number;
+  cancelledCount?: number;
   pendingTasks: Task[];
+  busy?: boolean;
+  retryOnly?: boolean;
   onClose: () => void;
   onComplete: (action: PendingTaskAction) => void;
 }
 
-export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTasks, onClose, onComplete }: SprintCompleteModalProps) => {
+export const SprintCompleteModal = ({ currentSprint, completedCount, cancelledCount = 0, pendingTasks, busy = false, retryOnly = false, onClose, onComplete }: SprintCompleteModalProps) => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const [action, setAction] = useState<PendingTaskAction>('backlog');
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy && !retryOnly) onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, busy, retryOnly]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -36,14 +39,14 @@ export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTask
   const remaining = pendingTasks.length - PREVIEW_LIMIT;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { if (!busy && !retryOnly) onClose(); }}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="sprint-complete-title"
         tabIndex={-1}
-        className="bg-card rounded-xl shadow-xl border border-border p-0 w-full max-w-md overflow-hidden outline-none"
+        className="bg-card rounded-xl shadow-xl border border-border p-0 w-full max-w-md max-h-[90dvh] overflow-y-auto outline-none"
         onClick={e => e.stopPropagation()}
       >
         <div className="bg-gradient-to-r from-primary/80 to-primary p-4 md:p-6 text-center">
@@ -52,6 +55,9 @@ export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTask
         </div>
         <div className="p-4 md:p-6 space-y-4">
           <p className="text-sm text-foreground" dangerouslySetInnerHTML={{ __html: t('sprint.complete.summary', { completedCount, pendingCount: pendingTasks.length }) }} />
+          <p className="text-sm text-muted-foreground">{t('sprint.complete.cancelledSummary', { count: cancelledCount })}</p>
+          <p className="text-xs text-muted-foreground">{t('sprint.complete.historyHint')}</p>
+          {retryOnly && <p role="status" className="text-sm text-amber-600">{t('sprint.commandUncertain')}</p>}
 
           {pendingTasks.length > 0 && (
             <div className="space-y-3">
@@ -60,7 +66,6 @@ export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTask
                 {([
                   { value: 'backlog' as PendingTaskAction, label: t('sprint.complete.backlogLabel'), desc: t('sprint.complete.backlogDesc') },
                   { value: 'next-sprint' as PendingTaskAction, label: t('sprint.complete.nextSprintLabel'), desc: t('sprint.complete.nextSprintDesc') },
-                  { value: 'keep' as PendingTaskAction, label: t('sprint.complete.keepLabel'), desc: t('sprint.complete.keepDesc') },
                 ] as const).map(opt => (
                   <label
                     key={opt.value}
@@ -71,6 +76,7 @@ export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTask
                       name="pending-action"
                       value={opt.value}
                       checked={action === opt.value}
+                      disabled={busy || retryOnly}
                       onChange={() => setAction(opt.value)}
                       className="mt-0.5 accent-primary"
                     />
@@ -95,8 +101,8 @@ export const SprintCompleteModal = ({ currentSprint, completedCount, pendingTask
           )}
 
           <div className="flex gap-2 pt-1">
-            <button onClick={onClose} className="flex-1 py-2.5 rounded-md text-sm font-medium border border-border text-foreground hover:bg-accent transition-colors">{t('common.cancel')}</button>
-            <button onClick={() => onComplete(action)} className="flex-1 py-2.5 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">{t('button.confirmComplete')}</button>
+            <button onClick={onClose} disabled={busy || retryOnly} className="flex-1 py-2.5 rounded-md text-sm font-medium border border-border text-foreground hover:bg-accent transition-colors disabled:opacity-50">{t('common.cancel')}</button>
+            <button onClick={() => onComplete(action)} disabled={busy} className="flex-1 py-2.5 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50">{t(busy ? 'sprint.processing' : retryOnly ? 'sprint.retryOriginal' : 'button.confirmComplete')}</button>
           </div>
         </div>
       </div>
@@ -110,35 +116,38 @@ interface SprintStartModalProps {
   onConfirm: (name: string, includeBacklog: boolean) => void;
   closeable?: boolean;
   carryOverCount?: number;
+  excludedCarryCount?: number;
   /** Open backlog tasks the sprint takes in when the box is ticked. */
   backlogCount?: number;
+  busy?: boolean;
+  retryOnly?: boolean;
 }
 
-export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = true, carryOverCount = 0, backlogCount }: SprintStartModalProps) => {
+export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = true, carryOverCount = 0, excludedCarryCount = 0, backlogCount, busy = false, retryOnly = false }: SprintStartModalProps) => {
   const { t } = useTranslation();
   const [name, setName] = useState(defaultName);
-  const [includeBacklog, setIncludeBacklog] = useState(true);
+  const [includeBacklog, setIncludeBacklog] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && closeable) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && closeable && !busy && !retryOnly) onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, closeable]);
+  }, [onClose, closeable, busy, retryOnly]);
 
   useEffect(() => {
     dialogRef.current?.focus();
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { if (closeable) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { if (closeable && !busy && !retryOnly) onClose(); }}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="sprint-start-title"
         tabIndex={-1}
-        className="bg-card rounded-xl shadow-xl border border-border p-0 w-full max-w-sm overflow-hidden outline-none"
+        className="bg-card rounded-xl shadow-xl border border-border p-0 w-full max-w-sm max-h-[90dvh] overflow-y-auto outline-none"
         onClick={e => e.stopPropagation()}
       >
         <div className="bg-gradient-to-r from-primary/80 to-primary p-4 md:p-5 text-center">
@@ -152,8 +161,10 @@ export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = 
               id="sprint-name-input"
               type="text"
               value={name}
+              maxLength={120}
+              disabled={busy || retryOnly}
               onChange={e => setName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onConfirm(name.trim(), includeBacklog); }}
+              onKeyDown={e => { if (e.key === 'Enter' && name.trim() && !busy) onConfirm(name.trim(), includeBacklog); }}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background text-foreground outline-none focus:ring-2 focus:ring-primary"
               autoFocus
             />
@@ -162,19 +173,24 @@ export const SprintStartModal = ({ defaultName, onClose, onConfirm, closeable = 
             <input
               type="checkbox"
               checked={includeBacklog}
+              disabled={busy || retryOnly}
               onChange={e => setIncludeBacklog(e.target.checked)}
               className="accent-primary"
             />
             <span className="text-sm text-foreground">{backlogCount === undefined ? t('sprint.start.includeBacklog') : t('sprint.start.includeBacklogCount', { count: backlogCount })}</span>
           </label>
+          <p className="text-xs text-muted-foreground">{t('sprint.start.scopeHint')}</p>
+          {backlogCount !== undefined && <p className="text-sm font-medium">{t('sprint.start.selectedCount', { count: carryOverCount + (includeBacklog ? backlogCount : 0) })}</p>}
+          {retryOnly && <p role="status" className="text-sm text-amber-600">{t('sprint.commandUncertain')}</p>}
           {carryOverCount > 0 && (
             <p className="text-xs text-muted-foreground">{t('sprint.start.carryOverHint', { count: carryOverCount })}</p>
           )}
+          {excludedCarryCount > 0 && <p className="text-xs text-muted-foreground">{t('sprint.start.archivedCarryHint', { count: excludedCarryCount })}</p>}
           <div className="flex gap-2">
             {closeable && (
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-md text-sm font-medium border border-border text-foreground hover:bg-accent transition-colors">{t('common.cancel')}</button>
+              <button onClick={onClose} disabled={busy || retryOnly} className="flex-1 py-2.5 rounded-md text-sm font-medium border border-border text-foreground hover:bg-accent transition-colors disabled:opacity-50">{t('common.cancel')}</button>
             )}
-            <button onClick={() => name.trim() && onConfirm(name.trim(), includeBacklog)} disabled={!name.trim()} className="flex-1 py-2.5 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50">{t('button.startSprint')}</button>
+            <button onClick={() => name.trim() && onConfirm(name.trim(), includeBacklog)} disabled={!name.trim() || busy} className="flex-1 py-2.5 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50">{t(busy ? 'sprint.processing' : retryOnly ? 'sprint.retryOriginal' : 'button.startSprint')}</button>
           </div>
         </div>
       </div>

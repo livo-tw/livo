@@ -1,4 +1,5 @@
 import { generateId } from '@/lib/generateId';
+import { sprintMockTaskChange } from './sprintMock';
 import { canonicalTaskWorkPayload, parseTaskWorkCommand, TaskWorkError, type TaskWorkResult, type TaskWorkTask } from '@/lib/taskWork/core';
 type Row=Record<string,unknown>; type Store=Record<string,Row[]>;
 const fail=(code:string):never=>{throw new TaskWorkError(code);};
@@ -73,8 +74,8 @@ export function taskWorkMockCommand(db:Store,authId:string|undefined,input:unkno
     const state=(draft.statuses||[]).find(s=>s.id===command.statusId)!;
     record=workMockPatch(draft,'tasks',null,{id:generateId('task'),task_key:`${project.key}-${next}`,project_id:project.id,parent_task_id:card.id,title:command.title,
       status_id:command.statusId,priority:command.priority,creator_id:actor.id,assignee_id:command.assigneeId,reviewer_id:command.reviewerId,due_date:command.dueDate,
-      due_date_kind:null,due_date_version:0,sprint_id:card.sprint_id??null,sort_order:0,created_at:stamp,comment_count:0,started_at:state.auto_start?stamp:null,completed_at:state.auto_done?stamp:null});
-    table(draft,'tasks').push(record);table(draft,'task_specs').push({id:generateId('spec'),task_id:record.id,background:'',requirement:'',notes:''});
+      due_date_kind:null,due_date_version:0,sprint_id:table(draft,'sprints').some(sprint=>sprint.id===card.sprint_id&&sprint.is_active)?card.sprint_id:null,sort_order:0,created_at:stamp,comment_count:0,started_at:state.auto_start?stamp:null,completed_at:state.auto_done?stamp:null});
+    table(draft,'tasks').push(record);sprintMockTaskChange(draft,null,record);table(draft,'task_specs').push({id:generateId('spec'),task_id:record.id,background:'',requirement:'',notes:''});
     table(draft,'status_logs').push({id:generateId('log'),task_id:record.id,from_status_id:null,to_status_id:command.statusId,changed_by:actor.id,changed_at:stamp});
   } else if('list' in command) {
     const name=`task_${command.list}`,items=table(draft,name);

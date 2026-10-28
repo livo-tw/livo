@@ -15,6 +15,10 @@ import { dragData, queueGroupId, queueMemberId, type QueueDragData } from './sta
 
 const EXCLUDED_ZONE_ID = 'standup-excluded-zone';
 
+type QueueFocusRequest =
+  | { kind: 'exclude'; memberIds: string[]; scroll: { element: HTMLElement; top: number; left: number }[] }
+  | { kind: 'restore'; memberId: string };
+
 export interface StandupQueueEditorProps {
   groups: StandupGroup[];
   sortMode: SortMode;
@@ -65,23 +69,52 @@ export function StandupQueueEditor({ groups, sortMode, onReorder, excludedMember
   const { t } = useTranslation();
   const [activeDrag, setActiveDrag] = useState<QueueDragData | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
-  const [focusRequest, setFocusRequest] = useState<{ memberId: string; excluded: boolean } | null>(null);
-  // Moving between lists removes the triggering button. Keep keyboard focus in
-  // the editor rather than letting it fall to the page behind the launch dialog.
+  const [focusRequest, setFocusRequest] = useState<QueueFocusRequest | null>(null);
+  // Excluding removes the active control. Keep the next reporting action and
+  // viewport in place instead of focusing the recovery button below the list.
   useLayoutEffect(() => {
     if (!focusRequest) return;
-    const attribute = focusRequest.excluded ? 'data-standup-restore-id' : 'data-standup-report-id';
-    const target = Array.from(editorRef.current?.querySelectorAll<HTMLButtonElement>(`button[${attribute}]`) ?? [])
-      .find(button => button.getAttribute(attribute) === focusRequest.memberId);
-    (target ?? editorRef.current)?.focus();
+    const editor = editorRef.current;
+    if (editor?.isConnected) {
+      if (focusRequest.kind === 'exclude') {
+        const controls = Array.from(editor.querySelectorAll<HTMLButtonElement>('button[data-standup-exclude-id]'));
+        const target = focusRequest.memberIds.map(id => controls.find(button => button.getAttribute('data-standup-exclude-id') === id))
+          .find(button => button && !button.disabled);
+        (target ?? editor).focus({ preventScroll: true });
+        // A browser may adjust an ancestor when rows disappear. Restore the
+        // captured positions; a shrinking scroll range still clamps naturally.
+        for (const { element, top, left } of focusRequest.scroll) {
+          if (!element.isConnected) continue;
+          if (element.scrollTop !== top) element.scrollTop = top;
+          if (element.scrollLeft !== left) element.scrollLeft = left;
+        }
+      } else {
+        const target = Array.from(editor.querySelectorAll<HTMLButtonElement>('button[data-standup-report-id]'))
+          .find(button => button.getAttribute('data-standup-report-id') === focusRequest.memberId);
+        (target ?? editor).focus();
+      }
+    }
     setFocusRequest(null);
   }, [focusRequest]);
   const excludeMember = (memberId: string) => {
-    setFocusRequest({ memberId, excluded: true });
+    const editor = editorRef.current;
+    const controls = Array.from(editor?.querySelectorAll<HTMLButtonElement>('button[data-standup-exclude-id]') ?? []);
+    const activeRow = document.activeElement?.closest('[data-standup-member-id]');
+    const activeControl = activeRow?.querySelector('button[data-standup-exclude-id]');
+    const activeIndex = controls.findIndex(button => button === activeControl && button.getAttribute('data-standup-exclude-id') === memberId);
+    const index = activeIndex >= 0 ? activeIndex : controls.findIndex(button => button.getAttribute('data-standup-exclude-id') === memberId);
+    const candidates = index >= 0 ? [...controls.slice(index + 1), ...controls.slice(0, index).reverse()] : controls;
+    const memberIds = [...new Set(candidates.map(button => button.getAttribute('data-standup-exclude-id')!)
+      .filter(id => id !== memberId))];
+    const scroll: Extract<QueueFocusRequest, { kind: 'exclude' }>['scroll'] = [];
+    for (let element: HTMLElement | null = editor; element; element = element.parentElement) {
+      scroll.push({ element, top: element.scrollTop, left: element.scrollLeft });
+    }
+    setFocusRequest({ kind: 'exclude', memberIds, scroll });
     onExclude(memberId);
   };
   const restoreMember = (memberId: string) => {
-    setFocusRequest({ memberId, excluded: false });
+    setFocusRequest({ kind: 'restore', memberId });
     onRestore(memberId);
   };
   const byMember = sortMode === 'by_member';
@@ -190,7 +223,7 @@ export function StandupQueueEditor({ groups, sortMode, onReorder, excludedMember
       }}
       onDragStart={({ active }) => setActiveDrag(dragData(active.data.current))}
       onDragEnd={finishDrag} onDragCancel={() => setActiveDrag(null)}>
-      <div ref={editorRef} tabIndex={-1} data-standup-dragging={activeDrag ? 'true' : undefined} className="min-w-0 space-y-3">
+      <div ref={editorRef} tabIndex={-1} data-standup-dragging={activeDrag ? 'true' : undefined} className="min-w-0 space-y-3 [overflow-anchor:none]">
         {groups.length > 0 ? (
           <SortableContext items={rootIds} strategy={verticalListSortingStrategy}>
             <div role="list" aria-label={label ?? t('standup.settings.preview')} className="space-y-2">

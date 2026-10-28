@@ -1,3 +1,4 @@
+import { sprintSummary } from '@/lib/sprintLifecycle';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useState, useRef, useMemo, useCallback, useEffect, type ReactNode } from 'react';
@@ -182,7 +183,7 @@ const BoardView = () => {
 
   const scopeSprintId = sprintActive && currentSprint ? currentSprint.id : null;
   const filteredTasks = useMemo(() => scopeSprintId
-    ? unscopedTasks.filter(t => t.sprintId === scopeSprintId || !t.sprintId)
+    ? unscopedTasks.filter(t => t.sprintId === scopeSprintId)
     : unscopedTasks,
   [unscopedTasks, scopeSprintId]);
   const sortedTasks = useMemo(() => sortBoardTasks(filteredTasks, sort), [filteredTasks, sort]);
@@ -317,7 +318,8 @@ const BoardView = () => {
 
   const doneIds = useMemo(() => statuses.filter(s => s.isDone).map(s => s.id), [statuses]);
   const sprintTasks = useMemo(() => currentSprint ? allTasks.filter(t => t.sprintId === currentSprint.id) : [], [allTasks, currentSprint]);
-  const completedCount = useMemo(() => sprintTasks.filter(t => doneIds.includes(t.statusId)).length, [sprintTasks, doneIds]);
+  const completedCount = useMemo(() => sprintSummary(sprintTasks, statuses).completed.length, [sprintTasks, statuses]);
+  const cancelledCount = useMemo(() => sprintSummary(sprintTasks, statuses).cancelled.length, [sprintTasks, statuses]);
   const pendingTasks = useMemo(() => sprintTasks.filter(t => !doneIds.includes(t.statusId)), [sprintTasks, doneIds]);
 
   const handleStartNewSprint = sprintFlow.openStart;
@@ -533,6 +535,9 @@ const BoardView = () => {
           currentSprint={currentSprint}
           completedCount={completedCount}
           pendingTasks={pendingTasks}
+          cancelledCount={cancelledCount}
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           onClose={sprintFlow.closeComplete}
           onComplete={action => void sprintFlow.complete(action)}
         />
@@ -541,11 +546,14 @@ const BoardView = () => {
       {/* Start Sprint modal */}
       {sprintFlow.showStartModal && (
         <SprintStartModal
+          busy={sprintFlow.busy}
+          retryOnly={sprintFlow.retryOnly}
           defaultName={getDefaultSprintName()}
           onClose={sprintFlow.cancelStart}
           onConfirm={(name, includeBacklog) => void sprintFlow.confirmStart(name, includeBacklog)}
           carryOverCount={sprintFlow.carryOverTaskIds.length}
-          backlogCount={sprintBacklogTaskIds(allTasks, statuses).length}
+          excludedCarryCount={sprintFlow.skippedCarryCount}
+          backlogCount={sprintBacklogTaskIds(allTasks, statuses, allProjects, sprintFlow.carryOverTaskIds).length}
         />
       )}
 
