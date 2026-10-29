@@ -9,7 +9,7 @@ import type { AuthCtx, Env } from '../src/env';
 
 type Row = Record<string, any>;
 const databases: DatabaseSync[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.unstubAllGlobals(); });
+afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 function fixture() {
   const db = new DatabaseSync(':memory:'); databases.push(db);
   db.exec(readFileSync(path.resolve(__dirname, '../schema.sql'), 'utf8'));
@@ -132,6 +132,53 @@ describe('cloud slack-notify', () => {
     await runSlackDigest(f.env, { waitUntil: () => {} } as never);
     expect(f.posts()).toEqual([]);
     expect(f.calls.some(call => call.method === 'users.lookupByEmail')).toBe(false);
+  });
+  it.each(['daily', 'weekly'])('excludes cancelled tasks from %s completion and open-work report counts', async reportType => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-28T04:00:00Z'));
+    const f = fixture();
+    f.db.exec(`INSERT INTO statuses(id,workspace_id,name,is_done,is_cancelled) VALUES
+      ('done','one','Done',1,0),('cancelled','one','Cancelled Review',1,1);
+      INSERT INTO tasks(id,workspace_id,task_key,project_id,title,status_id,priority,creator_id,assignee_id,due_date,completed_at) VALUES
+      ('done-task','one','EX-2','project','Completed work','done','medium','actor','assignee','2026-10-27','2026-10-28T01:00:00Z'),
+      ('cancelled-task','one','EX-3','project','Cancelled overdue work','cancelled','medium','actor','assignee','2026-10-27','2026-10-28T01:00:00Z'),
+      ('cancelled-next','one','EX-4','project','Cancelled upcoming work','cancelled','medium','actor','assignee','2026-10-29','2026-10-28T01:00:00Z'),
+      ('open-overdue','one','EX-5','project','Open overdue work','todo','medium','actor','assignee','2026-10-27',NULL),
+      ('open-next','one','EX-6','project','Open upcoming work','todo','medium','actor','assignee','2026-10-29',NULL);`);
+    f.db.prepare(`INSERT INTO user_report_configs(id,workspace_id,user_id,report_type,enabled,hour,weekday,template_key,custom_template,send_target,send_channel)
+      VALUES('report','one','assignee',?,1,12,3,'custom',?,'channel','C0REPORT')`).run(reportType,
+      'done={{completed_count}};open={{in_progress_count}};late={{overdue_count}}\n{{completed_tasks}}\n{{in_progress_tasks}}\n{{upcoming_deadlines}}');
+    await runSlackDigest(f.env, { waitUntil: () => {} } as never);
+    const posts = f.posts();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].channel).toBe('C0REPORT');
+    const body = f.text(posts[0]);
+    expect(body).toContain('done=1;open=3;late=1');
+    expect(body).toContain('Completed work');
+    expect(body).toContain('Open overdue work');
+    expect(body).toContain('Open upcoming work');
+    expect(body).not.toContain('Cancelled');
+  });
+  it('does not remind reviewers about terminal review-labelled statuses', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-28T04:00:00Z'));
+    const f = fixture();
+    f.db.exec(`INSERT INTO statuses(id,workspace_id,name,is_done,is_cancelled) VALUES
+      ('done-review','one','Review completed',1,0),('cancelled','one','Cancelled Review',1,1),('review','one','Review',0,0);
+      UPDATE tasks SET status_id='review';
+      INSERT INTO tasks(id,workspace_id,task_key,project_id,title,status_id,priority,creator_id,reviewer_id) VALUES
+      ('closed-review','one','EX-2','project','Completed review work','done-review','medium','actor','assignee'),
+      ('cancelled-review','one','EX-3','project','Cancelled review work','cancelled','medium','actor','assignee'),
+      ('open-review','one','EX-4','project','Open review work','review','medium','actor','assignee');
+      INSERT INTO user_notification_preferences(workspace_id,user_id,enabled,frequency,hour,include_assigned,include_review)
+      VALUES('one','assignee',1,'daily',12,0,1);`);
+    await runSlackDigest(f.env, { waitUntil: () => {} } as never);
+    const posts = f.posts();
+    expect(posts).toHaveLength(1);
+    const body = f.text(posts[0]);
+    expect(body).toContain('Open review work');
+    expect(body).not.toContain('Completed review work');
+    expect(body).not.toContain('Cancelled review work');
   });
   it('returns a generic error instead of internal details', async () => {
     const f = fixture();

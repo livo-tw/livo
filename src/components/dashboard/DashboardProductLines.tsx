@@ -6,6 +6,7 @@ interface LineItem {
   icon?: string;
   total: number;
   done: number;
+  cancelled: number;
   active: number;
   pct: number;
 }
@@ -27,7 +28,7 @@ const DashboardProductLines = ({ lineData }: DashboardProductLinesProps) => {
               <span className="text-base md:text-lg">{line.icon}</span>
               <span className="text-[13px] md:text-sm font-semibold text-foreground">{line.name}</span>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-2 md:mb-3 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2 md:mb-3 text-center">
               <div>
                 <div className="text-base md:text-lg font-bold text-foreground">{line.total}</div>
                 <div className="text-[13px] text-muted-foreground">{t('dashboard.totalCount')}</div>
@@ -39,6 +40,10 @@ const DashboardProductLines = ({ lineData }: DashboardProductLinesProps) => {
               <div>
                 <div className="text-base md:text-lg font-bold text-emerald-500">{line.done}</div>
                 <div className="text-[13px] text-muted-foreground">{t('dashboard.completed')}</div>
+              </div>
+              <div>
+                <div className="text-base md:text-lg font-bold text-muted-foreground">{line.cancelled}</div>
+                <div className="text-[13px] text-muted-foreground">{t('dashboard.cancelled')}</div>
               </div>
             </div>
             <div className="w-full bg-border rounded-full h-2 mb-1">

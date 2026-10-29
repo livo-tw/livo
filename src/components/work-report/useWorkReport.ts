@@ -8,6 +8,7 @@ import { format, addDays, isWithinInterval, parseISO } from 'date-fns';
 import { WorkReport, ReportType, getPeriodRange, periodTitle } from './types';
 import i18n from '@/i18n';
 import { copyText } from '@/lib/clipboard';
+import { isCompletedStatus, isTerminalStatus } from '@/lib/taskCompletion';
 
 export function useWorkReport() {
   const { allTasks, statuses } = useTaskContext();
@@ -35,7 +36,8 @@ export function useWorkReport() {
 
   const generateContent = useCallback((customTemplate?: string) => {
     const today = new Date();
-    const done = statuses.filter(s => s.isDone).map(s => s.id);
+    const done = statuses.filter(isCompletedStatus).map(s => s.id);
+    const terminal = statuses.filter(isTerminalStatus).map(s => s.id);
     const myTasks = allTasks.filter(t => t.assigneeId === currentMemberId);
 
     const inPeriod = (dateStr?: string) => {
@@ -48,7 +50,7 @@ export function useWorkReport() {
     const completedInPeriod = myTasks.filter(t =>
       done.includes(t.statusId) && inPeriod(t.completedAt)
     );
-    const inProgress = myTasks.filter(t => !done.includes(t.statusId));
+    const inProgress = myTasks.filter(t => !terminal.includes(t.statusId));
     const overdue = inProgress.filter(t => {
       if (!t.dueDate) return false;
       try { return parseISO(t.dueDate) < today; } catch { return false; }
@@ -290,13 +292,14 @@ export function useWorkReport() {
     });
   };
 
-  const done = statuses.filter(s => s.isDone).map(s => s.id);
+  const done = statuses.filter(isCompletedStatus).map(s => s.id);
+  const terminal = statuses.filter(isTerminalStatus).map(s => s.id);
   const myTasks = allTasks.filter(t => t.assigneeId === currentMemberId);
   const today = new Date();
   const completedCount = myTasks.filter(t => done.includes(t.statusId)).length;
-  const inProgressCount = myTasks.filter(t => !done.includes(t.statusId)).length;
+  const inProgressCount = myTasks.filter(t => !terminal.includes(t.statusId)).length;
   const overdueCount = myTasks.filter(t => {
-    if (done.includes(t.statusId) || !t.dueDate) return false;
+    if (terminal.includes(t.statusId) || !t.dueDate) return false;
     try { return parseISO(t.dueDate) < today; } catch { return false; }
   }).length;
 

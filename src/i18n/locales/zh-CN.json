@@ -2409,6 +2409,7 @@
     "noTransitionRecords": "暂无状态流转记录",
     "inProgress": "进行中",
     "completed": "已完成",
+    "cancelled": "已取消",
     "totalCount": "总数",
     "noSprintHistory": "尚无冲刺历史记录",
     "dwellDays": "{{days}}天",

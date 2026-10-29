@@ -11,6 +11,7 @@ import {
 } from 'date-fns';
 import { dateFnsLocale } from '@/lib/dateLabels';
 import i18n from '@/i18n';
+import { isCompletedStatus, isTerminalStatus } from '@/lib/taskCompletion';
 
 export type AutoReportType = 'daily' | 'weekly';
 
@@ -50,7 +51,8 @@ export function generateReportContent(opts: GenerateReportOptions): GeneratedRep
       ? format(today, 'yyyy/MM/dd (EEE)', { locale: dateFnsLocale() })
       : `${format(start, 'yyyy/MM/dd')} ~ ${format(end, 'MM/dd')}`;
 
-  const doneIds = statuses.filter(s => s.isDone).map(s => s.id);
+  const doneIds = statuses.filter(isCompletedStatus).map(s => s.id);
+  const terminalIds = statuses.filter(isTerminalStatus).map(s => s.id);
   const myTasks = tasks.filter(t => t.assigneeId === memberId);
 
   const inPeriod = (dateStr?: string) => {
@@ -65,7 +67,7 @@ export function generateReportContent(opts: GenerateReportOptions): GeneratedRep
   const completedInPeriod = myTasks.filter(
     t => doneIds.includes(t.statusId) && inPeriod(t.completedAt),
   );
-  const inProgressAll = myTasks.filter(t => !doneIds.includes(t.statusId));
+  const inProgressAll = myTasks.filter(t => !terminalIds.includes(t.statusId));
   const overdue = inProgressAll.filter(t => {
     if (!t.dueDate) return false;
     try {

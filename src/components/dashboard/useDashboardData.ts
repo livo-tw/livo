@@ -6,6 +6,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { sortUsersByDept } from '@/lib/department';
+import { isCompletedStatus, isTerminalStatus, summarizeTaskCompletion } from '@/lib/taskCompletion';
 
 function parseDateTime(value?: string | null): number {
   if (!value) return Number.NaN;
@@ -59,15 +60,16 @@ export function useDashboardData() {
 
   const totalTasks = allTasks.length;
 
-  const doneStatusIds = useMemo(() =>
-    statuses.filter(s => s.isDone).map(s => s.id),
+  const terminalStatusIds = useMemo(() =>
+    statuses.filter(isTerminalStatus).map(s => s.id),
   [statuses]);
+  const completedStatusIds = useMemo(() => statuses.filter(isCompletedStatus).map(s => s.id), [statuses]);
 
   const overdueTasks = useMemo(() =>
     allTasks.filter(t =>
-      t.dueDate && new Date(t.dueDate) < now && !t.completedAt && !doneStatusIds.includes(t.statusId)
+      t.dueDate && new Date(t.dueDate) < now && !t.completedAt && !terminalStatusIds.includes(t.statusId)
     ).length,
-  [allTasks, doneStatusIds]);
+  [allTasks, terminalStatusIds]);
 
   const statusData = useMemo(() =>
     statuses.map(s => {
@@ -147,12 +149,12 @@ export function useDashboardData() {
     });
     const firstStatus = statuses.find(s => s.sortOrder === Math.min(...statuses.map(st => st.sortOrder)));
     const inProgressStatus = statuses.find(s => s.autoStart);
-    const doneStatus = statuses.find(s => s.isDone);
+    const doneStatus = statuses.find(isCompletedStatus);
     allTasks.forEach(task => {
       if (taskLogMap.has(task.id)) return;
       const createdTs = parseDateTime(task.createdAt);
       const startedTs = parseDateTime(task.startedAt);
-      const completedTs = parseDateTime(task.completedAt);
+      const completedTs = isCompletedStatus(statusMap.get(task.statusId)) ? parseDateTime(task.completedAt) : Number.NaN;
       if (firstStatus && inProgressStatus && Number.isFinite(createdTs) && Number.isFinite(startedTs)) {
         const key = `${firstStatus.id}->${inProgressStatus.id}`;
         if (!transitions[key]) transitions[key] = { days: [], fromId: firstStatus.id, toId: inProgressStatus.id };
@@ -186,14 +188,14 @@ export function useDashboardData() {
 
   const teamData = useMemo(() => {
     const sortedStatuses = [...statuses].sort((a, b) => a.sortOrder - b.sortOrder);
-    const inProgressIds = sortedStatuses.filter(s => !s.isDone && s.autoStart).map(s => s.id);
-    const activeStatusIds = inProgressIds.length > 0 ? inProgressIds : sortedStatuses.filter((s, i) => !s.isDone && i > 0).map(s => s.id);
+    const inProgressIds = sortedStatuses.filter(s => !isTerminalStatus(s) && s.autoStart).map(s => s.id);
+    const activeStatusIds = inProgressIds.length > 0 ? inProgressIds : sortedStatuses.filter((s, i) => !isTerminalStatus(s) && i > 0).map(s => s.id);
     const maxInProgress = Math.max(...users.map(u => allTasks.filter(t => t.assigneeId === u.id && activeStatusIds.includes(t.statusId)).length), 1);
     const result = users.filter(u => u.isActive).map(u => {
       const userTasks = allTasks.filter(t => t.assigneeId === u.id);
       const inProgress = userTasks.filter(t => activeStatusIds.includes(t.statusId)).length;
-      const overdue = userTasks.filter(t => t.dueDate && new Date(t.dueDate) < now && !t.completedAt && !doneStatusIds.includes(t.statusId)).length;
-      const completed = userTasks.filter(t => t.completedAt);
+      const overdue = userTasks.filter(t => t.dueDate && new Date(t.dueDate) < now && !t.completedAt && !terminalStatusIds.includes(t.statusId)).length;
+      const completed = userTasks.filter(t => completedStatusIds.includes(t.statusId));
       // Only spans that make sense count: an imported task can show a finish before its creation.
       const averageDays = (spans: [string | undefined, string | undefined][]) => {
         const days = spans.map(([from, to]) => (parseDateTime(to) - parseDateTime(from)) / msPerDay).filter(value => Number.isFinite(value) && value >= 0);
@@ -210,27 +212,23 @@ export function useDashboardData() {
       };
     });
     return sortUsersByDept(result);
-  }, [allTasks, users, statuses, nowTs, msPerDay]);
+  }, [allTasks, users, statuses, nowTs, msPerDay, terminalStatusIds, completedStatusIds]);
 
   const lineData = useMemo(() =>
     productLines.map(line => {
       const lineProjectIds = allProjects.filter(p => p.lineId === line.id).map(p => p.id);
       const lineTasks = allTasks.filter(t => lineProjectIds.includes(t.projectId));
-      const done = lineTasks.filter(t => doneStatusIds.includes(t.statusId)).length;
-      const active = lineTasks.length - done;
-      return { ...line, total: lineTasks.length, done, active, pct: lineTasks.length > 0 ? Math.round((done / lineTasks.length) * 100) : 0 };
+      return { ...line, ...summarizeTaskCompletion(lineTasks, statuses) };
     }),
-  [allTasks, allProjects, productLines, doneStatusIds]);
+  [allTasks, allProjects, productLines, statuses]);
 
   const projectProgressData = useMemo(() =>
     allProjects.map(project => {
       const projectTasks = allTasks.filter(t => t.projectId === project.id);
-      const done = projectTasks.filter(t => doneStatusIds.includes(t.statusId)).length;
-      const inProgress = projectTasks.length - done;
-      const pct = projectTasks.length > 0 ? Math.round((done / projectTasks.length) * 100) : 0;
-      return { ...project, total: projectTasks.length, done, inProgress, pct };
+      const { active, ...summary } = summarizeTaskCompletion(projectTasks, statuses);
+      return { ...project, ...summary, inProgress: active };
     }).sort((a, b) => b.pct - a.pct || b.total - a.total),
-  [allProjects, allTasks, doneStatusIds]);
+  [allProjects, allTasks, statuses]);
 
   const completedSprints = sprints.filter(s => !s.isActive);
 

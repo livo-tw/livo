@@ -6,11 +6,12 @@ import { Users } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { sortUsersByDept } from '@/lib/department';
 import { useTranslation } from 'react-i18next';
+import { isCompletedStatus } from '@/lib/taskCompletion';
 
 const MemberListView = () => {
   const { t } = useTranslation();
   const { users } = useMemberContext();
-  const { allTasks, comments, statusLogs } = useTaskContext();
+  const { allTasks, comments, statusLogs, statuses } = useTaskContext();
   const { permissions } = useAuthContext();
   const isMobile = useIsMobile();
 
@@ -18,6 +19,7 @@ const MemberListView = () => {
     return <div className="flex-1 flex items-center justify-center text-muted-foreground">{t('error.noPermission')}</div>;
   }
 
+  const completedStatusIds = new Set(statuses.filter(isCompletedStatus).map(status => status.id));
   const memberStats = sortUsersByDept(users).map(user => {
     const assignedTasks = allTasks.filter(t => t.assigneeId === user.id);
     const userComments = comments.filter(c => c.userId === user.id);
@@ -29,7 +31,7 @@ const MemberListView = () => {
     return {
       user,
       assignedCount: assignedTasks.length,
-      completedCount: assignedTasks.filter(t => t.completedAt).length,
+      completedCount: assignedTasks.filter(t => completedStatusIds.has(t.statusId)).length,
       commentCount: userComments.length,
       lastActivity,
     };

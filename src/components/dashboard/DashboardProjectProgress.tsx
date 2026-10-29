@@ -8,6 +8,7 @@ interface ProjectItem {
   color: string;
   total: number;
   done: number;
+  cancelled: number;
   inProgress: number;
   pct: number;
 }
@@ -37,7 +38,7 @@ const DashboardProjectProgress = ({ projectProgressData }: DashboardProjectProgr
               <div className="w-full bg-border rounded-full h-2 mb-2 md:mb-3">
                 <div className="h-2 rounded-full transition-all" style={{ width: `${project.pct}%`, backgroundColor: getProjectColor(project) }} />
               </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                 <div>
                   <div className="text-[13px] md:text-sm font-semibold text-foreground">{project.total}</div>
                   <div className="text-[13px] text-muted-foreground">{t('dashboard.totalTasks')}</div>
@@ -49,6 +50,10 @@ const DashboardProjectProgress = ({ projectProgressData }: DashboardProjectProgr
                 <div>
                   <div className="text-[13px] md:text-sm font-semibold text-foreground">{project.done}</div>
                   <div className="text-[13px] text-muted-foreground">{t('dashboard.completed')}</div>
+                </div>
+                <div>
+                  <div className="text-[13px] md:text-sm font-semibold text-muted-foreground">{project.cancelled}</div>
+                  <div className="text-[13px] text-muted-foreground">{t('dashboard.cancelled')}</div>
                 </div>
               </div>
             </div>

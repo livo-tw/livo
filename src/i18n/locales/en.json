@@ -2471,6 +2471,7 @@
     "noTransitionRecords": "No status transition records yet",
     "inProgress": "In Progress",
     "completed": "Completed",
+    "cancelled": "Cancelled",
     "totalCount": "Total",
     "noSprintHistory": "No sprint history yet",
     "dwellDays": "{{days}}d",

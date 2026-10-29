@@ -14,6 +14,7 @@ import { useConfirmDialog } from '@/components/ConfirmDialog';
 import type { AccountCredential } from '@/components/AccountCredentialsDialog';
 import { callFunction, DEMO_BLOCKED } from '@/lib/callFunction';
 import { functionErrorCode } from '@/lib/functionError';
+import { isCompletedStatus } from '@/lib/taskCompletion';
 
 const COLORS = ['#FF5630', '#FF8B00', '#36B37E', '#00B8D9', '#6554C0', '#0065FF', '#6B778C', '#172B4D'];
 
@@ -86,7 +87,7 @@ export function useMemberManage() {
     fetchLogs();
   }, []);
 
-  const doneStatusIds = useMemo(() => new Set(statuses.filter(s => s.isDone).map(s => s.id)), [statuses]);
+  const doneStatusIds = useMemo(() => new Set(statuses.filter(isCompletedStatus).map(s => s.id)), [statuses]);
 
   const memberStats = useMemo(() => {
     return orderedUsers.map(user => {

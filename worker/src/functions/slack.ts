@@ -440,14 +440,14 @@ async function getAssignedTasks(
   env: Env,
   ws: string,
   memberId: string,
-  doneStatusIds: string[]
+  terminalStatusIds: string[]
 ): Promise<TaskRow[]> {
   let sql =
     'SELECT task_key, title, priority, status_id, project_id, due_date FROM tasks WHERE workspace_id = ? AND assignee_id = ?';
   const binds: unknown[] = [ws, memberId];
-  if (doneStatusIds.length > 0) {
-    sql += ` AND status_id NOT IN (${doneStatusIds.map(() => '?').join(',')})`;
-    binds.push(...doneStatusIds);
+  if (terminalStatusIds.length > 0) {
+    sql += ` AND status_id NOT IN (${terminalStatusIds.map(() => '?').join(',')})`;
+    binds.push(...terminalStatusIds);
   }
   return queryTaskRows(env, sql, binds);
 }
@@ -754,7 +754,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
       // Load lookup data (workspace-scoped)
       const [statusRes, projectRes, memberRes] = await Promise.all([
         env.DB
-          .prepare('SELECT id, name, is_done FROM statuses WHERE workspace_id = ?')
+          .prepare('SELECT id, name, is_done, is_cancelled FROM statuses WHERE workspace_id = ?')
           .bind(ws)
           .all<Record<string, unknown>>(),
         env.DB
@@ -768,7 +768,8 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
       ]);
 
       const statusMap = new Map<string, string>();
-      const doneStatusIds: string[] = [];
+      const completedStatusIds: string[] = [];
+      const terminalStatusIds: string[] = [];
       const reviewStatusIds: string[] = [];
       for (const raw of statusRes.results || []) {
         const s = rowToWire(raw, metaFor('statuses'));
@@ -776,9 +777,11 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
         const name = typeof s.name === 'string' ? s.name : '';
         if (!id) continue;
         statusMap.set(id, name);
-        if (s.is_done) doneStatusIds.push(id);
+        const isTerminal = s.is_done || s.is_cancelled;
+        if (s.is_done && !s.is_cancelled) completedStatusIds.push(id);
+        if (isTerminal) terminalStatusIds.push(id);
         // "驗收" or "Review" status for review tasks
-        if (name.includes('驗收') || name.toLowerCase().includes('review')) {
+        if (!isTerminal && (name.includes('驗收') || name.toLowerCase().includes('review'))) {
           reviewStatusIds.push(id);
         }
       }
@@ -807,7 +810,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
         // Get tasks
         const includeAssigned = asBool(pref.include_assigned, true);
         const includeReview = asBool(pref.include_review, true);
-        const assignedRaw = includeAssigned ? await getAssignedTasks(env, ws, userId, doneStatusIds) : [];
+        const assignedRaw = includeAssigned ? await getAssignedTasks(env, ws, userId, terminalStatusIds) : [];
         const reviewRaw = includeReview ? await getReviewTasks(env, ws, userId, reviewStatusIds) : [];
         const assigned = enrichTasks(assignedRaw, statusMap, projectMap);
         const review = enrichTasks(reviewRaw, statusMap, projectMap);
@@ -873,8 +876,8 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
         const upcoming: TaskRow[] = [];
 
         for (const t of allTasks) {
-          const isDone = t.status_id !== null && doneStatusIds.includes(t.status_id);
-          if (isDone) {
+          const isCompleted = t.status_id !== null && completedStatusIds.includes(t.status_id);
+          if (isCompleted) {
             // Check if completed recently (daily: today, weekly: this week)
             if (t.completed_at) {
               const completedDate = t.completed_at.split('T')[0] as string;
@@ -890,6 +893,7 @@ export async function runSlackDigest(env: Env, _ctx: Ctx): Promise<void> {
             continue;
           }
 
+          if (t.status_id !== null && terminalStatusIds.includes(t.status_id)) continue;
           inProgress.push(t);
 
           if (t.due_date) {
