@@ -383,7 +383,9 @@ def apply(client, cfg, initial, progress=None):
             # is unknown, never proof that no rows changed.
             attempted = True
             progress.update(dml_attempted=True, deleted_rows=deleted, batches=batches,
-                            status="running", result_unknown_until_readback=True)
+                            status="running", result_unknown=True, result_unknown_until_readback=True,
+                            pending_batch={"number": batches + 1, "source_name": item["source_name"],
+                                           "limit": min(cfg["batch_rows"], remaining)})
             write_json(cfg["status_path"], progress)
             result = client.json_sql(delete_batch_sql(cfg, item, initial["cutoff_utc"],
                                                        min(cfg["batch_rows"], remaining)),
@@ -394,6 +396,12 @@ def apply(client, cfg, initial, progress=None):
             deleted += count
             batches += 1
             progress.update(deleted_rows=deleted, batches=batches)
+            # Clear pending only after both the COMMIT acknowledgement and its
+            # bounded count are valid. Persist the ACK before any later guard.
+            acknowledged = {**progress, "pending_batch": None, "result_unknown": False,
+                            "result_unknown_until_readback": False}
+            write_json(cfg["status_path"], acknowledged)
+            progress.update(acknowledged)
             if count:
                 touched.add(item["table_name"])
                 active.append(item)
@@ -417,12 +425,42 @@ def apply(client, cfg, initial, progress=None):
                 "deleted_rows": deleted, "batches": batches, "max_batch_rows": cfg["batch_rows"],
                 "expired_remaining_bounded": expired_remaining, "vacuumed_tables": len(vacuumed),
                 "physical_compaction_performed": False, "dml_attempted": attempted,
+                "pending_batch": None, "result_unknown": False,
                 "result_unknown_until_readback": False, "preview_after": after}
     except Refused as e:
         return {"status": "partial" if attempted else "refused", "reason": e.code,
                 "deleted_rows": deleted, "batches": batches, "dml_attempted": attempted,
-                "result_unknown": attempted, "expired_remaining_bounded": None,
+                "pending_batch": progress.get("pending_batch"),
+                "result_unknown": progress.get("pending_batch") is not None,
+                "result_unknown_until_readback": progress.get("pending_batch") is not None,
+                "expired_remaining_bounded": None,
                 "physical_compaction_performed": False, **e.metadata}
+
+
+def unresolved_evidence(path):
+    """Inspect metadata only; never clear prior unknown results or an ops marker."""
+    p = external_path(path)
+    marker = p.with_name("manual-result-unknown.json")
+    evidence = {"unknown_marker_present": marker.exists() or marker.is_symlink()}
+    try:
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return evidence if evidence["unknown_marker_present"] else None
+    with os.fdopen(fd, "r", encoding="utf-8") as f:
+        st = os.fstat(f.fileno())
+        if st.st_uid != 0 or not stat.S_ISREG(st.st_mode) or stat.S_IMODE(st.st_mode) & 0o077:
+            raise Refused("unsafe_previous_status")
+        raw = f.read()
+    try:
+        previous = json.loads(raw)
+        if not isinstance(previous, dict):
+            raise ValueError()
+    except ValueError:
+        raise Refused("invalid_previous_status") from None
+    if (previous.get("pending_batch") is not None or previous.get("result_unknown")
+            or previous.get("result_unknown_until_readback")):
+        evidence["previous_status_sha256"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return evidence if len(evidence) > 1 or evidence["unknown_marker_present"] else None
 
 
 def last_success(path):
@@ -461,8 +499,18 @@ def main(argv=None):
         return self_test()
     result = {"schema_version": 1, "started_at_utc": now_utc(), "dml_attempted": False}
     status_path = args.status_path or DEFAULTS["status_path"]
+    with contextlib.ExitStack() as locks:
+        return run_main(args, result, status_path, locks)
+
+
+def run_main(args, result, status_path, locks):
+    # No status mutation is allowed until this invocation owns the instance
+    # lock. Even invalid CLI/config errors can race a valid run's next batch.
+    preserve_status = True
+    root_ok = False
     try:
         root_required()
+        root_ok = True
         if not args.config:
             raise Refused("config_missing")
         command = args.command or ("run" if args.scheduled else "preview")
@@ -479,6 +527,13 @@ def main(argv=None):
                 if getattr(args, key):
                     cfg[key] = getattr(args, key)
             validate_values(cfg, config_path)
+            status_path = cfg["status_path"]
+            preserve_status = True
+            locks.enter_context(single_instance(cfg["lock_path"]))
+            evidence = unresolved_evidence(status_path)
+            if evidence:
+                raise Refused("unresolved_previous_result", **evidence)
+            preserve_status = False
             client = Docker(cfg)
             client.inspect()
             cfg["binding"] = binding_from(client.metadata())
@@ -493,29 +548,36 @@ def main(argv=None):
             if saved_success:
                 result["last_success_at_utc"] = saved_success
             wants_apply = command == "run" and (args.apply or args.scheduled)
+            preserve_status = True
+            locks.enter_context(single_instance(cfg["lock_path"]))
+            evidence = unresolved_evidence(status_path)
+            if evidence:
+                raise Refused("unresolved_previous_result", **evidence)
+            preserve_status = False
             if wants_apply and not cfg["enabled"]:
                 raise Refused("disabled")
-            with single_instance(cfg["lock_path"]):
-                if Path(cfg["maintenance_inhibit_path"]).exists():
-                    raise Refused("maintenance_inhibited")
-                client = Docker(cfg)
-                initial = preview(client, cfg)
-                result.update(preview=initial, enabled=cfg["enabled"])
-                if wants_apply:
-                    fresh(client, cfg, start_lsn=initial["wal_lsn"], check_space=True)
-                    write_json(status_path, {**result, "status": "running", "result_unknown_until_readback": True})
-                    result.update(apply(client, cfg, initial, result))
-                else:
-                    result.update(status="preview", dml_attempted=False)
+            if Path(cfg["maintenance_inhibit_path"]).exists():
+                raise Refused("maintenance_inhibited")
+            client = Docker(cfg)
+            initial = preview(client, cfg)
+            result.update(preview=initial, enabled=cfg["enabled"])
+            if wants_apply:
+                fresh(client, cfg, start_lsn=initial["wal_lsn"], check_space=True)
+                result.update(status="running", pending_batch=None, result_unknown=False,
+                              result_unknown_until_readback=False)
+                write_json(status_path, result)
+                result.update(apply(client, cfg, initial, result))
+            else:
+                result.update(status="preview", dml_attempted=False)
     except Refused as e:
         result.update(status="partial" if result.get("dml_attempted") else "refused",
-                      reason=e.code, result_unknown=bool(result.get("dml_attempted")), **e.metadata)
+                      reason=e.code, result_unknown=result.get("pending_batch") is not None, **e.metadata)
     except KeyboardInterrupt:
         result.update(status="partial", reason="interrupted_result_requires_readback", result_unknown=True)
     except (OSError, ValueError, KeyError, TypeError) as e:
         result.update(status="partial" if result.get("dml_attempted") else "refused",
                       reason="invalid_runtime_metadata", exception_type=type(e).__name__,
-                      result_unknown=bool(result.get("dml_attempted")))
+                      result_unknown=result.get("pending_batch") is not None)
     result["completed_at_utc"] = now_utc()
     previous_success = result.get("last_success_at_utc") or last_success(status_path)
     if previous_success:
@@ -523,8 +585,18 @@ def main(argv=None):
     if result.get("status") == "completed":
         result["last_success_at_utc"] = result["completed_at_utc"]
     try:
-        write_json(status_path, result)
-    except (OSError, Refused):
+        # Failed config/lock acquisition and preview must not erase unresolved
+        # durable evidence, including the legacy flags emitted by older helpers.
+        if not root_ok:
+            preserve_status = True
+        elif not preserve_status and not result.get("dml_attempted"):
+            preserve_status = bool(unresolved_evidence(status_path))
+        if preserve_status:
+            result["status_preserved"] = True
+        else:
+            write_json(status_path, result)
+    except (OSError, ValueError, Refused):
+        result["status_preserved"] = True
         if previous_success:
             result["last_success_at_utc"] = previous_success
         else:
@@ -697,20 +769,75 @@ def self_test():
             self.assertEqual(result["batches"], 1)
             self.assertTrue(result["result_unknown"])
 
-        def smoke(self, argv, cfg, client=None, initial=None, disk=None):
+        def test_ack_is_durable_before_normal_guard(self):
+            for guard in ("wal_growth_gate", "wal_size_gate", "insufficient_free_space", "maintenance_inhibited"):
+                cfg = config()
+                cfg["batch_rows"] = 1
+                client = mock.Mock()
+                client.remaining.return_value = 100
+                client.json_sql.return_value = {"deleted_rows": 1}
+                snapshots = []
+                progress = {}
+                with mock.patch.object(module, "fresh", side_effect=[None, Refused(guard)]), mock.patch.object(
+                        module, "write_json", side_effect=lambda p, r: snapshots.append(copy.deepcopy(r))):
+                    result = apply(client, cfg, {"wal_lsn": "0/0", "cutoff_utc": "2026-01-01T00:00:00"}, progress)
+                self.assertEqual((result["status"], result["reason"], result["deleted_rows"], result["batches"]),
+                                 ("partial", guard, 1, 1))
+                self.assertFalse(result["result_unknown"])
+                self.assertFalse(result["result_unknown_until_readback"])
+                self.assertIsNone(result["pending_batch"])
+                self.assertEqual(snapshots[0]["pending_batch"]["number"], 1)
+                self.assertIsNone(snapshots[1]["pending_batch"])
+                self.assertEqual(snapshots[1]["deleted_rows"], 1)
+                self.assertFalse(snapshots[1]["result_unknown_until_readback"])
+
+        def test_invalid_ack_and_sql_failure_remain_unknown(self):
+            for response in ({"deleted_rows": "1"}, {}, Refused("postgres_command_failed")):
+                client = mock.Mock()
+                client.remaining.return_value = 100
+                if isinstance(response, Exception):
+                    client.json_sql.side_effect = response
+                else:
+                    client.json_sql.return_value = response
+                progress = {}
+                with mock.patch.object(module, "fresh"), mock.patch.object(module, "write_json"):
+                    try:
+                        result = apply(client, config(), {"wal_lsn": "0/0", "cutoff_utc": "2026-01-01T00:00:00"}, progress)
+                    except KeyError:
+                        result = progress
+                self.assertTrue(result["result_unknown"])
+                self.assertIsNotNone(result["pending_batch"])
+                self.assertEqual(result["deleted_rows"], 0)
+
+        def test_ack_persist_failure_remains_pending(self):
+            client = mock.Mock()
+            client.remaining.return_value = 100
+            client.json_sql.return_value = {"deleted_rows": 1}
+            progress = {}
+            with mock.patch.object(module, "fresh"), mock.patch.object(module, "write_json", side_effect=[None, OSError()]):
+                with self.assertRaises(OSError):
+                    apply(client, config(), {"wal_lsn": "0/0", "cutoff_utc": "2026-01-01T00:00:00"}, progress)
+            self.assertEqual(progress["deleted_rows"], 1)
+            self.assertIsNotNone(progress["pending_batch"])
+            self.assertTrue(progress["result_unknown"])
+
+        def smoke(self, argv, cfg, client=None, initial=None, disk=None, load_error=None, lock_error=None):
             disk = disk if disk is not None else {}
             def writer(path, value):
                 disk.clear()
                 disk.update(copy.deepcopy(value))
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(module, "root_required"))
-                stack.enter_context(mock.patch.object(module, "load_config", return_value=cfg))
+                stack.enter_context(mock.patch.object(module, "load_config", return_value=cfg, side_effect=load_error))
                 constructor = stack.enter_context(mock.patch.object(module, "Docker", return_value=client))
-                stack.enter_context(mock.patch.object(module, "single_instance", side_effect=lambda p: contextlib.nullcontext()))
+                stack.enter_context(mock.patch.object(module, "single_instance", side_effect=lock_error or (lambda p: contextlib.nullcontext())))
                 stack.enter_context(mock.patch.object(module, "write_json", side_effect=writer))
                 stack.enter_context(mock.patch.object(module, "last_success", side_effect=lambda p: disk.get("last_success_at_utc")))
                 stack.enter_context(mock.patch.object(module, "preview", return_value=initial or {}))
                 stack.enter_context(mock.patch.object(module, "fresh"))
+                stack.enter_context(mock.patch.object(module, "unresolved_evidence", side_effect=lambda p:
+                    {"previous_status_sha256": "fixture"} if disk.get("pending_batch") is not None
+                    or disk.get("result_unknown") or disk.get("result_unknown_until_readback") else None))
                 output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                 code = main(argv)
                 result = json.loads(output.getvalue())
@@ -731,6 +858,46 @@ def self_test():
                 self.assertEqual(result["status"], "preview")
                 self.assertFalse(result["dml_attempted"])
                 client.json_sql.assert_not_called()
+
+        def test_prelock_failures_never_overwrite_even_known_ack_status(self):
+            cases = [([], None, None),
+                     (["--config", "/fixture/config.json"], Refused("invalid_config_json"), None),
+                     (["--config", "/fixture/config.json"], None, Refused("already_running"))]
+            for argv, load_error, lock_error in cases:
+                disk = {"status": "running", "pending_batch": None, "result_unknown": False,
+                        "result_unknown_until_readback": False, "deleted_rows": 17, "batches": 3}
+                expected = copy.deepcopy(disk)
+                code, result, constructor = self.smoke(argv, config(), disk=disk,
+                                                       load_error=load_error, lock_error=lock_error)
+                self.assertEqual(code, 2)
+                self.assertTrue(result["status_preserved"])
+                self.assertEqual(disk, expected)
+                constructor.assert_not_called()
+
+        def test_unknown_preview_disabled_and_apply_preserve_status(self):
+            for old in ({"result_unknown": True}, {"result_unknown_until_readback": True},
+                        {"pending_batch": {"number": 2}}):
+                for argv in (["--config", "/fixture/config.json"], ["--scheduled", "--config", "/fixture/config.json"]):
+                    disk = {**old, "deleted_rows": 17, "batches": 3}
+                    expected = copy.deepcopy(disk)
+                    code, result, constructor = self.smoke(argv, config(), disk=disk)
+                    self.assertEqual(code, 2)
+                    self.assertEqual(result["reason"], "unresolved_previous_result")
+                    self.assertTrue(result["status_preserved"])
+                    self.assertEqual(disk, expected)
+                    constructor.assert_not_called()
+
+        def test_main_interrupt_after_pending_preserves_unknown(self):
+            cfg = config()
+            cfg["enabled"] = True
+            client = mock.Mock()
+            client.remaining.return_value = 100
+            client.json_sql.side_effect = KeyboardInterrupt()
+            code, result, _ = self.smoke(["--scheduled", "--config", "/fixture/config.json"], cfg, client,
+                {"wal_lsn": "0/0", "cutoff_utc": "2026-01-01T00:00:00"})
+            self.assertEqual(code, 2)
+            self.assertTrue(result["result_unknown"])
+            self.assertIsNotNone(result["pending_batch"])
 
         def test_last_success_survives_partial_pending(self):
             cfg = config()

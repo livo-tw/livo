@@ -28,6 +28,8 @@ Linux 需 Python 3 標準庫、Docker CLI、systemd，以及對應資料庫容�
 
 升級或備份前先建立 `/run/livo-maintenance.inhibit` 並等既有 job 結束；完成後才移除自己建立的 inhibit。工具另有單一執行鎖，不能取代升級協調。若容器的 Compose 身分、資料庫叢集、來源或 OID 與核對的身分不符，清理會拒絕；先停止 timer、保存舊設定，使用新的外部設定路徑重新 bind；核對並移交原本的自訂界線後才取代停用中的設定。不盲重試或自動綁到新表。升級後比較新版 helper，於時段內更新穩定 bin，保留外部設定，再跑 preview 和一輪實際驗證。出廠 Compose 上限會隨官方來源升級保留，timer 的穩定路徑不依賴會被替換的安裝目錄。
 
+批次只有在收到並驗證提交 ACK 後，才累計到 `deleted_rows`／`batches` 並清除 `pending_batch`。之後因 WAL、空間、維護 inhibit、時間或筆數界線停止，會回報已知的 `partial`（`result_unknown=false`），下次仍可按原界線繼續；不會宣稱已清完，也不更新最後成功時間。SQL 失敗、回覆逾時／無法解析、ACK 遺失或中斷仍需查核；未解的 `pending_batch`、舊版 unknown 旗標，或 status 同目錄的 `manual-result-unknown.json` 會拒絕 preview／run，保留原 status／marker。先停 timer、保留原證據，針對原 cutoff、來源身分和實際批次結果做唯讀對帳，由維護者在同一實例鎖內明確解除後才繼續；工具不會自動清除或提供強制重跑。
+
 停止排程用 `systemctl disable --now livo-log-retention.timer`，等待 job 結束後設定 `enabled=false`。這不會還原已按保留政策刪除的事件；要還原須使用事先的備份。回復 Vector 過濾時也要預估恢復的寫入量。
 
 ## 隔離驗證

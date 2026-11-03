@@ -6,6 +6,9 @@ configuration, production Docker context, daemon startup, or global prune is use
 Only one final JSON summary is printed; SQL rows and helper payloads stay private.
 """
 import copy
+import contextlib
+import io
+from unittest import mock
 import hashlib
 import importlib.util
 import json
@@ -192,17 +195,51 @@ class Fixture:
             payload = json.loads(result.stdout)
         except ValueError:
             raise FixtureFailure('helper_stdout_json') from None
+        return self.check_helper_result(payload, result.returncode, expected)
+
+    def check_helper_result(self, payload, returncode, expected):
         self.last_helper = {key: payload.get(key) for key in (
             'status', 'reason', 'dml_attempted', 'operation', 'returncode',
             'stderr_sha256', 'result_unknown')}
         if payload.get('status') not in expected:
             raise FixtureFailure('unexpected_helper_status')
         valid_code = 0 if payload['status'] in ('preview', 'completed', 'bound_disabled') else 2
-        if result.returncode != valid_code:
+        if returncode != valid_code:
             raise FixtureFailure('helper_exit_status_contract')
         if payload.get('status_write_failed'):
             raise FixtureFailure('helper_status_write_failed')
         return payload
+
+    def invoke_transport_fault(self, fault):
+        # Use the production CLI and real Docker/PG metadata and transaction.
+        # Only the disposable fixture transport response is deliberately lost;
+        # no fixture-only fault switch is added to the production helper.
+        spec = importlib.util.spec_from_file_location('livo_retention_fault_fixture', HELPER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = module.Docker.json_sql
+
+        def faulty_sql(client, sql, operation='postgres_metadata', timeout=30):
+            if operation == 'delete_expired_batch':
+                if fault == 'sql_failure':
+                    # Actual SQL failure in the real transaction, not a fake
+                    # metadata response. Treat unsuccessful SQL ACKs as unknown.
+                    return original(client, sql.replace('BEGIN;', 'BEGIN; SELECT 1/0;', 1), operation, timeout=timeout)
+                original(client, sql, operation, timeout=timeout)
+                if fault == 'lost_commit_ack':
+                    raise module.Refused('command_timeout', operation=operation)
+                if fault == 'invalid_commit_ack':
+                    return {'deleted_rows': 'unusable-ack'}
+                raise FixtureFailure('unknown_fixture_fault')
+            return original(client, sql, operation, timeout=timeout)
+
+        with mock.patch.object(module.Docker, 'json_sql', new=faulty_sql), contextlib.redirect_stdout(io.StringIO()) as output:
+            probe = module.Docker(json_file(self.config_path))
+            probe.inspect()
+            self.expect(probe.json_sql("SELECT jsonb_build_object('fixture',true);") == {'fixture': True},
+                'fault_wrapper_default_operation_contract')
+            code = module.main(['--scheduled', '--config', str(self.config_path)])
+        return self.check_helper_result(json.loads(output.getvalue()), code, ('partial',))
 
     def invoke(self, *args, expected=('preview',)):
         return self.helper(*args, '--config', str(self.config_path), expected=expected)
@@ -320,7 +357,9 @@ class Fixture:
         with open(self.lock_path, 'a', encoding='utf-8') as lock:
             os.chmod(self.lock_path, 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            status_bytes = self.status_path.read_bytes()
             self.refusal_case('single_instance_flock')
+            self.expect(self.status_path.read_bytes() == status_bytes, 'lock_failure_overwrote_status')
             fcntl.flock(lock, fcntl.LOCK_UN)
         config = json_file(self.config_path)
         self.refusal_case('insufficient_free_space', reason='insufficient_free_space',
@@ -357,6 +396,72 @@ class Fixture:
         self.expect(self.old_count() == 0 and self.protected() == protected, 'explicit_completion_scope')
         self.expect(result.get('last_success_at_utc') == result.get('completed_at_utc') and result['last_success_at_utc'] != first_success, 'last_success_not_updated')
         self.tests.append('enabled_explicit_only_expired')
+
+
+        self.seed_old()
+        before = self.old_count()
+        self.save(batch_rows=1, max_wal_growth_bytes=1)
+        self.stage = 'real_ack_then_wal_guard'
+        result = self.invoke('--scheduled', expected=('partial',))
+        self.expect(result.get('reason') == 'wal_growth_gate', 'normal_guard_reason')
+        self.expect(result.get('deleted_rows') == 1 and result.get('batches') == 1, 'real_ack_count')
+        self.expect(not result.get('result_unknown') and not result.get('result_unknown_until_readback')
+            and result.get('pending_batch') is None, 'acked_guard_falsely_unknown')
+        self.expect(self.old_count() == before - 1 and self.protected() == protected, 'acked_guard_scope')
+        self.tests.append('real_commit_ack_then_normal_wal_guard_known_partial')
+        self.save(max_wal_growth_bytes=512 * 1024**2, max_rows_per_run=2)
+        self.stage = 'known_partial_next_bounded_pass'
+        result = self.invoke('--scheduled', expected=('partial',))
+        self.expect(result.get('deleted_rows') == 2 and not result.get('result_unknown'), 'known_partial_not_resumable')
+        self.expect(self.old_count() == before - 3 and self.protected() == protected, 'resumed_partial_scope')
+        self.tests.append('known_partial_allows_next_bounded_pass')
+
+        self.stage = 'prelock_error_preserves_known_ack_evidence'
+        status_bytes = self.status_path.read_bytes()
+        missing = self.helper('--status-path', str(self.status_path), expected=('refused',))
+        self.expect(missing.get('reason') == 'config_missing' and missing.get('status_preserved'), 'missing_config_contract')
+        self.expect(self.status_path.read_bytes() == status_bytes, 'missing_config_overwrote_status')
+        invalid_config = self.scratch / 'invalid-policy.json'
+        write_config(invalid_config, {'fixture': 'invalid'})
+        invalid_config.write_text('{', encoding='utf-8')
+        invalid = self.helper('--config', str(invalid_config), '--status-path', str(self.status_path), expected=('refused',))
+        self.expect(invalid.get('reason') == 'invalid_config_json' and invalid.get('status_preserved'), 'invalid_config_contract')
+        self.expect(self.status_path.read_bytes() == status_bytes, 'invalid_config_overwrote_status')
+        self.tests.append('prelock_cli_and_config_errors_preserve_actual_status_bytes')
+
+        self.stage = 'external_unknown_marker'
+        marker = self.status_path.with_name('manual-result-unknown.json')
+        write_config(marker, {'fixture': 'unresolved-operation'})
+        status_bytes, marker_bytes = self.status_path.read_bytes(), marker.read_bytes()
+        for args in ((), ('--scheduled',)):
+            result = self.invoke(*args, expected=('refused',))
+            self.expect(result.get('reason') == 'unresolved_previous_result'
+                and result.get('status_preserved') and not result.get('dml_attempted'), 'marker_not_sticky')
+            self.expect(self.status_path.read_bytes() == status_bytes and marker.read_bytes() == marker_bytes, 'marker_evidence_overwritten')
+        marker.unlink()  # Only this disposable fixture's deliberately seeded marker.
+        self.tests.append('external_unknown_marker_blocks_preview_and_scheduled_without_overwrite')
+
+        for fault in ('lost_commit_ack', 'invalid_commit_ack', 'sql_failure'):
+            self.stage = fault
+            self.seed_old()
+            before = self.old_count()
+            result = self.invoke_transport_fault(fault)
+            expected_deleted = 0 if fault == 'sql_failure' else 1
+            self.expect(self.old_count() == before - expected_deleted, 'fault_actual_transaction_scope')
+            self.expect(self.protected() == protected and result.get('deleted_rows') == 0, 'fault_acked_count_or_scope')
+            self.expect(result.get('result_unknown') and result.get('result_unknown_until_readback')
+                and result.get('pending_batch') is not None, 'unacked_sql_not_unknown')
+            status_bytes = self.status_path.read_bytes()
+            for args in ((), ('--scheduled',)):
+                refused = self.invoke(*args, expected=('refused',))
+                self.expect(refused.get('reason') == 'unresolved_previous_result'
+                    and refused.get('status_preserved') and not refused.get('dml_attempted'), 'unknown_not_sticky')
+                self.expect(self.status_path.read_bytes() == status_bytes, 'unknown_evidence_overwritten')
+            self.expect(self.old_count() == before - expected_deleted and self.protected() == protected, 'unknown_retry_mutated')
+            self.tests.append('real_transaction_' + fault + '_unknown_and_preview_preserves_evidence')
+            # Explicit test-only evidence archive after count-only readback of
+            # the owned fixture; production CLI has no auto-clear/force option.
+            self.status_path.rename(self.scratch / (fault + '.status.json'))
 
 
 def root_main():
