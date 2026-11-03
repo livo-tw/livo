@@ -1,3 +1,7 @@
+// A synchronous acknowledgement lets the toolbar preserve lazy-mount intent
+// without changing the URL when an existing QA form declines a new create.
+export interface QaCreateIntent { handled: boolean; accepted: boolean }
+
 interface QaNavigationGuard { url: string; notify: () => void }
 const guards = new Map<symbol, QaNavigationGuard>();
 

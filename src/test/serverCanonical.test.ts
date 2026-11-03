@@ -7,9 +7,9 @@ import path from 'node:path';
 import http from 'node:http';
 
 let dir: string, child: ChildProcess, port: number;
-const get = (target: string, headers: Record<string, string> = {}, method = 'GET') => new Promise<{ status: number; location?: string; body: string }>((resolve, reject) => {
+const get = (target: string, headers: Record<string, string> = {}, method = 'GET') => new Promise<{ status: number; location?: string; cacheControl?: string; body: string }>((resolve, reject) => {
   const request = http.request({ host: '127.0.0.1', port, path: target, method, headers }, response => {
-    let body = ''; response.on('data', value => body += value); response.on('end', () => resolve({ status: response.statusCode || 0, location: response.headers.location, body }));
+    let body = ''; response.on('data', value => body += value); response.on('end', () => resolve({ status: response.statusCode || 0, location: response.headers.location, cacheControl: response.headers['cache-control'], body }));
   }); request.on('error', reject); request.end();
 });
 beforeAll(async () => {
@@ -29,8 +29,8 @@ afterAll(async () => {
 });
 describe('customer canonical entry', () => {
   it('preserves historical task and QA deep links on the configured HTTPS origin', async () => {
-    expect(await get('/?task=EXAMPLE-1', { Accept: 'text/html' })).toMatchObject({ status: 302, location: 'https://example.com/?task=EXAMPLE-1' });
-    expect(await get('/?qa=example-bug', { Accept: 'text/html' })).toMatchObject({ status: 302, location: 'https://example.com/?qa=example-bug' });
+    expect(await get('/?task=EXAMPLE-1', { Accept: 'text/html' })).toMatchObject({ status: 302, location: 'https://example.com/?task=EXAMPLE-1', cacheControl: 'no-store' });
+    expect(await get('/?qa=example-bug', { Accept: 'text/html' })).toMatchObject({ status: 302, location: 'https://example.com/?qa=example-bug', cacheControl: 'no-store' });
   });
   it('normalizes old app paths and cannot redirect to a URL supplied in the path', async () => {
     expect(await get('/demo/?task=EXAMPLE-1', { Accept: 'text/html' })).toMatchObject({ location: 'https://example.com/?task=EXAMPLE-1' });
@@ -47,7 +47,7 @@ describe('customer canonical entry', () => {
     expect(await get('/?task=EXAMPLE-1', { Accept: 'text/html', Host: 'example.com' })).toMatchObject({ status: 200, body: '<h1>Example app</h1>' });
   });
   it('leaves API, health probes, assets and non-navigation writes on their original origin', async () => {
-    for (const target of ['/rest/v1/tasks', '/auth/v1/token', '/functions/v1/qa', '/health']) expect((await get(target, { Accept: 'text/html' })).location).toBeUndefined();
+    for (const target of ['/rest/v1/tasks', '/auth/v1/token', '/functions/v1/qa', '/graphql/v1/', '/health', '/healthz', '/ready']) expect((await get(target, { Accept: 'text/html' })).location).toBeUndefined();
     expect((await get('/', { Accept: '*/*' })).location).toBeUndefined();
     expect((await get('/', { Accept: 'text/html' }, 'POST')).location).toBeUndefined();
     expect((await get('/missing.js', { Accept: '*/*' })).location).toBeUndefined();

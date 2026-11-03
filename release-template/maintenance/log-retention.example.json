@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "container": "supabase-db",
+  "compose_project": "supabase",
+  "compose_service": "db",
+  "db_user": "supabase_admin",
+  "database": "_supabase",
+  "retention_days": 7,
+  "batch_rows": 1000,
+  "max_rows_per_run": 1000000,
+  "max_seconds": 600,
+  "min_free_bytes": 2147483648,
+  "max_wal_bytes": 1073741824,
+  "max_wal_growth_bytes": 536870912,
+  "statement_timeout_ms": 15000,
+  "lock_timeout_ms": 1000,
+  "status_path": "/var/lib/livo-log-retention/status.json",
+  "lock_path": "/run/lock/livo-log-retention.lock",
+  "maintenance_inhibit_path": "/run/livo-maintenance.inhibit"
+}

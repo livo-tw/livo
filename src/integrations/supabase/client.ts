@@ -13,6 +13,7 @@ import { createCfClient } from '../backend/cfClient';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { SUPABASE_URL, supabaseAuthStorageKey } from '@/lib/gatewayUrl';
 import type { Database } from './types';
+import { createProtectedApiFetch } from '@/lib/protectedApiFetch';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 export const USING_MOCK_BACKEND = IS_DEMO_PRO || (!API_URL && !SUPABASE_URL);
@@ -26,6 +27,7 @@ function selectClient(): unknown {
     SUPABASE_URL,
     import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
     {
+      global: { fetch: createProtectedApiFetch(SUPABASE_URL) },
       auth: {
         storage: localStorage,
         storageKey: supabaseAuthStorageKey(SUPABASE_URL),

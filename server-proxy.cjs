@@ -28,6 +28,15 @@ function isAllowedApiPath(target) {
   }
 }
 
+// API data and redirects must not become a browser/CDN redirect cache.
+// Keep upstream status, Location and cookies intact: GoTrue OAuth uses redirects.
+// Storage objects retain their own download/cache/range policy.
+function apiResponseHeaders(url, headers) {
+  return /^\/(?:auth|rest|functions|graphql)\/v1\//.test(url)
+    ? { ...headers, 'cache-control': 'no-store' }
+    : headers;
+}
+
 // Stored objects keep whatever content-type the uploader sent, and the proxy
 // serves them from the app's own origin. Raster images and PDFs display inline;
 // anything else (HTML, SVG, XML…) downloads inside a sandbox, so an uploaded file
@@ -92,7 +101,7 @@ function createApiProxy(rawUpstream) {
       logError('http', error);
       if (res.headersSent) res.destroy();
       else {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(BAD_GATEWAY);
       }
       stop();
@@ -107,7 +116,7 @@ function createApiProxy(rawUpstream) {
     request.on('response', (incoming) => {
       response = incoming;
       incoming.on('error', fail);
-      res.writeHead(incoming.statusCode, storageObjectHeaders(req.url, endToEndHeaders(incoming.headers)));
+      res.writeHead(incoming.statusCode, apiResponseHeaders(req.url, storageObjectHeaders(req.url, endToEndHeaders(incoming.headers))));
       incoming.pipe(res);
     });
     req.pipe(request);
@@ -130,7 +139,7 @@ function createApiProxy(rawUpstream) {
       failed = true;
       logError('websocket', error);
       if (responded) socket.destroy();
-      else socket.end(`HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(BAD_GATEWAY)}\r\n\r\n${BAD_GATEWAY}`);
+      else socket.end(`HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ${Buffer.byteLength(BAD_GATEWAY)}\r\n\r\n${BAD_GATEWAY}`);
     });
     socket.on('error', () => remote.destroy());
     socket.on('close', () => remote.destroy());

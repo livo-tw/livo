@@ -7,6 +7,9 @@ const state = vi.hoisted(() => ({
   compact: true,
   displayMode: 'side' as 'side' | 'modal' | 'page',
   currentView: 'board',
+  qaEnabled: true,
+  featuresReady: true,
+  navigationAccepted: true,
   selectedTask: null as Task | null,
   tasks: [] as Task[],
   setSelectedTask: vi.fn(),
@@ -26,7 +29,7 @@ vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: []
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ setSelectedProjectId: vi.fn(), setSelectedLineId: vi.fn() }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ currentView: state.currentView, setCurrentView: state.setCurrentView,
   selectedTask: state.selectedTask, setSelectedTask: state.setSelectedTask, taskDisplayMode: state.displayMode,
-  approvalsEnabled: true, featureTogglesReady: true, featureToggles: { qa: true }, setShowCreateTask: state.setShowCreateTask }) }));
+  approvalsEnabled: true, featureTogglesReady: state.featuresReady, featureToggles: { qa: state.qaEnabled }, setShowCreateTask: state.setShowCreateTask }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: state.tasks, statuses: [] as Status[], taskSpecs: [] as TaskSpec[] }) }));
 vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: () => true }) }));
 vi.mock('@/hooks/useActionableApprovalCount', () => ({ useActionableApprovalCount: () => 2 }));
@@ -50,6 +53,10 @@ beforeEach(() => {
   state.compact = true;
   state.displayMode = 'side';
   state.currentView = 'board';
+  state.qaEnabled = true;
+  state.featuresReady = true;
+  state.navigationAccepted = true;
+  state.setCurrentView.mockImplementation((_view: string, onAccepted?: () => void) => { if (state.navigationAccepted) onAccepted?.(); });
   state.selectedTask = null;
   state.tasks = [];
   window.history.replaceState({}, '', '/');
@@ -57,6 +64,86 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('mobile navigation and tools', () => {
+  it.each(['board', 'qa', 'my-qa'])('offers independent task and Bug actions in %s', currentView => {
+    state.currentView = currentView;
+    render(<TopBar />);
+    const task = screen.getByRole('button', { name: 'button.createTask' });
+    const bug = screen.getByRole('button', { name: 'qa.report' });
+    expect(task).toHaveClass('bg-blue-600', 'min-h-[44px]');
+    expect(bug).toHaveClass('bg-rose-600', 'min-h-[44px]');
+    expect(task.textContent).toBe('button.createTask');
+    expect(bug.textContent).toBe('qa.report');
+    expect(screen.getByRole('group', { name: 'button.create' })).toHaveClass('grid-cols-2');
+    fireEvent.click(task);
+    expect(state.setShowCreateTask).toHaveBeenCalledWith(true);
+    expect(state.setCurrentView).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('');
+  });
+
+  it.each([[false, false], [false, true]])('keeps both labelled actions together for desktop/tablet (%s/%s)', (mobile, compact) => {
+    state.mobile = mobile; state.compact = compact;
+    render(<TopBar />);
+    const actions = screen.getByRole('group', { name: 'button.create' });
+    expect(within(actions).getByRole('button', { name: 'button.createTask' })).toBeVisible();
+    expect(within(actions).getByRole('button', { name: 'qa.report' })).toBeVisible();
+    expect(actions).toHaveClass('flex');
+  });
+
+  it.each(['disabled', 'not-ready'])('keeps task creation available with QA %s', capability => {
+    state.qaEnabled = capability !== 'disabled';
+    state.featuresReady = capability !== 'not-ready';
+    render(<TopBar />);
+    expect(screen.queryByRole('button', { name: 'qa.report' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'button.createTask' }));
+    expect(state.setShowCreateTask).toHaveBeenCalledWith(true);
+  });
+
+  it('queues Bug creation after an accepted cross-view navigation', () => {
+    const create = vi.fn(); window.addEventListener('livo:qa-create', create);
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.report' }));
+    expect(state.setCurrentView).toHaveBeenCalledWith('qa', expect.any(Function));
+    expect(new URLSearchParams(window.location.search).get('qaCreate')).toBe('1');
+    expect(create).toHaveBeenCalledOnce();
+    expect(state.setShowCreateTask).not.toHaveBeenCalled();
+    window.removeEventListener('livo:qa-create', create);
+  });
+
+  it('does not change the URL, selected task, or intent when navigation is rejected', () => {
+    state.navigationAccepted = false;
+    window.history.replaceState({}, '', '/?kb=example-page#draft');
+    const original = window.location.href;
+    const create = vi.fn(); window.addEventListener('livo:qa-create', create);
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.report' }));
+    expect(window.location.href).toBe(original);
+    expect(state.setSelectedTask).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    window.removeEventListener('livo:qa-create', create);
+  });
+
+  it.each(['qa', 'my-qa'])('preserves a mounted %s form that declines another create', currentView => {
+    state.currentView = currentView;
+    window.history.replaceState({}, '', '/?qa=example-issue');
+    const original = window.location.href;
+    const handler = (event: Event) => { (event as CustomEvent<{ handled: boolean; accepted: boolean }>).detail.handled = true; };
+    window.addEventListener('livo:qa-create', handler);
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.report' }));
+    expect(state.setCurrentView).not.toHaveBeenCalled();
+    expect(state.setSelectedTask).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(original);
+    window.removeEventListener('livo:qa-create', handler);
+  });
+
+  it('retains a same-view creation intent while the lazy QA workspace has no listener', () => {
+    state.currentView = 'my-qa';
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.report' }));
+    expect(new URLSearchParams(window.location.search).get('qaCreate')).toBe('1');
+    expect(state.setCurrentView).not.toHaveBeenCalled();
+  });
+
   it('offers a desktop sidebar toggle with the current expanded state and a localized action', () => {
     state.mobile = false;
     const toggle = vi.fn();

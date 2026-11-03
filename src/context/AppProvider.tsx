@@ -1,7 +1,6 @@
 import { createProjectColorResolver } from '@/lib/projectColors';
 import { DeploymentEnvironmentProvider } from './DeploymentEnvironmentContext';
 import { useMemo, useCallback } from 'react';
-import i18n from '@/i18n';
 
 import { AuthContext } from './AuthContext';
 import { MemberContext } from './MemberContext';
@@ -17,6 +16,7 @@ import { useProjectState } from './hooks/useProjectState';
 import { useTaskState } from './hooks/useTaskState';
 import { useSprintState } from './hooks/useSprintState';
 import { useInitialLoad } from './hooks/useInitialLoad';
+import { AppStartupScreen } from '@/components/AppStartupScreen';
 import { useRealtimeSubs } from './hooks/useRealtimeSubs';
 import { useSideEffects } from './hooks/useSideEffects';
 
@@ -56,7 +56,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   );
 
   // ─── Initial Data Load ───
-  useInitialLoad({
+  const initialLoad = useInitialLoad({
     setUsers: member.setUsers,
     setStatuses: task.setStatuses,
     setProductLines: project.setProductLines,
@@ -74,6 +74,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     setTaskTemplates: task.setTaskTemplates,
     setTaskDependencies: task.setTaskDependencies,
     setUserThemeState: auth.setUserThemeState,
+    readAuthUser: auth.readAuthUser,
     setRequiredFields: ui.setRequiredFields,
     refreshFeatureToggles: ui.refreshFeatureToggles,
     setIsLoading: ui.setIsLoading,
@@ -184,12 +185,10 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   }), [sprint.commandState, sprint.sprintActive, sprint.sprintStartedAt, sprint.sprints, sprint.currentSprint, startSprint, completeSprint, sprint.renameSprint, sprint.refreshSprints, sprint.getDefaultSprintName]);
 
   // ─── Auth Guard ───
-  if (!auth.memberVerified) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <span className="text-muted-foreground">{i18n.t('common.verifyingIdentity')}</span>
-      </div>
-    );
+  const startupFailed = initialLoad.loadFailed || auth.verificationFailed;
+  if (startupFailed || !auth.memberVerified || ui.isLoading) {
+    return <AppStartupScreen memberVerified={auth.memberVerified} isLoading={ui.isLoading}
+      loadFailed={startupFailed} onRetry={() => window.location.reload()} />;
   }
 
   // ─── Provider Composition ───

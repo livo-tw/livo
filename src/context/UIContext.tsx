@@ -53,7 +53,7 @@ export interface UIContextType {
   refreshFeatureToggles: () => Promise<void>;
   saveFeatureToggle: (key: FeatureKey, enabled: boolean) => Promise<void>;
   currentView: ViewType;
-  setCurrentView: (v: ViewType) => void;
+  setCurrentView: (v: ViewType, onAccepted?: () => void) => void;
   selectedTask: Task | null;
   setSelectedTask: Dispatch<SetStateAction<Task | null>>;
   standupMode: boolean;

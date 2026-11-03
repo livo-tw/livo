@@ -186,6 +186,7 @@ for (const [label, p] of [
   ['release-template/install.sh', path.join(TEMPLATE_DIR, 'install.sh')],
   ['release-template/install.bat', path.join(TEMPLATE_DIR, 'install.bat')],
   ['release-template/compose.frontend.yml', path.join(TEMPLATE_DIR, 'compose.frontend.yml')],
+  ['release-template/API-PROXY.md', path.join(TEMPLATE_DIR, 'API-PROXY.md')],
   ['release-template/installer/install.ps1', path.join(TEMPLATE_DIR, 'installer', 'install.ps1')],
   ['release-template/installer/create-admin.sql', path.join(TEMPLATE_DIR, 'installer', 'create-admin.sql')],
   ['release-template/installer/generate-keys.js', path.join(TEMPLATE_DIR, 'installer', 'generate-keys.js')],
@@ -340,6 +341,25 @@ fs.writeFileSync(
   toLF(fs.readFileSync(path.join(TEMPLATE_DIR, 'compose.frontend.yml'), 'utf8'))
 );
 log('  ✔ docker/compose.frontend.yml ← 前端容器 overlay（免裝 Node.js）');
+
+// Keep proxy/cache operating instructions in both private and canonical OSS packages.
+fs.copyFileSync(path.join(TEMPLATE_DIR, 'API-PROXY.md'), path.join(STAGING, 'API-PROXY.md'));
+
+// Optional Linux maintenance is shipped but never enabled by the installer.
+// Instance bindings/state live outside the version directory and are not packaged.
+const MAINTENANCE_DEST = path.join(STAGING, 'maintenance');
+fs.mkdirSync(MAINTENANCE_DEST, { recursive: true });
+for (const file of ['README.md', 'log-retention.example.json', 'livo-log-retention.service', 'livo-log-retention.timer']) {
+  const source = path.join(TEMPLATE_DIR, 'maintenance', file);
+  if (!fs.existsSync(source)) die(`Missing maintenance template: ${file}`);
+  fs.copyFileSync(source, path.join(MAINTENANCE_DEST, file));
+}
+const retentionFactory = JSON.parse(fs.readFileSync(path.join(MAINTENANCE_DEST, 'log-retention.example.json'), 'utf8'));
+if (retentionFactory.enabled !== false || retentionFactory.binding) die('Retention package must be disabled and contain no instance binding');
+const retentionSource = path.join(APP_ROOT, 'scripts', 'selfhost-log-retention.py');
+if (!fs.existsSync(retentionSource)) die('Missing technical log retention helper');
+fs.copyFileSync(retentionSource, path.join(MAINTENANCE_DEST, 'selfhost-log-retention.py'));
+log('  ✔ maintenance/ ← disabled technical log retention tools and schedule templates');
 
 // 2c. schema/ — 合併所有 migration 成單一檔，另附原始 migration
 const SCHEMA_DEST = path.join(STAGING, 'schema');

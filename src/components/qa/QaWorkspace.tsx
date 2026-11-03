@@ -22,7 +22,7 @@ import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { QA_SEVERITIES, type QaCommand, type QaCoordination, type QaDetail, type QaListInput, type QaListResult, type QaSeverity, type QaState } from '@/lib/qa/domain';
 import type { QaWorkflow } from '@/lib/qa/workflow';
 import { qaId } from '@/lib/qa/client';
-import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
+import { hasQaNavigationGuard, type QaCreateIntent } from '@/lib/qa/navigationGuard';
 import { QaSelect, qaButton } from './QaFields';
 import QaIssueDetail, { QaFailure } from './QaIssueDetail';
 import type { QaActionDefaults } from '@/lib/qa/boardInteraction';
@@ -186,8 +186,11 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   }, [selectedProjectId, openIssue]);
   useEffect(() => {
     const pop = () => { if (creatingRef.current || hasQaNavigationGuard()) return; setIssueId(new URLSearchParams(window.location.search).get('qa') || ''); setCreating(false); setInitialAction(undefined); setInitialDefaults(undefined); };
-    const createFromToolbar = () => {
+    const createFromToolbar = (event?: Event) => {
+      const intent = event instanceof CustomEvent ? event.detail as QaCreateIntent | undefined : undefined;
+      if (intent) intent.handled = true;
       if (creatingBusy.current || creatingRef.current || hasQaNavigationGuard()) return;
+      if (intent) intent.accepted = true;
       const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.delete('qaCreate'); window.history.replaceState({}, '', url.toString());
       createIds.current = { id: qaId(), commandId: qaId() }; setIssueId(''); setError(null); creatingRef.current = true; setCreating(true);
     };

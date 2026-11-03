@@ -1,0 +1,19 @@
+[Unit]
+Description=LIVO bounded technical log retention
+After=docker.service
+Requires=docker.service
+ConditionPathExists=/etc/livo/log-retention.json
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/livo-maintenance/bin/selfhost-log-retention.py --scheduled --config /etc/livo/log-retention.json
+TimeoutStartSec=660
+TimeoutStopSec=30
+KillSignal=SIGINT
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true

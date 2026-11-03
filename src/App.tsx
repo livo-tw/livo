@@ -230,7 +230,7 @@ const App = () => {
             <Route path="/join" element={<Join />} />
             <Route path="/" element={
               <ProtectedRoute session={session}>
-                <Index />
+                <Index key={session?.user.id} />
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />

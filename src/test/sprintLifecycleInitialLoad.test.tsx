@@ -6,7 +6,7 @@ interface Query extends PromiseLike<Reply> { select(...args: unknown[]): Query; 
 const api = vi.hoisted(() => ({ writes: [] as { table: string; operation: string }[], rpc: vi.fn(), from: vi.fn(), error: vi.fn() }));
 vi.mock('sonner', () => ({ toast: { error: api.error } }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: api.rpc, auth: { getUser: async (): Promise<{ data: { user: null } }> => ({ data: { user: null } }) }, from: (table: string) => {
+vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: false, supabase: { rpc: api.rpc, auth: { getUser: async (): Promise<{ data: { user: null } }> => ({ data: { user: null } }) }, from: (table: string) => {
   api.from(table);
   const response = Promise.resolve({ data: table === 'members' ? [{ id: 'member-example', name: 'Example Member', email: 'member@example.com', role: 'member', is_active: true, color: '#667788', avatar: 'E', job_title: 'Engineer', sort_order: 0 }] : [], error: null });
   const query: Query = { then: (resolve, reject) => response.then(resolve, reject), select: () => query, order: () => query, eq: () => query, limit: () => query, maybeSingle: async () => ({ data: null, error: null }), insert: () => { api.writes.push({ table, operation: 'insert' }); return query; } };

@@ -70,9 +70,32 @@ beforeEach(() => {
   mocks.upload.mockResolvedValue({ id: 'attachment1' });
   mocks.command.mockResolvedValue(issue); mocks.comment.mockResolvedValue({ id: 'comment1' });
 });
-afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); expect(hasQaNavigationGuard()).toBe(false); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); expect(hasQaNavigationGuard()).toBe(false); });
 
 describe('central QA navigation guard', () => {
+  it('consumes a toolbar intent on lazy workspace mount', async () => {
+    window.history.replaceState({}, '', '/?qaCreate=1');
+    render(<Spa />);
+    await screen.findByLabelText(/qa.titleField/);
+    expect(new URLSearchParams(window.location.search).has('qaCreate')).toBe(false);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges repeated create requests without replacing an open draft or asking twice', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const title = await openCreate();
+    fireEvent.change(title, { target: { value: 'Example draft to keep' } });
+    const original = window.location.href;
+    const intent = { handled: false, accepted: false };
+    fireEvent(window, new CustomEvent('livo:qa-create', { detail: intent }));
+    expect(intent).toEqual({ handled: true, accepted: false });
+    expect(screen.getByLabelText(/qa.titleField/)).toBe(title);
+    expect(title).toHaveValue('Example draft to keep');
+    expect(window.location.href).toBe(original);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it('keeps the stable setter and normal functional updates, while preventing guarded mine/all and task navigation', async () => {
     const { result, rerender } = renderHook(({ active }) => { const ui = useUIState(); useQaNavigationGuard(active); return ui; }, { initialProps: { active: false } });
     const setter = result.current.setCurrentView;
@@ -211,6 +234,13 @@ describe('real QA workspace across SPA views', () => {
     await openCreate(); fill();
     const title = screen.getByLabelText(/qa.titleField/); await waitFor(() => expect(screen.getByRole('button', { name: 'qa.createBug' })).not.toBeDisabled()); fireEvent.click(screen.getByRole('button', { name: 'qa.createBug' })); await screen.findByText('qa.createRetryHint');
     const original = mocks.create.mock.calls[0].slice(0, 3);
+    const originalUrl = window.location.href;
+    const intent = { handled: false, accepted: false };
+    fireEvent(window, new CustomEvent('livo:qa-create', { detail: intent }));
+    expect(intent).toEqual({ handled: true, accepted: false });
+    expect(window.location.href).toBe(originalUrl);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText(/qa.titleField/)).toBe(title);
     fireEvent.click(screen.getByRole('button', { name: 'My QA navigation' })); fireEvent.click(screen.getByRole('button', { name: 'Task navigation' }));
     expect(screen.getByLabelText('Current view')).toHaveTextContent('qa'); expect(screen.getByLabelText(/qa.titleField/)).toBe(title);
     fireEvent.click(screen.getByRole('button', { name: 'qa.retryCreate' })); await screen.findByRole('heading', { name: input.title, level: 1 });

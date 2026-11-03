@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useEffect, useRef, useState } from 'react';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { fetchComments } from '@/lib/commentQueries';
@@ -37,6 +37,7 @@ interface InitialLoadDeps {
   setTaskTemplates: (t: TaskTemplate[]) => void;
   setTaskDependencies: (d: TaskDependency[]) => void;
   setUserThemeState: (t: ThemeKey) => void;
+  readAuthUser?: () => ReturnType<typeof supabase.auth.getUser>;
   setRequiredFields: (f: RequiredFieldsConfig) => void;
   refreshFeatureToggles: () => Promise<void>;
   setIsLoading: (v: boolean) => void;
@@ -52,20 +53,54 @@ const safe = <T,>(p: PromiseLike<{ data: T | null }>, label: string) =>
     e => { console.error(`[LIVO] ${label} load skipped:`, e); return { data: null as T | null }; },
   );
 
+// A required read returning an error/null is unknown, not an empty collection.
+const required = <T,>(p: PromiseLike<{ data: T | null; error?: unknown }>, label: string) =>
+  Promise.resolve(p).then(result => {
+    if (result.error || result.data === null) throw result.error || new Error(`${label} returned no data`);
+    return result;
+  });
+
 export function useInitialLoad(deps: InitialLoadDeps) {
+  const [loadFailed, setLoadFailed] = useState(false);
   const loadedRef = useRef(false);
+  const activeRef = useRef(false);
 
   useEffect(() => {
-    if (loadedRef.current) return;
+    activeRef.current = true;
+    if (loadedRef.current) return () => { activeRef.current = false; };
     loadedRef.current = true;
 
     const loadAll = async () => {
       deps.setIsLoading(true);
+      // Publish the fresh member list independently of large task/history reads.
+      // Identity verification must not wait for unrelated application data.
+      const membersPromise = required(supabase.from('members').select('*'), 'members').then(result => {
+        if (activeRef.current && result.data) deps.setUsers(result.data.map(mapUser));
+        return result;
+      });
+      const authPromise = (deps.readAuthUser ? deps.readAuthUser() : supabase.auth.getUser()).catch((e: unknown) => {
+        if (activeRef.current) console.error('[LIVO] theme load skipped:', e);
+        return { data: { user: null } };
+      });
+      void Promise.all([membersPromise, authPromise]).then(([{ data: memberRows }, authRes]) => {
+        if (!activeRef.current || !memberRows || ('error' in authRes && authRes.error)) return;
+        const authUser = authRes.data.user;
+        if (!authUser) return;
+        const rows = memberRows as MemberRow[];
+        const allowEmailSelfLink = USING_MOCK_BACKEND || Boolean(import.meta.env.VITE_API_URL);
+        const myRow = rows.find(m => m.auth_id === authUser.id)
+          || (allowEmailSelfLink ? rows.find(m => !!authUser.email && m.email === authUser.email) : undefined);
+        if (myRow?.theme) {
+          const theme = myRow.theme as ThemeKey;
+          deps.setUserThemeState(theme);
+          applyTheme(theme);
+        }
+      }).catch(() => { /* The main load reports a member-read failure below. */ });
       // Attach rejection handling immediately while the other reads are running.
       const sprintsPromise = Promise.allSettled([deps.refreshSprints()]);
       const featureTogglesPromise = deps.refreshFeatureToggles();
       const [
-        { data: memberRows },
+        , // Members have already been published independently.
         { data: statusRows },
         { data: plRows },
         { data: projRows },
@@ -83,51 +118,34 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         { data: cfvRows },
         { data: tmplRows },
         { data: taskDepRows },
-        authRes,
         { data: settingsRows },
       ] = await Promise.all([
-        supabase.from('members').select('*'),
-        supabase.from('statuses').select('*').order('sort_order'),
-        supabase.from('product_lines').select('*').order('sort_order'),
-        supabase.from('projects').select('*'),
-        supabase.from('tags').select('*'),
-        supabase.from('task_specs').select('*'),
-        supabase.from('task_checks').select('*').order('sort_order'),
-        supabase.from('task_todos').select('*').order('sort_order'),
-        fetchComments(supabase),
-        supabase.from('status_logs').select('*'),
-        supabase.from('tasks').select('*'),
-        supabase.from('task_deployments').select('*'),
-        supabase.from('task_attachments').select('task_id'),
-        supabase.from('task_tags').select('*'),
+        membersPromise,
+        required(supabase.from('statuses').select('*').order('sort_order'), 'statuses'),
+        required(supabase.from('product_lines').select('*').order('sort_order'), 'product_lines'),
+        required(supabase.from('projects').select('*'), 'projects'),
+        required(supabase.from('tags').select('*'), 'tags'),
+        required(supabase.from('task_specs').select('*'), 'task_specs'),
+        required(supabase.from('task_checks').select('*').order('sort_order'), 'task_checks'),
+        required(supabase.from('task_todos').select('*').order('sort_order'), 'task_todos'),
+        required(fetchComments(supabase), 'comments'),
+        required(supabase.from('status_logs').select('*'), 'status_logs'),
+        required(supabase.from('tasks').select('*'), 'tasks'),
+        required(supabase.from('task_deployments').select('*'), 'task_deployments'),
+        required(supabase.from('task_attachments').select('task_id'), 'task_attachments'),
+        required(supabase.from('task_tags').select('*'), 'task_tags'),
         safe(supabase.from('custom_fields').select('*').order('sort_order'), 'custom_fields'),
         safe(supabase.from('task_custom_field_values').select('*'), 'custom_field_values'),
         safe(supabase.from('task_templates').select('*').order('created_at', { ascending: false }), 'task_templates'),
         safe(supabase.from('task_dependencies').select('*'), 'task_dependencies'),
-        supabase.auth.getUser().catch((e: unknown) => {
-          console.error('[LIVO] theme load skipped:', e);
-          return { data: { user: null } };
-        }),
         safe(supabase.from('system_settings').select('*').eq('key', 'required_fields').maybeSingle(), 'required_fields'),
       ]);
+      if (!activeRef.current) return;
 
       if (cfRows) deps.setCustomFields(cfRows.map(mapCustomField));
       if (cfvRows) deps.setCustomFieldValues(cfvRows.map(mapCustomFieldValue));
       if (tmplRows) deps.setTaskTemplates(tmplRows.map(mapTaskTemplate));
       if (taskDepRows) deps.setTaskDependencies(taskDepRows.map(mapTaskDependency));
-
-      if (memberRows) {
-        deps.setUsers(memberRows.map(mapUser));
-        const authUser = authRes.data.user;
-        if (authUser?.email) {
-          const myRow = (memberRows as MemberRow[]).find(m => m.email === authUser.email);
-          if (myRow?.theme) {
-            const t = myRow.theme as ThemeKey;
-            deps.setUserThemeState(t);
-            applyTheme(t);
-          }
-        }
-      }
 
       if (settingsRows?.value) {
         deps.setRequiredFields({ ...DEFAULT_REQUIRED_FIELDS, ...(settingsRows.value as Partial<RequiredFieldsConfig>) });
@@ -170,6 +188,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
       }
 
       const [sprintReads] = await Promise.all([sprintsPromise, featureTogglesPromise]);
+      if (!activeRef.current) return;
       if (sprintReads[0].status === 'rejected') {
         toast.error(i18n.t('sprint.refreshFailed'));
         throw sprintReads[0].reason;
@@ -181,8 +200,13 @@ export function useInitialLoad(deps: InitialLoadDeps) {
       deps.setIsLoading(false);
     };
     loadAll().catch(err => {
-      console.error('[LIVO] loadAll failed:', err);
-      deps.setIsLoading(false);
+      if (activeRef.current) {
+        console.error('[LIVO] loadAll failed:', err);
+        setLoadFailed(true);
+        deps.setIsLoading(false);
+      }
     });
+    return () => { activeRef.current = false; };
   }, []);
+  return { loadFailed };
 }

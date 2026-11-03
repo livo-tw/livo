@@ -376,6 +376,7 @@
     "clearAllFilters": "✕ Clear All Filters",
     "selectAll": "Select All",
     "deselectAll": "Deselect All",
+    "createTask": "New task",
     "createAction": "+ Create",
     "copy": "Copy",
     "export": "Export",

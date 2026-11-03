@@ -376,6 +376,7 @@
     "clearAllFilters": "✕ 清除所有篩選",
     "selectAll": "全選",
     "deselectAll": "取消全選",
+    "createTask": "新增任務",
     "createAction": "+ 創建",
     "copy": "複製",
     "export": "匯出",

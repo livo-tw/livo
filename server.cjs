@@ -48,7 +48,7 @@ function redirectOldAppPath(req, res) {
   const old = /^\/demo(?=\/|\?|$)(.*)$/s.exec(req.url);
   if (!old) return false;
   // Collapse leading slashes so /demo//example.com cannot leave this host.
-  res.writeHead(302, { Location: "/" + old[1].replace(/^\/+/, "") });
+  res.writeHead(302, { Location: "/" + old[1].replace(/^\/+/, ""), "Cache-Control": "no-store" });
   res.end();
   return true;
 }
@@ -69,9 +69,9 @@ function redirectCanonicalApp(req, res) {
   try { target = new URL(req.url, 'http://localhost'); } catch {
     res.writeHead(404); res.end('Not found'); return true;
   }
-  if (/^\/(?:rest|functions|storage|realtime)\/v1(?:\/|$)|^\/auth\/v1(?:\/|$)|^\/(?:health|healthz|ready)(?:\/|$)/.test(target.pathname)) return false;
+  if (/^\/(?:rest|functions|storage|realtime|graphql)\/v1(?:\/|$)|^\/auth\/v1(?:\/|$)|^\/(?:health|healthz|ready)(?:\/|$)/.test(target.pathname)) return false;
   const appPath = target.pathname.replace(/^\/demo(?=\/|$)/, '').replace(/^\/+/, '');
-  res.writeHead(302, { Location: CANONICAL_APP.origin + '/' + appPath + target.search });
+  res.writeHead(302, { Location: CANONICAL_APP.origin + '/' + appPath + target.search, 'Cache-Control': 'no-store' });
   res.end();
   return true;
 }

@@ -98,7 +98,7 @@ function clientFrame(text: string) {
 async function websocketRequest(port: number, target: string) {
   const socket = net.connect(port, '127.0.0.1');
   try {
-    return await new Promise<{ status: number; text: string }>((resolve, reject) => {
+    return await new Promise<{ status: number; text: string; headers: string }>((resolve, reject) => {
       let received = Buffer.alloc(0);
       socket.setTimeout(5000, () => reject(new Error('WebSocket fixture timed out')));
       socket.on('error', reject);
@@ -108,9 +108,9 @@ async function websocketRequest(port: number, target: string) {
         if (boundary < 0) return;
         const status = Number(received.toString('utf8', 0, boundary).split(' ')[1]);
         const body = received.subarray(boundary + 4);
-        if (status !== 101) { resolve({ status, text: body.toString() }); return; }
+        if (status !== 101) { resolve({ status, text: body.toString(), headers: received.toString('utf8', 0, boundary) }); return; }
         if (body.length >= 2 && body.length >= 2 + (body[1] & 127)) {
-          resolve({ status, text: body.subarray(2, 2 + (body[1] & 127)).toString() });
+          resolve({ status, text: body.subarray(2, 2 + (body[1] & 127)).toString(), headers: received.toString('utf8', 0, boundary) });
         }
       });
       socket.once('connect', () => {
@@ -137,6 +137,19 @@ beforeAll(async () => {
       pendingStarted?.();
       return;
     }
+    if (req.url === '/auth/v1/authorize?provider=example') {
+      res.writeHead(302, { location: 'https://identity.example.com/login',
+        'cache-control': 'public, max-age=3600', 'set-cookie': ['example-state=opaque; HttpOnly'] });
+      res.end(); return;
+    }
+    if (req.url === '/storage/v1/object/public/example/report.pdf') {
+      const whole = Buffer.from('%PDF-1.7\nexample\n');
+      const partial = req.headers.range === 'bytes=0-7';
+      res.writeHead(partial ? 206 : 200, { 'content-type': 'application/pdf',
+        'cache-control': 'public, max-age=3600', etag: '"example-object"',
+        'accept-ranges': 'bytes', ...(partial ? { 'content-range': `bytes 0-7/${whole.length}` } : {}) });
+      res.end(partial ? whole.subarray(0, 8) : whole); return;
+    }
     const chunks: Buffer[] = [];
     const hash = createHash('sha256');
     let size = 0;
@@ -150,7 +163,7 @@ beforeAll(async () => {
       res.writeHead(200, {
         'content-type': 'application/json', 'set-cookie': ['one=1', 'two=2'],
         connection: 'keep-alive, x-upstream-hop', 'x-upstream-hop': 'remove-me',
-        'x-response-example': 'preserved',
+        'x-response-example': 'preserved', 'cache-control': 'public, max-age=3600',
       });
       res.end(JSON.stringify({ method: req.method, url: req.url, headers: req.headers,
         body: Buffer.concat(chunks).toString(), size, sha256: hash.digest('hex') }));
@@ -234,6 +247,29 @@ describe('server.cjs proxy integration', () => {
     expect(result.headers['x-upstream-hop']).toBeUndefined();
     expect(result.headers['x-response-example']).toBe('preserved');
     expect(result.headers['set-cookie']).toEqual(['one=1', 'two=2']);
+  });
+
+  it.each(['/auth/v1/user', '/rest/v1/tasks?select=*', '/functions/v1/example', '/graphql/v1/'])('prevents caching API responses at %s', async (target) => {
+    const result = await request(proxy.port, target);
+    expect(result.status).toBe(200);
+    expect(result.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(result.body).url).toBe(target);
+  });
+
+  it('preserves a legitimate GoTrue OAuth redirect and cookie without caching it', async () => {
+    const result = await request(proxy.port, '/auth/v1/authorize?provider=example');
+    expect(result.status).toBe(302);
+    expect(result.headers.location).toBe('https://identity.example.com/login');
+    expect(result.headers['set-cookie']).toEqual(['example-state=opaque; HttpOnly']);
+    expect(result.headers['cache-control']).toBe('no-store');
+  });
+
+  it('preserves object download cache validators and byte ranges', async () => {
+    const result = await request(proxy.port, '/storage/v1/object/public/example/report.pdf', { headers: { range: 'bytes=0-7' } });
+    expect(result.status).toBe(206);
+    expect(result.headers).toMatchObject({ 'content-type': 'application/pdf', 'cache-control': 'public, max-age=3600',
+      etag: '"example-object"', 'accept-ranges': 'bytes', 'content-range': 'bytes 0-7/17' });
+    expect(result.body).toBe('%PDF-1.7');
   });
 
   it('uses http when no trusted front-proxy scheme is supplied', async () => {
@@ -320,6 +356,7 @@ describe('server.cjs proxy integration', () => {
         const result = await request(rootServer.port, from, page);
         expect(result.status, from).toBe(302);
         expect(result.headers.location, from).toBe(to);
+        expect(result.headers['cache-control'], from).toBe('no-store');
       }
     });
 
@@ -356,7 +393,7 @@ describe('server.cjs proxy integration', () => {
   });
 
   it('echoes a real WebSocket message and forwards upgrade headers', async () => {
-    expect(await websocketRequest(proxy.port, '/realtime/v1/websocket?apikey=example-key')).toEqual({ status: 101, text: 'hello realtime' });
+    expect(await websocketRequest(proxy.port, '/realtime/v1/websocket?apikey=example-key')).toMatchObject({ status: 101, text: 'hello realtime' });
     expect(websocketHeaders).toMatchObject({ authorization: 'Bearer example-token', apikey: 'example-key',
       'x-forwarded-proto': 'https', 'x-forwarded-host': 'livo.example.com', upgrade: 'websocket' });
     expect(websocketHeaders['x-client-hop']).toBeUndefined();
@@ -375,9 +412,11 @@ describe('server.cjs proxy integration', () => {
     const result = await request(proxy.port, '/auth/v1/user', { headers: { authorization: 'Bearer example-token' } });
     expect(result.status).toBe(502);
     expect(result.headers['content-type']).toBe('application/json');
+    expect(result.headers['cache-control']).toBe('no-store');
     expect(JSON.parse(result.body)).toEqual({ error: 'Bad gateway' });
     const upgrade = await websocketRequest(proxy.port, '/realtime/v1/websocket');
     expect(upgrade.status).toBe(502);
+    expect(upgrade.headers).toMatch(/\r\nCache-Control: no-store\r\n/i);
     expect(JSON.parse(upgrade.text)).toEqual({ error: 'Bad gateway' });
     // The child's stderr reaches this process asynchronously, possibly after
     // the 502 responses: wait for both log lines before checking them.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run LIVO technical log retention daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=900
+Persistent=true
+Unit=livo-log-retention.service
+
+[Install]
+WantedBy=timers.target

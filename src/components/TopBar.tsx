@@ -17,6 +17,7 @@ import { getRoleLabel, getRoleColor, type MemberRole } from '@/lib/permissions';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
+import { hasQaNavigationGuard, notifyQaNavigationBlocked, type QaCreateIntent } from '@/lib/qa/navigationGuard';
 
 const navItemDefs = [
   { id: 'dashboard' as const, labelKey: 'nav.dashboard', icon: BarChart3 },
@@ -43,11 +44,33 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
   const { approvalsEnabled, featureToggles, featureTogglesReady, setShowCreateTask, setCurrentView, currentView, selectedTask, setSelectedTask, taskDisplayMode } = useUIContext();
   const qaEnabled = featureTogglesReady && featureToggles.qa;
   const qaView = qaEnabled && (currentView === 'qa' || currentView === 'my-qa');
-  const createItem = () => {
-    if (!qaView) { setShowCreateTask(true); return; }
+  const createTask = () => setShowCreateTask(true);
+  const queueBugCreation = () => {
     setSelectedTask(null);
     const url = new URL(window.location.href); url.searchParams.delete('qa'); url.searchParams.set('qaCreate', '1');
-    window.history.replaceState({}, '', url.toString()); window.dispatchEvent(new Event('livo:qa-create'));
+    window.history.replaceState(window.history.state, '', url.toString());
+  };
+  const createBug = () => {
+    if (!qaEnabled) return;
+    if (qaView) {
+      // A mounted QA workspace owns its existing draft/pending-operation guard.
+      // Only leave a URL intent when lazy loading has not installed its listener.
+      const intent: QaCreateIntent = { handled: false, accepted: false };
+      window.dispatchEvent(new CustomEvent<QaCreateIntent>('livo:qa-create', { detail: intent }));
+      if (intent.handled) {
+        if (intent.accepted) setSelectedTask(null);
+        return;
+      }
+      if (hasQaNavigationGuard()) { notifyQaNavigationBlocked(); return; }
+      queueBugCreation();
+      return;
+    }
+    // Publish the intent only after every navigation guard accepts, before the
+    // new workspace mounts and consumes it. A rejected transition changes no URL.
+    setCurrentView('qa', () => {
+      queueBugCreation();
+      window.dispatchEvent(new Event('livo:qa-create'));
+    });
   };
   const { setSelectedProjectId, setSelectedLineId } = useProjectContext();
   const { allTasks, statuses, taskSpecs } = useTaskContext();
@@ -187,6 +210,19 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
     </div>
   );
 
+  const createButtons = <>
+    <button type="button" onClick={createTask}
+      className="inline-flex min-h-[44px] min-w-0 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 whitespace-nowrap">
+      <Plus size={18} className="shrink-0" aria-hidden="true" />
+      <span>{t('button.createTask')}</span>
+    </button>
+    {qaEnabled && <button type="button" onClick={createBug}
+      className="inline-flex min-h-[44px] min-w-0 items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 whitespace-nowrap">
+      <Bug size={18} className="shrink-0" aria-hidden="true" />
+      <span>{t('qa.report')}</span>
+    </button>}
+  </>;
+
   return (
     <div className="relative flex-shrink-0 shadow-md" style={{
       background: 'linear-gradient(to bottom, hsl(var(--sidebar-background)), hsl(var(--tab-bar-bg, var(--sidebar-accent))))',
@@ -210,8 +246,8 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
 
         {/* Desktop search + create */}
         {!compactToolbar && (
-          <div className="flex-1 flex items-center justify-center gap-2 mx-6">
-            <div className="relative w-full max-w-sm" ref={searchRef}>
+          <div className="flex-1 min-w-0 flex items-center justify-center gap-2 mx-4">
+            <div className="relative min-w-0 w-full max-w-sm" ref={searchRef}>
               <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-sidebar-accent/60 text-sidebar-foreground text-sm w-full">
                 <Search size={14} className="text-sidebar-foreground/50 flex-shrink-0" />
                 <input
@@ -231,12 +267,7 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
               </div>
               {searchDropdown}
             </div>
-            <button
-              onClick={createItem}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm hover:shadow-md flex-shrink-0"
-            >
-              {qaView ? `+ ${t('qa.report')}` : t('button.createAction')}
-            </button>
+            <div role="group" aria-label={t('button.create')} className="flex shrink-0 items-center gap-2">{createButtons}</div>
           </div>
         )}
 
@@ -255,16 +286,8 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
             </button>
           )}
 
-          {/* Mobile create button */}
-          {compactToolbar && (
-            <button
-              onClick={createItem}
-              aria-label={t(qaView ? 'qa.report' : 'button.createAction')}
-              title={t(qaView ? 'qa.report' : 'button.createAction')}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              <Plus size={18} aria-hidden="true" />
-            </button>
+          {compactToolbar && !isMobile && (
+            <div role="group" aria-label={t('button.create')} className="flex shrink-0 items-center gap-2">{createButtons}</div>
           )}
 
           {/* Pending approvals button */}
@@ -369,6 +392,13 @@ const TopBar = ({ onToggleSidebar, sidebarExpanded = true }: TopBarProps) => {
           </div>
         </div>
       </div>
+
+      {compactToolbar && isMobile && (
+        <div role="group" aria-label={t('button.create')}
+          className={`grid min-w-0 gap-2 px-3 pb-2 ${qaEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {createButtons}
+        </div>
+      )}
 
       {/* Mobile search bar (expandable) */}
       {compactToolbar && mobileSearchOpen && (

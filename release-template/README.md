@@ -620,3 +620,11 @@ Slack 的 `/livo releases` 開啟私人清單，`/livo release new` 建立批次
 升級時依序套用 `20261013_release_workspace.sql`、`20261014_release_delivery.sql`，同步 `release-workspace`、`slack-interact`、`slack-deliver` 函式，再重新啟動既有 Socket relay。沿用現有 Bot／App Token 及頻道成員查詢權限，不需另建 Token。Cloudflare D1 與 Mock 支援批次資料操作；目前 D1 一般登入身份不支援 Slack 發布確認／配送，不會假冒已綁定的 Slack 身份。
 
 備份包含批次清單、證據、事件、回執、發布確認及討論串映射。包含這些資料的瀏覽器 JSON 還原、破壞式 Jira 匯入及通用 PostgreSQL→D1 匯入會在寫入前停止，請使用已驗證的完整伺服器還原／專用遷移流程，避免丟失歷史。程式端驗證完成不等於線上部署或 Slack 驗收；升級後仍須在已授權測試頻道核對。
+
+## API 轉址與瀏覽器快取
+
+JSON API 不使用瀏覽器 HTTP 快取，避免先前錯誤的永久轉址被重用；附件物件保留原本快取規則。若外層有 nginx／CDN，請依 [API-PROXY.md](API-PROXY.md) 設定 API/probe 直通與禁止快取。修正程式不等於外層設定已套用；既有根頁快取轉址的復原與正式驗證也見該文件。
+
+## 技術日誌與磁碟容量
+
+所有出廠服務具每容器 10 MB × 3 的 Docker 日誌輪替，Vector 減少成功健康檢查與 field_locks 輪詢的技術事件。Logflare 資料庫的 7 日保留與每日排程範本另見 [maintenance/README.md](maintenance/README.md)，預設不啟用。既有安裝須先備份並選維護時段；單改設定不會立即釋放既有巨表磁碟。

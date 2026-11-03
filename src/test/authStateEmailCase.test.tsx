@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('sonner', () => ({ toast: { error: state.error, success: vi.fn() } }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: {
+vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {
   auth: {
     getUser: async () => ({ data: { user: { id: 'auth-1', email: 'sam@example.com' } } }),
     signOut: state.signOut,

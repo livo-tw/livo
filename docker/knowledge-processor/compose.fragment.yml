@@ -1,6 +1,14 @@
 # Merge this service into the self-host stack. No host port and no volume access.
+x-livo-knowledge-logging: &livo_knowledge_logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    compress: "true"
+
 services:
   knowledge-processor:
+    logging: *livo_knowledge_logging
     build: ./knowledge-processor
     restart: unless-stopped
     environment:

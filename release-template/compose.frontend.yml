@@ -9,8 +9,16 @@
 # Change the host port: add a line to docker/.env, e.g.
 #   LIVO_FRONTEND_PORT=3001
 # ============================================================
+x-livo-frontend-logging: &livo_frontend_logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    compress: "true"
+
 services:
   livo-frontend:
+    logging: *livo_frontend_logging
     container_name: livo-frontend
     image: node:20-alpine
     restart: unless-stopped
@@ -44,6 +52,7 @@ services:
 
   # Optional durable notification poller. Enable with COMPOSE_PROFILES=slack-delivery.
   livo-slack-delivery:
+    logging: *livo_frontend_logging
     image: curlimages/curl:latest
     profiles: [slack-delivery]
     restart: unless-stopped
@@ -68,6 +77,7 @@ services:
 
   # Optional outbound-only Slack transport. An empty app token exits successfully.
   livo-slack-socket:
+    logging: *livo_frontend_logging
     image: node:22-alpine
     restart: "on-failure:5"
     init: true

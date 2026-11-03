@@ -47,7 +47,7 @@ export function useUIState(role?: string) {
   const [currentView, setCurrentViewState] = useState<ViewType>('board');
   const navigationState = useRef({ currentView, qaEnabled: false });
   navigationState.current = { currentView, qaEnabled: featureTogglesReady && featureToggles.qa };
-  const setCurrentView = useCallback<Dispatch<SetStateAction<ViewType>>>(value => {
+  const setCurrentView = useCallback((value: SetStateAction<ViewType>, onAccepted?: () => void) => {
     const previous = navigationState.current.currentView;
     const next = typeof value === 'function' ? value(previous) : value;
     if (next === previous) return;
@@ -58,6 +58,7 @@ export function useUIState(role?: string) {
     // Capability revocation has priority over preserving pending UI work.
     if (!navigationState.current.qaEnabled) clearQaNavigationGuards();
     clearOtherViewParams(next);
+    onAccepted?.();
     navigationState.current.currentView = next; setCurrentViewState(next);
   }, []);
   const [selectedTask, setSelectedTaskState] = useState<Task | null>(null);

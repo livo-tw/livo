@@ -37,53 +37,99 @@ transforms:
       storage: '.appname == "supabase-storage"'
       functions: '.appname == "supabase-edge-functions"'
       db: '.appname == "supabase-db"'
-  # Ignores non nginx errors since they are related with kong booting up
+  # Classify once, then route exclusively. Unknown/boot messages must survive
+  # exactly once instead of aborting in both the access and error parsers.
+  kong_classify:
+    type: remap
+    inputs:
+      - router.kong
+    source: |-
+      message = to_string(.event_message) ?? ""
+      access, access_error = parse_nginx_log(message, "combined")
+      if access_error == null {
+        ._livo_kong_kind = "access"
+        ._livo_kong_parsed = access
+      } else {
+        error, error_parse_error = parse_nginx_log(message, "error")
+        if error_parse_error == null {
+          ._livo_kong_kind = "error"
+          ._livo_kong_parsed = error
+        } else {
+          ._livo_kong_kind = "unknown"
+        }
+      }
+  kong_classified:
+    type: route
+    inputs:
+      - kong_classify
+    route:
+      access: '._livo_kong_kind == "access"'
+      error: '._livo_kong_kind == "error"'
+      unknown: '._livo_kong_kind == "unknown"'
   kong_logs:
     type: remap
     inputs:
-      - router.kong
+      - kong_classified.access
     source: |-
-      req, err = parse_nginx_log(.event_message, "combined")
-      if err == null {
-          .timestamp = req.timestamp
-          .metadata.request.headers.referer = req.referer
-          .metadata.request.headers.user_agent = req.agent
-          .metadata.request.headers.cf_connecting_ip = req.client
-          .metadata.response.status_code = req.status
-          url, split_err = split(req.request, " ")
-          if split_err == null {
-              .metadata.request.method = url[0]
-              .metadata.request.path = url[1]
-              .metadata.request.protocol = url[2]
-          }
+      req = del(._livo_kong_parsed)
+      del(._livo_kong_kind)
+      .timestamp = req.timestamp
+      .metadata.request.headers.referer = req.referer
+      .metadata.request.headers.user_agent = req.agent
+      .metadata.request.headers.cf_connecting_ip = req.client
+      .metadata.response.status_code = req.status
+      parts = split(to_string(req.request) ?? "", " ")
+      if length(parts) == 3 {
+        .metadata.request.method = parts[0]
+        .metadata.request.path = parts[1]
+        .metadata.request.protocol = parts[2]
       }
-      if err != null {
-        abort
-      }
-  # Ignores non nginx errors since they are related with kong booting up
+  kong_logs_filtered:
+    type: filter
+    inputs:
+      - kong_logs
+    # Only proven, successful access records enter this filter. The error
+    # branch's legacy synthetic status=200 never qualifies as an access log.
+    condition: |-
+      method = string(.metadata.request.method) ?? ""
+      status = to_int(.metadata.response.status_code) ?? 0
+      path = string(.metadata.request.path) ?? ""
+      query_parts = split(path, "?")
+      path = string(query_parts[0]) ?? ""
+      path = replace(path, r'/+$', "")
+      low_value_path = includes([
+        "/health", "/healthz", "/ready", "/auth/v1/health",
+        "/storage/v1/status", "/realtime/v1/health",
+        "/rest/v1/field_locks"
+      ], path)
+      !(includes(["GET", "HEAD"], method) && status >= 200 && status < 300 && low_value_path)
   kong_err:
     type: remap
     inputs:
-      - router.kong
+      - kong_classified.error
     source: |-
+      parsed = del(._livo_kong_parsed)
+      del(._livo_kong_kind)
       .metadata.request.method = "GET"
       .metadata.response.status_code = 200
-      parsed, err = parse_nginx_log(.event_message, "error")
-      if err == null {
-          .timestamp = parsed.timestamp
-          .severity = parsed.severity
-          .metadata.request.host = parsed.host
-          .metadata.request.headers.cf_connecting_ip = parsed.client
-          url, err = split(parsed.request, " ")
-          if err == null {
-              .metadata.request.method = url[0]
-              .metadata.request.path = url[1]
-              .metadata.request.protocol = url[2]
-          }
+      .timestamp = parsed.timestamp
+      .severity = parsed.severity
+      .metadata.request.host = parsed.host
+      .metadata.request.headers.cf_connecting_ip = parsed.client
+      parts = split(to_string(parsed.request) ?? "", " ")
+      if length(parts) == 3 {
+        .metadata.request.method = parts[0]
+        .metadata.request.path = parts[1]
+        .metadata.request.protocol = parts[2]
       }
-      if err != null {
-        abort
-      }
+  kong_unknown:
+    type: remap
+    inputs:
+      - kong_classified.unknown
+    source: |-
+      del(._livo_kong_kind)
+      del(._livo_kong_parsed)
+      .metadata.log_parser = "unparsed"
   # Gotrue logs are structured json strings which frontend parses directly. But we keep metadata for consistency.
   auth_logs:
     type: remap
@@ -107,17 +153,14 @@ transforms:
           .timestamp = parse_timestamp!(value: parsed.time,format: "%d/%b/%Y:%H:%M:%S %z")
           .metadata.host = .project
       }
-  # Filter out healthcheck logs from Realtime
-  realtime_logs_filtered:
-    type: filter
-    inputs:
-      - router.realtime
-    condition: '!contains(string!(.event_message), "/health")'
+  # Realtime's unstructured messages do not prove a successful HTTP status.
+  # Keep them, including health-related warnings/errors. Only the parsed Kong
+  # access branch performs the bounded successful-poll filter above.
   # Realtime logs are structured so we parse the severity level using regex (ignore time because it has no date)
   realtime_logs:
     type: remap
     inputs:
-      - realtime_logs_filtered
+      - router.realtime
     source: |-
       .metadata.project = del(.project)
       .metadata.external_id = .metadata.project
@@ -255,8 +298,9 @@ sinks:
   logflare_kong:
     type: 'http'
     inputs:
-      - kong_logs
+      - kong_logs_filtered
       - kong_err
+      - kong_unknown
     encoding:
       codec: 'json'
     method: 'post'

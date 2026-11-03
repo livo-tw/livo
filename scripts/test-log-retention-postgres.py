@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""Real PostgreSQL 15.8 regression for the bounded technical-log helper.
+
+The fixture is root-owned and disposable. No host ports, host mounts, real
+configuration, production Docker context, daemon startup, or global prune is used.
+Only one final JSON summary is printed; SQL rows and helper payloads stay private.
+"""
+import copy
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+sys.dont_write_bytecode = True
+HELPER = Path(__file__).resolve().with_name('selfhost-log-retention.py')
+IMAGE = 'postgres:15.8-alpine'
+DOCKER = ['docker', '--host', 'unix:///var/run/docker.sock']
+
+
+class FixtureFailure(Exception):
+    pass
+
+
+def quoted(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def table_name(token):
+    return 'log_events_' + str(token).replace('-', '_')
+
+
+def relation(name):
+    if not re.fullmatch(r'log_events_[0-9a-f]{8}(?:_[0-9a-f]{4}){3}_[0-9a-f]{12}', name):
+        raise FixtureFailure('invalid_fixture_table_identifier')
+    return '"_analytics"."' + name + '"'
+
+
+def command(args, *, input_text=None, timeout=120, stage='command'):
+    try:
+        result = subprocess.run(args, input=input_text, text=True, encoding='utf-8',
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise FixtureFailure(stage + '_unavailable_or_timeout') from None
+    if result.returncode:
+        state = re.search(r'(?:ERROR|FATAL):\s+([A-Z0-9]{5})\b', result.stderr)
+        suffix = '_sqlstate_' + state.group(1) if state else ''
+        raise FixtureFailure(stage + '_failed' + suffix)
+    return result.stdout
+
+
+def write_config(path, config):
+    # mkdtemp's root-owned 0700 parent is checked by the production helper.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as output:
+        json.dump(config, output, sort_keys=True)
+        output.write('\n')
+    os.chmod(path, 0o600)
+
+
+def json_file(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def load_sources():
+    spec = importlib.util.spec_from_file_location('livo_retention_fixture_helper', HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    names = tuple(module.SOURCE_NAMES)
+    if len(names) != 9 or len(set(names)) != 9:
+        raise FixtureFailure('vendor_source_contract_changed')
+    return names
+
+
+class Fixture:
+    def __init__(self, scratch):
+        self.scratch = scratch
+        self.owner = uuid.uuid4().hex
+        self.name = 'livo-retention-fixture-' + self.owner[:16]
+        self.project = 'livo-retention-' + self.owner[:16]
+        self.cid = None
+        self.creation_attempted = False
+        self.sources = [(name, uuid.uuid4()) for name in load_sources()]
+        self.tables = [table_name(token) for _, token in self.sources]
+        self.unknown_token = uuid.uuid4()
+        self.unknown_table = table_name(self.unknown_token)
+        self.config_path = scratch / 'policy.json'
+        self.status_path = scratch / 'status.json'
+        self.lock_path = scratch / 'retention.lock'
+        self.inhibit_path = scratch / 'maintenance.inhibit'
+        self.last_helper = {}
+        self.tests = []
+        self.stage = 'initialize'
+
+    def sql(self, sql, database='_supabase'):
+        return command(DOCKER + ['exec', '-i', self.cid, 'psql', '-X', '-qAt', '-w',
+            '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate', '-U', 'postgres',
+            '-d', database], input_text=sql, stage='fixture_sql')
+
+    def json_sql(self, sql, database='_supabase'):
+        try:
+            return json.loads(self.sql(sql, database))
+        except ValueError:
+            raise FixtureFailure('fixture_sql_json') from None
+
+    def start(self):
+        command(DOCKER + ['info', '--format', '{{.ServerVersion}}'], timeout=20,
+                stage='docker_daemon')
+        command(DOCKER + ['pull', IMAGE], timeout=240, stage='postgres_image_pull')
+        self.creation_attempted = True
+        self.cid = command(DOCKER + ['run', '-d', '--name', self.name,
+            '--label', 'livo.retention-fixture=' + self.owner,
+            '--label', 'com.docker.compose.project=' + self.project,
+            '--label', 'com.docker.compose.service=db', '--network', 'none',
+            '--env', 'POSTGRES_HOST_AUTH_METHOD=trust', IMAGE],
+            timeout=120, stage='fixture_container_create').strip()
+        if not re.fullmatch(r'[0-9a-f]{64}', self.cid):
+            raise FixtureFailure('fixture_container_id')
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            ready = subprocess.run(DOCKER + ['exec', self.cid, 'pg_isready', '-U', 'postgres'],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10)
+            if ready.returncode == 0:
+                # Initialization restarts the temporary postmaster once. Require
+                # a successful normal database query after pg_isready as well.
+                try:
+                    if self.sql("SELECT current_setting('listen_addresses');", 'postgres').strip():
+                        return
+                except FixtureFailure:
+                    pass
+            time.sleep(0.5)
+        raise FixtureFailure('postgres_readiness_timeout')
+
+    def cleanup(self):
+        target = self.cid if self.cid and re.fullmatch(r'[0-9a-f]{64}', self.cid) else self.name
+        probe = subprocess.run(DOCKER + ['inspect', target], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=20)
+        if probe.returncode != 0:
+            absent = 'No such object' in probe.stderr or 'No such container' in probe.stderr
+            if self.creation_attempted and not absent:
+                raise FixtureFailure('fixture_cleanup_unverified')
+            return
+        items = json.loads(probe.stdout)
+        if len(items) != 1:
+            raise FixtureFailure('fixture_cleanup_identity')
+        item = items[0]
+        labels = item.get('Config', {}).get('Labels') or {}
+        if labels.get('livo.retention-fixture') != self.owner:
+            raise FixtureFailure('fixture_cleanup_ownership')
+        cid = item.get('Id', '')
+        if not re.fullmatch(r'[0-9a-f]{64}', cid):
+            raise FixtureFailure('fixture_cleanup_exact_id')
+        command(DOCKER + ['rm', '-f', '-v', cid], timeout=45, stage='fixture_cleanup')
+        self.cid = None
+
+    def setup(self):
+        self.sql('CREATE DATABASE _supabase;', 'postgres')
+        self.sql("CREATE TABLE public.example_business (id text PRIMARY KEY, value text);"
+                 "INSERT INTO public.example_business VALUES ('business','example-preserve');", 'postgres')
+        parts = [
+            'CREATE SCHEMA _analytics;',
+            'CREATE TABLE _analytics.sources (id integer PRIMARY KEY, name text NOT NULL, token uuid NOT NULL);',
+            'CREATE TABLE _analytics.backends (id integer PRIMARY KEY, config jsonb NOT NULL);',
+            "INSERT INTO _analytics.backends VALUES (1,'{\"fixture\":\"example-preserve\"}');",
+            'CREATE TABLE public.example_business (id text PRIMARY KEY, value text);',
+            "INSERT INTO public.example_business VALUES ('business','example-preserve');",
+            'CREATE TABLE public.example_slack (id text PRIMARY KEY, value text);',
+            "INSERT INTO public.example_slack VALUES ('slack','example-preserve');",
+        ]
+        for index, (name, token) in enumerate(self.sources + [('example.unknown.logs', self.unknown_token)], 1):
+            rel = relation(table_name(token))
+            parts.append('INSERT INTO _analytics.sources VALUES (' + str(index) + ',' + quoted(name) + ',' + quoted(token) + '::uuid);')
+            parts.append('CREATE TABLE ' + rel + ' (id text PRIMARY KEY, body jsonb, event_message text, timestamp TIMESTAMP WITHOUT TIME ZONE);')
+            parts.append('INSERT INTO ' + rel + " VALUES "
+                "('old','{\"fixture\":\"example\"}','Example old event',(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '8 days'),"
+                "('recent','{\"fixture\":\"example\"}','Example recent event',(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '1 day'),"
+                "('null','{\"fixture\":\"example\"}','Example null time',NULL),"
+                "('future','{\"fixture\":\"example\"}','Example future event',(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')+INTERVAL '1 day');")
+        self.sql('\n'.join(parts))
+
+    def helper(self, *args, expected=('preview',)):
+        result = subprocess.run([sys.executable, '-B', str(HELPER), *args],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180, check=False)
+        try:
+            payload = json.loads(result.stdout)
+        except ValueError:
+            raise FixtureFailure('helper_stdout_json') from None
+        self.last_helper = {key: payload.get(key) for key in (
+            'status', 'reason', 'dml_attempted', 'operation', 'returncode',
+            'stderr_sha256', 'result_unknown')}
+        if payload.get('status') not in expected:
+            raise FixtureFailure('unexpected_helper_status')
+        valid_code = 0 if payload['status'] in ('preview', 'completed', 'bound_disabled') else 2
+        if result.returncode != valid_code:
+            raise FixtureFailure('helper_exit_status_contract')
+        if payload.get('status_write_failed'):
+            raise FixtureFailure('helper_status_write_failed')
+        return payload
+
+    def invoke(self, *args, expected=('preview',)):
+        return self.helper(*args, '--config', str(self.config_path), expected=expected)
+
+    def save(self, **changes):
+        config = json_file(self.config_path)
+        config.update(changes)
+        write_config(self.config_path, config)
+        return config
+
+    def old_count(self):
+        query = ' UNION ALL '.join('SELECT count(*)::bigint AS n FROM ' + relation(name)
+            + " WHERE timestamp < (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '7 days'" for name in self.tables)
+        return int(self.sql('SELECT sum(n) FROM (' + query + ') q;').strip())
+
+    def seed_old(self):
+        self.sql('\n'.join('INSERT INTO ' + relation(name)
+            + " VALUES ('old-extra','{}','Example old event',(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '8 days')"
+              ' ON CONFLICT (id) DO UPDATE SET timestamp=EXCLUDED.timestamp;' for name in self.tables))
+
+    def protected(self):
+        expressions = []
+        for name in self.tables:
+            expressions.append('SELECT ' + quoted(name) + ' AS label, md5(coalesce((SELECT jsonb_agg(to_jsonb(t) ORDER BY id)::text FROM '
+                + relation(name) + " t WHERE timestamp IS NULL OR timestamp >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '7 days'),'[]')) AS digest")
+        for label, rel, order in (
+            ('sources', '_analytics.sources', 'id'), ('backends', '_analytics.backends', 'id'),
+            ('business', 'public.example_business', 'id'), ('slack', 'public.example_slack', 'id'),
+            ('unknown', relation(self.unknown_table), 'id'),
+        ):
+            expressions.append('SELECT ' + quoted(label) + ", md5(coalesce((SELECT jsonb_agg(to_jsonb(t) ORDER BY " + order + ')::text FROM ' + rel + " t),'[]'))")
+        result = self.json_sql('SELECT jsonb_object_agg(label,digest) FROM (' + ' UNION ALL '.join(expressions) + ') q;')
+        result['other_database_business'] = self.sql("SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY id)::text) FROM public.example_business t;", 'postgres').strip()
+        return result
+
+    def expect(self, condition, reason):
+        if not condition:
+            raise FixtureFailure(reason)
+
+    def refusal_case(self, name, *, reason=None, mutate=None, restore=None):
+        self.stage = name
+        old = self.old_count()
+        protected = self.protected()
+        previous_success = json_file(self.status_path).get('last_success_at_utc')
+        try:
+            if mutate:
+                mutate()
+            result = self.invoke('run', '--apply', expected=('refused',))
+            self.expect(not result.get('dml_attempted'), 'refusal_attempted_dml')
+            if reason:
+                self.expect(result.get('reason') == reason, 'unexpected_refusal_reason')
+            self.expect(result.get('last_success_at_utc') == previous_success, 'refusal_lost_last_success')
+        finally:
+            if restore:
+                restore()
+        self.expect(self.old_count() == old, 'refusal_changed_expired_rows')
+        self.expect(self.protected() == protected, 'refusal_changed_protected_data')
+        self.tests.append(name)
+
+    def exercise(self):
+        self.stage = 'bind_disabled'
+        result = self.helper('bind', '--config', str(self.config_path), '--container', self.name,
+            '--project', self.project, '--db-user', 'postgres', '--status-path', str(self.status_path),
+            '--lock-path', str(self.lock_path), '--maintenance-inhibit-path', str(self.inhibit_path),
+            expected=('bound_disabled',))
+        config = json_file(self.config_path)
+        self.expect(config['enabled'] is False, 'bind_not_disabled')
+        self.expect(config['compose_service'] == 'db' and config['database'] == '_supabase', 'binding_target_contract')
+        self.expect(stat.S_IMODE(self.config_path.stat().st_mode) == 0o600 and self.config_path.stat().st_uid == 0, 'binding_permissions')
+        self.tests.append('bind_disabled_root_owned')
+        protected = self.protected()
+        before = self.old_count()
+        self.stage = 'default_preview'
+        result = self.invoke()
+        self.expect(result.get('dml_attempted') is False and self.old_count() == before, 'default_preview_mutated')
+        self.expect(self.protected() == protected, 'preview_changed_protected_data')
+        self.tests.append('default_preview_no_dml')
+        self.stage = 'disabled_scheduled'
+        result = self.invoke('--scheduled', expected=('refused',))
+        self.expect(result.get('reason') == 'disabled' and not result.get('dml_attempted'), 'disabled_scheduled_contract')
+        self.expect(self.old_count() == before and self.protected() == protected, 'disabled_scheduled_mutated')
+        self.tests.append('disabled_scheduled_no_dml')
+        result = self.invoke('run', '--apply', expected=('refused',))
+        self.expect(result.get('reason') == 'disabled' and self.old_count() == before, 'disabled_apply_mutated')
+        self.tests.append('disabled_explicit_apply_no_dml')
+        self.save(enabled=True, batch_rows=1, max_rows_per_run=2)
+        self.stage = 'bounded_partial'
+        result = self.invoke('run', '--apply', expected=('partial',))
+        self.expect(result.get('deleted_rows') == 2 and result.get('max_batch_rows') == 1 and result.get('expired_remaining_bounded', 0) > 0, 'row_budget_not_partial')
+        self.expect(self.old_count() == before - 2 and self.protected() == protected, 'bounded_partial_scope')
+        self.expect(not result.get('last_success_at_utc'), 'partial_claimed_first_success')
+        self.tests.append('bounded_partial_not_completed')
+        self.save(batch_rows=1000, max_rows_per_run=1000000)
+        self.stage = 'scheduled_complete'
+        result = self.invoke('--scheduled', expected=('completed',))
+        self.expect(self.old_count() == 0 and self.protected() == protected, 'scheduled_retained_scope')
+        self.expect(result.get('last_success_at_utc') == result.get('completed_at_utc') and result.get('physical_compaction_performed') is False, 'completed_success_contract')
+        self.tests.append('enabled_scheduled_only_expired')
+        first_success = result['last_success_at_utc']
+        self.stage = 'completed_preview'
+        result = self.invoke()
+        self.expect(result.get('last_success_at_utc') == first_success, 'preview_lost_last_success')
+        self.tests.append('preview_preserves_last_success')
+        self.seed_old()
+        self.save(batch_rows=1, max_rows_per_run=2)
+        self.stage = 'partial_after_success'
+        result = self.invoke('run', '--apply', expected=('partial',))
+        self.expect(result.get('last_success_at_utc') == first_success, 'partial_lost_last_success')
+        self.expect(result.get('deleted_rows') == 2 and self.protected() == protected, 'partial_after_success_scope')
+        self.tests.append('partial_preserves_last_success')
+        self.save(batch_rows=1000, max_rows_per_run=1000000)
+        self.refusal_case('maintenance_inhibit', reason='maintenance_inhibited',
+            mutate=lambda: self.inhibit_path.touch(mode=0o600), restore=lambda: self.inhibit_path.unlink(missing_ok=True))
+        import fcntl
+        with open(self.lock_path, 'a', encoding='utf-8') as lock:
+            os.chmod(self.lock_path, 0o600)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.refusal_case('single_instance_flock')
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        config = json_file(self.config_path)
+        self.refusal_case('insufficient_free_space', reason='insufficient_free_space',
+            mutate=lambda: self.save(min_free_bytes=2**62), restore=lambda: write_config(self.config_path, config))
+        bad = copy.deepcopy(config)
+        bad['binding']['cluster_id'] = '0'
+        self.refusal_case('cluster_identity_drift', reason='retention_binding_changed',
+            mutate=lambda: write_config(self.config_path, bad), restore=lambda: write_config(self.config_path, config))
+        self.refusal_case('compose_label_drift', reason='container_identity_or_readiness_changed',
+            mutate=lambda: self.save(compose_project=self.project + '-wrong'), restore=lambda: write_config(self.config_path, config))
+        first_source = self.sources[0][0]
+        self.refusal_case('source_name_drift',
+            mutate=lambda: self.sql('UPDATE _analytics.sources SET name=\'example.renamed.logs\' WHERE name=' + quoted(first_source) + ';'),
+            restore=lambda: self.sql('UPDATE _analytics.sources SET name=' + quoted(first_source) + " WHERE name='example.renamed.logs';"))
+        target = self.tables[0]
+        saved = target + '_original'
+        self.refusal_case('table_oid_drift', reason='retention_binding_changed',
+            mutate=lambda: self.sql('ALTER TABLE ' + relation(target) + ' RENAME TO "' + saved + '";CREATE TABLE ' + relation(target) + ' (LIKE "_analytics"."' + saved + '" INCLUDING ALL);INSERT INTO ' + relation(target) + ' SELECT * FROM "_analytics"."' + saved + '";'),
+            restore=lambda: self.sql('DROP TABLE ' + relation(target) + ';ALTER TABLE "_analytics"."' + saved + '" RENAME TO "' + target + '";'))
+        self.refusal_case('delete_rewrite_side_effect_refused', reason='unsupported_source_schema',
+            mutate=lambda: self.sql('CREATE RULE example_unsafe_delete AS ON DELETE TO ' + relation(target) + ' DO ALSO DELETE FROM public.example_business;'),
+            restore=lambda: self.sql('DROP RULE example_unsafe_delete ON ' + relation(target) + ';'))
+        self.refusal_case('user_trigger_side_effect_refused', reason='unsupported_source_schema',
+            mutate=lambda: self.sql("CREATE FUNCTION public.example_unsafe_trigger() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN DELETE FROM public.example_business; RETURN OLD; END;$$;CREATE TRIGGER example_unsafe BEFORE DELETE ON " + relation(target) + ' FOR EACH ROW EXECUTE FUNCTION public.example_unsafe_trigger();'),
+            restore=lambda: self.sql('DROP TRIGGER example_unsafe ON ' + relation(target) + ';DROP FUNCTION public.example_unsafe_trigger();'))
+        self.refusal_case('foreign_key_side_effect_refused', reason='unsupported_source_schema',
+            mutate=lambda: self.sql('CREATE TABLE public.example_fk (id text REFERENCES ' + relation(target) + "(id) ON DELETE CASCADE);INSERT INTO public.example_fk VALUES ('recent');"),
+            restore=lambda: self.sql('DROP TABLE public.example_fk;'))
+        self.refusal_case('inheritance_refused', reason='unsupported_source_schema',
+            mutate=lambda: self.sql('CREATE TABLE _analytics.example_child () INHERITS (' + relation(target) + ');'),
+            restore=lambda: self.sql('DROP TABLE _analytics.example_child;'))
+        self.stage = 'explicit_complete'
+        result = self.invoke('run', '--apply', expected=('completed',))
+        self.expect(self.old_count() == 0 and self.protected() == protected, 'explicit_completion_scope')
+        self.expect(result.get('last_success_at_utc') == result.get('completed_at_utc') and result['last_success_at_utc'] != first_success, 'last_success_not_updated')
+        self.tests.append('enabled_explicit_only_expired')
+
+
+def root_main():
+    summary = {'passed': False, 'fixture': 'postgresql-15.8', 'tests': [], 'cleanup_verified': False}
+    fixture = None
+    try:
+        with tempfile.TemporaryDirectory(prefix='livo-retention-pg-', dir='/tmp') as directory:
+            scratch = Path(directory)
+            os.chmod(scratch, 0o700)
+            if scratch.stat().st_uid != 0:
+                raise FixtureFailure('fixture_directory_not_root_owned')
+            fixture = Fixture(scratch)
+            try:
+                fixture.start()
+                fixture.setup()
+                fixture.exercise()
+                summary['passed'] = True
+            finally:
+                fixture.cleanup()
+                summary['cleanup_verified'] = True
+    except BaseException as error:
+        summary['passed'] = False
+        summary['reason'] = str(error) if isinstance(error, FixtureFailure) else type(error).__name__
+    if fixture:
+        summary['tests'] = fixture.tests
+        summary['stage'] = fixture.stage
+        if not summary['passed']:
+            summary['helper'] = fixture.last_helper
+    print(json.dumps(summary, sort_keys=True))
+    return 0 if summary['passed'] else 1
+
+
+def main():
+    if not hasattr(os, 'geteuid'):
+        print(json.dumps({'passed': False, 'reason': 'linux_root_required'}))
+        return 1
+    if os.geteuid() != 0:
+        # Preserve the helper's real root/ownership checks. Only the disposable
+        # fixture driver is elevated; no production configuration is involved.
+        try:
+            result = subprocess.run(['sudo', '-n', 'python3', '-B', str(Path(__file__).resolve())],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=900)
+            payload = json.loads(result.stdout)
+            print(json.dumps(payload, sort_keys=True))
+            return result.returncode
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            print(json.dumps({'passed': False, 'reason': 'noninteractive_root_reexec_failed'}))
+            return 1
+    return root_main()
+
+
+if __name__ == '__main__':
+    sys.exit(main())
