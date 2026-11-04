@@ -3,10 +3,12 @@ import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import UserSelect from '@/components/UserSelect';
+import type { User } from '@/types';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
+import { NO_QA_TASKS, useExternalQa } from '@/context/ExternalQaContext';
 import { getDepartmentPreferenceIds, getProjectDeveloperPreferenceIds } from '@/lib/memberSelection';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import type { QaCommand, QaIssue, QaSeverity } from '@/lib/qa/domain';
@@ -16,14 +18,15 @@ import { useQaDetailDraft } from './QaDetailDraftContext';
 
 type Fields = Pick<QaIssue, 'projectId' | 'assigneeId' | 'qaOwnerId' | 'severity' | 'priority' | 'dueDate'>;
 
-export default function QaIssueSidebarFields({ issue, disabled, onCommand }: {
-  issue: QaIssue; disabled: boolean; onCommand: (command: QaCommand) => Promise<boolean>;
+export default function QaIssueSidebarFields({ issue, disabled, onCommand, assignmentOptions }: {
+  issue: QaIssue; disabled: boolean; assignmentOptions?: readonly User[]; onCommand: (command: QaCommand) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const configuration = useQaDisplayConfiguration();
   const { users } = useMemberContext();
   const { allProjects, productLines } = useProjectContext();
-  const { allTasks } = useTaskContext();
+  const externalQa = useExternalQa();
+  const allTasks = useTaskContext(externalQa)?.allTasks ?? NO_QA_TASKS;
   const [dueDate, setDueDate] = useState(issue.dueDate || '');
   useQaDetailDraft(dueDate !== (issue.dueDate || ''));
   const dateBaseline = useRef({ id: issue.id, value: issue.dueDate || '' });
@@ -51,10 +54,10 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand }: {
     {configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={issue.severity} disabled={disabled} onChange={event => update({ severity: event.target.value as QaSeverity })}>
       {['untriaged', 'low', 'medium', 'high'].map(value => <option key={value} value={value}>{t(`qa.severityNames.${value}`)}</option>)}
     </QaSelect>}
-    <UserSelect label={t('qa.assignee')} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
+    <UserSelect label={t('qa.assignee')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
       onChange={value => update({ assigneeId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} size="md" />
-    <UserSelect label={t('qa.qaOwner')} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}
+    <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}
       onChange={value => update({ qaOwnerId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} size="md" />
     <QaField label={t('qa.dueDate')} type="date" disabled={disabled} value={dueDate}

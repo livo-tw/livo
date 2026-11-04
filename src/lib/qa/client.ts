@@ -55,6 +55,9 @@ export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'f
   if (!extensions || (cloud && !extensions.includes(file.name.split('.').pop()!.toLowerCase()))) return 'file_type';
 }
 
+export type QaProjectPerson = { id: string; name: string; avatar?: string; color?: string; jobTitle?: string; isActive: boolean };
+export type QaTaskReference = { id: string; taskKey: string; title: string };
+
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }
 export function createQaClient(options: QaClientOptions) {
   const mock = options.mock ?? USING_MOCK_BACKEND;
@@ -96,6 +99,14 @@ export function createQaClient(options: QaClientOptions) {
     return clone(demoCoordination.get(`${ctx.workspaceId}:${projectId}`) ?? {projectId,coordinatorId:null,version:0});
   };
   const api = {
+    async projectPeople(projectId: string, offset = 0, signal?: AbortSignal): Promise<{ members: QaProjectPerson[]; hasMore: boolean }> {
+      if (mock) return { members: [], hasMore: false };
+      return request('project_people', { projectId, offset }, signal);
+    },
+    async taskReferences(projectId: string, options: { search?: string; offset?: number; taskIds?: string[] }, signal?: AbortSignal): Promise<{ tasks: QaTaskReference[]; hasMore: boolean }> {
+      if (mock) throw new QaClientError('qa_forbidden', 403);
+      return request('task_references', { projectId, ...options }, signal);
+    },
     async getCoordination(projectId:string, signal?:AbortSignal):Promise<QaCoordination> {
       ensureEnabled(); return mock ? demoConfig(projectId) : request('get_coordination',{projectId},signal);
     },

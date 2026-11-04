@@ -12,6 +12,8 @@ import { QaVersionField } from './QaVersionField';
 import QaEnvironmentField from './QaEnvironmentField';
 import { QaField, QaSelect, qaButton, qaPrimary } from './QaFields';
 import { useQaFieldConfiguration } from '@/hooks/useQaFieldConfiguration';
+import { useQaProjectPeople } from '@/hooks/useQaProjectPeople';
+import { useExternalQa } from '@/context/ExternalQaContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { QaCustomFieldInputs } from './QaCustomFieldInputs';
 import UserSelect from '@/components/UserSelect';
@@ -21,7 +23,7 @@ import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import QaDisplaySettingsNotice from './QaDisplaySettingsNotice';
 
 export default function QaReportForm({ initial, projectId, defaultQaOwnerId, projects, productLines, client, busy, onSubmit, onCancel, children, submitLabel, cancelLabel, readOnly = false, cancelDisabled = false, fixedFooter = false }: {
-  initial?: QaIssue; projectId?: string; defaultQaOwnerId?: string; projects: Project[]; productLines: ProductLine[]; client: Pick<QaClient, 'versions' | 'getFieldConfiguration' | 'getDisplaySettings'>; busy: boolean;
+  initial?: QaIssue; projectId?: string; defaultQaOwnerId?: string; projects: Project[]; productLines: ProductLine[]; client: Pick<QaClient, 'versions' | 'getFieldConfiguration' | 'getDisplaySettings'> & Partial<Pick<QaClient, 'projectPeople'>>; busy: boolean;
   onSubmit: (input: QaCreateInput) => void; onCancel: () => void;
   children?: ReactNode; submitLabel?: string; cancelLabel?: string; readOnly?: boolean; cancelDisabled?: boolean; fixedFooter?: boolean;
 }) {
@@ -31,6 +33,10 @@ export default function QaReportForm({ initial, projectId, defaultQaOwnerId, pro
   const environments = useDeploymentEnvironments();
   const [form, setForm] = useState<QaCreateInput>(() => ({ projectId: initial?.projectId || projectId || '', title: initial?.title || '', actual: initial?.actual || '', steps: initial?.steps || '', expected: initial?.expected || '', observedEnvironment: initial?.observedEnvironment || '', observedVersion: initial?.observedVersion || '', component: initial?.component || '', severity: initial?.severity || 'untriaged', customFields: { ...initial?.customFields },
     ...(!initial ? { assigneeId: null, qaOwnerId: defaultQaOwnerId || undefined, priority: 3, dueDate: null } : {}) }));
+  const externalQa = useExternalQa();
+  const assignmentOptions = useQaProjectPeople(client, initial ? '' : form.projectId);
+  const ownersAllowed = !externalQa || !!initial || [form.assigneeId, form.qaOwnerId].every(id =>
+    !id || assignmentOptions?.some(member => member.id === id && member.isActive));
   const fields = useQaFieldConfiguration(client);
   const display = useQaDisplaySettings(client, defaultQaOwnerId || initial?.workspaceId || '');
   useEffect(() => { if (!initial && display.configuration) setForm(current => display.configuration!.hiddenPriorityChoices.includes(current.priority ?? 3)
@@ -43,7 +49,7 @@ export default function QaReportForm({ initial, projectId, defaultQaOwnerId, pro
   }, [isMobile, busy, readOnly, display.configuration]);
   const change = (key: keyof QaCreateInput, value: string) => setForm(previous => ({ ...previous, [key]: value,
     ...(key === 'projectId' && value !== previous.projectId && !initial ? { observedVersion: '' } : {}) }));
-  return <form ref={formRef} onSubmit={event => { event.preventDefault(); if (!busy && (readOnly || (environments.ready && fields.configuration && display.configuration))) onSubmit(form); }} className={fixedFooter ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'min-w-0 space-y-5'} aria-busy={busy}>
+  return <form ref={formRef} onSubmit={event => { event.preventDefault(); if (!busy && (readOnly || (environments.ready && fields.configuration && display.configuration && ownersAllowed))) onSubmit(form); }} className={fixedFooter ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'min-w-0 space-y-5'} aria-busy={busy}>
     <div className={fixedFooter ? 'min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pb-5' : 'min-w-0 space-y-5'}>
     <QaDisplaySettingsNotice {...display} />
     {fields.error !== null && <div role="alert" className="flex flex-wrap items-center gap-3 rounded border border-destructive/30 p-3 text-sm text-destructive"><span>{t('qa.failed')}</span><button type="button" className={qaButton} onClick={fields.retry}>{t('qa.refresh')}</button></div>}
@@ -61,8 +67,8 @@ export default function QaReportForm({ initial, projectId, defaultQaOwnerId, pro
         <QaVersionField label={t('qa.observedVersion')} value={form.observedVersion || ''} onChange={value => change('observedVersion', value)} suggestions={versions} />
         {!initial && display.configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={form.severity} onChange={e => change('severity', e.target.value as QaSeverity)}>{['untriaged', 'low', 'medium', 'high'].map(s => <option key={s} value={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
         {!initial && <>
-          <UserSelect label={t('qa.assignee')} activeOnly allowEmpty disabled={busy || readOnly} value={form.assigneeId || ''} onChange={value => setForm(previous => ({ ...previous, assigneeId: value || null }))} />
-          <UserSelect label={t('qa.qaOwner')} activeOnly allowEmpty disabled={busy || readOnly} value={form.qaOwnerId || ''} onChange={value => setForm(previous => ({ ...previous, qaOwnerId: value || null }))} />
+          <UserSelect label={t('qa.assignee')} options={assignmentOptions} activeOnly allowEmpty disabled={busy || readOnly} value={form.assigneeId || ''} onChange={value => setForm(previous => ({ ...previous, assigneeId: value || null }))} />
+          <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={busy || readOnly} value={form.qaOwnerId || ''} onChange={value => setForm(previous => ({ ...previous, qaOwnerId: value || null }))} />
           <p className="text-xs text-muted-foreground">{t('qa.qaOwnerReporterDefaultHint')}</p>
           <QaSelect label={t('qa.priority')} value={form.priority} onChange={event => setForm(previous => ({ ...previous, priority: Number(event.target.value) }))}>
             {display.configuration && getQaPriorityChoices(display.configuration, initial?.priority).map(priority => <option key={priority} value={priority}>{t(`priority.${qaPriorities[priority - 1]}`)}</option>)}
@@ -76,7 +82,7 @@ export default function QaReportForm({ initial, projectId, defaultQaOwnerId, pro
     </div>
     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-card pt-4 pb-[env(safe-area-inset-bottom)]">
       <button type="button" className={qaButton} disabled={busy || cancelDisabled} onClick={onCancel}>{cancelLabel || t('qa.cancel')}</button>
-      <button type="submit" className={qaPrimary} disabled={busy || (!readOnly && (!environments.ready || !fields.configuration || !display.configuration))}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}{busy ? t('qa.saving') : submitLabel || t('qa.save')}</button>
+      <button type="submit" className={qaPrimary} disabled={busy || (!readOnly && (!environments.ready || !fields.configuration || !display.configuration || !ownersAllowed))}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}{busy ? t('qa.saving') : submitLabel || t('qa.save')}</button>
     </div>
   </form>;
 }

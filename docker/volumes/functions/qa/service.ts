@@ -15,6 +15,11 @@ export interface QaEnvironment { get(name: string): string | undefined }
 type Row = Record<string, any>;
 const WORKSPACE = 'default';
 const BUCKET = 'qa-evidence';
+const EXTERNAL_QA_ACTIONS = new Set([
+  'versions', 'get_coordination', 'deployment_permission', 'my_coordination', 'members', 'project_people',
+  'get_display_settings', 'get_manual_state_visibility', 'get_workflow', 'get_field_configuration',
+  'list', 'get', 'create', 'command', 'comment', 'delete', 'upload_init', 'upload_complete', 'download', 'task_references',
+]);
 export const QA_BACKUP_TABLES = ['qa_issues', 'qa_commands', 'qa_events', 'qa_comments', 'qa_uploads', 'qa_attachments', 'qa_slack_links','qa_project_coordination','qa_coordination_commands'] as const;
 const MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'application/pdf', 'text/plain']);
 const fail = (code: string, status = 400): never => { throw new QaError(code, status); };
@@ -80,7 +85,7 @@ export function attachment(row: Row): QaAttachment {
  * The caller supplies only a session token, never a trusted actor ID or role. */
 export function createQaService(env: QaEnvironment, sessionToken: string) {
   const db = new Store(env);
-  async function authenticate(): Promise<Row & { authId: string }> {
+  async function authenticate(profileOnly: boolean): Promise<Row & { authId: string; external: boolean }> {
     if (!sessionToken || sessionToken === env.get('SUPABASE_SERVICE_ROLE_KEY') || sessionToken === env.get('SUPABASE_ANON_KEY')) fail('qa_unauthorized', 401);
     const response = await fetch(`${env.get('SUPABASE_URL')}/auth/v1/user`, { headers: {
       apikey: env.get('SUPABASE_ANON_KEY') || '', Authorization: `Bearer ${sessionToken}` }, signal: AbortSignal.timeout(10000) });
@@ -88,11 +93,17 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const user = await response.json();
     if (typeof user.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(user.id)) fail('qa_unauthorized', 401);
     const [members, settings] = await Promise.all([
-      db.rows('members', { select: 'id,role,auth_id,is_active,is_qa_admin', auth_id: `eq.${user.id}`, is_active: 'eq.true', limit: 2 }),
+      db.rows('members', { select: 'id,role,auth_id,is_active,is_qa_admin', auth_id: `eq.${user.id}`, limit: 2 }),
       db.rows('system_settings', { select: 'value', key: 'eq.feature_toggles', limit: 1 }),
     ]);
-    if (members.length !== 1 || members[0].is_active !== true) fail('qa_forbidden', 403);
-    if (settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
+    if (members.length > 1 || (members.length === 1 && members[0].is_active !== true)) fail('qa_forbidden', 403);
+    const external = members.length === 0;
+    const account = external
+      ? (await db.rows('external_qa_accounts', { select: 'id,name,is_active', auth_id: 'eq.' + user.id, limit: 1 }))[0]
+      : members[0];
+    if (!account || account.is_active !== true) fail('qa_forbidden', 403);
+    if (external && user.user_metadata?.livo_password_change_required === true) fail('qa_password_change_required', 403);
+    if (!profileOnly && settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
     let slackIdentity = null;
     let slackSource = null;
     // Parse claims only after GoTrue has authenticated the complete token.
@@ -108,15 +119,22 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         }
       }
     }catch{fail('qa_forbidden',403);}
+    if (external && slackIdentity) fail('qa_forbidden', 403);
     if(slackIdentity)await db.rpc('livo_qa_live_actor',{p_auth_id:user.id,p_identity:slackIdentity});
-    return { ...members[0], authId: user.id, qaAdmin: members[0].is_qa_admin === true, slackIdentity, slackSource };
+    return { ...account, authId: user.id, external, role: external ? 'member' : account.role,
+      qaAdmin: !external && account.is_qa_admin === true, slackIdentity, slackSource };
   }
-  async function getIssue(issueId: string): Promise<QaIssue> {
+  const externalRead = (actor: Row, action: string, input: Row = {}) => db.rpc('livo_qa_external_read', {
+    p_auth_id: actor.authId, p_action: action, p_input: input,
+  });
+  async function getIssue(issueId: string, actor: Row): Promise<QaIssue> {
+    if (actor.external) return externalRead(actor, 'issue', { id: id(issueId) });
     const row = (await db.qaRows('qa_issues', { select: 'data', id: `eq.${id(issueId)}`, limit: 1 }))[0];
     if (!row) return fail('qa_issue_not_found', 404);
     return row.data;
   }
   async function deploymentPermission(actor: Row): Promise<boolean> {
+    if (actor.external) return false;
     const [queue, toggles] = await Promise.all([
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_queue', limit: 1 }),
       db.rows('system_settings', { select: 'value', key: 'eq.feature_toggles', limit: 1 }),
@@ -146,20 +164,30 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     const moving = destinationId !== projectId;
     const linked = command?.type === 'link_tasks' ? command.taskIds : moving ? issue?.taskIds ?? [] : [];
     if (!Array.isArray(linked) || linked.length > 50) fail('qa_invalid_tasks');
-    const [members, projects, tasks, duplicates, environmentRows, fieldRows] = await Promise.all([
-      db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
+    if (actor.external) await Promise.all(projectCandidates.map(candidate =>
+      externalRead(actor, 'coordination', { projectId: candidate })));
+    const externalIds = candidates.filter(candidate => candidate.startsWith('eqa-'));
+    const [members, projects, tasks, duplicates, environmentRows, fieldRows, externalMembers] = await Promise.all([
+      actor.external ? externalRead(actor, 'people', { projectId: destinationId, ids: candidates })
+        : db.rows('members', { select: 'id', id: `in.(${candidates.join(',')})`, is_active: 'eq.true' }),
       db.rows('projects', { select: 'id', id: `in.(${projectCandidates.join(',')})`, is_archived: 'eq.false' }),
       linked.length ? db.rows('tasks', { select: 'id', id: `in.(${linked.map(id).join(',')})`, project_id: `eq.${destinationId}` }) : [],
       // A duplicate must be another bug of the same project, as in the cloud.
       command?.type === 'close' && command.resolution === 'duplicate' ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(command.duplicateOfId)}`, project_id: `eq.${id(projectId)}`, limit: 1 }) : moving && issue?.duplicateOfId ? db.qaRows('qa_issues', { select: 'id', id: `eq.${id(issue.duplicateOfId)}`, project_id: `eq.${destinationId}`, limit: 1 }) : [],
       db.rows('system_settings', { select: 'value', key: 'eq.deployment_environments', limit: 1 }),
       !issue || command?.type === 'edit' ? db.rows('system_settings', { select: 'value', key: 'eq.qa_custom_fields', limit: 1 }) : [],
+      !actor.external && externalIds.length ? db.rpc('livo_qa_external_roster', { p_project_id: destinationId }) : [],
     ]);
-    const [config, deploymentOperator] = await Promise.all([coordination(projectId), deploymentPermission(actor)]);
+    const [config, deploymentOperator] = await Promise.all([
+      actor.external ? externalRead(actor, 'coordination', { projectId }) : coordination(projectId),
+      deploymentPermission(actor),
+    ]);
     const environments = parseDeploymentEnvironments(environmentRows[0]?.value);
     if (!environments) return fail('qa_invalid_environment');
     return { ...(!issue || command?.type === 'edit' ? { fieldConfiguration: parseQaFieldConfiguration(fieldRows[0]?.value) } : {}), environmentValues: environments.values, actor: { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin, deploymentOperator, qaCoordinatorProjectIds:config.coordinatorId===actor.id?[projectId]:[] }, workspaceId: WORKSPACE, now: now(), newId: () => crypto.randomUUID(),
-      memberIds: new Set(members.map(m => m.id)), projectIds: new Set(projects.map(p => p.id)),
+      memberIds: new Set([...members.map((m: Row) => m.id),
+        ...externalMembers.filter((m: Row) => m.is_active && externalIds.includes(m.id)).map((m: Row) => m.id)]),
+      projectIds: new Set(projects.map(p => p.id)),
       taskIds: new Set(tasks.map(t => t.id)), duplicateIssueIds: new Set(duplicates.map(d => d.id)) };
   }
   // A new bug goes to the project's active QA coordinator, otherwise to the admins.
@@ -171,7 +199,9 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     return (coordinator.length ? coordinator : rows).map(row => String(row.id));
   }
   async function replay(actor: Row, request: Row, hash: string) {
-    const receipt = (await db.qaRows('qa_commands', { select: '*', id: `eq.${commandId(request.commandId)}`, limit: 1 }))[0];
+    const receipt = actor.external
+      ? await externalRead(actor, 'receipt', { id: id(request.id), commandId: commandId(request.commandId) })
+      : (await db.qaRows('qa_commands', { select: '*', id: `eq.${commandId(request.commandId)}`, limit: 1 }))[0];
     if (!receipt) return undefined;
     if (receipt.actor_id !== actor.id || receipt.issue_id !== request.id || receipt.payload_hash !== hash) fail('qa_command_id_reused', 409);
     return receipt.response;
@@ -188,10 +218,22 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     return result;
   }
   return { async handle(raw: unknown): Promise<any> {
-    const request = object(raw), actor = await authenticate();
+    const request = object(raw), actor = await authenticate(request.action === 'external_profile');
+    if (request.action === 'external_profile') return actor.external ? externalRead(actor, 'profile') : { external: false };
+    if (actor.external && !EXTERNAL_QA_ACTIONS.has(request.action)) fail('qa_forbidden', 403);
     switch (request.action) {
+      case 'task_references': {
+        if (!actor.external) fail('qa_forbidden', 403);
+        const requestedIds = request.taskIds;
+        if (requestedIds !== undefined && (!Array.isArray(requestedIds) || requestedIds.length > 50)) fail('qa_invalid_tasks');
+        return externalRead(actor, 'task_references', {
+          projectId: id(request.projectId), offset: request.offset, search: request.search,
+          ...(requestedIds === undefined ? {} : { taskIds: requestedIds.map(id) }),
+        });
+      }
       case 'versions': {
         const projectId = id(request.projectId);
+        if (actor.external) return qaVersionSuggestions(await externalRead(actor, 'versions', { projectId }), WORKSPACE, projectId);
         const project = (await db.rows('projects', { select: 'id', id: `eq.${projectId}`, limit: 1 }))[0];
         if (!project) fail('qa_project_unavailable', 403);
         // Read only version-bearing fields, with the same server-only QA scope.
@@ -199,19 +241,26 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           select: 'workspaceId:workspace_id,projectId:project_id,observedVersion:data->>observedVersion,targets:data->targets,runs:data->runs' });
         return qaVersionSuggestions(rows as Array<{workspaceId:string;projectId:string}>, WORKSPACE, projectId);
       }
-      case 'get_coordination': return coordination(id(request.projectId));
+      case 'get_coordination': return actor.external
+        ? externalRead(actor, 'coordination', { projectId: id(request.projectId) }) : coordination(id(request.projectId));
       case 'deployment_permission': return { deploymentOperator: await deploymentPermission(actor) };
       // The projects whose QA the caller coordinates, so cards can offer triage outside the selected project.
       case 'my_coordination': {
+        if (actor.external) return { projectIds: [] };
         const rows = await db.qaRows('qa_project_coordination', { select: 'id', coordinator_id: `eq.${actor.id}`, order: 'id', limit: 1000 });
         const ids = rows.map(row => String(row.id));
         const open = ids.length ? await db.rows('projects', { select: 'id', id: `in.(${ids.map(id).join(',')})`, is_archived: 'eq.false' }) : [];
         return { projectIds: open.map(row => String(row.id)).sort() };
       }
-      case 'members': {
-        await coordination(id(request.projectId));
+      case 'members': case 'project_people': {
+        const projectId = id(request.projectId);
         const offset=request.offset??0,search=typeof request.search==='string'?request.search.trim():'';
         if(!Number.isSafeInteger(offset)||offset<0||offset>100000||search.length>100)fail('qa_invalid_request');
+        if (actor.external) return externalRead(actor, 'members', { projectId, offset, search });
+        if (request.action === 'project_people') return db.rpc('livo_qa_internal_external_people', {
+          p_auth_id: actor.authId, p_project_id: projectId, p_search: search, p_offset: offset,
+        });
+        await coordination(projectId);
         const rows=await db.rows('members',{select:'id,name',is_active:'eq.true',order:'name,id',offset,limit:100,...(search?{name:`ilike.*${search.replace(/[\\%_*]/g,'\\$&')}*`}:{})});
         return {members:rows,hasMore:rows.length===100};
       }
@@ -302,12 +351,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         anyOf('project_id', filters.projectIds); anyOf('assignee_id', filters.assigneeIds); anyOf('qa_owner_id', filters.qaOwnerIds);
         anyOf('reporter_id', filters.reporterIds); anyOf('data->>priority', filters.priorities); anyOf('data->>severity', filters.severities);
         if (none) return { issues: [], total: 0, hasMore: false } satisfies QaListResult;
+        if (actor.external) return externalRead(actor, 'list', { ...input, ...filters, offset, limit });
         const response = await db.raw('/rest/v1/qa_issues', 'GET', undefined, query, { Prefer: 'count=exact' });
         const rows = await response.json(), total = Number(response.headers.get('Content-Range')?.split('/')[1] ?? rows.length);
         return { issues: rows.map((r: Row) => r.data), total, hasMore: offset + rows.length < total } satisfies QaListResult;
       }
       case 'get': {
-        const issue = await getIssue(request.id);
+        if (actor.external) return externalRead(actor, 'get', { id: id(request.id) });
+        const issue = await getIssue(request.id, actor);
         const [comments, events, attachments] = await Promise.all(['qa_comments', 'qa_events', 'qa_attachments'].map(table =>
           db.all(table, { issue_id: `eq.${issue.id}`, order: 'created_at,id' })));
         const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter(Boolean))].map(id);
@@ -325,7 +376,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           const issue = createQaIssue(input, request.id, await context(actor, input.projectId, undefined, undefined, input));
           return commit(actor, request, hash, issue, 'create', 'created');
         }
-        const issue = await getIssue(request.id);
+        const issue = await getIssue(request.id, actor);
         if (request.action === 'comment') {
           if (!canQaComment(issue, { id: actor.id, role: actor.role })) fail('qa_forbidden', 403);
           const comment = { id: crypto.randomUUID(), issueId: issue.id, actorId: actor.id, body: text(request.body, 20000), createdAt: now() };
@@ -338,7 +389,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return commit(actor, request, hash, next, 'command', command.type, undefined, issue);
       }
       case 'delete': {
-        const issue = await getIssue(request.id);
+        const issue = await getIssue(request.id, actor);
         if (!Number.isInteger(request.expectedVersion) || request.expectedVersion < 1) fail('qa_invalid_version');
         if (issue.version !== request.expectedVersion) fail('qa_version_conflict', 409);
         if (!canQaDelete(issue, { id: actor.id, role: actor.role, qaAdmin: actor.qaAdmin })) fail('qa_forbidden', 403);
@@ -354,10 +405,13 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         return { id: issue.id, deleted: true };
       }
       case 'upload_init': {
-        const issue = await getIssue(request.id), fileName = text(request.fileName, 255), mimeType = text(request.mimeType, 100).toLowerCase();
+        const issue = await getIssue(request.id, actor), fileName = text(request.fileName, 255), mimeType = text(request.mimeType, 100).toLowerCase();
         if (/[\\/\r\n]/.test(fileName) || !MIMES.has(mimeType) || !Number.isSafeInteger(request.size) || request.size < 1 || request.size > QA_MAX_FILE_BYTES) fail('qa_invalid_file');
         const uploadId = crypto.randomUUID(), path = `default/${issue.id}/${uploadId}`, createdAt = now();
-        await db.request('/rest/v1/qa_uploads', 'POST', { id: uploadId, workspace_id: WORKSPACE, issue_id: issue.id, actor_id: actor.id,
+        if (actor.external) await db.rpc('livo_qa_external_reserve_upload', {
+          p_auth_id: actor.authId, p_issue_id: issue.id, p_upload_id: uploadId, p_name: fileName, p_mime: mimeType, p_size: request.size,
+        });
+        else await db.request('/rest/v1/qa_uploads', 'POST', { id: uploadId, workspace_id: WORKSPACE, issue_id: issue.id, actor_id: actor.id,
           file_name: fileName, mime_type: mimeType, size: request.size, storage_path: path, created_at: createdAt,
           expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() });
         const signed = await db.request(`/storage/v1/object/upload/sign/${BUCKET}/${storagePath(path)}`, 'POST', {});
@@ -367,9 +421,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       }
       case 'upload_complete': return attachment(await db.rpc('livo_qa_finalize_upload', { p_auth_id: actor.authId, p_upload_id: id(request.uploadId) }));
       case 'download': {
-        const row = (await db.qaRows('qa_attachments', { select: '*', id: `eq.${id(request.attachmentId)}`, limit: 1 }))[0];
+        const attachmentId = id(request.attachmentId);
+        const row = actor.external ? await externalRead(actor, 'attachment', { attachmentId })
+          : (await db.qaRows('qa_attachments', { select: '*', id: `eq.${attachmentId}`, limit: 1 }))[0];
         if (!row) fail('qa_attachment_not_found', 404);
-        await getIssue(row.issue_id);
+        if (!actor.external) await getIssue(row.issue_id, actor);
         const response = await db.raw(`/storage/v1/object/authenticated/${BUCKET}/${storagePath(row.storage_path)}`, 'GET', undefined, {}, {}, 300000);
         return new Response(response.body, { headers: { 'Content-Type': row.mime_type, 'X-Content-Type-Options': 'nosniff',
           'Cache-Control': 'private, no-store', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.file_name)}` } });

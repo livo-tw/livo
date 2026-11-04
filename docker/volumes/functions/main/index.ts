@@ -23,6 +23,18 @@ function b64urlDecode(s: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
+// Extra denial for restricted logins; this check grants no privileges.
+// The QA service still validates the token with GoTrue and binds the account
+// by auth id. Ordinary functions continue to check their usual callers.
+function isExternalQaToken(authHeader: string | null): boolean {
+  try {
+    const claims = authHeader?.match(/^Bearer (\S+)$/i)?.[1]?.split(".")[1];
+    return !!claims && JSON.parse(new TextDecoder().decode(b64urlDecode(claims))).app_metadata?.livo_external_qa === true;
+  } catch {
+    return false;
+  }
+}
+
 async function verifyJWT(jwt: string): Promise<boolean> {
   const parts = jwt.split(".");
   if (parts.length !== 3) return false;
@@ -69,6 +81,9 @@ Deno.serve(async (req: Request) => {
   }
   if (serviceName === "main" || !/^[A-Za-z0-9_-]+$/.test(serviceName)) {
     return json({ msg: `invalid function name: ${serviceName}` }, 400);
+  }
+  if (req.method !== "OPTIONS" && serviceName !== "qa" && isExternalQaToken(req.headers.get("authorization"))) {
+    return json({ error: "external_qa_forbidden" }, 403);
   }
 
   const servicePath = `${FUNCTIONS_DIR}/${serviceName}`;

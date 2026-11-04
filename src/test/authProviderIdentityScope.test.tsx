@@ -7,16 +7,21 @@ const state = vi.hoisted(() => ({
   session: null as Session | null,
   listener: null as ((event: string, session: Session | null) => void) | null,
   mounts: 0,
+  gateMounts: 0,
   unmounts: 0,
 }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 vi.mock('@/components/ui/sonner', () => ({ Toaster: (): null => null }));
-vi.mock('@/components/RequiredPasswordChange', () => ({ default: (): null => null }));
+vi.mock('@/components/RequiredPasswordChange', () => ({ default: () => <p>Required password change</p> }));
+vi.mock('@/components/qa/ExternalQaAccessGate', () => ({ default: ({ internal }: { internal: React.ReactNode }) => {
+  state.gateMounts++;
+  return <>{internal}</>;
+} }));
 vi.mock('@/components/DemoModeBanner', () => ({ default: (): null => null, DEMO_BANNER_HEIGHT: 0 }));
 vi.mock('@/lib/demoMode', () => ({ IS_DEMO_PRO: false }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { auth: {
+vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: false, supabase: { auth: {
   getSession: async () => ({ data: { session: state.session } }),
   onAuthStateChange: (listener: (event: string, session: Session | null) => void) => {
     state.listener = listener;
@@ -43,12 +48,27 @@ beforeEach(() => {
   state.session = session('example-user-a');
   state.listener = null;
   state.mounts = 0;
+  state.gateMounts = 0;
   state.unmounts = 0;
   window.history.replaceState({}, '', '/');
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('application identity scope', () => {
+  it('requires a new password before external QA audience discovery or application startup', async () => {
+    const temporary = session('external-example');
+    temporary.user.user_metadata.livo_password_change_required = true;
+    state.session = temporary;
+    render(<App />);
+    expect(await screen.findByText('Required password change')).toBeInTheDocument();
+    expect(state.gateMounts).toBe(0);
+    expect(state.mounts).toBe(0);
+
+    await act(async () => { state.listener?.('USER_UPDATED', session('external-example')); });
+    expect(await screen.findByTestId('index-instance')).toBeInTheDocument();
+    expect(state.gateMounts).toBeGreaterThan(0);
+  });
+
   it('remounts the application when the authenticated user changes', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByTestId('index-instance').textContent).toBe('1'));

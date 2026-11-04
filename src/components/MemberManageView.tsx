@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState } from 'react';
 import { Plus, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -9,10 +10,15 @@ import ResetPasswordModal from './member-manage/ResetPasswordModal';
 import CreateLoginModal from './member-manage/CreateLoginModal';
 import EditJobTitleModal from './member-manage/EditJobTitleModal';
 import AccountCredentialsDialog from './AccountCredentialsDialog';
+import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+import { USE_CF_BACKEND } from '@/lib/apiBase';
+
+const ExternalQaAdminPanel = lazy(() => import('./member-manage/ExternalQaAdminPanel'));
 
 const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const [externalQaOpen, setExternalQaOpen] = useState(false);
   const {
     users, currentMemberId,
     isSuperAdmin, canAddMember, canReorder,
@@ -86,6 +92,18 @@ const MemberManageView = ({ embedded }: { embedded?: boolean }) => {
           <div className="mb-4 p-3 md:p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground space-y-1">
             {(['superAdmin', 'admin', 'qaAdmin', 'member'] as const).map(role => <p key={role}><strong className="text-foreground">{t(`role.${role}`)}</strong>{t('common.labelSeparator')}{t(`role.${role}Desc`)}</p>)}
           </div>
+        )}
+
+        {isSuperAdmin && !USING_MOCK_BACKEND && !USE_CF_BACKEND && (
+          <section className="mb-4 space-y-2">
+            <button type="button" aria-expanded={externalQaOpen} onClick={() => setExternalQaOpen(value => !value)}
+              className="rounded-md border border-border px-3 py-2 text-sm font-medium">
+              {t('externalQaAdmin.title')}
+            </button>
+            {externalQaOpen && <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
+              <ExternalQaAdminPanel key={currentMemberId} />
+            </Suspense>}
+          </section>
         )}
 
         {isMobile ? (

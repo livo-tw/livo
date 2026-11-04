@@ -4,9 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import QaReportForm from '@/components/qa/QaReportForm';
 import { createQaIssue } from '@/lib/qa/domain';
 import type { QaFieldConfiguration } from '@/lib/qa/fields';
+import type { MemberContextType } from '@/context/MemberContext';
 
 vi.mock('react-i18next',()=>({useTranslation:()=>({t:(key:string)=>key})}));
 vi.mock('@/context/DeploymentEnvironmentContext',()=>({useDeploymentEnvironments:()=>({ready:true,values:['Stage'],loadError:false})}));
+vi.mock('@/context/MemberContext',()=>({
+  useMemberContext: (): MemberContextType => ({ users: [], refreshUsers: async () => {} }),
+}));
 const issue=createQaIssue({projectId:'p1',title:'Existing report',actual:'Unexpected result',observedEnvironment:'Stage'},'issue',{actor:{id:'reporter',role:'member'},workspaceId:'default',now:'2026-10-03T00:00:00Z',newId:()=> 'event',memberIds:new Set(['reporter']),projectIds:new Set(['p1']),taskIds:new Set()});
 const configuration:QaFieldConfiguration={version:1,fields:[
   {id:'reason',fieldName:'Reason',fieldType:'text',isEnabled:true,isRequired:true,sortOrder:0},

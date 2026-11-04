@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useId, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
+import type { User } from '@/types';
 import { Check, ChevronDown } from 'lucide-react';
 import { sortMemberOptions } from '@/lib/memberSelection';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -20,11 +21,12 @@ interface UserSelectProps {
   disabled?: boolean;
   activeOnly?: boolean;
   preferredUserIds?: readonly string[];
+  options?: readonly User[];
 }
 
 const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, allowEmpty = false,
   emptyLabel = '—', className = '', size = 'sm', name, label, required = false, disabled = false,
-  activeOnly = false, preferredUserIds = [] }: UserSelectProps) => {
+  activeOnly = false, preferredUserIds = [], options }: UserSelectProps) => {
   const { t } = useTranslation();
   const { users } = useMemberContext();
   const [internalValue, setInternalValue] = useState(defaultValue);
@@ -35,11 +37,13 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const selected = users.find(user => user.id === value);
-  const unavailable = !!value && (!selected || (activeOnly && selected.isActive !== true));
+  const source = options ?? users;
+  const candidate = source.find(user => user.id === value);
+  const selected = candidate ?? users.find(user => user.id === value);
+  const unavailable = !!value && (!candidate || (activeOnly && candidate.isActive !== true));
   const formValue = unavailable ? '' : value;
   const avatarSize = size === 'sm' ? 'h-5 w-5 text-[7px]' : 'h-6 w-6 text-[8px]';
-  const availableUsers = sortMemberOptions(users.filter(user => !activeOnly || user.isActive === true), preferredUserIds);
+  const availableUsers = sortMemberOptions(source.filter(user => !activeOnly || user.isActive === true), preferredUserIds);
   const query = search.trim().toLocaleLowerCase();
   const filteredUsers = availableUsers.filter(user => !query ||
     `${user.name} ${user.jobTitle || ''}`.toLocaleLowerCase().includes(query));

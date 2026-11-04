@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+import { USE_CF_BACKEND } from '@/lib/apiBase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { User } from '@/types';
 import type { OtherViewer } from './types';
@@ -35,7 +36,9 @@ export function useTaskPresence(
   useEffect(() => {
     if (!taskId || !currentMemberId) return;
     const channelName = `task-presence-${taskId}`;
-    const channel = supabase.channel(channelName, { config: { presence: { key: currentMemberId } } });
+    const channel = supabase.channel(channelName, {
+      config: { presence: { key: currentMemberId }, ...(!USE_CF_BACKEND && !USING_MOCK_BACKEND ? { private: true } : {}) },
+    });
     channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();

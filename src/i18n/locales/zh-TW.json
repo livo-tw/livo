@@ -1,4 +1,25 @@
 {
+  "externalQaAdmin": {
+    "title": "外包 QA",
+    "description": "外包帳號只能使用獲授權專案的 QA 功能，並遵循一般 QA 的操作規則。成員介紹與站會不會列出外包帳號。",
+    "create": "建立外包帳號",
+    "edit": "編輯外包帳號",
+    "empty": "尚無外包帳號",
+    "active": "已啟用",
+    "inactive": "已停用",
+    "projects": "授權專案",
+    "noProjects": "無專案授權",
+    "saved": "已儲存外包 QA 設定",
+    "errors": {
+      "external_qa_request_failed": "無法處理外包 QA 設定，請重試。",
+      "external_qa_forbidden": "只有超級管理員能管理外包 QA。",
+      "external_qa_invalid": "請檢查姓名和 Email。",
+      "external_qa_invalid_projects": "選取的專案已異動，請重新整理後再試。",
+      "external_qa_email_in_use": "此 Email 已用於其他帳號。請確認帳號後再處理。",
+      "external_qa_stale": "設定已由其他人更新，請重新載入後再編輯。",
+      "external_qa_registration_pending": "登入已建立，但尚未確認專案授權。請重新載入外包名單並請管理員查核，避免重複建立。"
+    }
+  },
   "qaHandoff": {
     "coordinatorSaved": "協調人已更新",
     "coordinatorButtonHint": "指定一位成員負責這個專案的 Bug：新 Bug 會通知他，他也能安排交接與記錄阻礙（設定負責人人人都可以）。不會變更對方的系統角色。",
@@ -3368,6 +3389,10 @@
     "adminOnlyOption": "只有管理員可以編輯此頁（其他人仍依權限閱讀）"
   },
   "qa": {
+    "externalWorkspace": "外部 QA",
+    "externalAllProjects": "所有已授權專案",
+    "externalNoProjects": "你目前沒有 QA 專案存取權限。請聯絡工作區管理員授權。",
+    "externalProfileUnavailable": "目前無法確認工作區存取權限。",
     "qaOwnerReporterDefaultHint": "QA 負責人預設為回報人，可自行改選。",
     "addVerificationEvidence": "補驗證紀錄",
     "displaySettings": {

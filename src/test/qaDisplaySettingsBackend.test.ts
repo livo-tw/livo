@@ -20,7 +20,7 @@ beforeEach(() => {
     calls.push({ path: parsed.pathname, query: parsed.searchParams, body });
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
     if (parsed.pathname === '/auth/v1/user') return json({ id: AUTH });
-    if (parsed.pathname === '/rest/v1/members') return json(active ? [{ id: 'example-member', auth_id: AUTH, role, is_active: true, is_qa_admin: qaAdmin }] : []);
+    if (parsed.pathname === '/rest/v1/members') return json([{ id: 'example-member', auth_id: AUTH, role, is_active: active, is_qa_admin: qaAdmin }]);
     if (parsed.pathname === '/rest/v1/system_settings') {
       const key = parsed.searchParams.get('key');
       if (key === 'eq.feature_toggles') return json([{ value: { qa: true } }]);
@@ -53,6 +53,7 @@ describe('Docker QA display settings retain the super administrator boundary', (
       await expect(api().handle(request)).rejects.toMatchObject({ code: 'qa_forbidden', status: 403 });
     }
     expect(stored).toBeUndefined();
+    expect(calls.some(call => call.path === '/rest/v1/external_qa_accounts')).toBe(false);
   });
   it.each(['member', 'admin', 'super_admin'])('active %s reads defaults and current display settings', async value => {
     role = value;

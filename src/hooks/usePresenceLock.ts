@@ -4,7 +4,7 @@ import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeCl
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useAuthContext } from '@/context/AuthContext';
 import { useMemberContext } from '@/context/MemberContext';
-import { rpcUrl, getAccessTokenSync } from '@/lib/apiBase';
+import { rpcUrl, getAccessTokenSync, USE_CF_BACKEND } from '@/lib/apiBase';
 
 export interface PresenceViewer {
   memberId: string;
@@ -89,7 +89,7 @@ export function usePresenceLock(channelName: string, disabled = false) {
     if (!currentMemberId || disabled) return;
 
     const channel = supabase.channel(channelName, {
-      config: { presence: { key: currentMemberId } },
+      config: { presence: { key: currentMemberId }, ...(!USE_CF_BACKEND && !USING_MOCK_BACKEND ? { private: true } : {}) },
     });
 
     channel

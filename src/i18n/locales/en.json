@@ -1,4 +1,25 @@
 {
+  "externalQaAdmin": {
+    "title": "External QA",
+    "description": "External accounts use the standard QA workflow in the projects you grant. They are excluded from the team directory and standups.",
+    "create": "Create external account",
+    "edit": "Edit external account",
+    "empty": "No external accounts yet",
+    "active": "Active",
+    "inactive": "Disabled",
+    "projects": "Granted projects",
+    "noProjects": "No project access",
+    "saved": "External QA settings saved",
+    "errors": {
+      "external_qa_request_failed": "Could not manage external QA settings. Try again.",
+      "external_qa_forbidden": "Only super admins can manage external QA.",
+      "external_qa_invalid": "Check the name and email address.",
+      "external_qa_invalid_projects": "A selected project has changed. Refresh and try again.",
+      "external_qa_email_in_use": "This email belongs to another account. Verify the account before continuing.",
+      "external_qa_stale": "Someone updated this account. Reload it before editing.",
+      "external_qa_registration_pending": "A login was created, but its project access is unconfirmed. Reload the list and ask an administrator to review before retrying."
+    }
+  },
   "qaHandoff": {
     "coordinatorSaved": "Coordinator updated",
     "coordinatorButtonHint": "Choose a member who looks after this project's bugs: they are told about new bugs, and can arrange handoffs and record blockers. Everyone can set owners. Their system role does not change.",
@@ -3368,6 +3389,10 @@
     "adminOnlyOption": "Only admins can edit this page (others still read it by its permissions)"
   },
   "qa": {
+    "externalWorkspace": "External QA",
+    "externalAllProjects": "All granted projects",
+    "externalNoProjects": "You have no QA project access. Ask your workspace administrator to grant access.",
+    "externalProfileUnavailable": "Workspace access could not be verified.",
     "qaOwnerReporterDefaultHint": "The reporter is the default QA owner. You can choose another member.",
     "addVerificationEvidence": "Add verification evidence",
     "displaySettings": {

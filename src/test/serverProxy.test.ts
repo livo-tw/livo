@@ -272,6 +272,32 @@ describe('server.cjs proxy integration', () => {
     expect(result.body).toBe('%PDF-1.7');
   });
 
+  it('sends legacy task image reads to authenticated Storage without forwarding cookies', async () => {
+    const asset = '/storage/v1/object/public/task-images/example/file.png';
+    const endpoint = '/storage/v1/livo-task-image-session';
+    const issue = (authorization: string, site = 'same-origin') => request(proxy.port, endpoint, { method: 'POST', headers: {
+      authorization, 'sec-fetch-site': site, 'x-forwarded-proto': 'https',
+    } });
+    expect((await request(proxy.port, asset)).status).toBe(404);
+    expect((await issue('Bearer fake.internal.token', 'cross-site')).status).toBe(403);
+    const session = await issue('Bearer fake.internal.token');
+    expect(session.status).toBe(204);
+    const setCookie = session.headers['set-cookie']?.[0] ?? '';
+    expect(setCookie).toMatch(/HttpOnly; SameSite=Strict; Secure$/);
+    expect(setCookie).not.toContain('fake.internal.token');
+    const cookie = setCookie.split(';')[0];
+    const proxied = await request(proxy.port, asset, { headers: { cookie, authorization: 'Bearer overwritten.example.token' } });
+    expect(proxied.headers['cache-control']).toBe('private, no-store');
+    expect(JSON.parse(proxied.body)).toMatchObject({
+      url: '/storage/v1/object/authenticated/task-images/example/file.png',
+      headers: { authorization: 'Bearer fake.internal.token' },
+    });
+    expect(JSON.parse(proxied.body).headers.cookie).toBeUndefined();
+    expect((await request(proxy.port, asset, { headers: { cookie: cookie.replace('=', '=forged') } })).status).toBe(404);
+    const logout = await request(proxy.port, '/auth/v1/logout?scope=local', { method: 'POST' });
+    expect(logout.headers['set-cookie']).toContainEqual(expect.stringMatching(/^livo_task_image_session=;.*Max-Age=0/));
+  });
+
   it('uses http when no trusted front-proxy scheme is supplied', async () => {
     const result = await request(proxy.port, '/auth/v1/user');
     expect(JSON.parse(result.body).headers['x-forwarded-proto']).toBe('http');

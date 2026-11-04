@@ -26,16 +26,34 @@ let rpcError: Record<string, unknown> | undefined;
 let workflowSetting: unknown;
 let fieldSetting: unknown;
 let qaAdmin = false;
+let externalAccount = false;
+let requiredPasswordChange = false;
+const externalProfile = { external: true, id: 'eqa-example', name: 'Example tester', qaEnabled: true,
+  environments: ['Stage'], projects: [{ id: 'project-1', name: 'Allowed project' }], members: [] as unknown[] };
 let calls: { url: URL; body: any; headers: Headers; method: string }[];
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
-  issue = fixture(); enabled = true; active = true; role = 'member'; receipt = undefined; rpcError = undefined; workflowSetting = undefined; fieldSetting = undefined; qaAdmin = false; calls = [];
+  issue = fixture(); enabled = true; active = true; role = 'member'; receipt = undefined; rpcError = undefined; workflowSetting = undefined; fieldSetting = undefined; qaAdmin = false; externalAccount = false; requiredPasswordChange = false; calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
     const call = { url: new URL(url), body: init.body ? JSON.parse(String(init.body)) : undefined, headers: new Headers(init.headers), method: init.method || 'GET' };
     calls.push(call);
     const endpoint = call.url.pathname;
-    if (endpoint === '/auth/v1/user') return json({ id: AUTH });
+    if (endpoint === '/auth/v1/user') return json({ id: AUTH, user_metadata: { livo_password_change_required: requiredPasswordChange } });
+    if (endpoint === '/rest/v1/external_qa_accounts') return json(externalAccount
+      ? [{ id: externalProfile.id, name: externalProfile.name, is_active: true }] : []);
+    if (endpoint === '/rest/v1/rpc/livo_qa_internal_external_people') return json({
+      members: [{ id: externalProfile.id, name: externalProfile.name, isActive: true }], hasMore: false,
+    });
+    if (endpoint === '/rest/v1/rpc/livo_qa_external_read') {
+      const { p_action: action, p_input: request } = call.body;
+      if (action === 'profile') return json(externalProfile);
+      if (action === 'list') return json({ issues: [issue], total: 1, hasMore: false });
+      if (action === 'get' && request.id === issue.id) return json({ issue });
+      if (action === 'task_references') return json({ tasks: [], hasMore: false });
+      if (action === 'members') return json({ members: [{ id: 'member-2', name: 'Example member', isActive: true }], hasMore: false });
+      return json({ code: 'P0002', message: 'qa_issue_not_found' }, 404);
+    }
     if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.deployment_environments') return json([]);
     if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.qa_custom_fields') return json(fieldSetting === undefined ? [] : [{value:fieldSetting}]);
     if (endpoint === '/rest/v1/system_settings') return json(call.url.searchParams.get('key') === 'eq.qa_workflow'
@@ -62,6 +80,59 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const service = () => createQaService(env, 'actual-session');
+
+describe('Docker external QA service boundary', () => {
+  beforeEach(() => { active = false; externalAccount = true; });
+
+  it('detects an ordinary authenticated user before QA feature gating', async () => {
+    active = true; externalAccount = false; enabled = false;
+    expect(await service().handle({ action: 'external_profile' })).toEqual({ external: false });
+    expect(calls.some(call => call.url.pathname === '/rest/v1/external_qa_accounts')).toBe(false);
+  });
+
+  it('routes external reads and reference lookup through the scoped RPC', async () => {
+    expect(await service().handle({ action: 'external_profile' })).toEqual(externalProfile);
+    await service().handle({ action: 'list', input: { projectIds: ['project-1', 'project-other'] } });
+    await expect(service().handle({ action: 'get', id: 'issue-other' })).rejects.toMatchObject({ code: 'qa_issue_not_found', status: 404 });
+    await service().handle({ action: 'task_references', projectId: 'project-1', taskIds: ['task-1'] });
+    expect(calls.some(call => call.url.pathname === '/rest/v1/qa_issues' || call.url.pathname === '/rest/v1/tasks')).toBe(false);
+    expect(calls.filter(call => call.url.pathname.endsWith('/livo_qa_external_read')).map(call => call.body)).toMatchObject([
+      { p_auth_id: AUTH, p_action: 'profile' },
+      { p_auth_id: AUTH, p_action: 'list', p_input: { projectIds: ['project-1', 'project-other'] } },
+      { p_auth_id: AUTH, p_action: 'get', p_input: { id: 'issue-other' } },
+      { p_auth_id: AUTH, p_action: 'task_references', p_input: { projectId: 'project-1', taskIds: ['task-1'] } },
+    ]);
+  });
+
+  it('gives ordinary QA only project-granted external candidates, and external QA the scoped roster', async () => {
+    const selection = { action: 'project_people', projectId: 'project-1', offset: 100 };
+    const outside = await service().handle(selection);
+    expect(outside).toMatchObject({ members: [{ id: 'member-2' }], hasMore: false });
+    expect(calls.find(call => call.url.pathname.endsWith('/livo_qa_external_read'))?.body).toMatchObject({
+      p_auth_id: AUTH, p_action: 'members', p_input: { projectId: 'project-1', offset: 100 },
+    });
+    active = true; externalAccount = false;
+    const internal = await service().handle(selection);
+    expect(internal).toMatchObject({ members: [{ id: externalProfile.id }], hasMore: false });
+    expect(calls.find(call => call.url.pathname.endsWith('/livo_qa_internal_external_people'))?.body).toMatchObject({
+      p_auth_id: AUTH, p_project_id: 'project-1', p_offset: 100,
+    });
+  });
+
+  it('blocks workflow and configuration actions outside external authority', async () => {
+    for (const action of ['backup', 'restore', 'save_coordination', 'save_display_settings', 'save_workflow', 'save_field_configuration', 'receipt']) {
+      await expect(service().handle({ action })).rejects.toMatchObject({ code: 'qa_forbidden', status: 403 });
+    }
+    expect(calls.some(call => call.url.pathname.startsWith('/rest/v1/rpc/'))).toBe(false);
+  });
+
+  it('requires a new password before the external account can read project data', async () => {
+    requiredPasswordChange = true;
+    await expect(service().handle({ action: 'external_profile' })).rejects.toMatchObject({ code: 'qa_password_change_required', status: 403 });
+    await expect(service().handle({ action: 'list' })).rejects.toMatchObject({ code: 'qa_password_change_required', status: 403 });
+    expect(calls.some(call => call.url.pathname.startsWith('/rest/v1/rpc/'))).toBe(false);
+  });
+});
 
 describe('Docker submit QA verification', () => {
   const command = { type: 'submit_fix', summary: '', targets: [{ environment: 'Stage', component: '', build: '', required: true }] };

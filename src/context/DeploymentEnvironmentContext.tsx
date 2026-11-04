@@ -16,6 +16,11 @@ const fallback: EnvironmentState = {
 const EnvironmentContext = createContext<EnvironmentState>(fallback);
 export const useDeploymentEnvironments = () => useContext(EnvironmentContext);
 
+export function ScopedDeploymentEnvironmentProvider({ children, values, reload }: { children: ReactNode; values: string[]; reload: () => Promise<void> }) {
+  const save = async () => { throw new Error('environment-settings-forbidden'); };
+  return <EnvironmentContext.Provider value={{ values, revision: null, ready: true, loadError: false, reload, save }}>{children}</EnvironmentContext.Provider>;
+}
+
 export function DeploymentEnvironmentProvider({ children }: { children: ReactNode }) {
   const { realMemberId, currentMemberId } = useAuthContext();
   const [values, setValues] = useState(defaultDeploymentEnvironments().values);

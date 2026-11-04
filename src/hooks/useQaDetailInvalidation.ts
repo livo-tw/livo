@@ -3,8 +3,8 @@ import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import type { QaDetail } from '@/lib/qa/domain';
 
 // Events only invalidate a read. Detail contents and permissions always come from get().
-export function useQaDetailInvalidation({ issueId, scope, blocked, isBlocked, load, apply }: {
-  issueId: string; scope: number; blocked: boolean; isBlocked: () => boolean;
+export function useQaDetailInvalidation({ issueId, scope, blocked, isBlocked, load, apply, realtime = true }: {
+  issueId: string; scope: number; blocked: boolean; realtime?: boolean; isBlocked: () => boolean;
   load: (signal: AbortSignal) => Promise<QaDetail>; apply: (detail: QaDetail) => void;
 }) {
   const latest = useRef({ isBlocked, load, apply }); latest.current = { isBlocked, load, apply };
@@ -52,7 +52,7 @@ export function useQaDetailInvalidation({ issueId, scope, blocked, isBlocked, lo
     // also recovers a missed event while a browser or VPN was disconnected.
     const poll = setInterval(invalidate, 30_000);
     let subscribed = false;
-    const channel = !USING_MOCK_BACKEND && typeof supabase.channel === 'function' ? supabase.channel(`qa-detail:${scope}:${issueId}`)
+    const channel = realtime && !USING_MOCK_BACKEND && typeof supabase.channel === 'function' ? supabase.channel(`qa-detail:${scope}:${issueId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qa_issues', filter: `id=eq.${issueId}` }, invalidate)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qa_comments', filter: `issue_id=eq.${issueId}` }, invalidate)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qa_events', filter: `issue_id=eq.${issueId}` }, invalidate)
@@ -65,7 +65,7 @@ export function useQaDetailInvalidation({ issueId, scope, blocked, isBlocked, lo
       window.removeEventListener('livo:qa-changed', invalidate); document.removeEventListener('visibilitychange', invalidate);
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [issueId, scope]);
+  }, [issueId, scope, realtime]);
   useEffect(() => { if (!blocked) controls.current?.resume(); }, [blocked, scope]);
   const acknowledge = useCallback(() => controls.current?.acknowledge(), []);
   return { pending: state.scope === scope && state.pending, error: state.scope === scope ? state.error : null,

@@ -6,6 +6,7 @@ import { useUIContext } from '@/context/UIContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { useTaskContext } from '@/context/TaskContext';
+import { NO_QA_TASKS, useExternalQa } from '@/context/ExternalQaContext';
 import { createQaClient, qaId } from '@/lib/qa/client';
 
 export function useQa() {
@@ -15,7 +16,8 @@ export function useQa() {
   const { featureToggles, featureTogglesReady } = useUIContext();
   const { allProjects } = useProjectContext();
   const { users } = useMemberContext();
-  const { allTasks } = useTaskContext();
+  const externalQa = useExternalQa();
+  const allTasks = useTaskContext(externalQa)?.allTasks ?? NO_QA_TASKS;
   const enabled = featureTogglesReady && featureToggles.qa === true;
   const latest = useRef({ enabled, currentMember, allProjects, users, allTasks, environments, deploymentOperator: deployment.isOperator });
   latest.current = { enabled, currentMember, allProjects, users, allTasks, environments, deploymentOperator: deployment.isOperator };

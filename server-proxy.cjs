@@ -3,6 +3,7 @@ const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
 const tls = require('node:tls');
+const { randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
 
 const API_PREFIXES = [
   '/auth/v1/', '/rest/v1/', '/storage/v1/',
@@ -71,6 +72,34 @@ function forwardedHeaders(req) {
 }
 
 const BAD_GATEWAY = JSON.stringify({ error: 'Bad gateway' });
+const LEGACY_TASK_IMAGES = '/storage/v1/object/public/task-images/';
+const AUTH_TASK_IMAGES = '/storage/v1/object/authenticated/task-images/';
+const TASK_IMAGE_SESSION = '/storage/v1/livo-task-image-session';
+const TASK_IMAGE_COOKIE = 'livo_task_image_session';
+const TASK_IMAGE_TTL = 5 * 60 * 1000;
+const TASK_IMAGE_MAX_BEARER_LENGTH = 2700;
+
+function taskImageCookie(req) {
+  const entry = String(req.headers.cookie || '').split(';')
+    .map(part => part.trim()).find(part => part.startsWith(TASK_IMAGE_COOKIE + '='));
+  return entry?.slice(TASK_IMAGE_COOKIE.length + 1) || '';
+}
+
+function assetCookieHeader(headers, value, seconds) {
+  const security = headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  return `${TASK_IMAGE_COOKIE}=${value}; Path=/storage/v1/; Max-Age=${seconds}; HttpOnly; SameSite=Strict${security}`;
+}
+
+function sameOriginBrowserRequest(req, headers) {
+  if (req.headers['sec-fetch-site'] === 'same-origin') return true;
+  try {
+    const origin = new URL(req.headers.origin);
+    return origin.host === req.headers.host && origin.protocol === headers['x-forwarded-proto'] + ':';
+  } catch {
+    return false;
+  }
+}
+
 function logError(kind, error) {
   const code = /^[A-Z0-9_]+$/.test(error?.code || '') ? error.code : 'UPSTREAM_ERROR';
   console.error(`[api-proxy] ${kind} ${code}`);
@@ -86,13 +115,70 @@ function createApiProxy(rawUpstream) {
   const secure = upstream.protocol === 'https:';
   const hostname = upstream.hostname.replace(/^\[|\]$/g, '');
   const port = Number(upstream.port) || (secure ? 443 : 80);
+  // Only this proxy process can decrypt the cookie. It cannot authorize
+  // general API requests and expires after five minutes.
+  // Storage checks live internal membership for every legacy object read.
+  const taskImageKey = randomBytes(32);
+  function encodeAssetSession(bearer) {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', taskImageKey, iv);
+    const expires = Date.now() + TASK_IMAGE_TTL;
+    const encrypted = Buffer.concat([cipher.update(`${expires} ${bearer}`, 'utf8'), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
+  }
+  function decodeAssetSession(ticket) {
+    if (!/^[A-Za-z0-9_-]{48,3800}$/.test(ticket)) return null;
+    try {
+      const bytes = Buffer.from(ticket, 'base64url');
+      const decipher = createDecipheriv('aes-256-gcm', taskImageKey, bytes.subarray(0, 12));
+      decipher.setAuthTag(bytes.subarray(12, 28));
+      const decoded = Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
+      const separator = decoded.indexOf(' ');
+      return Number(decoded.slice(0, separator)) > Date.now() ? decoded.slice(separator + 1) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function assetSessionReply(req, res, headers) {
+    if (req.method !== 'POST' || !sameOriginBrowserRequest(req, headers)) {
+      res.writeHead(403, { 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+    const bearer = String(headers.authorization || '');
+    const ticket = bearer.length <= TASK_IMAGE_MAX_BEARER_LENGTH && /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(bearer)
+      ? encodeAssetSession(bearer) : '';
+    res.writeHead(204, {
+      'Cache-Control': 'no-store',
+      'Set-Cookie': assetCookieHeader(headers, ticket, ticket ? TASK_IMAGE_TTL / 1000 : 0),
+    });
+    res.end();
+  }
 
   function proxyHttp(req, res) {
+    const headers = forwardedHeaders(req);
+    if (req.url === TASK_IMAGE_SESSION) return assetSessionReply(req, res, headers);
+    let path = req.url;
+    const isLegacyTaskImage = path.startsWith(LEGACY_TASK_IMAGES) &&
+      (req.method === 'GET' || req.method === 'HEAD');
+    if (isLegacyTaskImage) {
+      const bearer = decodeAssetSession(taskImageCookie(req));
+      if (!bearer) {
+        res.writeHead(404, { 'Cache-Control': 'private, no-store' });
+        res.end();
+        return;
+      }
+      path = AUTH_TASK_IMAGES + path.slice(LEGACY_TASK_IMAGES.length);
+      headers.authorization = bearer;
+    }
+    // The cookie is scoped to the proxy and never forwarded to upstream Storage.
+    if (path.startsWith('/storage/v1/')) delete headers.cookie;
     let response;
     let failed = false;
     const request = (secure ? https : http).request({
-      hostname, port, method: req.method, path: req.url,
-      headers: forwardedHeaders(req), agent: false,
+      hostname, port, method: req.method, path,
+      headers, agent: false,
     });
     const stop = () => { request.destroy(); response?.destroy(); };
     const fail = (error) => {
@@ -116,7 +202,12 @@ function createApiProxy(rawUpstream) {
     request.on('response', (incoming) => {
       response = incoming;
       incoming.on('error', fail);
-      res.writeHead(incoming.statusCode, apiResponseHeaders(req.url, storageObjectHeaders(req.url, endToEndHeaders(incoming.headers))));
+      const out = apiResponseHeaders(req.url, storageObjectHeaders(req.url, endToEndHeaders(incoming.headers)));
+      if (isLegacyTaskImage || path.startsWith(AUTH_TASK_IMAGES)) out['cache-control'] = 'private, no-store';
+      if (req.method === 'POST' && req.url.split('?')[0] === '/auth/v1/logout') {
+        out['set-cookie'] = [...(out['set-cookie'] || []), assetCookieHeader(headers, '', 0)];
+      }
+      res.writeHead(incoming.statusCode, out);
       incoming.pipe(res);
     });
     req.pipe(request);

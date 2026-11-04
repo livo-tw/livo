@@ -47,8 +47,10 @@ export interface TaskContextType {
 
 export const TaskContext = createContext<TaskContextType | null>(null);
 
-export const useTaskContext = () => {
+export function useTaskContext(): TaskContextType;
+export function useTaskContext(optional: boolean): TaskContextType | null;
+export function useTaskContext(optional = false) {
   const ctx = useContext(TaskContext);
-  if (!ctx) throw new Error('useTaskContext must be used within AppProvider');
+  if (!ctx && !optional) throw new Error('useTaskContext must be used within AppProvider');
   return ctx;
-};
+}

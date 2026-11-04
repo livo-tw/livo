@@ -565,7 +565,7 @@ wait_db() {
 # 等 auth / storage / realtime 完成各自的資料庫初始化
 wait_backend_ready() {
   printf "      等待後端服務初始化（auth / storage / realtime）"
-  _sql="SELECT (to_regclass('auth.users') IS NOT NULL) AND (to_regclass('storage.buckets') IS NOT NULL) AND (EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime'))"
+  _sql="SELECT (to_regclass('auth.users') IS NOT NULL) AND (to_regclass('storage.buckets') IS NOT NULL) AND (to_regclass('realtime.messages') IS NOT NULL) AND (EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime'))"
   _i=0
   while [ "$_i" -lt 90 ]; do
     [ "$(psql_c "$_sql")" = "t" ] && { say ""; say "  [OK] 後端服務初始化完成"; return 0; }
@@ -577,7 +577,7 @@ wait_backend_ready() {
   say "  以下服務尚未完成初始化："
   [ "$(psql_c "SELECT to_regclass('auth.users') IS NOT NULL")" = "t" ]      || say "    - auth（帳號系統）    記錄：docker compose logs --tail=20 auth"
   [ "$(psql_c "SELECT to_regclass('storage.buckets') IS NOT NULL")" = "t" ] || say "    - storage（檔案系統）  記錄：docker compose logs --tail=20 storage"
-  [ "$(psql_c "SELECT EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime')")" = "t" ] || say "    - realtime（協作同步） 記錄：docker compose logs --tail=20 realtime"
+  [ "$(psql_c "SELECT (to_regclass('realtime.messages') IS NOT NULL) AND EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime')")" = "t" ] || say "    - realtime（協作同步） 記錄：docker compose logs --tail=20 realtime"
   die "後端服務初始化逾時。" "請到 docker/ 目錄執行上列 logs 指令查看原因（多半是記憶體不足），
 排除後重新執行：sh install.sh"
 }

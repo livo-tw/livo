@@ -639,7 +639,7 @@ function Wait-Database {
 
 function Wait-BackendReady {
   Write-Host '      等待後端服務初始化（auth / storage / realtime）' -NoNewline
-  $sql = "SELECT (to_regclass('auth.users') IS NOT NULL) AND (to_regclass('storage.buckets') IS NOT NULL) AND (EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime'))"
+  $sql = "SELECT (to_regclass('auth.users') IS NOT NULL) AND (to_regclass('storage.buckets') IS NOT NULL) AND (to_regclass('realtime.messages') IS NOT NULL) AND (EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime'))"
   for ($i = 0; $i -lt 90; $i++) {
     if ((Invoke-PsqlQuery $sql) -eq 't') {
       Say ''
@@ -653,7 +653,7 @@ function Wait-BackendReady {
   Say '  以下服務尚未完成初始化：'
   if ((Invoke-PsqlQuery "SELECT to_regclass('auth.users') IS NOT NULL") -ne 't')      { Say '    - auth（帳號系統）    記錄：docker compose logs --tail=20 auth' }
   if ((Invoke-PsqlQuery "SELECT to_regclass('storage.buckets') IS NOT NULL") -ne 't') { Say '    - storage（檔案系統）  記錄：docker compose logs --tail=20 storage' }
-  if ((Invoke-PsqlQuery "SELECT EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime')") -ne 't') { Say '    - realtime（協作同步） 記錄：docker compose logs --tail=20 realtime' }
+  if ((Invoke-PsqlQuery "SELECT (to_regclass('realtime.messages') IS NOT NULL) AND EXISTS (SELECT 1 FROM pg_publication WHERE pubname='supabase_realtime')") -ne 't') { Say '    - realtime（協作同步） 記錄：docker compose logs --tail=20 realtime' }
   Fail '後端服務初始化逾時。' @'
 請到 docker\ 目錄執行上列 logs 指令查看原因（多半是記憶體不足），
 排除後重新執行 install.bat。

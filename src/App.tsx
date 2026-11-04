@@ -7,13 +7,16 @@ import { passwordChangeRequired } from '@/lib/passwordChangeRequired';
 import RequiredPasswordChange from '@/components/RequiredPasswordChange';
 import { useState, useEffect, lazy, Suspense } from "react";
 import type { Session } from '@supabase/supabase-js';
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, USING_MOCK_BACKEND } from "@/integrations/supabase/client";
+import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { IS_DEMO_PRO } from "@/lib/demoMode";
 import DemoModeBanner, { DEMO_BANNER_HEIGHT } from "@/components/DemoModeBanner";
 
 const Index = lazy(() => import("./pages/Index"));
+const ExternalQaAccessGate = lazy(() => import('./components/qa/ExternalQaAccessGate'));
+const RESOLVE_EXTERNAL_QA = USING_MOCK_BACKEND === false && !USE_CF_BACKEND;
 const Auth = lazy(() => import("./pages/Auth"));
 const Signup = lazy(() => import("./pages/Signup"));
 const SetPassword = lazy(() => import("./pages/SetPassword"));
@@ -91,6 +94,9 @@ const App = () => {
     const validateAndLogLogin = async (event: string, session: Session | null) => {
       const userId = session?.user?.id;
       if (!userId) return;
+      // External logins have no ordinary members/activity row. Avoid starting
+      // internal REST requests while their scoped workspace is being resolved.
+      if (RESOLVE_EXTERNAL_QA && session?.user.app_metadata?.livo_external_qa === true) return;
 
       if (event === 'SIGNED_IN') {
         const userEmail = session?.user?.email;
@@ -230,7 +236,8 @@ const App = () => {
             <Route path="/join" element={<Join />} />
             <Route path="/" element={
               <ProtectedRoute session={session}>
-                <Index key={session?.user.id} />
+                {RESOLVE_EXTERNAL_QA ? <ExternalQaAccessGate key={session?.user.id} accessToken={session?.access_token} internal={<Index key={session?.user.id} />} />
+                  : <Index key={session?.user.id} />}
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />

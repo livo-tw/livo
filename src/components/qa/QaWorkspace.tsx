@@ -15,6 +15,7 @@ import type { Priority } from '@/types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUIContext } from '@/context/UIContext';
+import { useExternalQa } from '@/context/ExternalQaContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useQa } from '@/hooks/useQa';
 import { useQaDetailInvalidation } from '@/hooks/useQaDetailInvalidation';
@@ -47,6 +48,7 @@ export default function QaWorkspace({ mine = false }: { mine?: boolean }) {
 function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { t } = useTranslation();
   const { client, actor: baseActor } = useQa();
+  const externalQa = useExternalQa();
   const display = useQaDisplaySettings(client, baseActor.id);
   const hiddenBoardStates = display.configuration?.hiddenBoardStates ?? [];
   const { taskDisplayMode = 'modal', selectedTask } = useUIContext();
@@ -75,7 +77,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     if (visit.current.token !== detailScope) return;
     protection.current = { scope: detailScope, blocked }; setRefreshBlocked(blocked);
   }, [detailScope]);
-  const externalRefresh = useQaDetailInvalidation({ issueId, scope: detailScope, blocked: refreshBlocked,
+  const externalRefresh = useQaDetailInvalidation({ issueId, scope: detailScope, realtime: !externalQa, blocked: refreshBlocked,
     isBlocked: () => protection.current.blocked, load: signal => client.get(issueId, signal), apply: setDetail });
   const [list, setList] = useState<QaListResult>({ issues: [], total: 0, hasMore: false });
   const [loading, setLoading] = useState(false);
@@ -256,7 +258,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
         <div className="rounded-xl border border-border/80 bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5">
           <div className="flex gap-1 rounded-lg bg-muted/70 p-1" role="group" aria-label={t('qa.viewMode')}>{([{ id: 'board', Icon: LayoutGrid }, { id: 'list', Icon: List }] as const).map(({ id, Icon }) => <button key={id} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary ${view === id ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} aria-pressed={view === id} disabled={busy} onClick={() => setView(id)}><Icon size={15} aria-hidden="true" />{t(`qa.${id}`)}</button>)}</div>
-          <details className="relative text-sm"><summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-accent"><MessageSquare size={15} aria-hidden="true" />{t('qa.slackTitle')}</summary><div className="absolute right-0 z-20 mt-2 w-[min(80vw,360px)] rounded-xl border border-border bg-popover p-4 text-sm text-popover-foreground shadow-lg">{t('qa.slackUsage')}</div></details>
+          {!externalQa && <details className="relative text-sm"><summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-accent"><MessageSquare size={15} aria-hidden="true" />{t('qa.slackTitle')}</summary><div className="absolute right-0 z-20 mt-2 w-[min(80vw,360px)] rounded-xl border border-border bg-popover p-4 text-sm text-popover-foreground shadow-lg">{t('qa.slackUsage')}</div></details>}
         </div>
         <div className="space-y-3 p-3">
           <form className="flex flex-wrap items-center gap-2" role="search" onSubmit={event => { event.preventDefault(); if (busy) return; setSearch(searchDraft.trim()); setOffset(0); }}>

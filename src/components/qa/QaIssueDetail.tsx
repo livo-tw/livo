@@ -4,6 +4,7 @@ import { CommentOrderSelect } from '@/components/CommentOrderSelect';
 import { getQaNextAction } from './QaIssueCard';
 import { QaDetailDraftContext } from './QaDetailDraftContext';
 import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
+import { QaExternalLinkedTasks, QaExternalTaskPicker } from './QaExternalTaskReferences';
 import { useQaNavigationGuard } from '@/hooks/useQaNavigationGuard';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
@@ -23,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useTaskContext } from '@/context/TaskContext';
+import { NO_QA_TASKS, useExternalQa } from '@/context/ExternalQaContext';
 import { useUIContext } from '@/context/UIContext';
 import { canQaComment, canQaCommand, canQaDelete, isHistoricalQaPass, isQaTerminal, qaIdSearch, requiredTargetsPassed } from '@/lib/qa/domain';
 import type { QaActor, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/lib/qa/domain';
@@ -41,6 +43,7 @@ import { ColoredStatusSelect } from '@/components/ui/colored-status-select';
 import { DEFAULT_QA_WORKFLOW } from '@/lib/qa/workflow';
 import { getQaManualStateChoices } from '@/lib/qa/manualStateVisibility';
 import { useQaDisplaySettings } from '@/hooks/useQaDisplaySettings';
+import { useQaProjectPeople } from '@/hooks/useQaProjectPeople';
 import { QaDisplaySettingsContext } from '@/context/QaDisplaySettingsContext';
 import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import QaDisplaySettingsNotice from './QaDisplaySettingsNotice';
@@ -70,12 +73,14 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const getProjectColor = useProjectColor();
   const { users } = useMemberContext();
   const { allProjects, productLines } = useProjectContext();
-  const { allTasks } = useTaskContext();
+  const externalQa = useExternalQa();
+  const allTasks = useTaskContext(externalQa)?.allTasks ?? NO_QA_TASKS;
   const { setSelectedTask } = useUIContext();
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const [acknowledgedIssue, setAcknowledgedIssue] = useState<QaDetail['issue'] | null>(null);
   const [acknowledgedVerification, setAcknowledgedVerification] = useState<QaVerificationCommand>();
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
+  const assignmentOptions = useQaProjectPeople(client, issue.projectId);
   const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), detail.issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
   const manualStates = useQaManualStateVisibility(client);
@@ -111,7 +116,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
   const projectTasks = allTasks.filter(task => task.projectId === issue.projectId);
-  const unavailableLinks = links.filter(id => !projectTasks.some(task => task.id === id));
+  const unavailableLinks = externalQa ? [] : links.filter(id => !projectTasks.some(task => task.id === id));
   const [targets, setTargets] = useState<QaTargetDraft[]>(() => issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
   const [fixSummary, setFixSummary] = useState('');
   const actionBaseline = useRef({ links, targets });
@@ -132,13 +137,13 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const commandSending = useRef(false);
   const pendingComment = useRef<{ body: string; id: string }>();
   // Comments have their own tab; the cloud also logs them as events.
-  const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import' && event.type !== 'comment');
+  const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import' && event.type !== 'comment' && (!externalQa || event.type !== 'link_tasks'));
   const source = (issue as unknown as { legacySource?: { recordUrl?: string } }).legacySource;
-  const sourceUrl = source?.recordUrl && /^https:\/\/[^/]+\.slack\.com\//i.test(source.recordUrl) ? source.recordUrl : null;
+  const sourceUrl = !externalQa && source?.recordUrl && /^https:\/\/[^/]+\.slack\.com\//i.test(source.recordUrl) ? source.recordUrl : null;
   const nextAction = getQaNextAction(issue, actor);
   const can = (type: ActionType) => canQaCommand(issue, actor, type);
-  const member = (id: string | null) => users.find(user => user.id === id)?.name || id || '—';
-  const memberNames = new Map(users.map(user => [user.id, user.name]));
+  const member = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name || id || '—';
+  const memberNames = new Map([...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name]));
   const eventText = { t, issue, showSeverity: display.configuration?.showSeverity ?? false, member: (id: string) => memberNames.get(id) ?? id, date: displayDate,
     task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
     project: (id: string) => allProjects.find(project => project.id === id)?.name || id,
@@ -344,7 +349,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {issue.reopenReason && !isQaTerminal(issue.state) && <div className="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"><p className="font-medium">{t('qa.reopenReason')}</p><p className="mt-1 whitespace-pre-wrap break-words"><QaText text={issue.reopenReason} /></p></div>}
           {issue.resolution && <p className="mt-4 whitespace-pre-wrap rounded bg-muted p-3 text-sm">{t(`qa.resolution.${issue.resolution}`)} · {issue.resolutionReason}{issue.duplicateOfId && <> · <a className="underline" href={`?qa=${encodeURIComponent(issue.duplicateOfId)}`}>{issue.duplicateOfId}</a></>}</p>}
         </QaSection>
-        <QaSection title={t('qa.attachments')}><QaLegacyAttachments issue={issue} /><QaAttachments compact issueId={issue.id} attachments={detail.attachments} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
+        <QaSection title={t('qa.attachments')}>{!externalQa && <QaLegacyAttachments issue={issue} />}<QaAttachments compact issueId={issue.id} attachments={detail.attachments} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
         </>}
         {tab === 'verification' && <>
         <QaSection title={t('qa.targets')}>
@@ -374,13 +379,16 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {!isMobile && actionSection}
         <QaSection title={t('qa.properties')}>
           {!isMobile && stateControl}
-          <QaIssueSidebarFields issue={issue} disabled={busy || !can('update_fields')} onCommand={send} />
+          <QaIssueSidebarFields issue={issue} assignmentOptions={assignmentOptions} disabled={busy || !can('update_fields')} onCommand={send} />
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
         {fields.error !== null && <div role="alert" className="text-sm text-destructive">{t('qa.failed')} <button type="button" className={qaButton} onClick={fields.retry}>{t('qa.refresh')}</button></div>}
-        <RelatedKnowledge targetKind="qa" targetId={issue.id} />
-        <QaSection title={t('qa.taskLinks')}><p className="mb-2 text-xs text-muted-foreground">{t('qa.taskLinksHint')}</p>{!issue.taskIds.length && <p className="text-sm text-muted-foreground">{t('qa.noTasks')}</p>}<ul className="space-y-2">{issue.taskIds.map(id => { const task = allTasks.find(row => row.id === id); return <li key={id}><button className="text-left text-sm text-primary underline disabled:text-muted-foreground" disabled={busy || !task} onClick={() => task && setSelectedTask(task)}>{task ? `${task.taskKey} · ${task.title}` : id}</button></li>; })}</ul></QaSection>
+        {!externalQa && <RelatedKnowledge targetKind="qa" targetId={issue.id} />}
+        {externalQa && <QaSection title={t('qa.taskLinks')}>
+          <QaExternalLinkedTasks client={client} projectId={issue.projectId} ids={issue.taskIds} />
+        </QaSection>}
+        {!externalQa && <QaSection title={t('qa.taskLinks')}><p className="mb-2 text-xs text-muted-foreground">{t('qa.taskLinksHint')}</p>{!issue.taskIds.length && <p className="text-sm text-muted-foreground">{t('qa.noTasks')}</p>}<ul className="space-y-2">{issue.taskIds.map(id => { const task = allTasks.find(row => row.id === id); return <li key={id}><button className="text-left text-sm text-primary underline disabled:text-muted-foreground" disabled={busy || !task} onClick={() => task && setSelectedTask(task)}>{task ? `${task.taskKey} · ${task.title}` : id}</button></li>; })}</ul></QaSection>}
 
       </div>
     </div>
@@ -393,8 +401,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {action === 'edit' && can('edit') && <div className="mt-4 flex min-h-0 flex-1 overflow-hidden"><QaReportForm fixedFooter initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '', customFields: input.customFields })} /></div>}
           {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 min-h-0 space-y-3 overflow-y-auto overscroll-contain" onSubmit={submitAction}><fieldset disabled={busy || (action === 'triage' && !display.configuration)} className="space-y-3">
             {action === 'triage' && <>
-              <UserSelect label={t('qa.assignee')} name="assigneeId" required activeOnly disabled={busy} preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} defaultValue={issue.assigneeId || ''} emptyLabel={t('qa.choose')} size="md" />
-              <UserSelect label={t('qa.qaOwner')} name="qaOwnerId" required activeOnly disabled={busy} preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} defaultValue={issue.qaOwnerId || ''} emptyLabel={t('qa.choose')} size="md" />
+              <UserSelect label={t('qa.assignee')} name="assigneeId" options={assignmentOptions} required activeOnly disabled={busy} preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} defaultValue={issue.assigneeId || ''} emptyLabel={t('qa.choose')} size="md" />
+              <UserSelect label={t('qa.qaOwner')} name="qaOwnerId" options={assignmentOptions} required activeOnly disabled={busy} preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} defaultValue={issue.qaOwnerId || ''} emptyLabel={t('qa.choose')} size="md" />
               {display.configuration?.showSeverity && <QaSelect label={t('qa.severity')} name="severity" required defaultValue={issue.severity === 'untriaged' ? '' : issue.severity}><option value="">{t('qa.choose')}</option>{['low', 'medium', 'high'].map(s => <option value={s} key={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
               <section className="rounded-lg border border-border p-3"><h3 className="text-sm font-medium">{t('qa.additionalDetails')}</h3><div className="mt-3 space-y-3"><QaSelect label={t('qa.priority')} name="priority" required defaultValue={issue.priority}>{display.configuration && getQaPriorityChoices(display.configuration, issue.priority).map(priority => <option key={priority} value={priority}>{t(`priority.${qaPriorities[priority - 1]}`)}</option>)}</QaSelect><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} /></div></section>
             </>}
@@ -405,7 +413,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
             {action === 'close' && resolution === 'fixed' && isHistoricalQaPass(issue) && <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><input type="checkbox" name="acknowledgeHistoricalPass" required className="mt-1" /><span>{t('qa.acknowledgeHistoricalPass')}</span></label>}
             {(action === 'close' || action === 'reopen' || action === 'hold') && <QaField label={action === 'close' && resolution === 'fixed' && !isHistoricalQaPass(issue) ? t('qa.reasonOptional') : t('qa.reason')} name="reason" multiline required={!(action === 'close' && resolution === 'fixed' && !isHistoricalQaPass(issue))} maxLength={8000} />}
             {action === 'hold' && issue.holdReason && <p className="text-xs text-muted-foreground">{t('qa.holdReplaceHint')}</p>}
-            {action === 'link_tasks' && <><p className="text-sm text-muted-foreground">{t('qa.taskLinksHint')}</p><QaField label={t('qa.taskSearch')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)} />
+            {action === 'link_tasks' && externalQa && <QaExternalTaskPicker
+              client={client} projectId={issue.projectId} links={links} onChange={setLinks} />}
+            {action === 'link_tasks' && !externalQa && <><p className="text-sm text-muted-foreground">{t('qa.taskLinksHint')}</p><QaField label={t('qa.taskSearch')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)} />
               {unavailableLinks.length > 0 && <div className="space-y-2 rounded-lg border border-amber-500/30 p-3"><p className="text-sm text-muted-foreground">{t('qa.linkedTaskUnavailable')}</p>{unavailableLinks.map(id => { const task = allTasks.find(row => row.id === id); return <label key={id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked onChange={() => setLinks(previous => previous.filter(link => link !== id))} /><span>{task ? `${task.taskKey} · ${task.title}` : id}</span></label>; })}</div>}
               <div className="max-h-60 space-y-2 overflow-y-auto">{projectTasks.filter(task => `${task.taskKey} ${task.title}`.toLowerCase().includes(taskSearch.toLowerCase())).slice(0, 100).map(task => <label key={task.id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={links.includes(task.id)} onChange={event => setLinks(previous => event.target.checked ? [...previous, task.id] : previous.filter(id => id !== task.id))} /><span>{task.taskKey} · {task.title}</span></label>)}</div></>}
             <p className="text-xs text-muted-foreground">{t('qa.unsent')}</p>
@@ -419,7 +429,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {error !== null && <QaFailure error={error} />}
         {commandRetryNotice}
         {notice && <div className="space-y-2"><p role="status" className="text-sm text-muted-foreground">{notice}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
-        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} busy={busy} onCommand={send} />
+        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} assignmentOptions={assignmentOptions} busy={busy} onCommand={send} />
       </DialogContent>
     </Dialog>
     {ConfirmDialog}

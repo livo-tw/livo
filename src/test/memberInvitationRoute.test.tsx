@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), setSession: vi.fn(), call: vi.fn() }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { auth: {
+vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: { auth: {
   getSession: mocks.getSession, setSession: mocks.setSession,
   onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
 } } }));

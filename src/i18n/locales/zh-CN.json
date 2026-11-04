@@ -1,4 +1,25 @@
 {
+  "externalQaAdmin": {
+    "title": "外包 QA",
+    "description": "外包账号只能使用获授权项目的 QA 功能，并遵循普通 QA 的操作规则。团队介绍与站会不会列出外包账号。",
+    "create": "创建外包账号",
+    "edit": "编辑外包账号",
+    "empty": "暂无外包账号",
+    "active": "已启用",
+    "inactive": "已停用",
+    "projects": "授权项目",
+    "noProjects": "无项目授权",
+    "saved": "已保存外包 QA 设置",
+    "errors": {
+      "external_qa_request_failed": "无法处理外包 QA 设置，请重试。",
+      "external_qa_forbidden": "只有超级管理员能管理外包 QA。",
+      "external_qa_invalid": "请检查姓名和 Email。",
+      "external_qa_invalid_projects": "所选项目已更改，请刷新后重试。",
+      "external_qa_email_in_use": "此 Email 已用于其他账号。请确认账号后再处理。",
+      "external_qa_stale": "设置已由其他人更新，请重新加载后再编辑。",
+      "external_qa_registration_pending": "登录已创建，但尚未确认项目授权。请重新加载外包名单并请管理员核查，避免重复创建。"
+    }
+  },
   "qaHandoff": {
     "coordinatorSaved": "协调人已更新",
     "coordinatorButtonHint": "指定一位成员负责这个专案的 Bug：新 Bug 会通知他，他也能安排交接与记录阻碍（设定负责人人人都可以）。不会变更对方的系统角色。",
@@ -3368,6 +3389,10 @@
     "adminOnlyOption": "只有管理员可以编辑此页（其他人仍按权限阅读）"
   },
   "qa": {
+    "externalWorkspace": "外部 QA",
+    "externalAllProjects": "所有已授权项目",
+    "externalNoProjects": "你目前没有 QA 项目访问权限。请联系工作区管理员授权。",
+    "externalProfileUnavailable": "目前无法确认工作区访问权限。",
     "qaOwnerReporterDefaultHint": "QA 负责人默认为回报人，可自行改选。",
     "addVerificationEvidence": "补验证记录",
     "displaySettings": {

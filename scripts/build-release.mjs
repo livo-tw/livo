@@ -302,6 +302,7 @@ if (skippedUntracked.length) {
 }
 for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/vector.yml', 'volumes/db/roles.sql',
   ...['core.ts','handler.ts','backend.ts','index.ts'].map(file => `volumes/functions/member-invitations/${file}`),
+  'volumes/functions/external-qa-admin/index.ts',
   ...['core.ts','index.ts'].map(file => `volumes/functions/approval-command/${file}`),
   ...['index.ts','knowledgeImportCleanup.ts'].map(file => `volumes/functions/knowledge-import-cleanup/${file}`),
   ...['core.ts','index.ts'].map(file => `volumes/functions/task-work-command/${file}`),
