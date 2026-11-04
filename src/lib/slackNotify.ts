@@ -14,8 +14,7 @@ import { threadMappingQueries, tokenQueries } from '@/lib/integrationQueries';
 import type { Task } from '@/types';
 import type { ApprovalRequest, ApprovalRuleStep } from '@/lib/approvalQueries';
 
-interface SlackNotifyPayload {
-  type: 'task_created' | 'status_changed' | 'assignee_changed' | 'comment_added' | 'priority_changed';
+type SlackNotifyPayload = {
   taskKey: string;
   taskTitle: string;
   taskId: string;
@@ -39,7 +38,10 @@ interface SlackNotifyPayload {
   dmTargets?: { email: string; name?: string; reason: string }[];
   // Optional custom message
   customMessage?: string;
-}
+} & (
+  | { type: 'comment_added'; commentId: string }
+  | { type: 'task_created' | 'status_changed' | 'assignee_changed' | 'priority_changed'; commentId?: never }
+);
 
 /**
  * Invoke the Supabase Edge Function `slack-notify` with the given payload.

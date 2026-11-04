@@ -109,7 +109,7 @@ export const useTaskComments = ({
         createNotification(recipientId, currentMemberId, 'comment', task.id, commentPreview);
     }
     sendSlackNotify({
-      type: 'comment_added', taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
+      type: 'comment_added', commentId: comment.id, taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
       projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
       assigneeName: assignee?.name, statusName: status?.name, priority: task.priority,
       commentPreview: plainText.length > 200 ? plainText.slice(0, 200) + '...' : plainText,

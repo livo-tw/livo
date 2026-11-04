@@ -31,6 +31,7 @@ function fixture() {
   const env = { APP_BASE_URL: 'https://app.example.com', DB: { prepare: (sql: string) => ({ ...statement(sql), bind: (...v: unknown[]) => statement(sql, v) }) } } as unknown as Env;
   const auth: AuthCtx = { userId: 'actor-auth', email: 'actor@example.com', member: { id: 'actor', name: 'Example actor', role: 'member', email: 'actor@example.com', workspaceId: 'one' } };
   const calls: { method: string; args: Row }[] = [];
+  const postResult = vi.fn(async () => Response.json({ ok: true, ts: '1.0' }));
   const users: Record<string, Row> = {
     'assignee@example.com': { id: 'UASSIGNEE', profile: { email: 'assignee@example.com' } },
     'reviewer@example.com': { id: 'UREVIEWER', profile: { email: 'reviewer@example.com' } },
@@ -46,6 +47,7 @@ function fixture() {
     if (method === 'users.list') return Response.json({ ok: true, members: [{ id: 'UNAMESAKE1', real_name: 'Example assignee', profile: { display_name: 'Example assignee' } },
       { id: 'UNAMESAKE2', real_name: 'Example outsider', profile: { display_name: 'Example outsider' } }] });
     if (method === 'conversations.open') return Response.json({ ok: true, channel: { id: `D${args.users}` } });
+    if (method === 'chat.postMessage') return postResult();
     return Response.json({ ok: true, ts: '1.0' });
   }));
   const send = async (payload: Row) => {
@@ -56,8 +58,14 @@ function fixture() {
   };
   const posts = () => calls.filter(call => call.method === 'chat.postMessage').map(call => call.args);
   const text = (post: Row) => JSON.stringify(post.blocks) + post.text;
-  return { db, env, send, calls, posts, text };
+  return { db, env, send, calls, posts, text, postResult };
 }
+
+function addComment(db: DatabaseSync, id: string, content: string, options: { task?: string; actor?: string; workspace?: string; createdAt?: string } = {}) {
+  db.prepare('INSERT INTO comments(id,workspace_id,task_id,user_id,content,created_at) VALUES(?,?,?,?,?,?)')
+    .run(id, options.workspace ?? 'one', options.task ?? 'task', options.actor ?? 'actor', content, options.createdAt ?? new Date().toISOString());
+}
+const commentEvent = (commentId: string) => ({ type: 'comment_added', taskId: 'task', commentId });
 
 describe('cloud slack-notify', () => {
   it('never posts caller-built report blocks and escapes report text', async () => {
@@ -83,7 +91,7 @@ describe('cloud slack-notify', () => {
   it('builds task notices from the stored task, escaping everything that reaches mrkdwn', async () => {
     const f = fixture();
     f.db.exec("INSERT INTO comments(id,workspace_id,task_id,user_id,content) VALUES('c1','one','task','actor','<p>&lt;!channel&gt; please check</p>')");
-    await f.send({ type: 'comment_added', taskId: 'task', taskKey: 'EX-1', taskTitle: '<https://phish.example.com|Forged>',
+    await f.send({ ...commentEvent('c1'), taskKey: 'EX-1', taskTitle: '<https://phish.example.com|Forged>',
       actorName: '<!here> boss', projectName: 'Forged', commentPreview: '&lt;!channel&gt; forged' });
     const [post] = f.posts();
     expect(post.channel).toBe('C0NOTIFY');
@@ -97,7 +105,7 @@ describe('cloud slack-notify', () => {
   it('sends DMs only to stored task recipients, by email, never to guests or display-name matches', async () => {
     const f = fixture();
     f.db.exec("INSERT INTO comments(id,workspace_id,task_id,user_id,content) VALUES('c1','one','task','actor','<p><span data-type=\"mention\" data-id=\"guest\">@Example guest</span> hi</p>')");
-    await f.send({ type: 'comment_added', taskId: 'task', commentPreview: 'hi', dmTargets: [
+    await f.send({ ...commentEvent('c1'), commentPreview: 'hi', dmTargets: [
       { email: 'outsider@example.com', reason: 'Spoofed' }, { email: 'guest@example.com', reason: '你在留言中被提及' },
       { email: 'nobody@example.com', name: 'Example assignee', reason: '你被指派為經辦人' }, { email: 'reviewer@example.com', reason: 'x' }] });
     const dms = f.posts().filter(post => String(post.channel).startsWith('D'));
@@ -105,6 +113,65 @@ describe('cloud slack-notify', () => {
     expect(f.calls.some(call => call.method === 'users.list')).toBe(false);
     expect(f.text(dms[0])).toContain('你的任務有新留言');
     expect(f.text(dms[0])).not.toContain('Spoofed');
+  });
+  it('uses the delayed comment and its own mentions, then suppresses its replay', async () => {
+    const f = fixture();
+    addComment(f.db, 'first', '<p>Earlier note <span data-id="outsider">@Example outsider</span></p>',
+      { createdAt: new Date(Date.now() - 1000).toISOString() });
+    addComment(f.db, 'second', '<p>Later note</p>');
+    const first = { ...commentEvent('first'), dmTargets: [{ email: 'outsider@example.com', reason: 'mention' }] };
+    expect((await f.send(first)).body).toEqual({ success: true });
+    expect((await f.send(commentEvent('second'))).body).toEqual({ success: true });
+    expect((await f.send(first)).body).toEqual({ success: true, duplicate: true });
+    const [channelFirst, dmFirst, channelSecond] = f.posts();
+    expect(f.posts()).toHaveLength(3);
+    expect(channelFirst.channel).toBe('C0NOTIFY');
+    expect(dmFirst.channel).toBe('DUOUTSIDER');
+    expect(f.text(channelFirst)).toContain('Earlier note');
+    expect(f.text(dmFirst)).toContain('Earlier note');
+    expect(f.text(channelSecond)).toContain('Later note');
+  });
+  it('claims a comment once across concurrent requests', async () => {
+    const f = fixture();
+    addComment(f.db, 'same', 'One note');
+    const results = await Promise.all([f.send(commentEvent('same')), f.send(commentEvent('same'))]);
+    expect(results.filter(result => result.body.duplicate === true)).toHaveLength(1);
+    expect(f.posts()).toHaveLength(1);
+    expect(f.db.prepare('SELECT workspace_id FROM qa_slack_receipts').all()).toEqual([{ workspace_id: 'one' }]);
+  });
+  it('refuses missing IDs and comments outside the actor, task or workspace scope', async () => {
+    const f = fixture();
+    addComment(f.db, 'own', 'Matching recent comment');
+    addComment(f.db, 'other-author', 'Another author', { actor: 'reviewer' });
+    addComment(f.db, 'other-workspace', 'Another workspace', { workspace: 'two' });
+    f.db.exec("INSERT INTO tasks(id,workspace_id,task_key,project_id,title,status_id,priority,creator_id) VALUES('other-task','one','EX-2','project','Another task','todo','high','actor')");
+    addComment(f.db, 'different-task', 'Different task', { task: 'other-task' });
+    addComment(f.db, 'future', 'Future timestamp', { createdAt: new Date(Date.now() + 120000).toISOString() });
+    for (const commentId of [undefined, 'missing', 'other-author', 'other-workspace', 'different-task', 'future']) {
+      expect(await f.send({ ...commentEvent('own'), commentId })).toEqual({ status: 404, body: { error: 'comment_unavailable' } });
+    }
+    expect(f.posts()).toEqual([]);
+    expect(f.db.prepare('SELECT id FROM qa_slack_receipts').all()).toEqual([]);
+  });
+  it('leaves the comment claim available until a destination is configured', async () => {
+    const f = fixture();
+    addComment(f.db, 'repair', 'After configuration');
+    f.db.exec("UPDATE backup_settings SET task_notify_channel='unknown-channel'");
+    expect((await f.send(commentEvent('repair'))).body).toEqual({ error: 'channel_not_found' });
+    expect(f.db.prepare('SELECT id FROM qa_slack_receipts').all()).toEqual([]);
+    f.db.exec("UPDATE backup_settings SET task_notify_channel='C0NOTIFY'");
+    expect((await f.send(commentEvent('repair'))).body).toEqual({ success: true });
+    expect(f.posts()).toHaveLength(1);
+  });
+  it.each(['rejected', 'unknown'] as const)('keeps the claim after a %s post outcome', async outcome => {
+    const f = fixture();
+    addComment(f.db, 'uncertain', 'One attempt');
+    if (outcome === 'rejected') f.postResult.mockResolvedValueOnce(Response.json({ ok: false, error: 'not_in_channel' }));
+    else f.postResult.mockRejectedValueOnce(new Error('connection closed after dispatch'));
+    const result = await f.send(commentEvent('uncertain'));
+    expect(result).toEqual({ status: 502, body: { error: outcome === 'rejected' ? 'comment_delivery_failed' : 'comment_delivery_unknown' } });
+    expect((await f.send(commentEvent('uncertain'))).body).toEqual({ success: true, duplicate: true });
+    expect(f.posts()).toHaveLength(1);
   });
   it('sends task digests only to the email-matched account, with escaped titles', async () => {
     const f = fixture();

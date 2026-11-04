@@ -11,7 +11,7 @@ import type { ChangeEvent } from '../protocol';
 import { TABLES } from '../tables';
 import { rowToWire, valueToDb, nowIso, type TableMeta } from '../meta';
 import { notifyChanges } from '../notify';
-import { hashPassword, clearMemberCache } from '../auth';
+import { hashPassword } from '../auth';
 import { API_KEY_FORBIDDEN, deliverLogin, isApiKeyCaller, LoginError, prepareLogin, resolveLoginChannel } from '../memberLogin';
 import { isPlaceholderEmail, isValidEmail, normalizeEmail } from './jiraCsv';
 import { isMemberLimitError, memberLimitFailure } from '../memberQuota';
@@ -145,7 +145,6 @@ async function resetPassword(c: Context<AppContext>, body: ManageMemberBody): Pr
       .prepare('DELETE FROM auth_refresh_tokens WHERE user_id = ?1')
       .bind(existingAuth.id)
       .run();
-    clearMemberCache(existingAuth.id);
   } else {
     // Member never had a login (e.g. imported from Jira) — resetting heals it.
     const authUserId = crypto.randomUUID();
@@ -237,7 +236,6 @@ async function createLogin(c: Context<AppContext>, body: ManageMemberBody): Prom
     if (/UNIQUE/i.test(msg)) return c.json({ error: 'email_taken', message: '此 Email 已被使用' }, 409);
     throw err;
   }
-  clearMemberCache(login.authUserId);
 
   const delivery = await deliverLogin(env, channel, login, {
     name: member.name,
@@ -414,7 +412,6 @@ async function toggleActive(c: Context<AppContext>, body: ManageMemberBody): Pro
       .run();
   }
   // Drop this isolate's requireMember cache so deactivation applies immediately.
-  clearMemberCache();
 
   if (updated) {
     const event: ChangeEvent = {

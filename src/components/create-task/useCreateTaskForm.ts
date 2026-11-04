@@ -77,12 +77,15 @@ export function useCreateTaskForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const creationInFlight = useRef<string | null>(null);
   const createdTask = useRef<Task | null>(null);
+  const retryPrimary = useRef<((sprintId?: string | null) => Promise<void>) | null>(null);
+  const [uncertainTask, setUncertainTask] = useState(false);
+  const [recoverySprintConflict, setRecoverySprintConflict] = useState(false);
   const draftOwner = useRef(currentMemberId);
   const [partialCreation, setPartialCreation] = useState<{ task: Task; sections: string[] } | null>(null);
   const childSubmission = useRef<{ parentId:string; invoke:() => Promise<Task | null> } | null>(null);
   const [uncertainSubtask, setUncertainSubtask] = useState(false);
   const [retainedChildParentId, setRetainedChildParentId] = useState<string | null>(null);
-  const subtaskParentId = partialCreation ? undefined : retainedChildParentId || createTaskSeed?.parentTaskId;
+  const subtaskParentId = partialCreation || uncertainTask ? undefined : retainedChildParentId || createTaskSeed?.parentTaskId;
   const isSubtask = !!subtaskParentId;
   const parentTask = allTasks.find(task => task.id === subtaskParentId);
   const creationVisit = useRef({ memberId: currentMemberId, parentId: subtaskParentId, generation: 0 });
@@ -113,12 +116,17 @@ export function useCreateTaskForm() {
   useEffect(() => {
     if (draftOwner.current === currentMemberId) return;
     draftOwner.current = currentMemberId;
+    retryPrimary.current = null; setUncertainTask(false); setRecoverySprintConflict(false);
     createdTask.current = null; setPartialCreation(null); childSubmission.current = null; setUncertainSubtask(false); setRetainedChildParentId(null);
     creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
     setShowCreateTask(false);
   }, [currentMemberId, setShowCreateTask]);
 
-  useEffect(() => { if (showCreateTask && partialCreation && createTaskSeed) toast.info(t('taskCreate.recovery.resolveFirst')); }, [showCreateTask, partialCreation, createTaskSeed, t]);
+  useEffect(() => {
+    if (!showCreateTask || !createTaskSeed) return;
+    if (uncertainTask) toast.info(t('taskCreate.recovery.resultUnknown'));
+    else if (partialCreation) toast.info(t('taskCreate.recovery.resolveFirst'));
+  }, [showCreateTask, partialCreation, uncertainTask, createTaskSeed, t]);
 
   // Reset only when the form opens: a project or line changing elsewhere (realtime)
   // while it is open must not wipe what was typed.
@@ -126,7 +134,7 @@ export function useCreateTaskForm() {
   useEffect(() => {
     const opening = showCreateTask && lastOpenedScope.current !== creationScope;
     lastOpenedScope.current = showCreateTask ? creationScope : null;
-    if (opening && !partialCreation && !uncertainSubtask) {
+    if (opening && !partialCreation && !uncertainTask && !uncertainSubtask) {
       createdTask.current = null;
       creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
       setSprintChoice(activeSprint?.id);
@@ -143,30 +151,30 @@ export function useCreateTaskForm() {
       setSubtaskItems([]); setNewSubtaskText('');
       setTimeout(() => titleRef.current?.focus(), 100);
     }
-  }, [showCreateTask, creationScope, isSubtask, parentTask, createTaskSeed, selectedProjectId, selectedLineId, allProjects, productLines, activeSprint, sprintReadState, partialCreation, uncertainSubtask]);
+  }, [showCreateTask, creationScope, isSubtask, parentTask, createTaskSeed, selectedProjectId, selectedLineId, allProjects, productLines, activeSprint, sprintReadState, partialCreation, uncertainTask, uncertainSubtask]);
 
   useEffect(() => {
-    if (!showCreateTask || isSubtask || !activeSprint) return;
+    if (!showCreateTask || isSubtask || uncertainTask || !activeSprint) return;
     setSprintChoice(previous => previous === undefined ? activeSprint.id : previous);
-  }, [showCreateTask, isSubtask, activeSprint]);
+  }, [showCreateTask, isSubtask, uncertainTask, activeSprint]);
 
   const sprintChanged = sprintReadState === 'ready' && typeof sprintChoice === 'string' && activeSprint?.id !== sprintChoice;
-  const sprintChoicePending = !isSubtask && sprintChoice !== null && (sprintReadState !== 'ready' || (activeSprint !== null && sprintChoice === undefined) || sprintChanged);
+  const sprintChoicePending = !uncertainTask && !isSubtask && sprintChoice !== null && (sprintReadState !== 'ready' || (activeSprint !== null && sprintChoice === undefined) || sprintChanged);
 
   const projectCustomFields = useMemo(() => (customFields || []).filter(field => field.projectId === projectId).sort((a, b) => a.sortOrder - b.sortOrder), [customFields, projectId]);
   const customFieldsRef = useRef(projectCustomFields); customFieldsRef.current = projectCustomFields;
   // Defaults are filled in when the form opens or the project changes, not when a field list refreshes.
   useEffect(() => {
-    if (!showCreateTask || partialCreation || uncertainSubtask) return;
+    if (!showCreateTask || partialCreation || uncertainTask || uncertainSubtask) return;
     setCustomValues(Object.fromEntries(customFieldsRef.current.map(field => [field.id, customFieldDefault(field)])));
     setCustomTouched(false);
-  }, [showCreateTask, projectId, partialCreation]);
+  }, [showCreateTask, projectId, partialCreation, uncertainTask]);
   const setCustomValue = (fieldId: string, value: CustomFieldDraft) => { setCustomValues(previous => ({ ...previous, [fieldId]: value })); setCustomTouched(true); setShowValidationErrors(false); };
   const missingCustomFields = projectCustomFields.filter(field => field.isRequired && !customFieldFilled(field, customValues[field.id]));
   const subtasksRequireFullForm = subtaskNeedsFullForm(requiredFields, projectCustomFields.some(field => field.isRequired));
 
   const applyTemplate = (templateId: string) => {
-    if (isSubmitting || partialCreation || uncertainSubtask) return;
+    if (isSubmitting || partialCreation || uncertainTask || uncertainSubtask) return;
     const tmpl = taskTemplates.find(t => t.id === templateId);
     if (!tmpl) return;
     if (isSubtask && tmpl.projectId && tmpl.projectId !== parentTask?.projectId) { toast.error(t('taskCreate.subtaskTemplateProject')); return; }
@@ -226,7 +234,7 @@ export function useCreateTaskForm() {
   // has been created and the whole file has been sent to the server.
   const addPendingFiles = (files: FileList) => {
     if (isSubtask) { toast.info(t('taskCreate.subtaskAttachmentsAfterCreation')); return; }
-    if (isSubmitting || partialCreation || uncertainSubtask) return;
+    if (isSubmitting || partialCreation || uncertainTask || uncertainSubtask) return;
     const all = Array.from(files);
     const oversized = all.filter(f => f.size > MAX_UPLOAD_BYTES);
     if (oversized.length > 0) {
@@ -247,6 +255,7 @@ export function useCreateTaskForm() {
   };
 
   const removePendingFile = (id: string) => {
+    if (isSubmitting || uncertainTask) return;
     setPendingFiles(prev => {
       const f = prev.find(p => p.id === id);
       if (f?.preview) URL.revokeObjectURL(f.preview);
@@ -294,7 +303,7 @@ export function useCreateTaskForm() {
 
   const handleSubmitAttempt = () => {
     if (sprintChoicePending || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
-    if (uncertainSubtask) { void handleSubmit(); return; }
+    if (uncertainTask || uncertainSubtask) { void handleSubmit(); return; }
     if (isSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId)) { toast.error(t('taskWork.errors.work_invalid_parent')); return; }
     if (isSubtask && subtaskItems.length) { toast.error(t('task.noNestedSubtasks')); return; }
     if (isSubtask && pendingFiles.length) { toast.info(t('taskCreate.subtaskAttachmentsAfterCreation')); return; }
@@ -321,7 +330,9 @@ export function useCreateTaskForm() {
   };
 
   const handleSubmit = async () => {
-    if ((!isValid && !uncertainSubtask) || sprintChoicePending || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if (isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if (uncertainTask) { await retryPrimary.current?.(); return; }
+    if ((!isValid && !uncertainSubtask) || sprintChoicePending) return;
     if (!uncertainSubtask && deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
     if (isSubtask) {
       if (!uncertainSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId || pendingFiles.length || subtaskItems.length)) return;
@@ -361,8 +372,6 @@ export function useCreateTaskForm() {
       return;
     }
     if (subtaskItems.length && subtasksRequireFullForm) { toast.info(t('taskCreate.subtasksNeedFullForm')); return; }
-    creationInFlight.current = creationScope;
-    setIsSubmitting(true);
     const status = statuses.find(s => s.id === statusId);
     const now = new Date().toISOString().split('T')[0];
     const taskKey = generateTaskKey();
@@ -379,6 +388,15 @@ export function useCreateTaskForm() {
       deployments, sprintId: sprintChoice ?? undefined,
       tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     };
+    await savePrimary(newTask);
+  };
+
+  const savePrimary = async (newTask: Task, recovering = false) => {
+    const isCurrent = () => activeCreationScope.current === creationScope;
+    if (creationInFlight.current || !isCurrent()) return;
+    creationInFlight.current = creationScope;
+    setIsSubmitting(true);
+    const taskId = newTask.id;
     const sections = [
       ...(background || requirement || notes ? ['spec'] : []),
       ...(checkItems.length ? ['checks'] : []), ...(todoItems.length ? ['todos'] : []),
@@ -397,15 +415,15 @@ export function useCreateTaskForm() {
       sections.splice(sections.indexOf(section), 1);
     };
     try {
-      setAllTasks(prev => [...prev, newTask]);
-      const created = await createTaskInDb(newTask);
+      if (!recovering) setAllTasks(prev => [...prev, newTask]);
+      const created = await createTaskInDb(newTask, { recovering, isCurrent });
       if (activeCreationScope.current !== creationScope) {
         // Do not compensate or continue writes with a different login/session.
         if (created) console.info('[LIVO] Task created for a previous form session', { taskId: created.id });
         return;
       }
       // The insert failed (already explained): keep the form open with what was typed.
-      if (!created) { setAllTasks(prev => prev.filter(task => task.id !== taskId)); return; }
+      if (!created) { setAllTasks(prev => prev.filter(task => task !== newTask)); return; }
       // The database may have kept a different key; notifications use the stored one.
       createdTask.current = created;
       const storedKey = created.taskKey;
@@ -466,22 +484,34 @@ export function useCreateTaskForm() {
       await Promise.all([refreshTaskSpecs(), refreshTaskChecks(), refreshTaskTodos(), refreshStatusLogs()])
         .catch(() => { if (activeCreationScope.current === creationScope) toast.info(t('taskCreate.recovery.refreshFailed')); });
       assertCurrentScope();
-      createdTask.current = null;
+      createdTask.current = null; retryPrimary.current = null; setUncertainTask(false); setRecoverySprintConflict(false);
       toast.success(t('task.created'));
       setShowCreateTask(false);
     } catch (err) {
       if (activeCreationScope.current !== creationScope) return;
       if (createdTask.current) {
         // The card exists. Preserve its draft and identity; another Create would duplicate it.
+        retryPrimary.current = null; setUncertainTask(false); setRecoverySprintConflict(false);
         setPartialCreation({ task: createdTask.current, sections: sections.length ? [...sections] : ['details'] });
         toast.error(t('taskCreate.recovery.createdPartial', { key: createdTask.current.taskKey }));
       } else {
-        setAllTasks(prev => prev.filter(task => task.id !== newTask.id));
-        if (err instanceof Error && err.message === 'sprint_conflict') {
+        setAllTasks(prev => prev.filter(task => task !== newTask));
+        const sprintConflict = err instanceof Error && err.message === 'sprint_conflict';
+        if (recovering || !sprintConflict) {
+          // Capture the original draft and post-create work. Only the sprint
+          // may be reselected when an inactive sprint rejects the same ID.
+          retryPrimary.current = sprintId => savePrimary(
+            sprintId === undefined ? newTask : { ...newTask, sprintId: sprintId ?? undefined }, true,
+          );
+          setUncertainTask(true);
+          setRecoverySprintConflict(sprintConflict);
+          if (sprintConflict) setSprintChoice(newTask.sprintId);
+        }
+        if (sprintConflict) {
           toast.error(t('taskCreate.sprintSaveConflict'));
           await refreshSprints().catch(() => {});
         } else {
-          toast.error(t('task.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
+          toast.error(t('taskCreate.recovery.resultUnknown'));
         }
       }
     } finally {
@@ -499,8 +529,8 @@ export function useCreateTaskForm() {
   const dirty = !!title.trim() || hasRichTextContent(background) || hasRichTextContent(requirement) || hasRichTextContent(notes)
     || checkItems.length > 0 || todoItems.length > 0 || subtaskItems.length > 0 || pendingFiles.length > 0 || deployments.length > 0 || !!gitlabUrl.trim() || customTouched;
   const requestClose = async () => {
-    if (isSubmitting) return;
-    if (partialCreation || uncertainSubtask) { setShowCreateTask(false); return; }
+    if (isSubmitting || creationInFlight.current) return;
+    if (partialCreation || uncertainTask || uncertainSubtask) { setShowCreateTask(false); return; }
     if (dirty && !(await confirm({ title: t('taskCreate.discardTitle'), description: t('taskCreate.discardDesc'), destructive: true }))) return;
     if (activeCreationScope.current !== creationScope) return;
     setRetainedChildParentId(null); setShowCreateTask(false);
@@ -539,7 +569,7 @@ export function useCreateTaskForm() {
   return {
     showCreateTask: showCreateTask && draftOwner.current === currentMemberId, setShowCreateTask,
     sprintChoicePending,
-    sprintSelection: isSubtask || partialCreation ? undefined : {
+    sprintSelection: isSubtask || partialCreation || uncertainTask ? undefined : {
       name: activeSprint?.name,
       checked: !!activeSprint && activeSprint.id === sprintChoice,
       readState: sprintChoice === null ? 'ready' as const : sprintReadState,
@@ -548,8 +578,13 @@ export function useCreateTaskForm() {
       chooseBacklog: () => setSprintChoice(null),
       retry: () => { void refreshSprints().catch(() => {}); },
     },
+    taskSprintRecovery: recoverySprintConflict ? {
+      activeName: activeSprint?.id !== sprintChoice ? activeSprint?.name : undefined,
+      retryInActive: () => { if (activeSprint) void retryPrimary.current?.(activeSprint.id); },
+      retryInBacklog: () => { void retryPrimary.current?.(null); },
+    } : undefined,
     title, setTitle,
-    isSubtask, parentTask, subtasksRequireFullForm, uncertainSubtask,
+    isSubtask, parentTask, subtasksRequireFullForm, uncertainTask, uncertainSubtask,
     background, setBackground,
     requirement, setRequirement,
     notes, setNotes,

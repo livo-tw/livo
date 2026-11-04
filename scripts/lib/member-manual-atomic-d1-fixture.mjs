@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { clearMemberCache, registerAuthRoutes, requireMember } from '../../worker/src/auth';
+import { registerAuthRoutes, requireMember } from '../../worker/src/auth';
 import { handleManageMember } from '../../worker/src/functions/manageMember';
 
 const workerRequire = createRequire(new URL('../../worker/package.json', import.meta.url));
@@ -136,7 +136,6 @@ export async function createManualAtomicFixture() {
   return {
     a, b, notifications,
     close: () => {
-      clearMemberCache('manual-owner-a'); clearMemberCache('manual-owner-b');
       first.close(); second.close(); rmSync(directory, { recursive: true, force: true });
     },
   };

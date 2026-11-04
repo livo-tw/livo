@@ -21,8 +21,8 @@ export interface TaskContextType {
   refreshStatuses: () => Promise<void>;
   refreshTags: () => Promise<void>;
   updateTaskInDb: (taskId: string, updates: Partial<Task>) => Promise<boolean | void>;
-  /** The stored task (database key), or null when the insert failed. */
-  createTaskInDb: (task: Task) => Promise<Task | null>;
+  /** The confirmed task, or null for a rejected insert or a superseded session. */
+  createTaskInDb: (task: Task, attempt: { recovering: boolean; isCurrent: () => boolean }) => Promise<Task | null>;
   createSubtask: (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task, values?: SubtaskCreateValues) => Promise<Task | null>;
   customFields: CustomField[];
   customFieldValues: TaskCustomFieldValue[];

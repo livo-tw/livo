@@ -3,7 +3,7 @@
 import type { Context } from 'hono';
 import type { AppContext, Env } from '../env';
 import { appBaseUrl, DEFAULT_WORKSPACE, isDemoMember, isDemoWorkspace } from '../env';
-import { clearMemberCache, hashPassword, prepareAuthSession, requireMember } from '../auth';
+import { hashPassword, prepareAuthSession, requireMember } from '../auth';
 import { liveMember, liveMemberSql } from '../liveMember';
 import { isApiKeyCaller } from '../memberLogin';
 import { notifyChanges } from '../notify';
@@ -192,7 +192,6 @@ async function accept(c: Context<AppContext>, body: Record<string, unknown>): Pr
   ]);
   const inserted = results[2]?.results[0] as Record<string, unknown> | undefined;
   if (!results[0]?.meta.changes || !inserted) throw new InvitationError('invalid_token');
-  clearMemberCache(authId);
   notifyChanges(c.env, c.executionCtx, [{ table: 'members', eventType: 'INSERT',
     new: rowToWire(inserted, TABLES.members), old: null }], ws);
   return c.json({ success: true, session: { ...prepared.session, token_type: 'bearer',
@@ -233,7 +232,6 @@ async function acceptInvite(c: Context<AppContext>, body: Record<string, unknown
   ]);
   const inserted = results[2]?.results[0] as Record<string, unknown> | undefined;
   if (!results[0]?.meta.changes || !inserted) throw new InvitationError('invalid_token');
-  clearMemberCache(authId);
   notifyChanges(c.env, c.executionCtx, [{ table: 'members', eventType: 'INSERT',
     new: rowToWire(inserted, TABLES.members), old: null }], ws);
   return c.json({ success: true, session: { ...prepared.session, token_type: 'bearer',

@@ -998,6 +998,7 @@
   },
   "taskCreate": {
     "recovery": {
+      "resultUnknown": "尚未確認任務是否已建立。原始內容已保留並鎖定，請重試以確認同一次提交。",
       "resolveFirst": "請先處理已建立任務的保留草稿，再新增子任務。",
       "createdPartial": "任務 {{key}} 已建立，部分資料尚未完整儲存。",
       "unsaved": "尚未確認儲存：{{sections}}。",

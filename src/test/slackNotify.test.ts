@@ -24,7 +24,7 @@ function backend(tables: Record<string, Row[]> = {}) {
     statuses: [{ id: 'todo', name: 'Todo' }],
     slack_config: [{ id: 'singleton', bot_token: 'xoxb-example' }],
     backup_settings: [{ task_notify_channel: 'notify', dm_notify_enabled: true, dm_notify_start_hour: 0, dm_notify_end_hour: 24 }],
-    system_settings: [], comments: [], ...tables,
+    system_settings: [], comments: [], qa_slack_receipts: [], slack_delivery_outbox: [], ...tables,
   };
   const slackUsers: Record<string, Row> = {
     'assignee@example.com': { id: 'UASSIGNEE', profile: { email: 'assignee@example.com' } },
@@ -33,6 +33,7 @@ function backend(tables: Record<string, Row[]> = {}) {
     'guest@example.com': { id: 'UGUEST', is_restricted: true, profile: { email: 'guest@example.com' } },
   };
   const slack: { method: string; args: Row }[] = [], rest: { table: string; auth: string }[] = [], failing = new Set<string>();
+  const postResult = vi.fn(async () => Response.json({ ok: true, ts: '1.0' }));
   const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input)), auth = String((init?.headers as Row)?.Authorization || '');
     if (url.hostname === 'slack.com') {
@@ -41,6 +42,7 @@ function backend(tables: Record<string, Row[]> = {}) {
       if (method === 'conversations.list') return Response.json({ ok: true, channels: [{ id: 'C0NOTIFY', name: 'notify' }, { id: 'C0REPORT', name: 'reports' }] });
       if (method === 'users.lookupByEmail') return slackUsers[args.email] ? Response.json({ ok: true, user: slackUsers[args.email] }) : Response.json({ ok: false, error: 'users_not_found' });
       if (method === 'conversations.open') return Response.json({ ok: true, channel: { id: `D${args.users}` } });
+      if (method === 'chat.postMessage') return postResult();
       return Response.json({ ok: true, ts: '1.0' });
     }
     if (url.pathname === '/auth/v1/user') return auth === 'Bearer member-jwt' ? Response.json({ id: 'auth-actor' }) : Response.json({}, { status: 401 });
@@ -48,6 +50,16 @@ function backend(tables: Record<string, Row[]> = {}) {
     const table = url.pathname.split('/').pop()!;
     rest.push({ table, auth });
     if (failing.has(table)) return Response.json({ message: 'relation "backup_settings" does not exist (10.0.0.5:5432)' }, { status: 500 });
+    if (table === 'qa_slack_receipts' && init?.method === 'POST') {
+      expect(auth).toBe(`Bearer ${environment.SUPABASE_SERVICE_ROLE_KEY}`);
+      expect((init.headers as Row).Prefer).toBe('return=representation,resolution=ignore-duplicates');
+      expect(url.searchParams.get('on_conflict')).toBe('id');
+      const row = JSON.parse(String(init.body));
+      expect(row.workspace_id).toBe('default');
+      if (db.qa_slack_receipts.some(existing => existing.id === row.id)) return Response.json([]);
+      db.qa_slack_receipts.push(row);
+      return Response.json([row]);
+    }
     const rows = (db[table] || []).filter(row => [...url.searchParams].every(([key, value]) => {
       if (['select', 'limit', 'order'].includes(key)) return true;
       if (value.startsWith('eq.')) return String(row[key]) === value.slice(3);
@@ -64,9 +76,10 @@ function backend(tables: Record<string, Row[]> = {}) {
   };
   const posts = () => slack.filter(call => call.method === 'chat.postMessage').map(call => call.args);
   const text = (post: Row) => JSON.stringify(post.blocks) + post.text;
-  return { db, slack, rest, send, posts, text, fetcher, failing };
+  return { db, slack, rest, send, posts, text, fetcher, failing, postResult };
 }
-const recent = (content: string, user = 'actor') => ({ task_id: 'task', user_id: user, content, created_at: new Date().toISOString() });
+const recent = (content: string, user = 'actor') => ({ id: 'comment-1', task_id: 'task', user_id: user, content, source: 'web', created_at: new Date().toISOString() });
+const commentEvent = (commentId = 'comment-1') => ({ type: 'comment_added', taskId: 'task', commentId });
 
 describe('Slack notification text rules', () => {
   it('escapes Slack control characters after decoding, so encoded mentions stay inert', () => {
@@ -126,7 +139,7 @@ describe('Docker slack-notify', () => {
   });
   it('reads the task through the caller session and escapes everything that reaches mrkdwn', async () => {
     const t = backend({ comments: [recent('<p>&lt;!channel&gt; please check</p>')] });
-    await t.send({ type: 'comment_added', taskId: 'task', taskKey: 'EX-1', taskTitle: '<https://phish.example.com|Forged>',
+    await t.send({ ...commentEvent(), taskKey: 'EX-1', taskTitle: '<https://phish.example.com|Forged>',
       actorName: '<!here> boss', projectName: 'Forged', commentPreview: 'forged preview' });
     expect(t.rest.filter(r => r.table === 'tasks').map(r => r.auth)).toEqual(['Bearer member-jwt']);
     const [post] = t.posts();
@@ -145,7 +158,7 @@ describe('Docker slack-notify', () => {
   });
   it('sends DMs only to stored task recipients, by email, never to guests or display-name matches', async () => {
     const t = backend({ comments: [recent('<p><span data-type="mention" data-id="guest">@Example guest</span> hi</p>')] });
-    await t.send({ type: 'comment_added', taskId: 'task', dmTargets: [
+    await t.send({ ...commentEvent(), dmTargets: [
       { email: 'outsider@example.com', reason: 'Spoofed' }, { email: 'guest@example.com', reason: '你在留言中被提及' },
       { email: 'nobody@example.com', name: 'Example assignee', reason: '你被指派為經辦人' }, { email: 'reviewer@example.com', reason: 'x' }] });
     const dms = t.posts().filter(post => String(post.channel).startsWith('D'));
@@ -153,6 +166,56 @@ describe('Docker slack-notify', () => {
     expect(t.slack.some(call => call.method === 'users.list')).toBe(false);
     expect(t.text(dms[0])).toContain('你的任務有新留言');
     expect(t.text(dms[0])).not.toContain('Spoofed');
+  });
+  it('uses the exact delayed comment and ignores repeats even after a newer comment', async () => {
+    const first = { ...recent('<p>Earlier note <span data-id="outsider">@Example outsider</span></p>'), id: 'first',
+      created_at: new Date(Date.now() - 1000).toISOString() };
+    const second = { ...recent('<p>Later note</p>'), id: 'second' };
+    const t = backend({ comments: [second, first] });
+    const event = { ...commentEvent('first'), dmTargets: [{ email: 'outsider@example.com', reason: 'mention' }] };
+    expect((await t.send(event)).body).toEqual({ success: true });
+    expect((await t.send(commentEvent('second'))).body).toEqual({ success: true });
+    expect((await t.send(event)).body).toEqual({ success: true, duplicate: true });
+    expect(t.posts().map(post => post.channel)).toEqual(['C0NOTIFY', 'DUOUTSIDER', 'C0NOTIFY']);
+    expect(t.text(t.posts()[0])).toContain('Earlier note');
+    expect(t.text(t.posts()[1])).toContain('Earlier note');
+    expect(t.text(t.posts()[2])).toContain('Later note');
+  });
+  it('claims one comment across concurrent requests', async () => {
+    const t = backend({ comments: [recent('One note')] });
+    const results = await Promise.all([t.send(commentEvent()), t.send(commentEvent())]);
+    expect(results.filter(result => result.body.duplicate === true)).toHaveLength(1);
+    expect(t.posts()).toHaveLength(1);
+    expect(t.db.qa_slack_receipts).toHaveLength(1);
+  });
+  it('requires the persisted comment ID to match the task and active author', async () => {
+    const t = backend({ comments: [recent('Own note'),
+      { ...recent('Another author', 'reviewer'), id: 'other-author' },
+      { ...recent('Another task'), id: 'other-task', task_id: 'different-task' },
+      { ...recent('Future note'), id: 'future', created_at: new Date(Date.now() + 120000).toISOString() }] });
+    for (const commentId of [undefined, 'missing', 'other-author', 'other-task', 'future']) {
+      expect(await t.send({ ...commentEvent(), commentId })).toEqual({ status: 404, body: { error: 'comment_unavailable' } });
+    }
+    expect(t.posts()).toEqual([]);
+    expect(t.db.qa_slack_receipts).toEqual([]);
+  });
+  it('leaves the comment available to send after a destination is repaired', async () => {
+    const t = backend({ comments: [recent('After configuration')] });
+    t.db.backup_settings[0].task_notify_channel = 'unknown-channel';
+    expect((await t.send(commentEvent())).body).toEqual({ error: 'channel_not_found' });
+    expect(t.db.qa_slack_receipts).toEqual([]);
+    t.db.backup_settings[0].task_notify_channel = 'C0NOTIFY';
+    expect((await t.send(commentEvent())).body).toEqual({ success: true });
+    expect(t.posts()).toHaveLength(1);
+  });
+  it.each(['rejected', 'unknown'] as const)('keeps the receipt after a %s post outcome', async outcome => {
+    const t = backend({ comments: [recent('One attempt')] });
+    if (outcome === 'rejected') t.postResult.mockResolvedValueOnce(Response.json({ ok: false, error: 'not_in_channel' }));
+    else t.postResult.mockResolvedValueOnce(new Response('invalid acknowledgement'));
+    expect(await t.send(commentEvent())).toEqual({ status: 502,
+      body: { error: outcome === 'rejected' ? 'comment_delivery_failed' : 'comment_delivery_unknown' } });
+    expect((await t.send(commentEvent())).body).toEqual({ success: true, duplicate: true });
+    expect(t.posts()).toHaveLength(1);
   });
   it('sends no DM to a member who unlinked Slack in My settings', async () => {
     const t = backend({ slack_link_preferences: [{ member_id: 'reviewer', linking_disabled: true }, { member_id: 'assignee', linking_disabled: false }] });
@@ -170,9 +233,15 @@ describe('Docker slack-notify', () => {
     expect(t.posts().filter(post => String(post.channel).startsWith('D')).map(post => post.channel)).not.toContain('DUASSIGNEE');
   });
   it('keeps the database outbox as the single sender when durable delivery is on', async () => {
-    const t = backend({ system_settings: [{ key: 'slack_delivery', value: { enabled: true, routes: [] } }] });
+    const delivery: { enabled: boolean; routes: unknown[] } = { enabled: true, routes: [] };
+    const t = backend({ system_settings: [{ key: 'slack_delivery', value: delivery }],
+      comments: [recent('Already queued')], slack_delivery_outbox: [{ id: 'job', task_id: 'task', event_key: 'comment:comment-1' }] });
     expect((await t.send({ type: 'status_changed', taskId: 'task' })).body).toEqual({ accepted: true, managedBy: 'database' });
+    expect((await t.send(commentEvent())).body).toEqual({ accepted: true, managedBy: 'database' });
+    delivery.enabled = false;
+    expect((await t.send(commentEvent())).body).toEqual({ accepted: true, managedBy: 'database' });
     expect(t.posts()).toEqual([]);
+    expect(t.db.qa_slack_receipts).toEqual([]);
   });
   it('refuses fabricated approval notices and returns only generic errors', async () => {
     const t = backend();
@@ -182,16 +251,32 @@ describe('Docker slack-notify', () => {
     expect(failed).toEqual({ status: 500, body: { error: 'notify_failed' } });
   });
   it('delivers Slack comments as escaped text to the comment recipients', async () => {
-    const t = backend();
+    const converted = convertMrkdwn('&lt;!channel&gt; <!here> hi <@UOUTSIDER> <@UGUEST>', {
+      UOUTSIDER: { id: 'outsider', name: 'Example outsider' }, UGUEST: { id: 'guest', name: 'Example guest' },
+    });
+    const t = backend({ comments: [{ ...recent(converted.html), source: 'slack' }, { ...recent('Unrelated newer note'), id: 'other' }] });
     const actions = createActions(env, () => {});
-    await actions.deliver({ id: 'actor', name: 'Example actor', jwt: 'member-jwt' },
-      { kind: 'comment', task: t.db.tasks[0], preview: convertMrkdwn('&lt;!channel&gt; <!here> hi').plain, mentioned_ids: ['outsider', 'guest'] }, { channel: 'C0OTHER' });
+    const actor = { id: 'actor', name: 'Forged caller name', jwt: 'member-jwt' };
+    const receipt = { kind: 'comment', task: t.db.tasks[0], comment_id: 'comment-1', preview: 'Caller preview', mentioned_ids: converted.mentionedIds };
+    await actions.deliver(actor, receipt, { channel: 'C0OTHER' });
+    await actions.deliver(actor, receipt, { channel: 'C0OTHER' });
     const [channelPost, ...dms] = t.posts();
     expect(channelPost.channel).toBe('C0NOTIFY');
     expect(t.text(channelPost)).not.toMatch(/<!channel>|<!here>/);
     expect(t.text(channelPost)).toContain('&lt;!channel&gt;');
+    expect(t.text(channelPost)).toContain('Example actor');
+    expect(t.text(channelPost)).not.toMatch(/Caller preview|Forged caller name|Unrelated newer note/);
     // Mentioned members and the task's assignee/reviewer; a Slack guest never gets one.
     expect(dms.map(post => post.channel).sort()).toEqual(['DUASSIGNEE', 'DUOUTSIDER', 'DUREVIEWER']);
     expect(t.text(dms.find(post => post.channel === 'DUOUTSIDER')!)).toContain('你在留言中被提及');
+  });
+  it('rejects legacy service requests for web comments or inactive authors', async () => {
+    const t = backend({ comments: [recent('Web note'), { ...recent('Slack note'), id: 'slack-note', source: 'slack' }] });
+    const service = environment.SUPABASE_SERVICE_ROLE_KEY;
+    expect((await t.send({ ...commentEvent(), actorId: 'actor' }, service)).status).toBe(404);
+    t.db.members.find(member => member.id === 'actor')!.is_active = false;
+    expect((await t.send({ ...commentEvent('slack-note'), actorId: 'actor' }, service)).status).toBe(404);
+    expect(t.posts()).toEqual([]);
+    expect(t.db.qa_slack_receipts).toEqual([]);
   });
 });

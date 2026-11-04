@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { handleMemberInvitations } from '../../worker/src/functions/memberInvitations';
-import { clearMemberCache, registerAuthRoutes, requireMember, sha256Hex } from '../../worker/src/auth';
+import { registerAuthRoutes, requireMember, sha256Hex } from '../../worker/src/auth';
 import { runQuery } from '../../worker/src/db';
 import { handleManageMember } from '../../worker/src/functions/manageMember';
 import { handleImportJira } from '../../worker/src/functions/importJira';
@@ -107,7 +107,6 @@ export async function createMemberInvitationsFixture() {
     exec: (sql) => db.exec(sql),
     reapplySchema: () => db.exec(schema),
     close: () => {
-      for (const id of ['login-owner', 'login-admin', 'login-member', 'login-foreign']) clearMemberCache(id);
       db.close();
     },
   };

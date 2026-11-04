@@ -1,7 +1,12 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task, CustomField } from '@/types';
+import type { Task, CustomField, Status } from '@/types';
 import type { RequiredFieldsConfig } from '@/context/UIContext';
+import type { TaskContextType } from '@/context/TaskContext';
+
+type PrimaryInsert = { id: string; task_key: string; creator_id: string; sprint_id: string | null };
+type PrimaryResponse = 'commit' | 'drop-before-commit' | 'drop-after-commit' | 'reject' | 'sprint-conflict';
+type TaskQueryError = { message: string; code?: string };
 
 const state = vi.hoisted(() => ({
   seed: null as { parentTaskId: string; title: string } | null, tasks: [] as Task[],
@@ -11,6 +16,11 @@ const state = vi.hoisted(() => ({
   actor: 'member-example', holdCreate: false, resolveCreate: null as null | (() => void), fields: [] as CustomField[], fieldStored: true,
   open: true, deniedTable: 'task_specs', created: [] as Task[], close: vi.fn(), openTask: vi.fn(),
   success: vi.fn(), error: vi.fn(), confirm: vi.fn(), writes: [] as string[],
+  sprint: null as { id: string; name: string } | null, refreshSprints: vi.fn(async () => {}),
+  useRealInsert: false, primaryResponses: [] as PrimaryResponse[], attempts: [] as PrimaryInsert[],
+  committed: new Map<string, PrimaryInsert>(), readbackIds: [] as string[], unavailableReadbacks: 0,
+  holdReadback: false, resolveReadback: null as null | (() => void),
+  upload: vi.fn(async (path: string, _file: File) => ({ data: { path }, error: null })),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
@@ -20,31 +30,80 @@ vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMember
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as unknown[] }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ showCreateTask: state.open, setShowCreateTask: state.close, setSelectedTask: state.openTask, createTaskSeed: state.seed, requiredFields: state.required, currentView: 'board' }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ selectedProjectId: 'p', selectedLineId: null as string | null, allProjects: [{ id: 'p', name: 'Example Project', lineId: 'line' }], productLines: [{ id: 'line', name: 'Example Line' }] }) }));
-vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({
-  allTasks: state.tasks, setAllTasks: vi.fn(), statuses: [{ id: 'todo', name: 'Todo' }], tags: [] as unknown[], refreshTags: vi.fn(), refreshTasks: vi.fn(),
-  createTaskInDb: async (task: Task) => { state.created.push(task); if (state.holdCreate) return new Promise<Task>(resolve => { state.resolveCreate = () => resolve(task); }); return task; }, createSubtask: state.childCreate,
-  refreshTaskSpecs: () => state.holdRefresh ? new Promise<void>(resolve => { state.resolveRefresh = resolve; }) : Promise.resolve(), refreshCustomFieldValues: vi.fn(), refreshTaskChecks: vi.fn(), refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(),
-  taskTemplates: state.templates, customFields: state.fields, upsertCustomFieldValue: vi.fn(),
-}) }));
-vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: null as { id: string; name: string } | null, sprintReadState: 'ready' }) }));
+vi.mock('@/context/TaskContext', async () => {
+  const { useTaskCRUD } = await import('@/context/hooks/useTaskCRUD');
+  const setAllTasks: TaskContextType['setAllTasks'] = update => {
+    state.tasks = typeof update === 'function' ? update(state.tasks) : update;
+  };
+  const statuses = [{ id: 'todo', name: 'Todo' } as Status];
+  return { useTaskContext: () => {
+    const { createTaskInDb } = useTaskCRUD({
+      allTasks: state.tasks, statuses, setAllTasks, refreshTasks: async () => {}, appendStatusLog: vi.fn(),
+    });
+    return {
+      allTasks: state.tasks, setAllTasks, statuses, tags: [] as unknown[], refreshTags: vi.fn(), refreshTasks: vi.fn(),
+      createTaskInDb: state.useRealInsert ? createTaskInDb : async (task: Task) => {
+        state.created.push(task);
+        if (state.holdCreate) return new Promise<Task>(resolve => { state.resolveCreate = () => resolve(task); });
+        return task;
+      },
+      createSubtask: state.childCreate,
+      refreshTaskSpecs: () => state.holdRefresh ? new Promise<void>(resolve => { state.resolveRefresh = resolve; }) : Promise.resolve(),
+      refreshCustomFieldValues: vi.fn(), refreshTaskChecks: vi.fn(), refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(),
+      taskTemplates: state.templates, customFields: state.fields, upsertCustomFieldValue: vi.fn(),
+    };
+  } };
+});
+vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: state.sprint, sprintReadState: 'ready', refreshSprints: state.refreshSprints }) }));
 vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: () => true }) }));
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: state.confirm, ConfirmDialog: null as null }) }));
 vi.mock('@/lib/slackNotify', () => ({ sendSlackNotify: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (table: string) => {
-  const chain = {
-    select: () => chain, eq: () => chain,
-    maybeSingle: async () => ({ data: state.fieldStored ? { id: 'stored-custom-value' } : null, error: null as null }),
-    insert: () => {
-      state.writes.push(table);
-      return Promise.resolve({ data: null as null, error: table === state.deniedTable ? { message: 'Simulated write failure' } : null });
-    },
-  };
-  return chain;
-} } }));
+vi.mock('@/integrations/supabase/client', () => ({ supabase: {
+  storage: { from: () => ({ upload: state.upload }) },
+  from: (table: string) => {
+    let id = '';
+    const chain = {
+      select: () => chain,
+      eq: (column: string, value: string) => {
+        if (column === 'id') id = value;
+        return chain;
+      },
+      maybeSingle: async (): Promise<{ data: PrimaryInsert | { id: string } | null; error: TaskQueryError | null }> => {
+        if (table !== 'tasks') return { data: state.fieldStored ? { id: 'stored-custom-value' } : null, error: null };
+        state.readbackIds.push(id);
+        if (state.holdReadback) await new Promise<void>(resolve => { state.resolveReadback = resolve; });
+        if (state.unavailableReadbacks > 0) {
+          state.unavailableReadbacks--;
+          return { data: null, error: { message: 'Read unavailable' } };
+        }
+        return { data: state.committed.get(id) ?? null, error: null };
+      },
+      insert: async (row: PrimaryInsert): Promise<{ data?: null; error: TaskQueryError | null }> => {
+        state.writes.push(table);
+        if (table !== 'tasks') return { data: null, error: table === state.deniedTable ? { message: 'Simulated write failure' } : null };
+        state.attempts.push(row);
+        if (state.committed.has(row.id)) return { error: { code: '23505', message: 'Task ID already exists' } };
+        const response = state.primaryResponses.shift() ?? 'commit';
+        if (response === 'sprint-conflict') return { error: { code: 'PT409', message: 'sprint_conflict' } };
+        if (response === 'reject') return { error: { code: '23503', message: 'Invalid project' } };
+        if (response !== 'drop-before-commit') state.committed.set(row.id, { ...row, task_key: 'EX-42' });
+        return { error: response === 'commit' ? null : { message: 'Failed to fetch' } };
+      },
+    };
+    return chain;
+  },
+} }));
 import { useCreateTaskForm } from '@/components/create-task/useCreateTaskForm';
+import { logActivity } from '@/lib/activityLog';
+import { sendSlackNotify } from '@/lib/slackNotify';
 
 beforeEach(() => { vi.clearAllMocks(); state.seed = null; state.tasks = []; state.required = { title: true, project: true }; state.childCreate.mockReset(); state.templates = []; state.holdRefresh = false; state.resolveRefresh = null; state.actor = 'member-example'; state.holdCreate = false; state.resolveCreate = null; state.fields = []; state.fieldStored = true; state.open = true; state.deniedTable = 'task_specs'; state.created = []; state.writes = []; state.confirm.mockResolvedValue(false); });
+beforeEach(() => {
+  state.sprint = null;
+  state.useRealInsert = false; state.primaryResponses = []; state.attempts = []; state.committed.clear();
+  state.readbackIds = []; state.unavailableReadbacks = 0; state.holdReadback = false; state.resolveReadback = null;
+});
 afterEach(cleanup);
 const prepare = () => {
   const hook = renderHook(() => useCreateTaskForm());
@@ -149,6 +208,116 @@ describe('partially created task recovery', () => {
   });
 });
 
+
+describe('primary task creation with an uncertain result', () => {
+  beforeEach(() => { state.useRealInsert = true; state.deniedTable = ''; });
+
+  it('recovers a committed task after the response and first readback fail, then saves original attachments and side effects once', async () => {
+    state.primaryResponses = ['drop-after-commit'];
+    state.unavailableReadbacks = 1;
+    const { result, rerender } = prepare();
+    const attachment = new File(['original'], 'evidence.txt');
+    act(() => result.current.handleDrop({ preventDefault: vi.fn(), dataTransfer: { files: [attachment] } } as unknown as React.DragEvent));
+    await act(async () => result.current.handleSubmitAttempt());
+    const original = state.attempts[0];
+    expect(state.committed.size).toBe(1);
+    expect(result.current.uncertainTask).toBe(true);
+    expect(state.writes).toEqual(['tasks']);
+    expect(logActivity).not.toHaveBeenCalled();
+
+    await act(async () => result.current.requestClose());
+    state.open = false; rerender();
+    state.seed = { parentTaskId: 'another-parent', title: 'New child' };
+    state.open = true; rerender();
+    expect(result.current.isSubtask).toBe(false);
+    expect(result.current.title).toBe('Example task');
+    expect(result.current.pendingFiles[0].file).toBe(attachment);
+    expect(result.current.background).toBe('<p>Original background</p>');
+    state.holdReadback = true;
+    act(() => {
+      result.current.handleSubmitAttempt();
+      result.current.handleSubmitAttempt();
+    });
+    await waitFor(() => expect(state.resolveReadback).not.toBeNull());
+    expect(state.readbackIds).toEqual([original.id, original.id]);
+    await act(async () => state.resolveReadback?.());
+
+    expect(result.current.uncertainTask).toBe(false);
+    expect(state.attempts).toHaveLength(1);
+    expect(state.writes).toEqual(['tasks', 'task_specs', 'task_attachments', 'status_logs']);
+    expect(state.upload).toHaveBeenCalledOnce();
+    expect(state.upload).toHaveBeenCalledWith(expect.stringMatching('^' + original.id + '/'), attachment);
+    expect(logActivity).toHaveBeenCalledExactlyOnceWith('member-example', 'create_task', 'Example task', original.id, 'EX-42');
+    expect(sendSlackNotify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ taskId: original.id, taskKey: 'EX-42' }));
+  });
+
+  it('retries an uncommitted task with the same ID and payload, after a successful read finds no row', async () => {
+    state.primaryResponses = ['drop-before-commit', 'commit'];
+    const { result } = prepare();
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(result.current.uncertainTask).toBe(true);
+    expect(state.committed.size).toBe(0);
+
+    state.unavailableReadbacks = 1;
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(result.current.uncertainTask).toBe(true);
+    expect(state.attempts).toHaveLength(1);
+
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(state.attempts).toEqual([state.attempts[0], state.attempts[0]]);
+    expect(state.committed.size).toBe(1);
+    expect(result.current.uncertainTask).toBe(false);
+    expect(logActivity).toHaveBeenCalledOnce();
+  });
+
+  it('holds the original draft when a retry is rejected and the first insert is still unresolved', async () => {
+    state.primaryResponses = ['drop-before-commit', 'reject'];
+    const { result } = prepare();
+    await act(async () => result.current.handleSubmitAttempt());
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(state.attempts).toEqual([state.attempts[0], state.attempts[0]]);
+    expect(result.current.uncertainTask).toBe(true);
+    expect(state.committed.size).toBe(0);
+    expect(logActivity).not.toHaveBeenCalled();
+  });
+
+  it.each(['backlog', 'active'])('reselects the %s after a stale sprint rejection with the original task ID', async destination => {
+    state.primaryResponses = ['drop-before-commit', 'sprint-conflict', 'commit'];
+    state.sprint = { id: 'sprint-previous', name: 'Previous sprint' };
+    const { result, rerender } = prepare();
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(result.current.uncertainTask).toBe(true);
+    expect(state.attempts[0].sprint_id).toBe('sprint-previous');
+
+    state.sprint = { id: 'sprint-next', name: 'Next sprint' };
+    rerender();
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(state.attempts).toEqual([state.attempts[0], state.attempts[0]]);
+    expect(state.refreshSprints).toHaveBeenCalledOnce();
+    expect(result.current.taskSprintRecovery?.activeName).toBe('Next sprint');
+    expect(state.writes).toEqual(['tasks', 'tasks']);
+
+    await act(async () => {
+      if (destination === 'backlog') result.current.taskSprintRecovery?.retryInBacklog();
+      else result.current.taskSprintRecovery?.retryInActive();
+    });
+    const sprint_id = destination === 'backlog' ? null : 'sprint-next';
+    expect(state.attempts[2]).toEqual({ ...state.attempts[0], sprint_id });
+    expect(state.committed.size).toBe(1);
+    expect(result.current.uncertainTask).toBe(false);
+    expect(logActivity).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a definitely rejected first insert editable', async () => {
+    state.primaryResponses = ['reject'];
+    const { result } = prepare();
+    await act(async () => result.current.handleSubmitAttempt());
+    expect(result.current.uncertainTask).toBe(false);
+    expect(result.current.title).toBe('Example task');
+    expect(state.error).toHaveBeenCalledWith('task.createFailedInvalid project');
+    expect(state.committed.size).toBe(0);
+  });
+});
 
 const parentExample: Task = { id:'parent-example',taskKey:'EX-1',projectId:'p',title:'Example parent',statusId:'todo',priority:'medium',creatorId:'member-example',sortOrder:0,createdAt:'2026-10-27',commentCount:0,attachmentCount:0,deployments:[] };
 const createdChild: Task = {...parentExample,id:'child-example',taskKey:'EX-2',title:'Example child',parentTaskId:parentExample.id};

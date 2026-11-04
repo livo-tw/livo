@@ -268,8 +268,8 @@ export function createActions(env: Environment, background: (work: Promise<unkno
       // slack-notify escapes every text field and recomputes the recipients from
       // the stored task plus these server-resolved mentions.
       const payload = { type: isComment ? 'comment_added' : 'task_created', taskId: task.id, taskKey: task.task_key,
-        taskTitle: task.title, priority: task.priority, actorId: actor.id, actorName: actor.name, commentPreview: result.preview,
-        mentionedIds: isComment ? result.mentioned_ids || [] : [],
+        taskTitle: task.title, priority: task.priority, actorId: actor.id, actorName: actor.name,
+        commentId: isComment ? result.comment_id : undefined,
         sourceChannelId: isComment && source.echoExistingMessage !== false ? source.channel : undefined,
         dmTargets: members.map(m => ({ email: m.email, name: m.name, reason: targets.find(t => t.id === m.id)?.type === 'mention' ? '你被 @提及' : '你的任務有新留言' })) };
       // 20260714_notify_dispatch.sql already sends signed webhooks on task/comment

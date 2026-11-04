@@ -74,5 +74,9 @@ describe('task comment notifications', () => {
     expect(notices).toEqual(expected);
     expect(mocks.insert.mock.calls.filter(([table]) => table === 'comments')).toHaveLength(1);
     expect(mocks.slackNotify).toHaveBeenCalledTimes(1);
+    const storedComment = mocks.insert.mock.calls.find(([table]) => table === 'comments')?.[1];
+    expect(mocks.slackNotify).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'comment_added', commentId: storedComment.id, taskId: task.id,
+    }));
   });
 });

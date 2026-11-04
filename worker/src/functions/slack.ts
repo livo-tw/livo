@@ -93,6 +93,7 @@ interface SlackUser {
 interface SlackApiResponse {
   ok: boolean;
   error?: string;
+  ts?: string;
   channels?: { id: string; name?: string; is_private?: boolean; is_member?: boolean }[];
   channel?: { id: string };
   members?: SlackUser[];
@@ -121,7 +122,8 @@ async function slackGet(
 async function slackPost(
   sc: SlackCtx,
   method: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  verifyDelivery = false,
 ): Promise<SlackApiResponse> {
   const resp = await fetch(`${SLACK_API}/${method}`, {
     method: 'POST',
@@ -131,7 +133,12 @@ async function slackPost(
     },
     body: JSON.stringify(body),
   });
-  return (await resp.json()) as SlackApiResponse;
+  const result = (await resp.json()) as SlackApiResponse;
+  if (verifyDelivery && (resp.status >= 500 || typeof result?.ok !== 'boolean' ||
+      (result.ok && (!resp.ok || typeof result.ts !== 'string' || !/^\d+\.\d+$/.test(result.ts))))) {
+    throw new Error('slack_delivery_unconfirmed');
+  }
+  return result;
 }
 
 /**
@@ -163,21 +170,23 @@ async function resolveChannelId(sc: SlackCtx, setting: string): Promise<string |
  * member (no guests, bots or deactivated accounts). Display names are never
  * used — anyone can set a display name that matches a colleague.
  */
-async function findSlackUserId(sc: SlackCtx, email: string): Promise<string | null> {
+async function findSlackUserId(sc: SlackCtx, email: string, requireDestination = false): Promise<string | null> {
   if (!email) return null;
   try {
     const data = await slackGet(sc, 'users.lookupByEmail', { email });
     if (data.ok && data.user && slackDmEligible(data.user, email)) return data.user.id;
-  } catch {
-    /* treated as not found */
+    if (requireDestination && !data.ok && data.error !== 'users_not_found') throw new Error('slack_destination_unavailable');
+  } catch (error) {
+    if (requireDestination) throw error;
   }
   return null;
 }
 
 /** conversations.open with a user → DM channel id. */
-async function openDm(sc: SlackCtx, slackUserId: string): Promise<string | null> {
+async function openDm(sc: SlackCtx, slackUserId: string, requireDestination = false): Promise<string | null> {
   const data = await slackPost(sc, 'conversations.open', { users: slackUserId });
   if (!data.ok || !data.channel) {
+    if (requireDestination) throw new Error('slack_destination_unavailable');
     console.error(`[slack] conversations.open failed for ${slackUserId} — ${data.error}`);
     return null;
   }
@@ -190,7 +199,8 @@ async function postMessage(
   text: string,
   blocks: SlackBlock[],
   username: string,
-  iconEmoji: string
+  iconEmoji: string,
+  verifyDelivery = false,
 ): Promise<SlackApiResponse> {
   return slackPost(sc, 'chat.postMessage', {
     channel,
@@ -200,7 +210,7 @@ async function postMessage(
     unfurl_media: false,
     username,
     icon_emoji: iconEmoji,
-  });
+  }, verifyDelivery);
 }
 
 // ─── slack-notify ──────────────────────────────────────────────────────────
@@ -216,6 +226,7 @@ const taskUrl = (env: Env, taskKey: string): string =>
   `${appBaseUrl(env)}/demo/?task=${encodeURIComponent(taskKey)}`;
 
 const COMMENT_WINDOW_MS = 15 * 60 * 1000;
+const COMMENT_CLOCK_SKEW_MS = 60 * 1000;
 const ID = /^[\w-]{1,200}$/;
 
 // ─── Notify settings (backup_settings single row) ──────────────────────────
@@ -304,12 +315,16 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
   const details = notifyDetails(payload);
   let mentioned: string[] = [];
   let preview = details.commentPreview;
+  let commentId: string | undefined;
   if (type === 'comment_added') {
-    // Mentions and the preview come from the caller's own new comment.
+    if (typeof payload.commentId !== 'string' || !ID.test(payload.commentId)) return reply({ error: 'comment_unavailable' }, 404);
+    // A delayed request still names the same stored comment and its mentions.
     const comment = await env.DB.prepare(
-      'SELECT content, created_at FROM comments WHERE workspace_id = ? AND task_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1'
-    ).bind(ws, task.id, auth.member.id).first<{ content: string; created_at: string }>();
-    if (!comment || !(Date.now() - Date.parse(comment.created_at) < COMMENT_WINDOW_MS)) return reply({ error: 'comment_unavailable' }, 404);
+      'SELECT content, created_at FROM comments WHERE workspace_id = ? AND task_id = ? AND user_id = ? AND id = ? LIMIT 1'
+    ).bind(ws, task.id, auth.member.id, payload.commentId).first<{ content: string; created_at: string }>();
+    const age = comment ? Date.now() - Date.parse(comment.created_at) : NaN;
+    if (!comment || !(age >= -COMMENT_CLOCK_SKEW_MS && age < COMMENT_WINDOW_MS)) return reply({ error: 'comment_unavailable' }, 404);
+    commentId = payload.commentId;
     mentioned = commentMentionIds(comment.content);
     preview = commentPlainText(comment.content);
   }
@@ -319,15 +334,22 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
     assigneeName: assigneeName || details.assigneeName, statusName: statusName || details.statusName,
   };
   const url = taskUrl(env, fields.taskKey);
+  const commentDeliveries: Array<() => Promise<SlackApiResponse>> = [];
+  const deliver = async (channel: string, message: ReturnType<typeof taskChannelMessage>, icon: string) => {
+    const send = () => postMessage(sc, channel, message.text, message.blocks, 'PM 任務通知', icon, !!commentId);
+    if (commentId) {
+      commentDeliveries.push(send);
+      return;
+    }
+    const result = await send();
+    if (!result.ok) console.error('[slack] task notice error:', slackErrorCode(result.error));
+  };
 
   // Channel notification if this type is enabled and a channel is set
   if (settings.taskNotifyChannel && settings.enabledTypes.includes(type)) {
     const channelId = await resolveChannelId(sc, settings.taskNotifyChannel);
-    if (channelId) {
-      const message = taskChannelMessage(fields, url);
-      const res = await postMessage(sc, channelId, message.text, message.blocks, 'PM 任務通知', ':clipboard:');
-      if (!res.ok) console.error('[slack] channel error:', slackErrorCode(res.error));
-    }
+    if (!channelId && commentId) return reply({ error: 'channel_not_found' }, 400);
+    if (channelId) await deliver(channelId, taskChannelMessage(fields, url), ':clipboard:');
   }
 
   // DMs: only the task's own recipients, narrowed by the request.
@@ -348,17 +370,34 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
       // Members who unlinked Slack in My settings get no direct messages.
       const unlinked = await slackLinkDisabledMembers(env, ws, ids);
       const targets = (results || []).filter((m) => memberEmailIdentityVerified(m) && !unlinked.has(m.id) && typeof m.email === 'string' && requested.has(m.email.trim().toLowerCase()));
-      await Promise.allSettled(targets.map(async (m) => {
-        const slackUserId = await findSlackUserId(sc, m.email.trim());
-        const dm = slackUserId ? await openDm(sc, slackUserId) : null;
+      const prepared = await Promise.allSettled(targets.map(async (m) => {
+        const slackUserId = await findSlackUserId(sc, m.email.trim(), !!commentId);
+        const dm = slackUserId ? await openDm(sc, slackUserId, !!commentId) : null;
         if (!dm) return;
-        const message = taskDmMessage(fields, allowed.get(m.id) as DmReason, url);
-        const res = await postMessage(sc, dm, message.text, message.blocks, 'PM 任務通知', ':bell:');
-        if (!res.ok) console.error('[slack] DM error:', slackErrorCode(res.error));
+        await deliver(dm, taskDmMessage(fields, allowed.get(m.id) as DmReason, url), ':bell:');
       }));
+      if (commentId && prepared.some(result => result.status === 'rejected')) return reply({ error: 'comment_destination_unavailable' }, 502);
     } else {
       console.log('[slack] DM skipped: disabled or outside the notify window');
     }
+  }
+  if (commentId && commentDeliveries.length) {
+    // Use the private receipt ledger. Keep this claim after an uncertain post:
+    // the legacy path cannot safely replay some or all of its destinations.
+    const receiptId = `task-comment-v1:${JSON.stringify([ws, commentId])}`;
+    let claimed: number | undefined;
+    try {
+      const receipt = await env.DB.prepare('INSERT OR IGNORE INTO qa_slack_receipts(id,workspace_id,created_at) VALUES(?,?,?)')
+        .bind(receiptId, ws, new Date().toISOString()).run();
+      claimed = receipt.meta.changes;
+    } catch {
+      return reply({ error: 'comment_claim_unconfirmed' }, 502);
+    }
+    if (claimed === 0) return reply({ success: true, duplicate: true });
+    if (claimed !== 1) return reply({ error: 'comment_claim_unconfirmed' }, 502);
+    const outcomes = await Promise.allSettled(commentDeliveries.map(send => send()));
+    if (outcomes.some(result => result.status === 'rejected')) return reply({ error: 'comment_delivery_unknown' }, 502);
+    if (outcomes.some(result => result.status === 'fulfilled' && !result.value.ok)) return reply({ error: 'comment_delivery_failed' }, 502);
   }
   return reply({ success: true });
 }
@@ -370,7 +409,7 @@ export async function handleSlackNotify(c: Context<AppContext>): Promise<Respons
     const payload: unknown = await c.req.json();
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return c.json({ error: 'invalid_request' }, 400);
     const result = await executeSlackNotify(env, auth, payload as Row);
-    return c.json(result.body, result.status as 200 | 400 | 403 | 404 | 409);
+    return c.json(result.body, result.status as 200 | 400 | 403 | 404 | 409 | 502);
   } catch {
     console.error('[slack] notify failed');
     return c.json({ error: 'notify_failed' }, 500);

@@ -10,6 +10,7 @@ import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/c
 import { subtaskQuickCreateFields, type SubtaskRequiredFields, type SubtaskCreateValues } from '@/lib/taskWork/subtaskDefaults';
 import { mapTask, type TaskRow } from '@/context/mappers';
 import { taskWriteErrorText } from '@/lib/approval/feedback';
+import type { TaskContextType } from '../TaskContext';
 
 interface TaskCRUDDeps {
   allTasks: Task[];
@@ -27,45 +28,80 @@ export function useTaskCRUD({
   const subtaskRunners = useRef(new Map<string, ReturnType<typeof createTaskWorkCommandRunner>>());
   const subtaskActor = useRef('');
 
-  // Resolves the stored task (with the key the database kept). Sprint conflicts let the form reconcile its selection.
-  const createTaskInDb = useCallback(async (task: Task): Promise<Task | null> => {
-    const { error } = await supabase.from('tasks').insert({
-      id: task.id,
-      task_key: task.taskKey,
-      project_id: task.projectId,
-      title: task.title,
-      status_id: task.statusId,
-      priority: task.priority,
-      creator_id: task.creatorId,
-      assignee_id: task.assigneeId || null,
-      reviewer_id: task.reviewerId || null,
-      due_date: task.dueDate || null,
-      due_date_kind: task.dueDate ? task.dueDateKind ?? null : null,
-      started_at: task.startedAt || null,
-      completed_at: task.completedAt || null,
-      gitlab_url: task.gitlabUrl || null,
-      sort_order: task.sortOrder,
-      created_at: task.createdAt,
-      comment_count: task.commentCount,
-      sprint_id: task.sprintId || null,
-      parent_task_id: task.parentTaskId || null,
-    } as Record<string, unknown>);
-    if (error) {
-      if (error.message.includes('sprint_conflict')) throw new Error('sprint_conflict');
+  const createTaskInDb = useCallback<TaskContextType['createTaskInDb']>(async (task, { recovering, isCurrent }) => {
+    // Undefined means the exact row could not be verified. Null means this read found no row.
+    const readStoredKey = async (): Promise<string | null | undefined> => {
+      try {
+        const { data, error } = await supabase.from('tasks').select('id,task_key,creator_id').eq('id', task.id).maybeSingle();
+        if (error) return undefined;
+        if (!data) return null;
+        if (data.id === task.id && data.creator_id === task.creatorId && data.task_key) return data.task_key;
+      } catch { /* A failed read cannot settle the result of an earlier insert. */ }
+    };
+    const acknowledge = (storedKey: string | null | undefined) => {
+      if (!isCurrent()) return null;
+      const created = storedKey && storedKey !== task.taskKey ? { ...task, taskKey: storedKey } : task;
+      setAllTasks(prev => {
+        if (!prev.some(row => row.id === task.id)) return [...prev, created];
+        if (!storedKey) return prev;
+        return prev.map(row => row.id === task.id && row.taskKey !== storedKey ? { ...row, taskKey: storedKey } : row);
+      });
+      return created;
+    };
+    if (recovering) {
+      const storedKey = await readStoredKey();
+      if (!isCurrent()) return null;
+      if (storedKey === undefined) throw new Error('task_create_unconfirmed');
+      if (storedKey !== null) return acknowledge(storedKey);
+    }
+
+    let inserted: { error: { message: string; code?: string } | null } | undefined;
+    try {
+      inserted = await supabase.from('tasks').insert({
+        id: task.id,
+        task_key: task.taskKey,
+        project_id: task.projectId,
+        title: task.title,
+        status_id: task.statusId,
+        priority: task.priority,
+        creator_id: task.creatorId,
+        assignee_id: task.assigneeId || null,
+        reviewer_id: task.reviewerId || null,
+        due_date: task.dueDate || null,
+        due_date_kind: task.dueDate ? task.dueDateKind ?? null : null,
+        started_at: task.startedAt || null,
+        completed_at: task.completedAt || null,
+        gitlab_url: task.gitlabUrl || null,
+        sort_order: task.sortOrder,
+        created_at: task.createdAt,
+        comment_count: task.commentCount,
+        sprint_id: task.sprintId || null,
+        parent_task_id: task.parentTaskId || null,
+      } as Record<string, unknown>);
+    } catch { /* Transport failure may occur after the row was committed. */ }
+    if (!isCurrent()) return null;
+
+    const error = inserted?.error;
+    const sprintConflict = error?.message.includes('sprint_conflict');
+    if (!recovering && sprintConflict) throw new Error('sprint_conflict');
+    const storedKey = await readStoredKey();
+    if (!isCurrent()) return null;
+    if (storedKey || (!recovering && inserted && !error)) return acknowledge(storedKey);
+
+    // An inactive sprint cannot accept an earlier request after this rejection.
+    // Only offer to reselect after an exact read also confirms the task is absent.
+    if (recovering && sprintConflict && storedKey === null) throw new Error('sprint_conflict');
+
+    // Other rejections cannot disprove an earlier attempt whose response was lost.
+    if (!recovering && error && (
+      /^(?:(?:22|23|28|42)[A-Z0-9]{3}|PT4\d{2})$/.test(error.code ?? '') ||
+      /\b(?:FOREIGN KEY|NOT NULL|CHECK) constraint failed\b/i.test(error.message)
+    )) {
       toast.error(i18n.t('task.createFailed') + error.message);
-      await refreshTasks();
+      await refreshTasks().catch(() => {});
       return null;
     }
-    // Keys are unique across projects; if another task already holds the generated key
-    // (e.g. one moved here from elsewhere, or a concurrent create), the database stores
-    // the next free number. Show the stored key.
-    const stored = await supabase.from('tasks').select('task_key').eq('id', task.id).maybeSingle();
-    const storedKey = (stored.data as { task_key?: string } | null)?.task_key;
-    if (storedKey && storedKey !== task.taskKey) {
-      task = { ...task, taskKey: storedKey };
-      setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, taskKey: storedKey } : t));
-    }
-    return task;
+    throw new Error('task_create_unconfirmed');
   }, [refreshTasks, setAllTasks]);
 
   const createUpdateTaskInDb = useCallback(

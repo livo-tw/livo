@@ -20,14 +20,20 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 const ID = /^[\w-]{1,200}$/;
 const COMMENT_WINDOW_MS = 15 * 60 * 1000;
+const COMMENT_CLOCK_SKEW_MS = 60 * 1000;
 
 function slackApi(token: string, fetcher: typeof fetch) {
-  return async (method: string, args: Row): Promise<Row> => {
+  return async (method: string, args: Row, verifyDelivery = false): Promise<Row> => {
     const read = ['conversations.list', 'users.lookupByEmail'].includes(method);
     const res = await fetcher(`https://slack.com/api/${method}${read ? '?' + new URLSearchParams(args) : ''}`, { method: read ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${token}`, ...(read ? {} : { 'Content-Type': 'application/json; charset=utf-8' }) },
       ...(read ? {} : { body: JSON.stringify(args) }), signal: AbortSignal.timeout(12000) });
-    return await res.json().catch(() => ({ ok: false }));
+    const result: Row | null = await res.json().catch((): null => null);
+    if (verifyDelivery && (res.status >= 500 || typeof result?.ok !== 'boolean' ||
+        (result.ok && (!res.ok || typeof result.ts !== 'string' || !/^\d+\.\d+$/.test(result.ts))))) {
+      throw new Error('slack_delivery_unconfirmed');
+    }
+    return result ?? { ok: false };
   };
 }
 async function channelId(slack: (method: string, args: Row) => Promise<Row>, setting: unknown): Promise<string | undefined> {
@@ -106,34 +112,54 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       ? (await reader.rows(table, { select, id: `eq.${id}`, limit: '1' }))[0] : undefined;
     const [project, status, assignee] = await Promise.all([one('projects', task.project_id), one('statuses', task.status_id), one('members', task.assignee_id)]);
     const details = notifyDetails(payload);
-    let actorId: string, actorName: string, mentioned: string[], preview = details.commentPreview;
+    let actorId: string, actorName: string, mentioned: string[] = [], preview = details.commentPreview;
     if (service) {
       actorId = typeof payload.actorId === 'string' ? payload.actorId : '';
       actorName = typeof payload.actorName === 'string' ? payload.actorName : '';
-      mentioned = Array.isArray(payload.mentionedIds) ? payload.mentionedIds.filter((id: unknown): id is string => typeof id === 'string' && ID.test(id)).slice(0, 40) : [];
     } else {
-      actorId = caller!.id; actorName = caller!.name; mentioned = [];
-      if (type === 'comment_added') {
-        // Mentions and the preview come from the caller's own new comment.
-        const comment = (await reader.rows('comments', { select: 'content,created_at', task_id: `eq.${task.id}`, user_id: `eq.${caller!.id}`,
-          order: 'created_at.desc', limit: '1' }))[0];
-        if (!comment || !(Date.now() - Date.parse(comment.created_at) < COMMENT_WINDOW_MS)) return json({ error: 'comment_unavailable' }, 404);
-        mentioned = commentMentionIds(comment.content);
-        preview = commentPlainText(comment.content);
+      actorId = caller!.id; actorName = caller!.name;
+    }
+    let commentId: string | undefined;
+    if (type === 'comment_added') {
+      if (typeof payload.commentId !== 'string' || !ID.test(payload.commentId) || !ID.test(actorId)) return json({ error: 'comment_unavailable' }, 404);
+      if (service) {
+        // Slack actions name the author from the committed action. Recheck
+        // that the author is active and use their stored display name.
+        const author = (await admin.rows('members', { select: 'id,name', id: `eq.${actorId}`, is_active: 'eq.true', limit: '1' }))[0];
+        if (!author) return json({ error: 'comment_unavailable' }, 404);
+        actorName = author.name;
       }
+      const comment = (await reader.rows('comments', { select: 'content,created_at', id: `eq.${payload.commentId}`,
+        task_id: `eq.${task.id}`, user_id: `eq.${actorId}`, ...(service ? { source: 'eq.slack' } : {}), limit: '1' }))[0];
+      const age = comment ? Date.now() - Date.parse(comment.created_at) : NaN;
+      if (!comment || !(age >= -COMMENT_CLOCK_SKEW_MS && age < COMMENT_WINDOW_MS)) return json({ error: 'comment_unavailable' }, 404);
+      commentId = payload.commentId;
+      // A comment queued before the setting changed is still owned by the outbox.
+      const queued = await admin.rows('slack_delivery_outbox', { select: 'id', task_id: `eq.${task.id}`,
+        event_key: `eq.comment:${commentId}`, limit: '1' });
+      if (queued.length) return json({ accepted: true, managedBy: 'database' });
+      mentioned = commentMentionIds(comment.content);
+      preview = commentPlainText(comment.content);
     }
     const fields: NotifyFields = { ...details, type, taskKey: task.task_key, taskTitle: task.title, projectName: project?.name || '',
       actorName, priority: task.priority || 'medium', commentPreview: preview,
       assigneeName: assignee?.name || details.assigneeName, statusName: status?.name || details.statusName };
     const base = (env.get('APP_BASE_URL') || 'https://livo-tw.com').replace(/\/$/, '');
     const url = `${base}/?task=${encodeURIComponent(task.task_key)}`;
+    const commentDeliveries: Row[] = [];
 
     if (taskNotifyChannel && (Array.isArray(settings.task_notify_types) ? settings.task_notify_types
       : ['task_created', 'status_changed', 'assignee_changed', 'comment_added']).includes(type)) {
       const channel = await channelId(slack, taskNotifyChannel);
-      if (channel && shouldPostChannel(channel, payload.sourceChannelId)) {
-        const res = await slack('chat.postMessage', { channel, ...taskChannelMessage(fields, url), unfurl_links: false, unfurl_media: false, username: 'LIVO' });
-        if (!res.ok) return json({ error: slackErrorCode(res.error) }, 502);
+      if (!channel && commentId) return json({ error: 'channel_not_found' }, 400);
+      const sourceChannel = commentId && !service ? undefined : payload.sourceChannelId;
+      if (channel && shouldPostChannel(channel, sourceChannel)) {
+        const message = { channel, ...taskChannelMessage(fields, url), unfurl_links: false, unfurl_media: false, username: 'LIVO' };
+        if (commentId) commentDeliveries.push(message);
+        else {
+          const res = await slack('chat.postMessage', message);
+          if (!res.ok) return json({ error: slackErrorCode(res.error) }, 502);
+        }
       }
     }
 
@@ -156,12 +182,37 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
           if (!slackDmEligible(found.user, m.email)) return true;
           const dm = await slack('conversations.open', { users: found.user.id });
           if (!dm.ok || !dm.channel?.id) return false;
-          const sent = await slack('chat.postMessage', { channel: dm.channel.id, ...taskDmMessage(fields, allowed.get(m.id) as DmReason, url),
-            unfurl_links: false, unfurl_media: false, username: 'LIVO' });
+          const message = { channel: dm.channel.id, ...taskDmMessage(fields, allowed.get(m.id) as DmReason, url),
+            unfurl_links: false, unfurl_media: false, username: 'LIVO' };
+          if (commentId) {
+            commentDeliveries.push(message);
+            return true;
+          }
+          const sent = await slack('chat.postMessage', message);
           return sent.ok === true;
         }));
-        if (results.some(r => r.status === 'rejected' || r.value !== true)) return json({ error: 'dm_delivery_failed' }, 502);
+        if (results.some(r => r.status === 'rejected' || r.value !== true)) {
+          return json({ error: commentId ? 'comment_destination_unavailable' : 'dm_delivery_failed' }, 502);
+        }
       }
+    }
+    if (commentId && commentDeliveries.length) {
+      // Keep the private claim when an outcome is uncertain. Replaying a
+      // claimed comment could repeat posts already accepted by Slack.
+      const receiptId = `task-comment-v1:${JSON.stringify(['default', commentId])}`;
+      let rows: unknown;
+      try {
+        rows = await admin.request('/rest/v1/qa_slack_receipts', 'POST',
+          { id: receiptId, workspace_id: 'default' }, { on_conflict: 'id' },
+          'return=representation,resolution=ignore-duplicates');
+      } catch {
+        return json({ error: 'comment_claim_unconfirmed' }, 502);
+      }
+      if (Array.isArray(rows) && rows.length === 0) return json({ success: true, duplicate: true });
+      if (!Array.isArray(rows) || rows.length !== 1 || rows[0]?.id !== receiptId) return json({ error: 'comment_claim_unconfirmed' }, 502);
+      const outcomes = await Promise.allSettled(commentDeliveries.map(message => slack('chat.postMessage', message, true)));
+      if (outcomes.some(result => result.status === 'rejected')) return json({ error: 'comment_delivery_unknown' }, 502);
+      if (outcomes.some(result => result.status === 'fulfilled' && !result.value.ok)) return json({ error: 'comment_delivery_failed' }, 502);
     }
     return json({ success: true });
   } catch {

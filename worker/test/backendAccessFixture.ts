@@ -27,6 +27,7 @@ export function backendAccessFixture() {
     bind: (...params: unknown[]) => statement(sql, params),
     all: async () => ({ results: db.prepare(sql).all(...args as never[]), success: true }),
     first: async () => db.prepare(sql).get(...args as never[]) ?? null,
+    run: async () => ({ success: true, meta: db.prepare(sql).run(...args as never[]) }),
   });
   const env = { DB: { prepare: (sql: string) => statement(sql) } } as unknown as Env;
   const auth = (id: string, role: string = id === 'super' ? 'super_admin' : id === 'admin' ? 'admin' : 'member'): AuthCtx => ({

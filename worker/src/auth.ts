@@ -504,7 +504,6 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
       .run();
     if (!updated.meta.changes) return c.json(INVALID_SET_PASSWORD_LINK, 400);
     await c.env.DB.prepare('DELETE FROM auth_refresh_tokens WHERE user_id = ?').bind(user.id).run();
-    clearMemberCache(user.id);
 
     const session = await createSession(c.env, user.id, user.email);
     return c.json<AuthResponse>({ user: session.user, session, error: null });
@@ -593,58 +592,11 @@ export function registerAuthRoutes(app: Hono<AppContext>): void {
       return c.json({ error: 'signup_failed', message: '建立失敗，請稍後再試或聯繫管理員。' }, 500);
     }
 
-    clearMemberCache(authUserId);
     c.executionCtx.waitUntil(markWaitlistJoined(env, email, wsId));
 
     const session = await createSession(env, authUserId, email);
     return c.json<AuthResponse>({ user: session.user, session, error: null });
   });
-}
-
-// ─── requireMember micro-cache ────────────────────────────────────────────
-// Per-isolate cache of the primary `members WHERE auth_id = ?` lookup, keyed
-// by JWT sub. Caches the IN-FLIGHT promise so the frontend's initial-load
-// burst (~10+ parallel /api/query) collapses to one D1 query per isolate.
-// Only the happy path is kept (member found via auth_id, active, email
-// matches); 403s, stale links, and email-fallback heals are never cached so
-// the healing logic below always hits D1 and actually heals.
-// Deactivation latency ≤ TTL per isolate — acceptable next to the 1 h access
-// token TTL. Expired entries are evicted lazily on each lookup.
-
-const MEMBER_CACHE_TTL_MS = 45_000;
-const memberCache = new Map<string, { p: Promise<MemberRow | null>; exp: number }>();
-
-/** Drop cached member lookups (one sub, or all). Safe to call from anywhere
- *  (e.g. manageMember toggle_active/delete) — other isolates expire via TTL. */
-export function clearMemberCache(sub?: string): void {
-  if (sub === undefined) memberCache.clear();
-  else memberCache.delete(sub);
-}
-
-function getMemberByAuthId(env: Env, sub: string, email: string): Promise<MemberRow | null> {
-  const now = Date.now();
-  // Lazy eviction of expired entries (map stays at ~member count — trivial).
-  for (const [k, v] of memberCache) {
-    if (v.exp <= now) memberCache.delete(k);
-  }
-  const hit = memberCache.get(sub);
-  if (hit) return hit.p;
-
-  const p = env.DB
-    .prepare('SELECT id, role, email, name, is_active, workspace_id FROM members WHERE auth_id = ?')
-    .bind(sub)
-    .first<MemberRow>()
-    .then((member) => {
-      const happy =
-        member != null &&
-        !!member.is_active &&
-        (member.email || '').toLowerCase() === email.toLowerCase();
-      if (!happy) memberCache.delete(sub); // never cache 403/healing paths
-      return member;
-    });
-  p.catch(() => memberCache.delete(sub)); // never cache failures
-  memberCache.set(sub, { p, exp: now + MEMBER_CACHE_TTL_MS });
-  return p;
 }
 
 // ─── Personal access tokens (PAT) ─────────────────────────────────────────
@@ -738,34 +690,41 @@ export async function resolveActiveMember(
   email: string
 ): Promise<{ ok: true; member: MemberRow } | { ok: false; status: 401 | 403; message: string }> {
   const db = env.DB;
-  let member = await getMemberByAuthId(env, sub, email);
-
-  // Stale link: member row points at this auth user but emails no longer match.
-  if (member && (member.email || '').toLowerCase() !== email.toLowerCase()) {
-    clearMemberCache(sub);
-    await db.prepare('UPDATE members SET auth_id = NULL WHERE id = ?').bind(member.id).run();
-    member = null;
+  // Resolve current authorization on every request. A cached positive result
+  // would remain valid on other isolates after revocation or a role change.
+  const linked = await db.prepare(
+    `SELECT m.id, m.role, m.email, m.name, m.is_active, m.workspace_id, u.banned
+     FROM auth_users u LEFT JOIN members m ON m.auth_id = u.id
+     WHERE u.id = ? AND u.email = ? COLLATE NOCASE
+     ORDER BY m.email = u.email COLLATE NOCASE DESC LIMIT 1`
+  ).bind(sub, email).first<Omit<MemberRow, 'id'> & { id: string | null; banned: number }>();
+  if (!linked) return { ok: false, status: 401, message: 'Unauthorized' };
+  const { id, banned, ...member } = linked;
+  if (banned) return { ok: false, status: 403, message: 'Account disabled' };
+  if (id && member.email?.toLowerCase() === email.toLowerCase()) {
+    if (!member.is_active) return { ok: false, status: 403, message: 'Account disabled' };
+    return { ok: true, member: { id, ...member } };
   }
 
-  if (!member) {
-    // Healing path — make sure no cached entry survives for this sub.
-    clearMemberCache(sub);
-    // Fallback: match by email (case-insensitive) and heal the auth_id link.
-    // members.email is globally UNIQUE (one email = one workspace), so this
-    // can never cross a tenant boundary.
-    member = await db
-      .prepare('SELECT id, role, email, name, is_active, workspace_id FROM members WHERE email = ? COLLATE NOCASE AND email_identity_verified=1 LIMIT 1')
-      .bind(email)
-      .first<MemberRow>();
-    if (member) {
-      if (!member.is_active) return { ok: false, status: 403, message: 'Account disabled' };
-      await db.prepare('UPDATE members SET auth_id = ? WHERE id = ?').bind(sub, member.id).run();
-    }
+  // Repair a stale link only if the login and old binding still match the
+  // observed state. Verified-email fallback must never replace another login.
+  if (id) {
+    await db.prepare(
+      `UPDATE members SET auth_id = NULL
+       WHERE id = ? AND workspace_id = ? AND auth_id = ? AND COALESCE(email, '') <> ? COLLATE NOCASE
+       AND EXISTS (SELECT 1 FROM auth_users WHERE id = ? AND email = ? COLLATE NOCASE AND banned = 0)`
+    ).bind(id, member.workspace_id ?? DEFAULT_WORKSPACE, sub, email, sub, email).run();
   }
 
-  if (!member) return { ok: false, status: 403, message: 'Not a member' };
-  if (!member.is_active) return { ok: false, status: 403, message: 'Account disabled' };
-  return { ok: true, member };
+  const recovered = await db.prepare(
+    `UPDATE members SET auth_id = ?
+     WHERE email = ? COLLATE NOCASE AND email_identity_verified = 1 AND is_active = 1
+       AND (auth_id IS NULL OR auth_id = ?)
+       AND EXISTS (SELECT 1 FROM auth_users WHERE id = ? AND email = ? COLLATE NOCASE AND banned = 0)
+     RETURNING id, role, email, name, is_active, workspace_id`
+  ).bind(sub, email, sub, sub, email).first<MemberRow>();
+  if (!recovered) return { ok: false, status: 403, message: 'Not a member' };
+  return { ok: true, member: recovered };
 }
 
 export const requireMember: MiddlewareHandler<AppContext> = async (c, next) => {

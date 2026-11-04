@@ -998,6 +998,7 @@
   },
   "taskCreate": {
     "recovery": {
+      "resultUnknown": "The task creation result is still unknown. The original draft is locked. Retry to verify the same submission.",
       "resolveFirst": "Resolve the retained draft for the task already created before adding a subtask.",
       "createdPartial": "Task {{key}} was created, but some details were not fully saved.",
       "unsaved": "Saving is not confirmed for: {{sections}}.",

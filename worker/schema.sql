@@ -1057,6 +1057,24 @@ CREATE TABLE IF NOT EXISTS standup_member_durations (
 );
 CREATE INDEX IF NOT EXISTS idx_standup_member_durations_session ON standup_member_durations (standup_session_id);
 
+-- A duration belongs to its session's workspace. If the member still exists,
+-- it must also belong there. Historical imports may reference a deleted member.
+CREATE TRIGGER IF NOT EXISTS standup_duration_workspace_insert
+BEFORE INSERT ON standup_member_durations
+WHEN NOT EXISTS (SELECT 1 FROM standup_sessions s WHERE s.id = NEW.standup_session_id AND s.workspace_id = NEW.workspace_id)
+  OR EXISTS (SELECT 1 FROM members m WHERE m.id = NEW.member_id AND m.workspace_id <> NEW.workspace_id)
+BEGIN
+  SELECT RAISE(ABORT, 'standup_duration_workspace_mismatch');
+END;
+
+CREATE TRIGGER IF NOT EXISTS standup_duration_workspace_update
+BEFORE UPDATE OF standup_session_id, member_id, workspace_id ON standup_member_durations
+WHEN NOT EXISTS (SELECT 1 FROM standup_sessions s WHERE s.id = NEW.standup_session_id AND s.workspace_id = NEW.workspace_id)
+  OR EXISTS (SELECT 1 FROM members m WHERE m.id = NEW.member_id AND m.workspace_id <> NEW.workspace_id)
+BEGIN
+  SELECT RAISE(ABORT, 'standup_duration_workspace_mismatch');
+END;
+
 -- ── 時間追蹤（time tracking）────────────────────────────────────────────────
 -- 進行中的計時 = started_at 有值且 ended_at IS NULL 的 entry（minutes 0）；
 -- 停止時前端結算 minutes 並補 ended_at。手動補登直接寫 minutes + entry_date。
