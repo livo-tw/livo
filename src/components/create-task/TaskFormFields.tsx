@@ -69,10 +69,6 @@ export interface TaskFormFieldsProps {
   setTagManageMode: (v: boolean | ((prev: boolean) => boolean)) => void;
   confirm: (opts: { title: string; description: string; destructive?: boolean }) => Promise<boolean>;
   hideDeployment?: boolean;
-  /** The running sprint, when there is one; the member decides whether the new task joins it. */
-  sprintName?: string;
-  joinSprint?: boolean;
-  setJoinSprint?: (value: boolean) => void;
 }
 
 const TaskFormFields = ({
@@ -85,7 +81,7 @@ const TaskFormFields = ({
   groupedProjects, statuses,
   tagPickerOpen, setTagPickerOpen, tagPickerRef,
   newTagName, setNewTagName, newTagColor, setNewTagColor,
-  tagManageMode, setTagManageMode, sprintName, joinSprint, setJoinSprint, confirm,
+  tagManageMode, setTagManageMode, confirm,
   hideDeployment,
 }: TaskFormFieldsProps) => {
   const { t } = useTranslation();
@@ -161,13 +157,6 @@ const TaskFormFields = ({
           </PopoverContent>
         </Popover>
       </div>
-
-      {sprintName && setJoinSprint && (
-        <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-          <input type="checkbox" checked={!!joinSprint} onChange={e => setJoinSprint(e.target.checked)} className="rounded border-border accent-primary" />
-          {t('taskCreate.joinSprint', { name: sprintName })}
-        </label>
-      )}
 
       {/* Tags */}
       <div className="relative" ref={tagPickerRef}>

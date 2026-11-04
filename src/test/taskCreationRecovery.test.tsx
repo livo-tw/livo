@@ -26,7 +26,7 @@ vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({
   refreshTaskSpecs: () => state.holdRefresh ? new Promise<void>(resolve => { state.resolveRefresh = resolve; }) : Promise.resolve(), refreshCustomFieldValues: vi.fn(), refreshTaskChecks: vi.fn(), refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(),
   taskTemplates: state.templates, customFields: state.fields, upsertCustomFieldValue: vi.fn(),
 }) }));
-vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: null as { id: string; name: string } | null }) }));
+vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: null as { id: string; name: string } | null, sprintReadState: 'ready' }) }));
 vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: () => true }) }));
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: state.confirm, ConfirmDialog: null as null }) }));
 vi.mock('@/lib/slackNotify', () => ({ sendSlackNotify: vi.fn().mockResolvedValue(undefined) }));

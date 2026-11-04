@@ -8,6 +8,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useSprintContext } from '@/context/SprintContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useStandupSettings, type SortMode } from '@/hooks/useStandupSettings';
+import { Switch } from '@/components/ui/switch';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { StandupQueueEditor } from './standup/StandupQueueEditor';
@@ -73,7 +74,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
 
   const { groups: sortedGroups } = useStandupGrouping(
     activeUsers, sprintTasks, allProjects,
-    settings.sortMode, getDurationForMember, settings.bufferSeconds,
+    settings.sortMode, getDurationForMember, settings.bufferSeconds, undefined, settings.includeReviewTasks !== false,
   );
   const fullGroups = applyStandupOrder(sortedGroups, order);
   const groups = excludedMemberIds.length ? restoreStandupGroups({
@@ -230,6 +231,24 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
                 }`}
               />
             </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <label htmlFor="standup-include-review-tasks" className="text-sm font-medium text-foreground">
+                {t('standup.settings.includeReviewTasks')}
+              </label>
+              <p id="standup-include-review-tasks-description" className="text-xs text-muted-foreground">
+                {t('standup.settings.includeReviewTasksDesc')}
+              </p>
+            </div>
+            <Switch
+              id="standup-include-review-tasks"
+              className="shrink-0"
+              aria-describedby="standup-include-review-tasks-description"
+              checked={settings.includeReviewTasks !== false}
+              onCheckedChange={includeReviewTasks => updateSettings({ includeReviewTasks })}
+            />
           </div>
 
           {/* Per-member overrides */}

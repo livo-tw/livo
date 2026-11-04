@@ -1,3 +1,6 @@
+import { sortComments } from '@/lib/commentOrdering';
+import { useCommentOrder } from '@/hooks/useCommentOrder';
+import { CommentOrderSelect } from '@/components/CommentOrderSelect';
 import { safeLinkHref } from '@/lib/safeLink';
 import RichTextEditor from '@/components/RichTextEditorLazy';
 import { Paperclip, Download, HardDrive, X, FileText } from 'lucide-react';
@@ -24,13 +27,16 @@ const TaskCommentsTab = ({ detail }: Props) => {
     isMobile,
   } = detail;
 
+  const [commentOrder, setCommentOrder] = useCommentOrder(currentMemberId);
+
   if (!task) return null;
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 space-y-3">
+        <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
         {taskComments.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">{t('taskDetail.comments.empty')}</p>}
-        {taskComments.map(comment => {
+        {sortComments(taskComments, commentOrder).map(comment => {
           const user = users.find(u => u.id === comment.userId);
           const date = new Date(comment.createdAt);
           const isOwner = comment.userId === currentMemberId;

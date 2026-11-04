@@ -1,4 +1,6 @@
 import { sprintSummary } from '@/lib/sprintLifecycle';
+import { getStandupLaunch } from '@/lib/standupLaunch';
+import { matchesStandupMember } from '@/lib/standupTasks';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { sprintBacklogTaskIds } from '@/lib/sprintBacklog';
 import { useState, useRef, useMemo, useCallback, useEffect, type ReactNode } from 'react';
@@ -117,7 +119,13 @@ const BoardView = () => {
   const { approvalConfirm, setApprovalConfirm, handleApprovalDirectChange, handleApprovalSubmit, handleMandatoryApproval } = useBoardApproval({ allTasks, statuses, setAllTasks, updateTaskInDb, getRuleForTransition, requestApproval, t, announce: announceDirect });
   const userMap = useMemo(() => new Map(users.map(u => [u.id, u])), [users]);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
-  const boardFilters = useBoardFilters();
+  const regularFilters = useBoardFilters();
+  const standupFilters = useBoardFilters();
+  const clearStandupFilters = standupFilters.clearFilters;
+  const boardFilters = standupMode ? standupFilters : regularFilters;
+  useEffect(() => {
+    if (!standupMode) clearStandupFilters();
+  }, [standupMode, clearStandupFilters]);
   const scope = useProjectScope();
   useScopedProjectFilter(boardFilters.setFilterProjects);
   const { filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, hasFilters, clearFilters } = boardFilters;
@@ -154,10 +162,8 @@ const BoardView = () => {
     );
   };
 
-  // Every filter except the sprint scope. While a sprint runs, the board shows
-  // its tasks plus unscheduled ones; tasks of other (usually finished) sprints
-  // stay countable here so the board can say where they went (the sidebar
-  // counts and the 列表 view include them).
+  // Apply the sprint scope separately so other sprint cards remain countable.
+  const includeStandupReviewTasks = getStandupLaunch()?.settings.includeReviewTasks !== false;
   const unscopedTasks = useMemo(() => {
     let tasks = allTasks;
     if (selectedProjectId) {
@@ -167,7 +173,7 @@ const BoardView = () => {
       tasks = tasks.filter(t => lineProjectIdSet.has(t.projectId));
     }
     if (standupMode && standupUserId) {
-      tasks = tasks.filter(t => t.assigneeId === standupUserId);
+      tasks = tasks.filter(task => matchesStandupMember(task, standupUserId, includeStandupReviewTasks));
     }
     if (filterDept.length > 0) {
       const deptSet = new Set(filterDept);
@@ -179,7 +185,7 @@ const BoardView = () => {
     if (filterReviewers.length > 0) { const s = new Set(filterReviewers); tasks = tasks.filter(t => t.reviewerId && s.has(t.reviewerId)); }
     if (filterProjects.length > 0) { const s = new Set(filterProjects); tasks = tasks.filter(t => s.has(t.projectId)); }
     return tasks;
-  }, [allTasks, selectedProjectId, selectedLineId, standupMode, standupUserId, filterDept, users, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, allProjects]);
+  }, [allTasks, selectedProjectId, selectedLineId, standupMode, standupUserId, includeStandupReviewTasks, filterDept, users, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, allProjects]);
 
   const scopeSprintId = sprintActive && currentSprint ? currentSprint.id : null;
   const filteredTasks = useMemo(() => scopeSprintId
@@ -188,7 +194,8 @@ const BoardView = () => {
   [unscopedTasks, scopeSprintId]);
   const sortedTasks = useMemo(() => sortBoardTasks(filteredTasks, sort), [filteredTasks, sort]);
   // In nested mode a subtask is shown inside its parent's card; it keeps a card of its own only when its parent is not on the board.
-  const nestSubtasks = subtaskDisplayMode === 'nested' && hasFeature('subtasks');
+  const shownSubtaskMode = standupMode ? 'independent' : subtaskDisplayMode;
+  const nestSubtasks = shownSubtaskMode === 'nested' && hasFeature('subtasks');
   const boardTasks = useMemo(() => {
     if (!nestSubtasks) return sortedTasks;
     const shown = new Set(sortedTasks.map(task => task.id));
@@ -326,7 +333,7 @@ const BoardView = () => {
 
   const handleStandup = () => {
     if (standupMode) {
-      if (sprintActive) {
+      if (!isMobile && hasFeature('standup')) {
         window.dispatchEvent(new CustomEvent('standup-exit'));
       } else {
         setStandupMode(false);
@@ -384,7 +391,7 @@ const BoardView = () => {
         filters={boardFilters} sort={sort} onSortChange={setSort}
         cardFields={cardFields} toggleCardField={toggleCardField}
         subtaskDisplayMode={subtaskDisplayMode} setSubtaskDisplayMode={setSubtaskDisplayMode}
-        hasSubtasksFeature={hasFeature('subtasks')}
+        hasSubtasksFeature={!standupMode && hasFeature('subtasks')}
         customFields={customFields}
         customCardFields={customCardFields} toggleCustomCardField={toggleCustomCardField}
         visibleProjectIds={visibleProjectIds}
@@ -493,7 +500,7 @@ const BoardView = () => {
                           </div>
                           <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-auto md:overscroll-y-contain p-2 space-y-2">
                             {statusTasks.map(task => (
-                              <DraggableCard key={task.id} task={task} fields={cardFields} subtaskMode={subtaskDisplayMode} customCardFields={customCardFields} />
+                              <DraggableCard key={task.id} task={task} fields={cardFields} subtaskMode={shownSubtaskMode} customCardFields={customCardFields} />
                             ))}
                           </div>
                         </DroppableColumn>
@@ -572,7 +579,7 @@ const BoardView = () => {
     <DragOverlay dropAnimation={null}>
       {activeTask ? (
         <div className="rotate-2 shadow-xl w-[260px] md:w-[280px]">
-          <TaskCard task={activeTask} fields={cardFields} subtaskMode={subtaskDisplayMode} customCardFields={customCardFields} interactive={false} />
+          <TaskCard task={activeTask} fields={cardFields} subtaskMode={shownSubtaskMode} customCardFields={customCardFields} interactive={false} />
         </div>
       ) : null}
     </DragOverlay>

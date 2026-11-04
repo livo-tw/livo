@@ -1,4 +1,5 @@
 import type { User, Task } from '@/types';
+import { matchesStandupMember } from '@/lib/standupTasks';
 import type { StandupSettings } from '@/hooks/useStandupSettings';
 import type { StandupGroup, QueueItem } from '@/hooks/useStandupGrouping';
 
@@ -51,10 +52,11 @@ export function applyStandupOrder(groups: StandupGroup[], order?: StandupOrder):
 export function restoreStandupGroups(snapshot: StandupLaunchSnapshot, users: User[], tasks: Task[], getDuration: (id: string) => number, buffer: number): StandupGroup[] {
   const excluded = new Set(snapshot.excludedMemberIds || []);
   const active = new Map(users.filter(user => user.isActive === true).map(user => [user.id, user]));
+  const includeReviewTasks = snapshot.settings.includeReviewTasks !== false;
   return snapshot.groups.map(({ memberIds, ...group }) => {
     const members = [...new Set(memberIds)].flatMap(id => active.has(id) && !excluded.has(id) ? [active.get(id)!] : []);
-    const ids = new Set(members.map(member => member.id));
-    return { ...group, members, task_count: tasks.filter(task => task.assigneeId && ids.has(task.assigneeId) &&
+    return { ...group, members, task_count: tasks.filter(task =>
+      members.some(member => matchesStandupMember(task, member.id, includeReviewTasks)) &&
       (snapshot.settings.sortMode !== 'by_project' || task.projectId === group.group_key)).length,
     estimated_duration: members.reduce((sum, member) => sum + getDuration(member.id) + buffer, 0) };
   }).filter(group => group.members.length > 0);

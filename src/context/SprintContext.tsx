@@ -18,12 +18,15 @@ export interface Sprint {
 
 export interface SprintCommandState { busy: boolean; unresolved: boolean; operation?: 'start' | 'complete' }
 
+export type SprintReadState = 'loading' | 'ready' | 'error';
+
 export interface SprintContextType {
   sprintActive: boolean;
   setSprintActive: (v: boolean) => void;
   sprintStartedAt: string | null;
   sprints: Sprint[];
   currentSprint: Sprint | null;
+  sprintReadState: SprintReadState;
   /** Resolves false when the sprint was not started (the reason is shown). */
   startSprint: (name: string, carryOverTaskIds?: string[], includeBacklog?: boolean) => Promise<boolean>;
   getDefaultSprintName: () => string;

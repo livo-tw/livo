@@ -780,6 +780,8 @@
       "defaultDuration": "每人發言時間（預設）",
       "autoAdvance": "時間到自動切換",
       "autoAdvanceDesc": "進入 {{seconds}}s 緩衝後自動切下一位",
+      "includeReviewTasks": "顯示驗收任務",
+      "includeReviewTasksDesc": "同時顯示目前報告人負責驗收的卡片",
       "memberOverrides": "個別成員時間設定",
       "preview": "排序預覽",
       "totalDuration": "預估總時長：",
@@ -823,6 +825,8 @@
       "dragEnd": "已完成移動 {{name}}。",
       "dragCancel": "已取消移動 {{name}}。",
       "current": "目前報告",
+      "reportAgain": "重新報告",
+      "reportAgainNamed": "讓 {{name}} 重新報告",
       "completed": "已報告",
       "noPending": "目前沒有待報告成員，可從「本次不報告」名單加入成員繼續。",
       "skipCurrent": "略過目前報告",
@@ -1087,7 +1091,12 @@
     },
     "discardTitle": "放棄這張任務？",
     "discardDesc": "已輸入的內容還沒有建立，關閉後會遺失。",
-    "joinSprint": "加入目前衝刺「{{name}}」"
+    "joinSprint": "加入目前衝刺「{{name}}」",
+    "sprintBacklogHint": "這張任務會留在待辦清單。",
+    "sprintChecking": "正在確認目前衝刺…",
+    "sprintChanged": "衝刺在編輯期間已變更。請重新選擇，或將任務留在待辦清單。",
+    "sprintKeepBacklog": "留在待辦清單",
+    "sprintSaveConflict": "目前無法將任務加入選定的衝刺。請確認衝刺後再試一次。"
   },
   "template": {
     "nameRequired": "請輸入模板名稱",
@@ -1121,6 +1130,9 @@
       "discardDraft": "需求內容還沒儲存，離開會遺失這次修改。確定要離開嗎？"
     },
     "comments": {
+      "sortLabel": "留言排序",
+      "newestFirst": "從新到舊",
+      "oldestFirst": "從舊到新",
       "empty": "暫無留言",
       "editButton": "編輯",
       "deleteButton": "刪除",

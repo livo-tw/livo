@@ -87,12 +87,13 @@ export function useStandupQueue(groups: StandupGroup[], initialExcluded: string[
   };
 
   const advance = () => {
-    if (!currentItem) return false;
-    setCompletedKeys(previous => [...new Set([...previous, currentKey!])]);
+    if (!currentKey) return null;
+    setCompletedKeys(previous => [...new Set([...previous, currentKey])]);
     const next = pendingQueue[0];
-    setCursor({ key: next ? standupQueueKey(next) : null, index: 0 });
-    setFinished(!next);
-    return !next;
+    const nextKey = next ? standupQueueKey(next) : null;
+    setCursor({ key: nextKey, index: 0 });
+    setFinished(!nextKey);
+    return nextKey;
   };
 
   const skipCurrent = () => {
@@ -103,14 +104,20 @@ export function useStandupQueue(groups: StandupGroup[], initialExcluded: string[
     setFinished(!next);
   };
 
-  const select = (groupKey: string, memberId: string) => {
-    const index = remainingQueue.findIndex(item => item.group.group_key === groupKey && item.member.id === memberId);
-    if (index >= 0) {
-      setCursor({ key: standupQueueKey(remainingQueue[index]), index });
-      // A previously unavailable member can rejoin after the queue finished.
-      // Selecting their pending turn explicitly resumes this same meeting.
-      setFinished(false);
-    }
+  const select = (groupKey: string, memberId: string, finishCurrent: boolean, reportAgain = false) => {
+    const available = reportAgain ? completedQueue : remainingQueue;
+    const item = available.find(entry => entry.group.group_key === groupKey && entry.member.id === memberId);
+    if (!item) return null;
+
+    const key = standupQueueKey(item);
+    setCompletedKeys(previous => {
+      const completed = reportAgain ? previous.filter(entry => entry !== key) : previous;
+      if (finishCurrent && currentKey && currentKey !== key) return [...new Set([...completed, currentKey])];
+      return completed;
+    });
+    setCursor({ key, index: Math.max(0, remainingQueue.findIndex(entry => standupQueueKey(entry) === key)) });
+    setFinished(false);
+    return key;
   };
 
   const restart = () => {

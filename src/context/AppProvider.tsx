@@ -179,10 +179,10 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   const sprintValue = useMemo(() => ({
     sprintActive: sprint.sprintActive, setSprintActive: sprint.setSprintActive, sprintStartedAt: sprint.sprintStartedAt,
-    sprints: sprint.sprints, currentSprint: sprint.currentSprint, commandState: sprint.commandState,
+    sprints: sprint.sprints, currentSprint: sprint.currentSprint, sprintReadState: sprint.sprintReadState, commandState: sprint.commandState,
     startSprint, completeSprint, renameSprint: sprint.renameSprint,
     refreshSprints: sprint.refreshSprints, getDefaultSprintName: sprint.getDefaultSprintName,
-  }), [sprint.commandState, sprint.sprintActive, sprint.sprintStartedAt, sprint.sprints, sprint.currentSprint, startSprint, completeSprint, sprint.renameSprint, sprint.refreshSprints, sprint.getDefaultSprintName]);
+  }), [sprint.commandState, sprint.sprintReadState, sprint.sprintActive, sprint.sprintStartedAt, sprint.sprints, sprint.currentSprint, startSprint, completeSprint, sprint.renameSprint, sprint.refreshSprints, sprint.getDefaultSprintName]);
 
   // ─── Auth Guard ───
   const startupFailed = initialLoad.loadFailed || auth.verificationFailed;

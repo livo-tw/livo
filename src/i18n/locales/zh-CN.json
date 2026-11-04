@@ -780,6 +780,8 @@
       "defaultDuration": "每人发言时间（预设）",
       "autoAdvance": "时间到自动切换",
       "autoAdvanceDesc": "进入 {{seconds}}s 缓冲后自动切下一位",
+      "includeReviewTasks": "显示验收任务",
+      "includeReviewTasksDesc": "同时显示当前报告人负责验收的卡片",
       "memberOverrides": "个别成员时间设定",
       "preview": "排序预览",
       "totalDuration": "预估总时长：",
@@ -823,6 +825,8 @@
       "dragEnd": "已完成移动 {{name}}。",
       "dragCancel": "已取消移动 {{name}}。",
       "current": "目前报告",
+      "reportAgain": "重新报告",
+      "reportAgainNamed": "让 {{name}} 重新报告",
       "completed": "已报告",
       "noPending": "目前没有待报告成员，可从「本次不报告」名单加入成员继续。",
       "skipCurrent": "跳过当前报告",
@@ -1087,7 +1091,12 @@
     },
     "discardTitle": "放弃这张任务？",
     "discardDesc": "已输入的内容还没有建立，关闭后会遗失。",
-    "joinSprint": "加入目前冲刺「{{name}}」"
+    "joinSprint": "加入目前冲刺「{{name}}」",
+    "sprintBacklogHint": "这张任务会留在待办清单。",
+    "sprintChecking": "正在确认当前冲刺…",
+    "sprintChanged": "冲刺在编辑期间已变更。请重新选择，或将任务留在待办清单。",
+    "sprintKeepBacklog": "留在待办清单",
+    "sprintSaveConflict": "目前无法将任务加入选定的冲刺。请确认冲刺后再试一次。"
   },
   "template": {
     "nameRequired": "请输入模板名称",
@@ -1121,6 +1130,9 @@
       "discardDraft": "需求内容还没保存，离开会丢失这次修改。确定要离开吗？"
     },
     "comments": {
+      "sortLabel": "留言排序",
+      "newestFirst": "从新到旧",
+      "oldestFirst": "从旧到新",
       "empty": "暂无留言",
       "editButton": "编辑",
       "deleteButton": "删除",

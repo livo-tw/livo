@@ -8,7 +8,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { logActivity } from '@/lib/activityLog';
-import { Play, Pause, RotateCcw, Trophy, SkipForward } from 'lucide-react';
+import { Play, Pause, RotateCcw, Trophy, SkipForward, UserMinus } from 'lucide-react';
 import { useStandupSettings } from '@/hooks/useStandupSettings';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useStandupTimer } from '@/hooks/useStandupTimer';
@@ -38,10 +38,9 @@ const StandupPanel = () => {
   const { sprintActive, currentSprint, getDefaultSprintName } = useSprintContext();
   const { allTasks, statuses } = useTaskContext();
   const { currentMemberId } = useAuthContext();
-  const { allProjects } = useProjectContext();
+  const { allProjects, setSelectedProjectId } = useProjectContext();
 
   const [showSprintPrompt, setShowSprintPrompt] = useState(false);
-  const [reviewingFinished, setReviewingFinished] = useState(false);
   const [launch] = useState(getStandupLaunch);
   const fullLaunch = useMemo<StandupLaunchSnapshot | undefined>(() => launch ? { ...launch, excludedMemberIds: [] } : undefined, [launch]);
 
@@ -55,7 +54,7 @@ const StandupPanel = () => {
   const { settings, getDurationForMember } = useStandupSettings(memberIds, { initial: launch?.settings });
   const { groups } = useStandupGrouping(
     users, sprintTasks, allProjects,
-    settings.sortMode, getDurationForMember, settings.bufferSeconds, fullLaunch,
+    settings.sortMode, getDurationForMember, settings.bufferSeconds, fullLaunch, settings.includeReviewTasks !== false,
   );
   const queue = useStandupQueue(groups, launch?.excludedMemberIds);
   const restoreMemberRef = useRef(queue.restoreMember);
@@ -64,30 +63,59 @@ const StandupPanel = () => {
     setShowSprintPrompt(false);
   };
   const { currentItem, currentKey, flatQueue, queueIndex, finished: standupFinished } = queue;
-  const showCompletion = standupFinished && !reviewingFinished;
-  useEffect(() => { if (!standupFinished) setReviewingFinished(false); }, [standupFinished]);
   const currentDuration = currentItem
     ? getDurationForMember(currentItem.member.id)
     : settings.defaultSpeakDuration;
 
-  const handleAdvance = () => {
-    if (queue.advance() && sprintActive) setShowSprintPrompt(true);
-  };
+  const startOnTurnRef = useRef<string | null>(null);
+  const focusTurnRef = useRef<string | null>(null);
+  const currentRowRef = useRef<HTMLDivElement>(null);
 
-  const { displayTime, inBuffer, isRunning, timerStatus, toggle, reset, skip } = useStandupTimer({
+  function handleAdvance() {
+    if (!currentKey) return;
+    const nextKey = queue.advance();
+    startOnTurnRef.current = hasStarted ? nextKey : null;
+    if (!nextKey && sprintActive) setShowSprintPrompt(true);
+  }
+
+  const { displayTime, maxTime, inBuffer, isRunning, hasStarted, timerStatus, pause, resume, reset } = useStandupTimer({
+    turnKey: currentKey,
+    startOnTurn: currentKey !== null && currentKey === startOnTurnRef.current,
     duration: currentDuration,
     bufferSeconds: settings.bufferSeconds,
     autoAdvance: settings.autoAdvance,
     onAdvance: handleAdvance,
   });
 
-  // Editing pending turns cannot change the current identity or reset its timer.
+  const selectTurn = (groupKey: string, memberId: string, reportAgain = false) => {
+    const key = queue.select(groupKey, memberId, hasStarted, reportAgain);
+    if (!key) return;
+    startOnTurnRef.current = key;
+    focusTurnRef.current = key;
+    setShowSprintPrompt(false);
+  };
+
+  const reportProjectId = !standupFinished && settings.sortMode === 'by_project'
+    && currentItem?.group.group_key !== '__unassigned__' ? currentItem?.group.group_key ?? null : null;
   useEffect(() => {
     setStandupUserId(standupFinished ? null : currentItem?.member.id ?? null);
-    reset();
-  }, [currentKey, currentItem?.member.id, standupFinished, setStandupUserId, reset]);
+    setSelectedProjectId(reportProjectId);
+  }, [currentKey, currentItem?.member.id, standupFinished, reportProjectId, setStandupUserId, setSelectedProjectId]);
 
-  const leaveStandup = useCallback(() => { clearStandupLaunch(); setStandupUserId(null); setStandupMode(false); }, [setStandupUserId, setStandupMode]);
+  useEffect(() => {
+    if (currentKey && focusTurnRef.current === currentKey) {
+      currentRowRef.current?.querySelector<HTMLButtonElement>('button[aria-current="step"]')?.focus({ preventScroll: true });
+    }
+    startOnTurnRef.current = null;
+    focusTurnRef.current = null;
+  }, [currentKey]);
+
+  const leaveStandup = useCallback(() => {
+    clearStandupLaunch();
+    setStandupUserId(null);
+    setSelectedProjectId(null);
+    setStandupMode(false);
+  }, [setStandupUserId, setSelectedProjectId, setStandupMode]);
   // The stand-up ends with completing the sprint and offering to start the next one.
   const sprintFlow = useSprintFlow({ startAfterComplete: 'always', onStarted: leaveStandup, onStartClosed: leaveStandup });
 
@@ -107,11 +135,7 @@ const StandupPanel = () => {
     return () => window.removeEventListener('standup-exit', handler);
   }, []);
 
-  const handleSkipSprint = () => {
-    setShowSprintPrompt(false);
-    leaveStandup();
-    if (currentMemberId) logActivity(currentMemberId, 'end_standup', `${t('activityLog.endStandup')}`, undefined, undefined, 'system');
-  };
+  const dismissSprintPrompt = useCallback(() => setShowSprintPrompt(false), []);
 
   const handleOpenCompleteModal = () => {
     setShowSprintPrompt(false);
@@ -121,10 +145,10 @@ const StandupPanel = () => {
   // Escape key handler for sprint prompt
   useEffect(() => {
     if (!showSprintPrompt) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') handleSkipSprint(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') dismissSprintPrompt(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [showSprintPrompt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showSprintPrompt, dismissSprintPrompt]);
 
   // Sprint task stats
   const doneIds        = statuses.filter(s => s.isDone).map(s => s.id);
@@ -136,7 +160,6 @@ const StandupPanel = () => {
   // Timer display values
   const minutes  = Math.floor(displayTime / 60);
   const seconds  = displayTime % 60;
-  const maxTime  = inBuffer ? settings.bufferSeconds : currentDuration;
   const progress = maxTime > 0 ? (displayTime / maxTime) * 100 : 0;
   const strokeColor = TIMER_STROKE[timerStatus] ?? TIMER_STROKE.normal;
   const currentGroup = currentItem?.group ?? null;
@@ -159,8 +182,7 @@ const StandupPanel = () => {
 
   return (
     <>
-      <div className="relative w-56 h-full min-h-0 bg-sidebar flex flex-col flex-shrink-0">
-        {!showCompletion && <>
+      <div className="relative w-72 max-w-full h-full min-h-0 bg-sidebar flex flex-col flex-shrink-0">
         {/* Top bar */}
         <div className="px-4 py-2 flex items-center justify-between flex-shrink-0">
           <span className="text-xs font-bold text-sidebar-primary-foreground">{t('standup.mode')}</span>
@@ -172,6 +194,19 @@ const StandupPanel = () => {
           </button>
         </div>
 
+        {standupFinished && (
+          <div role="status" className="flex flex-shrink-0 items-center gap-2 px-4 py-3">
+            <Trophy size={20} className="shrink-0 text-yellow-400" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-bold text-sidebar-primary-foreground">{t('standup.completion.title')}</p>
+              <p className="text-xs text-sidebar-foreground/60">
+                {t('standup.completion.message', { count: new Set(queue.completedQueue.map(item => item.member.id)).size })}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!standupFinished && <>
         {/* Group header (hidden for by_member mode) */}
         {currentGroup && settings.sortMode !== 'by_member' && (
           <StandupGroupHeader
@@ -215,7 +250,7 @@ const StandupPanel = () => {
           {/* Controls */}
           <div className="flex items-center justify-center gap-2">
             <button
-              onClick={toggle}
+              onClick={isRunning ? pause : resume}
               disabled={!currentItem || standupFinished}
               className="p-1.5 rounded-full bg-sidebar-accent text-sidebar-primary-foreground hover:bg-sidebar-hover transition-colors"
               title={isRunning ? t('button.pause') : t('button.play')}
@@ -233,7 +268,7 @@ const StandupPanel = () => {
               <RotateCcw size={14} />
             </button>
             <button
-              onClick={skip}
+              onClick={handleAdvance}
               disabled={!currentItem || standupFinished}
               className="p-1.5 rounded-full bg-sidebar-accent text-sidebar-primary-foreground hover:bg-sidebar-hover transition-colors"
               title={t('button.skipToNext')}
@@ -244,68 +279,51 @@ const StandupPanel = () => {
           </div>
         </div>
 
+        </>}
+
         {/* Member list */}
         <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-3">
           {!flatQueue.length && <p role="status" className="px-2 py-3 text-xs text-sidebar-foreground/60">{t(groups.length ? 'standup.queue.noPending' : 'standup.noActiveMembers')}</p>}
           {currentItem && <section>
             <p className="px-2 pb-1 text-xs font-medium text-sidebar-foreground/60">{t('standup.queue.current')}</p>
-            <StandupItemCard member={currentItem.member} active onClick={() => {}} />
-            <button type="button" onClick={skipCurrent} className="min-h-11 w-full rounded px-2 text-xs text-sidebar-foreground/70 hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary">
-              {t('standup.queue.skipCurrent')}
-            </button>
+            <div ref={currentRowRef} className="flex items-center rounded bg-sidebar-active">
+              <div className="min-w-0 flex-1"><StandupItemCard member={currentItem.member} active onClick={resume} /></div>
+              <button type="button" onClick={skipCurrent} title={t('standup.queue.skipCurrent')} aria-label={t('standup.queue.skipCurrent')}
+                className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center rounded text-sidebar-primary-foreground hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary">
+                <UserMinus size={14} aria-hidden="true" />
+              </button>
+            </div>
           </section>}
           <section>
             <p className="px-2 pb-1 text-xs font-medium text-sidebar-foreground/60">{t('standup.queue.pending')}</p>
             <StandupQueueEditor groups={queue.pendingGroups} sortMode={settings.sortMode}
               onReorder={queue.reorderPending} excludedMembers={queue.excludedMembers}
-              onExclude={excludeMember} onRestore={restoreMemberRef.current} onSelect={queue.select}
+              onExclude={excludeMember} onRestore={restoreMemberRef.current} onSelect={selectTurn}
               compact label={t('standup.queue.pending')} />
           </section>
-          {queue.completedQueue.length > 0 && <details className="text-sidebar-foreground/60">
+          {queue.completedQueue.length > 0 && <details open className="text-sidebar-foreground/60">
             <summary className="min-h-9 cursor-pointer px-2 py-2 text-xs">{t('standup.queue.completed')} ({queue.completedQueue.length})</summary>
-            {queue.completedQueue.map(item => <div key={standupQueueKey(item)} className="px-2 py-1 text-xs">
-              {item.member.name}{settings.sortMode !== 'by_member' && <span className="ml-1 opacity-70">· {item.group.group_title}</span>}
-            </div>)}
+            {queue.completedQueue.map(item => {
+              const name = t('standup.queue.reportAgainNamed', { name: item.member.name });
+              const label = settings.sortMode === 'by_member' ? name : `${name} · ${item.group.group_title}`;
+              return <div key={standupQueueKey(item)} className="flex min-w-0 items-center gap-2 rounded px-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">
+                  {item.member.name}{settings.sortMode !== 'by_member' && <span className="ml-1 opacity-70">· {item.group.group_title}</span>}
+                </span>
+                <button type="button" aria-label={label} title={label} onClick={() => selectTurn(item.group.group_key, item.member.id, true)}
+                  className="min-h-9 shrink-0 rounded px-2 font-medium text-sidebar-primary-foreground hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary">
+                  {t('standup.queue.reportAgain')}
+                </button>
+              </div>;
+            })}
           </details>}
         </div>
-        </>}
 
-        {/* ── Standup finished overlay ─────────────────────────────────────── */}
-        {showCompletion && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-sidebar z-10 px-4 text-center">
-            <Trophy size={40} className="text-yellow-400 mb-3" />
-            <p className="text-sm font-bold text-sidebar-primary-foreground">{t('standup.completion.title')}</p>
-            <p className="text-xs text-sidebar-foreground/60 mt-1">
-              {t('standup.completion.message', { count: new Set(queue.completedQueue.map(item => item.member.id)).size })}
-            </p>
-            {queue.excludedMembers.length > 0 && <div className="mt-3 max-h-40 w-full overflow-y-auto">
-              <p className="text-xs text-sidebar-foreground/60">{t('standup.queue.excluded', { count: queue.excludedMembers.length })}</p>
-              {queue.excludedMembers.map(member => <button key={member.id} type="button"
-                aria-label={t('standup.queue.restoreNamed', { name: member.name })}
-                className="min-h-11 w-full rounded px-2 text-xs text-sidebar-primary-foreground hover:bg-sidebar-hover focus-visible:ring-2 focus-visible:ring-primary"
-                onClick={() => restoreMemberRef.current(member.id)}>
-                {member.name} · {t('standup.queue.restore')}
-              </button>)}
-            </div>}
-            <button
-              onClick={() => { setReviewingFinished(true); setShowSprintPrompt(false); }}
-              className="mt-4 text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground underline transition-colors"
-            >
-              {t('button.backToList')}
-            </button>
-            <button
-              onClick={handleExitStandup}
-              className="mt-2 text-xs text-primary hover:text-primary/80 transition-colors"
-            >
-              {t('button.exitStandup')}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* ── Sprint completion prompt ─────────────────────────────────────── */}
       {showSprintPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleSkipSprint}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={dismissSprintPrompt}>
           <div ref={sprintPromptRef} role="dialog" aria-modal="true" aria-labelledby="standup-sprint-complete-title" className="bg-card rounded-xl border border-border shadow-2xl p-6 max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
               <h2 id="standup-sprint-complete-title" className="text-base font-bold text-foreground mb-2 flex items-center gap-2">
                 <Trophy size={18} className="text-yellow-500" />
@@ -314,16 +332,16 @@ const StandupPanel = () => {
               <p className="text-sm text-muted-foreground mb-4">{t('sprint.prompt.description')}</p>
               <div className="flex gap-2 justify-end">
                 <button
-                  onClick={() => { setShowSprintPrompt(false); setReviewingFinished(true); }}
+                  onClick={dismissSprintPrompt}
                   className="min-h-11 rounded px-3 py-1.5 text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   {t('button.backToList')}
                 </button>
                 <button
-                  onClick={handleSkipSprint}
+                  onClick={handleExitStandup}
                   className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  {t('button.skip')}
+                  {t('button.exitStandup')}
                 </button>
                 <button
                   onClick={handleOpenCompleteModal}

@@ -1,90 +1,76 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export type TimerStatus = 'idle' | 'normal' | 'warning' | 'critical' | 'buffer';
 
 interface UseStandupTimerOptions {
-  duration: number;       // seconds allocated for current member
-  bufferSeconds: number;  // grace period after time runs out
-  autoAdvance: boolean;   // trigger onAdvance after buffer expires
-  onAdvance?: () => void;
+  turnKey: string | null;
+  startOnTurn: boolean;
+  duration: number;
+  bufferSeconds: number;
+  autoAdvance: boolean;
+  onAdvance: () => void;
+}
+
+function startTurn(turnKey: string | null, duration: number, bufferSeconds: number, running: boolean) {
+  return {
+    turnKey, duration, bufferSeconds, timeLeft: duration, bufferLeft: bufferSeconds,
+    isRunning: running, hasStarted: running, inBuffer: false,
+  };
 }
 
 export function useStandupTimer({
-  duration,
-  bufferSeconds,
-  autoAdvance,
-  onAdvance,
+  turnKey, startOnTurn, duration, bufferSeconds, autoAdvance, onAdvance,
 }: UseStandupTimerOptions) {
-  const [timeLeft, setTimeLeft]       = useState(duration);
-  const [isRunning, setIsRunning]     = useState(false);
-  const [inBuffer, setInBuffer]       = useState(false);
-  const [bufferLeft, setBufferLeft]   = useState(bufferSeconds);
+  const [timer, setTimer] = useState(() => startTurn(turnKey, duration, bufferSeconds, startOnTurn));
   const onAdvanceRef = useRef(onAdvance);
   onAdvanceRef.current = onAdvance;
+  // The group/member identity owns the countdown. Queue edits and refreshes
+  // may change the group object, but the current allocation stays in effect.
+  if (timer.turnKey !== turnKey) {
+    setTimer(startTurn(turnKey, duration, bufferSeconds, startOnTurn));
+  }
 
-  // Reset whenever the target duration changes (new member selected)
-  const reset = useCallback(
-    (newDuration?: number) => {
-      setTimeLeft(newDuration ?? duration);
-      setIsRunning(false);
-      setInBuffer(false);
-      setBufferLeft(bufferSeconds);
-    },
-    [duration, bufferSeconds],
-  );
-
+  const { isRunning, inBuffer, timeLeft, bufferLeft, hasStarted } = timer;
   useEffect(() => {
-    reset(duration);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [duration]);
+    if (!isRunning || turnKey === null) return;
 
-  // Main countdown tick
-  useEffect(() => {
-    if (!isRunning) return;
-
-    if (!inBuffer) {
-      if (timeLeft > 0) {
-        const id = setInterval(() => setTimeLeft(t => t - 1), 1000);
-        return () => clearInterval(id);
-      }
-      // Time reached 0 — enter buffer if autoAdvance is on
-      if (autoAdvance) {
-        setInBuffer(true);
-        setBufferLeft(bufferSeconds);
-      }
+    if (!inBuffer && timeLeft === 0) {
+      if (autoAdvance) setTimer(previous => ({ ...previous, inBuffer: true }));
       return;
     }
 
-    // In buffer
-    if (bufferLeft > 0) {
-      const id = setInterval(() => setBufferLeft(t => t - 1), 1000);
-      return () => clearInterval(id);
+    if (inBuffer && bufferLeft === 0) {
+      setTimer(previous => ({ ...previous, isRunning: false }));
+      onAdvanceRef.current();
+      return;
     }
-    // Buffer exhausted
-    setIsRunning(false);
-    onAdvanceRef.current?.();
-  }, [isRunning, timeLeft, inBuffer, bufferLeft, autoAdvance, bufferSeconds]);
+
+    const field = inBuffer ? 'bufferLeft' : 'timeLeft';
+    const id = setInterval(() => {
+      setTimer(previous => previous.turnKey === turnKey && previous.isRunning
+        ? { ...previous, [field]: Math.max(0, previous[field] - 1) }
+        : previous);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [turnKey, isRunning, inBuffer, timeLeft, bufferLeft, autoAdvance]);
 
   const timerStatus: TimerStatus = (() => {
-    if (!isRunning && timeLeft === duration && !inBuffer) return 'idle';
-    if (inBuffer)        return 'buffer';
-    if (timeLeft <= 10)  return 'critical';
-    if (timeLeft <= 30)  return 'warning';
+    if (!isRunning && timeLeft === timer.duration && !inBuffer) return 'idle';
+    if (inBuffer) return 'buffer';
+    if (timeLeft <= 10) return 'critical';
+    if (timeLeft <= 30) return 'warning';
     return 'normal';
   })();
 
   return {
-    /** Time to display: bufferLeft while in buffer, otherwise timeLeft */
     displayTime: inBuffer ? bufferLeft : timeLeft,
-    rawTimeLeft: timeLeft,
-    bufferLeft,
+    maxTime: inBuffer ? timer.bufferSeconds : timer.duration,
     inBuffer,
     isRunning,
+    hasStarted,
     timerStatus,
-    toggle:  useCallback(() => setIsRunning(r => !r), []),
-    pause:   useCallback(() => setIsRunning(false), []),
-    resume:  useCallback(() => setIsRunning(true), []),
-    skip:    useCallback(() => { setIsRunning(false); onAdvanceRef.current?.(); }, []),
-    reset,
+    pause: () => setTimer(previous => ({ ...previous, isRunning: false })),
+    resume: () => setTimer(previous => ({ ...previous, isRunning: true, hasStarted: true })),
+    reset: () => setTimer(previous => ({ ...startTurn(turnKey, duration, bufferSeconds, false), hasStarted: previous.hasStarted })),
   };
 }

@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 import type { Task } from '@/types';
+import type { BoardFilterState } from '@/hooks/useBoardFilters';
 import type { ApprovalConfirmPayload } from '@/components/board/BoardApprovalModal';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   tasks: [] as Task[],
+  standupMode: false, standupUserId: null as string | null, projectId: null as string | null,
   update: vi.fn(), setTasks: vi.fn(), open: vi.fn(), gate: vi.fn(), refusal: vi.fn(),
   announce: vi.fn(), undo: vi.fn(), info: vi.fn(), error: vi.fn(), approval: vi.fn(),
 }));
@@ -20,7 +22,7 @@ vi.mock('react-i18next', async importOriginal => ({ ...await importOriginal<type
 vi.mock('@/context/AppContext', () => ({ useAppContext: () => ({
   ...ui, allTasks: state.tasks, setAllTasks: state.setTasks, updateTaskInDb: state.update,
   allProjects: projects, statuses, users, productLines: [] as never[], customFields: [] as never[],
-  selectedProjectId: null as string | null, selectedLineId: null as string | null, standupMode: false, standupUserId: null as string | null,
+  selectedProjectId: state.projectId, selectedLineId: null as string | null, standupMode: state.standupMode, standupUserId: state.standupUserId,
   sprintActive: false, currentSprint: null as { id: string } | null, currentMemberId: users[0].id, currentMember: users[0],
 }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ui }));
@@ -43,7 +45,9 @@ vi.mock('@/lib/taskAnnouncements', () => ({ announceStatusChange: state.announce
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
 vi.mock('sonner', () => ({ toast: { info: state.info, error: state.error } }));
 vi.mock('@/components/board/BoardSprintHeader', () => ({ default: (): null => null }));
-vi.mock('@/components/board/BoardFilters', () => ({ default: (): null => null }));
+vi.mock('@/components/board/BoardFilters', () => ({ default: ({ filters }: { filters: BoardFilterState }) =>
+  <button onClick={() => filters.setFilterAssignees(['example-member'])}>Filter to example assignee</button>
+}));
 vi.mock('@/components/StandupLaunchDialog', () => ({ default: (): null => null }));
 vi.mock('@/components/UpgradePrompt', () => ({ default: (): null => null }));
 vi.mock('@/components/board/SprintModals', () => ({ SprintCompleteModal: (): null => null, SprintStartModal: (): null => null }));
@@ -63,6 +67,7 @@ describe('general task board touch interaction', () => {
   beforeEach(() => {
     vi.useFakeTimers(); vi.clearAllMocks(); localStorage.clear();
     state.tasks = [task, otherTask]; state.update.mockResolvedValue(true);
+    state.standupMode = false; state.standupUserId = null; state.projectId = null;
     state.gate.mockReturnValue({ kind: 'direct' }); state.refusal.mockReturnValue(null);
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       const columns = [...document.querySelectorAll('.snap-start')];
@@ -89,6 +94,28 @@ describe('general task board touch interaction', () => {
     move(target, x); act(() => { vi.advanceTimersByTime(20); });
     await act(async () => { end(target, x); });
   };
+
+  it('opens the current standup project with a clean filter and restores the regular board filter on exit', () => {
+    const review = { ...task, id: 'review-task', taskKey: 'EX-3', title: 'Card to review', assigneeId: 'another-member', reviewerId: 'example-member' };
+    state.tasks = [task, otherTask, review];
+    const board = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Filter to example assignee' }));
+    expect(screen.queryByText(review.title)).toBeNull();
+
+    state.standupMode = true;
+    state.standupUserId = 'example-member';
+    state.projectId = 'example-project';
+    board.rerender(<BoardView />);
+    expect(screen.getByText(review.title)).toBeVisible();
+    expect(screen.queryByText(otherTask.title)).toBeNull();
+
+    state.standupMode = false;
+    state.standupUserId = null;
+    state.projectId = null;
+    board.rerender(<BoardView />);
+    expect(screen.queryByText(review.title)).toBeNull();
+    expect(screen.getByText(otherTask.title)).toBeVisible();
+  });
 
   it('provides a distinct drag handle without sacrificing swiping on the card surface or opening details', () => {
     mount();

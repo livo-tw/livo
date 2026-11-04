@@ -27,7 +27,7 @@ export function useTaskCRUD({
   const subtaskRunners = useRef(new Map<string, ReturnType<typeof createTaskWorkCommandRunner>>());
   const subtaskActor = useRef('');
 
-  // Resolves the stored task (with the key the database kept), or null when the insert failed.
+  // Resolves the stored task (with the key the database kept). Sprint conflicts let the form reconcile its selection.
   const createTaskInDb = useCallback(async (task: Task): Promise<Task | null> => {
     const { error } = await supabase.from('tasks').insert({
       id: task.id,
@@ -51,6 +51,7 @@ export function useTaskCRUD({
       parent_task_id: task.parentTaskId || null,
     } as Record<string, unknown>);
     if (error) {
+      if (error.message.includes('sprint_conflict')) throw new Error('sprint_conflict');
       toast.error(i18n.t('task.createFailed') + error.message);
       await refreshTasks();
       return null;

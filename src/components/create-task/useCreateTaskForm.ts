@@ -36,12 +36,13 @@ export function useCreateTaskForm() {
   const environmentConfig = useDeploymentEnvironments();
   const { currentMemberId, currentMember } = useAuthContext();
   const { users } = useMemberContext();
-  const { showCreateTask, setShowCreateTask, setSelectedTask, requiredFields, currentView, createTaskSeed } = useUIContext();
-  // Visible in the form: a task made from the backlog stays in the backlog unless the member ticks it.
-  const [joinSprint, setJoinSprint] = useState(true);
+  const { showCreateTask, setShowCreateTask, setSelectedTask, requiredFields, createTaskSeed } = useUIContext();
+  // Undefined has no active sprint selection; null is an explicit backlog choice; an ID pins the selection.
+  const [sprintChoice, setSprintChoice] = useState<string | null>();
   const { selectedProjectId, selectedLineId, allProjects, productLines } = useProjectContext();
   const { allTasks, setAllTasks, statuses, tags, refreshTags, refreshTasks, createTaskInDb, createSubtask, refreshTaskSpecs, refreshTaskChecks, refreshTaskTodos, refreshStatusLogs, refreshCustomFieldValues, taskTemplates, customFields, upsertCustomFieldValue } = useTaskContext();
-  const { currentSprint } = useSprintContext();
+  const { currentSprint, sprintReadState, refreshSprints } = useSprintContext();
+  const activeSprint = sprintReadState === 'ready' ? currentSprint : null;
   const { hasFeature } = useLicense();
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const isMobile = useIsMobile();
@@ -128,7 +129,7 @@ export function useCreateTaskForm() {
     if (opening && !partialCreation && !uncertainSubtask) {
       createdTask.current = null;
       creationInFlight.current = null; setIsSubmitting(false); setUploading(false);
-      setJoinSprint(!isSubtask && currentView !== 'backlog');
+      setSprintChoice(activeSprint?.id);
       setProjectId(isSubtask ? parentTask?.projectId || '' : defaultTaskProject(groupProjectsByLine(productLines, allProjects), selectedProjectId, selectedLineId));
       setTitle(isSubtask ? createTaskSeed?.title || '' : ''); setStatusId(isSubtask ? parentTask?.statusId || '' : statuses[0]?.id || ''); setPriority('medium');
       const inherited = parentTask ? subtaskQuickCreateFields(parentTask, requiredFields) : null;
@@ -142,7 +143,15 @@ export function useCreateTaskForm() {
       setSubtaskItems([]); setNewSubtaskText('');
       setTimeout(() => titleRef.current?.focus(), 100);
     }
-  }, [showCreateTask, creationScope, isSubtask, parentTask, createTaskSeed, selectedProjectId, selectedLineId, allProjects, productLines, currentView, partialCreation, uncertainSubtask]);
+  }, [showCreateTask, creationScope, isSubtask, parentTask, createTaskSeed, selectedProjectId, selectedLineId, allProjects, productLines, activeSprint, sprintReadState, partialCreation, uncertainSubtask]);
+
+  useEffect(() => {
+    if (!showCreateTask || isSubtask || !activeSprint) return;
+    setSprintChoice(previous => previous === undefined ? activeSprint.id : previous);
+  }, [showCreateTask, isSubtask, activeSprint]);
+
+  const sprintChanged = sprintReadState === 'ready' && typeof sprintChoice === 'string' && activeSprint?.id !== sprintChoice;
+  const sprintChoicePending = !isSubtask && sprintChoice !== null && (sprintReadState !== 'ready' || (activeSprint !== null && sprintChoice === undefined) || sprintChanged);
 
   const projectCustomFields = useMemo(() => (customFields || []).filter(field => field.projectId === projectId).sort((a, b) => a.sortOrder - b.sortOrder), [customFields, projectId]);
   const customFieldsRef = useRef(projectCustomFields); customFieldsRef.current = projectCustomFields;
@@ -284,7 +293,7 @@ export function useCreateTaskForm() {
   };
 
   const handleSubmitAttempt = () => {
-    if (isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if (sprintChoicePending || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
     if (uncertainSubtask) { void handleSubmit(); return; }
     if (isSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId)) { toast.error(t('taskWork.errors.work_invalid_parent')); return; }
     if (isSubtask && subtaskItems.length) { toast.error(t('task.noNestedSubtasks')); return; }
@@ -312,7 +321,7 @@ export function useCreateTaskForm() {
   };
 
   const handleSubmit = async () => {
-    if ((!isValid && !uncertainSubtask) || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
+    if ((!isValid && !uncertainSubtask) || sprintChoicePending || isSubmitting || creationInFlight.current || createdTask.current || partialCreation) return;
     if (!uncertainSubtask && deployments.length && (!environmentConfig.ready || deployments.some(deployment => !environmentConfig.values.includes(deployment.environment)))) { toast.error(t('deploymentEnvironments.changed')); return; }
     if (isSubtask) {
       if (!uncertainSubtask && (!parentTask || parentTask.parentTaskId || parentTask.projectId !== projectId || pendingFiles.length || subtaskItems.length)) return;
@@ -367,7 +376,7 @@ export function useCreateTaskForm() {
       completedAt: status?.autoDone ? now : undefined,
       gitlabUrl: gitlabUrl.trim() || undefined,
       sortOrder: 0, createdAt: now, commentCount: 0, attachmentCount: 0,
-      deployments, sprintId: joinSprint && currentSprint ? currentSprint.id : undefined,
+      deployments, sprintId: sprintChoice ?? undefined,
       tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
     };
     const sections = [
@@ -468,7 +477,12 @@ export function useCreateTaskForm() {
         toast.error(t('taskCreate.recovery.createdPartial', { key: createdTask.current.taskKey }));
       } else {
         setAllTasks(prev => prev.filter(task => task.id !== newTask.id));
-        toast.error(t('task.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
+        if (err instanceof Error && err.message === 'sprint_conflict') {
+          toast.error(t('taskCreate.sprintSaveConflict'));
+          await refreshSprints().catch(() => {});
+        } else {
+          toast.error(t('task.createFailed') + (err instanceof Error ? err.message : t('error.unexpectedError')));
+        }
       }
     } finally {
       if (activeCreationScope.current === creationScope && creationInFlight.current === creationScope) {
@@ -519,12 +533,21 @@ export function useCreateTaskForm() {
     tagPickerOpen, setTagPickerOpen, tagPickerRef,
     newTagName, setNewTagName, newTagColor, setNewTagColor,
     tagManageMode, setTagManageMode, confirm,
-    sprintName: isSubtask ? undefined : currentSprint?.name, joinSprint, setJoinSprint,
   };
   const customFieldsProps = { fields: projectCustomFields, values: customValues, onChange: setCustomValue, showValidationErrors };
 
   return {
     showCreateTask: showCreateTask && draftOwner.current === currentMemberId, setShowCreateTask,
+    sprintChoicePending,
+    sprintSelection: isSubtask || partialCreation ? undefined : {
+      name: activeSprint?.name,
+      checked: !!activeSprint && activeSprint.id === sprintChoice,
+      readState: sprintChoice === null ? 'ready' as const : sprintReadState,
+      changed: sprintChanged,
+      chooseCurrent: (checked: boolean) => setSprintChoice(checked ? activeSprint?.id : null),
+      chooseBacklog: () => setSprintChoice(null),
+      retry: () => { void refreshSprints().catch(() => {}); },
+    },
     title, setTitle,
     isSubtask, parentTask, subtasksRequireFullForm, uncertainSubtask,
     background, setBackground,

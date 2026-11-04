@@ -780,6 +780,8 @@
       "defaultDuration": "Speaking time per person (default)",
       "autoAdvance": "Auto-advance when time is up",
       "autoAdvanceDesc": "Automatically switch to next person after {{seconds}}s buffer",
+      "includeReviewTasks": "Show review tasks",
+      "includeReviewTasksDesc": "Include cards the current speaker is assigned to review",
       "memberOverrides": "Individual member time settings",
       "preview": "Sort Preview",
       "totalDuration": "Estimated total duration: ",
@@ -823,6 +825,8 @@
       "dragEnd": "Finished moving {{name}}.",
       "dragCancel": "Cancelled moving {{name}}.",
       "current": "Reporting now",
+      "reportAgain": "Re-report",
+      "reportAgainNamed": "Have {{name}} report again",
       "completed": "Reported",
       "noPending": "No upcoming reports. Add a member from the not reporting list to continue.",
       "skipCurrent": "Skip current report",
@@ -1087,7 +1091,12 @@
     },
     "discardTitle": "Discard this task?",
     "discardDesc": "What you entered has not been created yet and will be lost.",
-    "joinSprint": "Add to the current sprint ({{name}})"
+    "joinSprint": "Add to the current sprint ({{name}})",
+    "sprintBacklogHint": "This task will stay in the backlog.",
+    "sprintChecking": "Checking the current sprint…",
+    "sprintChanged": "The sprint changed while you were editing. Select the current sprint or keep the task in the backlog.",
+    "sprintKeepBacklog": "Keep in backlog",
+    "sprintSaveConflict": "The task could not join the selected sprint. Review the current sprint and try again."
   },
   "template": {
     "nameRequired": "Please enter a template name",
@@ -1121,6 +1130,9 @@
       "discardDraft": "Your changes to this field are not saved and will be lost. Leave anyway?"
     },
     "comments": {
+      "sortLabel": "Comment order",
+      "newestFirst": "Newest first",
+      "oldestFirst": "Oldest first",
       "empty": "No comments yet",
       "editButton": "Edit",
       "deleteButton": "Delete",

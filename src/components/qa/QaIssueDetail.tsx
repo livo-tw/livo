@@ -1,3 +1,6 @@
+import { sortComments } from '@/lib/commentOrdering';
+import { useCommentOrder } from '@/hooks/useCommentOrder';
+import { CommentOrderSelect } from '@/components/CommentOrderSelect';
 import { getQaNextAction } from './QaIssueCard';
 import { QaDetailDraftContext } from './QaDetailDraftContext';
 import RelatedKnowledge from '@/components/knowledge/RelatedKnowledge';
@@ -62,6 +65,7 @@ export function QaFailure({ error }: { error: unknown }) {
 export default function QaIssueDetail({ detail, client, actor: baseActor, workflow, initialAction, initialDefaults, onRefresh, onBack, onDeleted, onBusyChange, onRefreshBlockedChange, externalUpdatePending, externalRefreshError }: { detail: QaDetail; client: QaClient; actor: QaActor; workflow?: QaWorkflow; initialAction?: ActionType; initialDefaults?: QaActionDefaults; onRefresh: () => Promise<void>; onBack: () => void; onDeleted?: () => void; onBusyChange?: (busy: boolean) => void; onRefreshBlockedChange?: (blocked: boolean) => void; externalUpdatePending?: boolean; externalRefreshError?: unknown }) {
   const { t } = useTranslation();
   const environments = useDeploymentEnvironments();
+  const [commentOrder, setCommentOrder] = useCommentOrder(baseActor.id);
   const isMobile = useIsMobile();
   const getProjectColor = useProjectColor();
   const { users } = useMemberContext();
@@ -351,8 +355,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         </>}
         {tab === 'comments' && <>
         <QaSection title={t('qa.comments')}>
+          <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
-          <ol className="mb-4 space-y-3">{detail.comments.map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p></li>)}</ol>
+          <ol className="mb-4 space-y-3">{sortComments(detail.comments, commentOrder).map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p></li>)}</ol>
           {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><button className={qaPrimary} disabled={busy || !comment.trim()}>{t('qa.addComment')}</button></form>}
         </QaSection>
         </>}

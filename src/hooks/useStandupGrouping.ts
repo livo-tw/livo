@@ -4,6 +4,7 @@ import type { User, Task, Project } from '@/types';
 import { DEPARTMENTS, getDepartment } from '@/lib/department';
 import { restoreStandupGroups, type StandupLaunchSnapshot } from '@/lib/standupLaunch';
 import type { SortMode } from '@/hooks/useStandupSettings';
+import { matchesStandupMember } from '@/lib/standupTasks';
 
 export interface StandupGroup {
   group_key: string;
@@ -58,12 +59,13 @@ export function groupMembers(
   sortMode: SortMode,
   getDuration: (id: string) => number,
   bufferSeconds: number,
+  includeReviewTasks = false,
 ): StandupGroup[] {
   members = members.filter(member => member.isActive === true);
   switch (sortMode) {
     case 'by_member': {
       return members.map(m => {
-        const mt = tasks.filter(t => t.assigneeId === m.id);
+        const mt = tasks.filter(task => matchesStandupMember(task, m.id, includeReviewTasks));
         return {
           group_key: m.id,
           group_title: m.name,
@@ -79,7 +81,7 @@ export function groupMembers(
       const groupMap = new Map<string, { project: Project; members: User[]; tasks: Task[] }>();
 
       for (const member of members) {
-        const mt = tasks.filter(t => t.assigneeId === member.id);
+        const mt = tasks.filter(task => matchesStandupMember(task, member.id, includeReviewTasks));
         const projectIds = [...new Set(mt.map(t => t.projectId))];
         for (const pid of projectIds) {
           const project = projectMap.get(pid);
@@ -102,7 +104,7 @@ export function groupMembers(
         .map(g => ({
           group_key: g.project.id,
           group_title: `📁 ${g.project.name}`,  // project name is user data, not hardcoded
-          task_count: g.tasks.length,
+          task_count: new Set(g.tasks.map(task => task.id)).size,
           estimated_duration: g.members.reduce((s, m) => s + getDuration(m.id) + bufferSeconds, 0),
           members: g.members,
         }));
@@ -126,7 +128,7 @@ export function groupMembers(
       );
 
       for (const member of members) {
-        const mt = tasks.filter(t => t.assigneeId === member.id);
+        const mt = tasks.filter(task => matchesStandupMember(task, member.id, includeReviewTasks));
         const bucket = getNearestBucket(mt);
         const g = bucketMap.get(bucket)!;
         g.members.push(member);
@@ -141,7 +143,7 @@ export function groupMembers(
           return {
             group_key: b,
             group_title: dueBucketLabels[b],
-            task_count: g.tasks.length,
+            task_count: new Set(g.tasks.map(task => task.id)).size,
             estimated_duration: g.members.reduce((s, m) => s + getDuration(m.id) + bufferSeconds, 0),
             members: g.members,
           };
@@ -158,14 +160,14 @@ export function groupMembers(
         if (!deptMap.has(dept)) deptMap.set(dept, { label, members: [], tasks: [] });
         const g = deptMap.get(dept)!;
         g.members.push(member);
-        g.tasks.push(...tasks.filter(t => t.assigneeId === member.id));
+        g.tasks.push(...tasks.filter(task => matchesStandupMember(task, member.id, includeReviewTasks)));
       }
 
       const departmentRank = (key: string) => { const index = DEPARTMENTS.findIndex(dept => dept === key); return index < 0 ? DEPARTMENTS.length : index; };
       return [...deptMap.entries()].sort(([a], [b]) => departmentRank(a) - departmentRank(b)).map(([key, g]) => ({
         group_key: key,
         group_title: g.label,
-        task_count: g.tasks.length,
+        task_count: new Set(g.tasks.map(task => task.id)).size,
         estimated_duration: g.members.reduce((s, m) => s + getDuration(m.id) + bufferSeconds, 0),
         members: g.members,
       }));
@@ -190,10 +192,11 @@ export function useStandupGrouping(
   getDuration: (id: string) => number,
   bufferSeconds: number,
   launch?: StandupLaunchSnapshot,
+  includeReviewTasks = false,
 ) {
   const groups = useMemo(
-    () => launch ? restoreStandupGroups(launch, members, tasks, getDuration, bufferSeconds) : groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds),
-    [members, tasks, projects, sortMode, getDuration, bufferSeconds, launch],
+    () => launch ? restoreStandupGroups(launch, members, tasks, getDuration, bufferSeconds) : groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds, includeReviewTasks),
+    [members, tasks, projects, sortMode, getDuration, bufferSeconds, launch, includeReviewTasks],
   );
 
   const flatQueue = useMemo<QueueItem[]>(() => {

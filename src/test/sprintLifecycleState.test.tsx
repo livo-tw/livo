@@ -46,6 +46,7 @@ describe('actual sprint state identity and read ordering', () => {
     await act(async () => { fresh.resolve(read(row('member-a-active', 4))); await fresh.promise; });
     expect(view.result.current.currentSprint?.id).toBe('member-a-active');
     expect(view.result.current.sprintActive).toBe(true);
+    expect(view.result.current.sprintReadState).toBe('ready');
     await act(async () => { early.resolve(read(row('pre-binding-stale'))); await initialRead; });
     expect(view.result.current.sprints.map(sprint => sprint.id)).toEqual(['member-a-active']);
     expect(view.result.current.currentSprint?.version).toBe(4);
@@ -64,6 +65,7 @@ describe('actual sprint state identity and read ordering', () => {
     expect(view.result.current.currentSprint).toBeNull();
     expect(view.result.current.sprintActive).toBe(false);
     expect(view.result.current.sprintStartedAt).toBeNull();
+    expect(view.result.current.sprintReadState).toBe('loading');
     await act(async () => { oldAccount.resolve(read(row('account-a-late', 7))); await oldRead; });
     expect(view.result.current.currentSprint).toBeNull();
     await act(async () => { newAccount.resolve(read(row('account-b-active', 2))); await newAccount.promise; });
@@ -84,6 +86,16 @@ describe('actual sprint state identity and read ordering', () => {
     expect(view.result.current.sprints.map(sprint => sprint.id)).toEqual(['newest']);
     expect(view.result.current.currentSprint?.version).toBe(3);
     expect(boundary.rpc).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes a failed sprint read from a successful read without an active sprint', async () => {
+    boundary.read.mockRejectedValueOnce(new Error('Example read failure')).mockResolvedValueOnce(read());
+    const view = renderHook(() => useSprintState('account-a'));
+    await waitFor(() => expect(view.result.current.sprintReadState).toBe('error'));
+    expect(view.result.current.currentSprint).toBeNull();
+    await act(async () => { await view.result.current.refreshSprints(); });
+    expect(view.result.current.sprintReadState).toBe('ready');
+    expect(view.result.current.currentSprint).toBeNull();
   });
 
   it('keeps a committed command successful when view refresh fails and does not send it again for recovery', async () => {

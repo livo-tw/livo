@@ -26,7 +26,7 @@ vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ selecte
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: [] as Task[], setAllTasks: vi.fn(), statuses: state.statuses,
   tags: [] as never[], refreshTags: vi.fn(), createTaskInDb: vi.fn(), createSubtask: vi.fn(), refreshTaskSpecs: vi.fn(), refreshTaskChecks: vi.fn(),
   refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(), taskTemplates: [] as never[], customFields: [] as CustomField[], upsertCustomFieldValue: vi.fn() }) }));
-vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: null as null }) }));
+vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: null as null, sprintReadState: 'ready' }) }));
 vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: () => false }) }));
 vi.mock('@/lib/slackNotify', () => ({ sendSlackNotify: vi.fn() }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));

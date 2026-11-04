@@ -1,26 +1,36 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CustomField, Project, Task } from '@/types';
+import type { SprintReadState } from '@/context/SprintContext';
 
 const state = vi.hoisted(() => ({
-  view: 'board', projects: [] as Project[], created: [] as Task[],
+  view: 'board', open: true, projects: [] as Project[], created: [] as Task[],
+  sprint: null as { id: string; name: string } | null,
+  sprintReadState: 'ready' as SprintReadState, refreshSprints: vi.fn<() => Promise<void>>(),
+  failCreateWithSprintConflict: false, error: vi.fn(),
   fields: [] as CustomField[], saved: [] as Array<{ taskId: string; fieldId: string; value: unknown }>,
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: state.error, info: vi.fn() } }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ ready: true, values: [] as string[] }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: 'me', currentMember: { id: 'me', name: 'Me' } }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as unknown[] }) }));
-vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ showCreateTask: true, setShowCreateTask: vi.fn(), requiredFields: { title: true, project: true }, currentView: state.view }) }));
+vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ showCreateTask: state.open, setShowCreateTask: vi.fn(), requiredFields: { title: true, project: true }, currentView: state.view }) }));
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ selectedProjectId: null as string | null, selectedLineId: null as string | null, allProjects: state.projects, productLines: [{ id: 'l', name: 'Line' }] }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({
   allTasks: [] as Task[], setAllTasks: vi.fn(), statuses: [{ id: 'todo', name: 'To do' }], tags: [] as unknown[], refreshTags: vi.fn(),
-  createTaskInDb: async (task: Task) => { state.created.push(task); return task; }, createSubtask: vi.fn(),
+  createTaskInDb: async (task: Task) => {
+    if (state.failCreateWithSprintConflict) throw new Error('sprint_conflict');
+    state.created.push(task);
+    return task;
+  }, createSubtask: vi.fn(),
   refreshTaskSpecs: vi.fn(), refreshTaskChecks: vi.fn(), refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(), taskTemplates: [] as unknown[],
   customFields: state.fields, upsertCustomFieldValue: async (taskId: string, fieldId: string, value: unknown) => { state.saved.push({ taskId, fieldId, value }); },
 }) }));
-vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ currentSprint: { id: 'sprint-1', name: 'Sprint 1' } }) }));
+vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({
+  currentSprint: state.sprint, sprintReadState: state.sprintReadState, refreshSprints: state.refreshSprints,
+}) }));
 vi.mock('@/context/LicenseContext', () => ({ useLicense: () => ({ hasFeature: () => true }) }));
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: vi.fn(), ConfirmDialog: null as null }) }));
 vi.mock('@/lib/slackNotify', () => ({ sendSlackNotify: vi.fn().mockResolvedValue(undefined) }));
@@ -34,7 +44,13 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => {
 import { useCreateTaskForm } from '@/components/create-task/useCreateTaskForm';
 
 const project = (id: string, name: string) => ({ id, name, lineId: 'l' }) as Project;
-beforeEach(() => { state.view = 'board'; state.projects = [project('p1', 'Shop')]; state.created = []; state.fields = []; state.saved = []; });
+beforeEach(() => {
+  state.view = 'board'; state.open = true; state.projects = [project('p1', 'Shop')];
+  state.created = []; state.fields = []; state.saved = [];
+  state.sprint = { id: 'sprint-1', name: 'Sprint 1' }; state.sprintReadState = 'ready';
+  state.refreshSprints.mockReset().mockResolvedValue(undefined); state.error.mockClear();
+  state.failCreateWithSprintConflict = false;
+});
 
 describe('the create task form', () => {
   it('keeps what was typed when projects change elsewhere while it is open', () => {
@@ -45,24 +61,108 @@ describe('the create task form', () => {
     expect(result.current.title).toBe('Checkout fails on Safari');
   });
 
-  it('a task made from the backlog stays out of the sprint unless the member ticks it', async () => {
-    state.view = 'backlog';
+  it.each(['board', 'backlog'])('defaults to the running sprint when opened from %s', async view => {
+    state.view = view;
     const { result } = renderHook(() => useCreateTaskForm());
-    expect(result.current.fieldsProps.joinSprint).toBe(false);
+    expect(result.current.sprintSelection).toMatchObject({ checked: true, name: 'Sprint 1' });
+    act(() => result.current.setTitle('Fix now'));
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.created).toHaveLength(1));
+    expect(state.created[0].sprintId).toBe('sprint-1');
+  });
+
+  it('keeps the backlog choice through sprint changes and defaults again on the next form opening', async () => {
+    const { result, rerender } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.sprintSelection?.chooseCurrent(false));
+    state.sprint = { id: 'sprint-2', name: 'Sprint 2' };
+    rerender();
+    expect(result.current.sprintSelection).toMatchObject({ checked: false, name: 'Sprint 2', changed: false });
     act(() => result.current.setTitle('Later idea'));
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.created).toHaveLength(1));
+    expect(state.created[0].sprintId).toBeUndefined();
+
+    state.open = false; rerender();
+    state.open = true; rerender();
+    expect(result.current.sprintSelection).toMatchObject({ checked: true, name: 'Sprint 2' });
+  });
+
+  it('waits for the sprint read before assigning the default or creating a card', async () => {
+    state.sprint = null; state.sprintReadState = 'loading';
+    const { result, rerender } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Use the loaded sprint'));
+    expect(result.current.sprintChoicePending).toBe(true);
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    expect(state.created).toHaveLength(0);
+    state.sprint = { id: 'sprint-1', name: 'Sprint 1' }; state.sprintReadState = 'ready';
+    rerender();
+    expect(result.current.title).toBe('Use the loaded sprint');
+    expect(result.current.sprintSelection).toMatchObject({ checked: true, name: 'Sprint 1' });
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.created).toHaveLength(1));
+    expect(state.created[0].sprintId).toBe('sprint-1');
+  });
+
+  it('defaults to the first sprint started while a draft is open without changing the draft', async () => {
+    state.sprint = null;
+    const { result, rerender } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Keep this draft'));
+    expect(result.current.sprintChoicePending).toBe(false);
+
+    state.sprint = { id: 'sprint-1', name: 'Sprint 1' };
+    rerender();
+    expect(result.current.title).toBe('Keep this draft');
+    expect(result.current.sprintSelection).toMatchObject({ checked: true, name: 'Sprint 1' });
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.created).toHaveLength(1));
+    expect(state.created[0].sprintId).toBe('sprint-1');
+  });
+
+  it('requires a deliberate backlog choice when the sprint read fails', async () => {
+    state.sprint = null; state.sprintReadState = 'error';
+    const { result } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Save to backlog'));
+    expect(result.current.sprintChoicePending).toBe(true);
+    act(() => result.current.sprintSelection?.retry());
+    expect(state.refreshSprints).toHaveBeenCalledOnce();
+    act(() => result.current.sprintSelection?.chooseBacklog());
+    expect(result.current.sprintChoicePending).toBe(false);
     await act(async () => { result.current.handleSubmitAttempt(); });
     await waitFor(() => expect(state.created).toHaveLength(1));
     expect(state.created[0].sprintId).toBeUndefined();
   });
 
-  it('elsewhere a new task joins the running sprint by default', async () => {
-    const { result } = renderHook(() => useCreateTaskForm());
-    expect(result.current.fieldsProps.joinSprint).toBe(true);
-    expect(result.current.fieldsProps.sprintName).toBe('Sprint 1');
-    act(() => result.current.setTitle('Fix now'));
+  it('requires reselection when another sprint replaces the displayed sprint', async () => {
+    const { result, rerender } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Keep this draft'));
+    state.sprint = { id: 'sprint-2', name: 'Sprint 2' };
+    rerender();
+    expect(result.current.sprintSelection).toMatchObject({ checked: false, changed: true, name: 'Sprint 2' });
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    expect(state.created).toHaveLength(0);
+    act(() => result.current.sprintSelection?.chooseCurrent(true));
     await act(async () => { result.current.handleSubmitAttempt(); });
     await waitFor(() => expect(state.created).toHaveLength(1));
-    expect(state.created[0].sprintId).toBe('sprint-1');
+    expect(state.created[0].sprintId).toBe('sprint-2');
+  });
+
+  it('keeps the draft and refreshes the sprint if the insert loses a race with closure', async () => {
+    state.failCreateWithSprintConflict = true;
+    const { result, rerender } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Keep this draft'));
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    expect(state.error).toHaveBeenCalledWith('taskCreate.sprintSaveConflict');
+    expect(state.refreshSprints).toHaveBeenCalledOnce();
+    expect(result.current.title).toBe('Keep this draft');
+    expect(state.created).toHaveLength(0);
+
+    state.sprint = null; state.failCreateWithSprintConflict = false;
+    rerender();
+    expect(result.current.sprintChoicePending).toBe(true);
+    act(() => result.current.sprintSelection?.chooseBacklog());
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.created).toHaveLength(1));
+    expect(state.created[0].sprintId).toBeUndefined();
   });
 
   it('fills custom field defaults, blocks a missing required one and saves the values with the task', async () => {

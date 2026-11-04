@@ -35,6 +35,7 @@ const CreateTaskModal = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const {
     showCreateTask, isSubtask, parentTask, subtasksRequireFullForm, uncertainSubtask,
+    sprintSelection, sprintChoicePending,
     title, setTitle,
     background, setBackground,
     requirement, setRequirement,
@@ -56,6 +57,7 @@ const CreateTaskModal = () => {
     ConfirmDialog,
   } = useCreateTaskForm();
   const focusTrapRef = useFocusTrap(showCreateTask);
+  const submitDisabled = uploading || isSubmitting || sprintChoicePending;
 
   // Partition advanced fields into required (always visible) vs optional (collapsible)
   const { requiredAdvanced, optionalAdvanced } = useMemo(() => {
@@ -248,6 +250,34 @@ const CreateTaskModal = () => {
                   />
                 </div>
 
+                {sprintSelection && (
+                  <div className="rounded-md border border-border px-3 py-2 text-sm">
+                    {sprintSelection.name !== undefined && (
+                      <label className="flex min-h-8 cursor-pointer items-center gap-2">
+                        <input type="checkbox" checked={sprintSelection.checked} onChange={event => sprintSelection.chooseCurrent(event.target.checked)}
+                          className="rounded border-border accent-primary" />
+                        {t('taskCreate.joinSprint', { name: sprintSelection.name })}
+                      </label>
+                    )}
+                    <div role="status" className="text-xs text-muted-foreground">
+                      {sprintSelection.readState === 'loading' && t('taskCreate.sprintChecking')}
+                      {sprintSelection.readState === 'error' && t('sprint.refreshFailed')}
+                      {sprintSelection.changed && t('taskCreate.sprintChanged')}
+                      {sprintSelection.readState === 'ready' && !sprintSelection.changed && !sprintSelection.checked && t('taskCreate.sprintBacklogHint')}
+                    </div>
+                    {(sprintSelection.changed || sprintSelection.readState === 'error') && (
+                      <div className="mt-1 flex flex-wrap gap-x-3">
+                        {sprintSelection.readState === 'error' && (
+                          <button type="button" className="min-h-8 text-xs font-medium text-primary underline" onClick={sprintSelection.retry}>{t('common.retry')}</button>
+                        )}
+                        <button type="button" className="min-h-8 text-xs font-medium text-primary underline" onClick={sprintSelection.chooseBacklog}>
+                          {t('taskCreate.sprintKeepBacklog')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Requirement (always visible - most used field by PM) */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-0.5 block flex items-center gap-1">
@@ -312,10 +342,10 @@ const CreateTaskModal = () => {
             {partialCreation ? <>
               <button onClick={() => void discardPartialDraft()} className="rounded px-3 py-2 text-sm text-destructive hover:bg-destructive/10">{t('taskCreate.recovery.discard')}</button>
               <button onClick={openCreatedTask} className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">{t('taskCreate.recovery.open')}</button>
-            </> : <button onClick={(uploading || isSubmitting) ? undefined : handleSubmitAttempt} disabled={uploading || isSubmitting}
+            </> : <button onClick={submitDisabled ? undefined : handleSubmitAttempt} disabled={submitDisabled}
               aria-busy={uploading || isSubmitting}
               className={cn("px-5 py-2 text-sm font-medium rounded transition-colors flex items-center gap-1.5",
-                (uploading || isSubmitting) ? "bg-muted text-muted-foreground cursor-not-allowed" : isValid ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-primary/60 text-primary-foreground hover:bg-primary/70 cursor-pointer")}>
+                submitDisabled ? "bg-muted text-muted-foreground cursor-not-allowed" : isValid ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-primary/60 text-primary-foreground hover:bg-primary/70 cursor-pointer")}>
               {(uploading || isSubmitting) && (
                 <svg className="animate-spin w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

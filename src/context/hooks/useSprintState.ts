@@ -6,7 +6,7 @@ import { randomUUID } from '@/lib/generateId';
 import { createSprintCommandRunner, sprintError } from '@/lib/sprintCommands';
 import type { SprintIntent, SprintCommandResult } from '@/lib/sprintLifecycle';
 import type { Task, Status } from '@/types';
-import type { Sprint, SprintCommandState } from '../SprintContext';
+import type { Sprint, SprintCommandState, SprintReadState } from '../SprintContext';
 import type { SprintRow } from '../mappers';
 
 type SetAllTasks = React.Dispatch<React.SetStateAction<Task[]>>;
@@ -18,6 +18,8 @@ export function useSprintState(actorKey?: string | null) {
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [commandState, setCommandState] = useState<SprintCommandState>({ busy: false, unresolved: false });
   const runner = useMemo(() => createSprintCommandRunner({ rpc: (name, args) => supabase.rpc(name, args as never) }), [actorKey]);
+  const [sprintRead, setSprintRead] = useState<{ owner: typeof runner; state: SprintReadState } | null>(null);
+  const sprintReadState = sprintRead?.owner === runner ? sprintRead.state : 'loading';
   const activeRunner = useRef(runner);
   activeRunner.current = runner;
   const inFlight = useRef<typeof runner | null>(null);
@@ -27,20 +29,28 @@ export function useSprintState(actorKey?: string | null) {
   const refreshSprints = useCallback(async (keepActiveState = false) => {
     const owner = activeRunner.current;
     const visit = ++readVisit.current;
-    const { data, error } = await supabase.from('sprints').select('*').order('started_at', { ascending: false });
-    if (activeRunner.current !== owner || visit !== readVisit.current) return;
-    if (error || !data) throw new Error('sprint_refresh_failed');
-    const mapped: Sprint[] = data.map((row: SprintRow) => ({
-      id: row.id, name: row.name ?? '', startedAt: row.started_at, completedAt: row.completed_at,
-      completedCount: row.completed_count, pendingCount: row.pending_count, isActive: row.is_active,
-      cancelledCount: row.cancelled_count ?? null, historyCapturedAt: row.history_captured_at ?? null,
-      version: row.version ?? 0,
-    }));
-    setSprints(mapped);
-    if (!keepActiveState) {
-      const active = mapped.find(sprint => sprint.isActive);
-      setSprintActive(!!active);
-      setSprintStartedAt(active?.startedAt || null);
+    setSprintRead(previous => previous?.owner === owner && previous.state === 'error' ? { owner, state: 'loading' } : previous);
+    try {
+      const { data, error } = await supabase.from('sprints').select('*').order('started_at', { ascending: false });
+      if (activeRunner.current !== owner || visit !== readVisit.current) return;
+      if (error || !data) throw new Error('sprint_refresh_failed');
+      const mapped: Sprint[] = data.map((row: SprintRow) => ({
+        id: row.id, name: row.name ?? '', startedAt: row.started_at, completedAt: row.completed_at,
+        completedCount: row.completed_count, pendingCount: row.pending_count, isActive: row.is_active,
+        cancelledCount: row.cancelled_count ?? null, historyCapturedAt: row.history_captured_at ?? null,
+        version: row.version ?? 0,
+      }));
+      setSprints(mapped);
+      if (!keepActiveState) {
+        const active = mapped.find(sprint => sprint.isActive);
+        setSprintActive(!!active);
+        setSprintStartedAt(active?.startedAt || null);
+      }
+      setSprintRead({ owner, state: 'ready' });
+    } catch (error) {
+      if (activeRunner.current !== owner || visit !== readVisit.current) return;
+      setSprintRead({ owner, state: 'error' });
+      throw error;
     }
   }, []);
 
@@ -110,5 +120,5 @@ export function useSprintState(actorKey?: string | null) {
   }, [sprints, refreshSprints]);
 
   return { sprintActive, setSprintActive, sprintStartedAt, setSprintStartedAt, sprints, setSprints, currentSprint,
-    commandState, refreshSprints, getDefaultSprintName, createStartSprint, createCompleteSprint, renameSprint };
+    sprintReadState, commandState, refreshSprints, getDefaultSprintName, createStartSprint, createCompleteSprint, renameSprint };
 }

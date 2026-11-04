@@ -8,6 +8,7 @@ export interface StandupSettings {
   defaultSpeakDuration: number;
   sortMode: SortMode;
   autoAdvance: boolean;
+  includeReviewTasks?: boolean;
   bufferSeconds: number;
   memberDurations: Record<string, number>;
 }
@@ -18,6 +19,7 @@ const DEFAULT_SETTINGS: StandupSettings = {
   defaultSpeakDuration: 120,
   sortMode: 'by_member',
   autoAdvance: true,
+  includeReviewTasks: true,
   bufferSeconds: 15,
   memberDurations: {},
 };
@@ -65,6 +67,7 @@ export function useStandupSettings(memberIds: string[], options: { active?: bool
             defaultSpeakDuration: data.default_speak_duration,
             sortMode: data.sort_mode,
             autoAdvance: data.auto_advance,
+            includeReviewTasks: loadFromLocalStorage().includeReviewTasks !== false,
             bufferSeconds: data.buffer_seconds,
             memberDurations,
           };

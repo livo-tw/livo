@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import type { Project, Status, Task, User } from '@/types';
-const mocks = vi.hoisted(() => ({ users: [] as User[], tasks: [] as Task[], projects: [] as Project[], sprintActive: false, speaker: vi.fn(), mode: vi.fn(), fetchActive: vi.fn(), durations: vi.fn(), update: vi.fn(), toast: vi.fn<(message: string, options?: { action: { label: string; onClick: () => void } }) => void>() }));
+const mocks = vi.hoisted(() => ({ users: [] as User[], tasks: [] as Task[], projects: [] as Project[], sprintActive: false, speaker: vi.fn(), projectScope: vi.fn(), mode: vi.fn(), fetchActive: vi.fn(), durations: vi.fn(), update: vi.fn(), toast: vi.fn<(message: string, options?: { action: { label: string; onClick: () => void } }) => void>() }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { count?: number; name?: string }) => {
   if (values?.name !== undefined) return `${key} ${values.name}`;
   return values?.count === undefined ? key : `${key} ${values.count}`;
@@ -10,7 +10,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, valu
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: mocks.users }) }));
 vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({ allTasks: mocks.tasks, statuses: [] as Status[] }) }));
-vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: mocks.projects }) }));
+vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: mocks.projects, setSelectedProjectId: mocks.projectScope }) }));
 vi.mock('@/context/SprintContext', () => ({ useSprintContext: () => ({ sprintActive: mocks.sprintActive, currentSprint: undefined as { id: string } | undefined }) }));
 vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ setStandupUserId: mocks.speaker, setStandupMode: mocks.mode }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: null as string | null }) }));
@@ -383,6 +383,8 @@ describe('editing the standup report roster', () => {
     expect(screen.getByText('1:56')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
     expect(screen.getByRole('button', { name: 'Casey' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
+    expect(screen.getByText('2:00')).toBeTruthy();
   });
 
   it('only counts reported people as complete after excluding pending and current reports', () => {
@@ -401,10 +403,10 @@ describe('editing the standup report roster', () => {
     saveStandupLaunch(settings, groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_member', () => 120, 15));
     render(<StandupPanel />);
     for (let count = 0; count < 3; count++) fireEvent.click(screen.getByRole('button', { name: 'standup.queue.skipCurrent' }));
-    const completion = screen.getByText('standup.completion.message 0').parentElement!;
+    expect(screen.getByText('standup.completion.message 0')).toBeTruthy();
     expect(screen.queryByText('sprint.prompt.description')).toBeNull();
     expect(screen.queryByRole('button', { name: 'button.play' })).toBeNull();
-    fireEvent.click(within(completion).getByRole('button', { name: 'standup.queue.restoreNamed Blair' }));
+    fireEvent.click(control('restoreNamed', 'Blair'));
     expect(screen.queryByText('standup.completion.title')).toBeNull();
     expect(screen.getByRole('button', { name: 'Blair' })).toHaveAttribute('aria-current', 'step');
     expect(screen.getByRole('button', { name: 'button.play' })).toBeEnabled();
@@ -448,7 +450,6 @@ describe('editing the standup report roster', () => {
     expect(pending.queryByRole('button', { name: 'Alex' })).toBeNull();
     for (let count = 0; count < 3; count++) fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
     expect(screen.getByText('standup.completion.message 3')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'button.backToList' }));
     expect(screen.getByText('standup.queue.completed (3)')).toBeTruthy();
   });
 
@@ -467,17 +468,18 @@ describe('editing the standup report roster', () => {
     expect(screen.getByText('standup.completion.message 2')).toBeTruthy();
   });
 
-  it('returns from the sprint prompt to restore an excluded reporter without exiting or replaying completed reports', () => {
+  it.each(['back button', 'Escape'])('returns from the sprint prompt with %s without exiting or replaying completed reports', action => {
     mocks.sprintActive = true;
     saveStandupLaunch(settings, groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_member', () => 120, 15), ['b']);
     render(<StandupPanel />);
     for (let count = 0; count < 2; count++) fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
     expect(screen.getByText('standup.completion.message 2')).toBeTruthy();
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'button.backToList' }));
+    if (action === 'Escape') fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    else fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'button.backToList' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.queryByText('standup.completion.title')).toBeNull();
+    expect(screen.getByText('standup.completion.title')).toBeTruthy();
     expect(screen.getByText('standup.queue.completed (2)')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'button.play' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'button.play' })).toBeNull();
     expect(mocks.mode).not.toHaveBeenCalled();
     fireEvent.click(control('restoreNamed', 'Blair'));
     expect(screen.getByRole('button', { name: 'Blair' })).toHaveAttribute('aria-current', 'step');
@@ -518,15 +520,79 @@ describe('editing the standup report roster', () => {
     expect(screen.getByText('standup.completion.message 2')).toBeTruthy();
     mocks.users = mocks.users.map(user => user.id === 'b' ? { ...user, isActive: true } : user);
     view.rerender(<StandupPanel />);
-    fireEvent.click(screen.getByRole('button', { name: 'button.backToList' }));
     fireEvent.click(screen.getByRole('button', { name: 'Blair' }));
     expect(screen.getByRole('button', { name: 'Blair' })).toHaveAttribute('aria-current', 'step');
-    expect(screen.getByRole('button', { name: 'button.play' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
     expect(screen.getByText('standup.queue.completed (2)')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Alex' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Casey' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
     expect(screen.getByText('standup.completion.message 3')).toBeTruthy();
+  });
+
+  it('starts the selected speaker, finishes a deliberately paused report and re-reports after completion', () => {
+    saveStandupLaunch(settings, groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_member', () => 120, 15));
+    vi.useFakeTimers();
+    render(<StandupPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Alex' }));
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByText('1:58')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'button.pause' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Casey' }));
+    expect(screen.getByRole('button', { name: 'Casey' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
+    expect(screen.getByText('2:00')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'standup.queue.reportAgainNamed Alex' })).toBeVisible();
+
+    for (let count = 0; count < 2; count++) fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
+    expect(screen.getByText('standup.completion.message 3')).toBeTruthy();
+    expect(mocks.mode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'standup.queue.reportAgainNamed Alex' }));
+    expect(screen.getByRole('button', { name: 'Alex' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
+    expect(screen.getByText('2:00')).toBeTruthy();
+    expect(screen.getByText('standup.queue.completed (2)')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
+    const reports = within(screen.getByText('standup.queue.completed (3)').parentElement!).getAllByRole('button');
+    expect(reports.map(button => button.getAttribute('aria-label'))).toEqual([
+      'standup.queue.reportAgainNamed Casey', 'standup.queue.reportAgainNamed Blair', 'standup.queue.reportAgainNamed Alex',
+    ]);
+  });
+
+  it('advances after the buffer and starts timing the next report without resetting on refresh', () => {
+    const brief = { ...settings, defaultSpeakDuration: 2, bufferSeconds: 1 };
+    saveStandupLaunch(brief, groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_member', () => 2, 1));
+    vi.useFakeTimers();
+    const view = render(<StandupPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Alex' }));
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByText('standup.buffer')).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(screen.getByRole('button', { name: 'Blair' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
+    expect(screen.getByText('0:02')).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(1000); });
+    mocks.tasks = mocks.tasks.map(task => ({ ...task }));
+    mocks.users = mocks.users.map(user => ({ ...user }));
+    view.rerender(<StandupPanel />);
+    expect(screen.getByText('0:01')).toBeTruthy();
+  });
+
+  it('re-reports only the selected project turn when one person reported in two projects', () => {
+    mocks.tasks.push({ id: 'another-project', assigneeId: 'a', projectId: 'alpha' } as Task);
+    const groups = groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_project', () => 120, 15);
+    saveStandupLaunch({ ...settings, sortMode: 'by_project' }, groups);
+    render(<StandupPanel />);
+    for (let count = 0; count < 4; count++) fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
+    const alpha = screen.getByRole('button', { name: /reportAgainNamed Alex.*Alpha/ });
+    const zeta = screen.getByRole('button', { name: /reportAgainNamed Alex.*Zeta/ });
+    fireEvent.click(alpha);
+    expect(mocks.projectScope).toHaveBeenLastCalledWith('alpha');
+    expect(zeta).toBeVisible();
+    expect(screen.queryByRole('button', { name: /reportAgainNamed Alex.*Alpha/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Alex' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('button', { name: 'button.pause' })).toBeEnabled();
   });
 
   it('presents reported people in their actual completion order after changing the current speaker', () => {
