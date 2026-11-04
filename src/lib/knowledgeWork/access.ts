@@ -32,8 +32,12 @@ export function knowledgeRuleMatches(rule: KnowledgeRule, actor: KnowledgeActor)
 }
 
 export function knowledgeCan(pages: KnowledgeAclPage[], pageId: string, actor: KnowledgeActor | null | undefined, action: KnowledgeAction): boolean {
+  return knowledgeCanFromIndex(new Map(pages.map(page => [page.id, page])), pageId, actor, action);
+}
+
+/** Reuse one index when checking many pages from the same snapshot. */
+export function knowledgeCanFromIndex(byId: ReadonlyMap<string, KnowledgeAclPage>, pageId: string, actor: KnowledgeActor | null | undefined, action: KnowledgeAction): boolean {
   if (!actor?.id || !['member', 'admin', 'super_admin'].includes(actor.role) || actor.is_active === false || actor.is_active === 0) return false;
-  const byId = new Map(pages.map(p => [p.id, p]));
   let page = byId.get(pageId);
   if (!page) return false;
   const seen = new Set<string>();

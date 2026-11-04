@@ -18,6 +18,7 @@ import { TABLES } from '../tables';
 import { rowToWire, type TableMeta } from '../meta';
 import { checkProfessional } from '../license';
 import { slackLinkDisabled, slackLinkDisabledMembers } from '../slackLink';
+import { typedMentions, withoutPickedMentionLabels, type MentionPerson } from '../mentionMatching';
 import { commentMentionIds, commentPlainText, dmRecipients, mrkdwn, mrkdwnLine, notifyChannelId, notifyDetails, NOTIFY_TASK_TYPES,
   reportMessage, requestedEmails, memberEmailIdentityVerified, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from '../slackNotifyCore';
 
@@ -313,6 +314,7 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
     name('projects', task.project_id), name('statuses', task.status_id), name('members', task.assignee_id),
   ]);
   const details = notifyDetails(payload);
+  const requested = requestedEmails(payload.dmTargets);
   let mentioned: string[] = [];
   let preview = details.commentPreview;
   let commentId: string | undefined;
@@ -327,6 +329,17 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
     commentId = payload.commentId;
     mentioned = commentMentionIds(comment.content);
     preview = commentPlainText(comment.content);
+    if (requested.size && settings.dmEnabled && preview.includes('@') && mentioned.length < 40) {
+      const typedText = commentPlainText(withoutPickedMentionLabels(comment.content));
+      if (typedText.includes('@')) {
+        // Match against all active members in this workspace before narrowing to
+        // requested addresses or eligible Slack accounts, so twins stay ambiguous.
+        const directory = await env.DB.prepare('SELECT id,name,email FROM members WHERE workspace_id=? AND is_active=1')
+          .bind(ws).all<MentionPerson>();
+        const typed = typedMentions(typedText, directory.results).map(person => person.id).filter(id => ID.test(id));
+        mentioned = [...new Set([...mentioned, ...typed])].slice(0, 40);
+      }
+    }
   }
   const fields: NotifyFields = {
     ...details, type, taskKey: task.task_key || '', taskTitle: task.title || '', projectName: projectName || '',
@@ -354,7 +367,6 @@ export async function executeSlackNotify(env: Env, auth: AuthCtx, payload: Row):
 
   // DMs: only the task's own recipients, narrowed by the request.
   const allowed = dmRecipients(type, task, auth.member.id, mentioned);
-  const requested = requestedEmails(payload.dmTargets);
   if (allowed.size > 0 && requested.size > 0) {
     // Time window check (Taiwan time UTC+8), wrap-around supported
     const currentHour = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();

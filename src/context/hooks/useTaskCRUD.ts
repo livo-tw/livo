@@ -10,7 +10,7 @@ import { createTaskWorkCommandRunner, taskWorkErrorCode } from '@/lib/taskWork/c
 import { subtaskQuickCreateFields, type SubtaskRequiredFields, type SubtaskCreateValues } from '@/lib/taskWork/subtaskDefaults';
 import { mapTask, type TaskRow } from '@/context/mappers';
 import { taskWriteErrorText } from '@/lib/approval/feedback';
-import type { TaskContextType } from '../TaskContext';
+import type { TaskContextType, TaskStatusSnapshot } from '../TaskContext';
 
 interface TaskCRUDDeps {
   allTasks: Task[];
@@ -112,13 +112,14 @@ export function useTaskCRUD({
     ) =>
       // Resolves true once the task row (and any deployments) is saved, false when the
       // save was refused or failed; callers gate notifications on it.
-      async (taskId: string, updates: Partial<Task>): Promise<boolean> => {
+      async (taskId: string, updates: Partial<Task>, expectedStatus?: TaskStatusSnapshot): Promise<boolean> => {
+        if (expectedStatus && (!updates.statusId || Object.keys(updates).some(key => !['statusId', 'startedAt', 'completedAt'].includes(key)))) return false;
         const dbUpdates: Record<string, string | number | boolean | null | undefined> = {};
         if ('statusId' in updates) {
           dbUpdates.status_id = updates.statusId;
           const oldTask = allTasksRef.current.find(t => t.id === taskId);
           const newIsDone = statuses.find(s => s.id === updates.statusId)?.isDone ?? false;
-          const oldIsDone = oldTask ? (statuses.find(s => s.id === oldTask.statusId)?.isDone ?? false) : false;
+          const oldIsDone = statuses.find(s => s.id === (expectedStatus?.statusId ?? oldTask?.statusId))?.isDone ?? false;
           if (!('completedAt' in updates)) {
             if (newIsDone && !oldIsDone) {
               const now = new Date().toISOString();
@@ -177,18 +178,45 @@ export function useTaskCRUD({
           }
         }
 
-        // Optimistic update
-        if (Object.keys(updates).length > 0) {
-          setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
-          setSelectedTask(prev => prev && prev.id === taskId ? { ...prev, ...updates } : prev);
-        }
+        const applyLocalUpdate = (task: Task) => {
+          if (task.id !== taskId) return task;
+          // A later realtime update may already be visible after the guarded write.
+          if (expectedStatus && (
+            task.projectId !== expectedStatus.projectId || task.statusId !== expectedStatus.statusId ||
+            task.startedAt !== expectedStatus.startedAt || task.completedAt !== expectedStatus.completedAt
+          )) return task;
+          return { ...task, ...updates };
+        };
+        const updateLocalTask = () => {
+          setAllTasks(prev => prev.map(applyLocalUpdate));
+          setSelectedTask(prev => prev ? applyLocalUpdate(prev) : prev);
+        };
+
+        if (!expectedStatus && Object.keys(updates).length > 0) updateLocalTask();
 
         if (Object.keys(dbUpdates).length > 0) {
-          const { error } = await supabase.from('tasks').update(dbUpdates).eq('id', taskId);
-          if (error) {
-            toast.error(taskWriteErrorText(error.message));
-            await refreshTasks();
-            return false;
+          const write = supabase.from('tasks').update(dbUpdates).eq('id', taskId);
+          if (expectedStatus) {
+            let guarded = write.eq('project_id', expectedStatus.projectId).eq('status_id', expectedStatus.statusId);
+            guarded = expectedStatus.startedAt == null ? guarded.is('started_at', null) : guarded.eq('started_at', expectedStatus.startedAt);
+            guarded = expectedStatus.completedAt == null ? guarded.is('completed_at', null) : guarded.eq('completed_at', expectedStatus.completedAt);
+            const { data, error } = await guarded.select('id,status_id,started_at,completed_at').maybeSingle();
+            const confirmed = data?.id === taskId && data.status_id === updates.statusId &&
+              (!('startedAt' in updates) || data.started_at === (updates.startedAt ?? null)) &&
+              (!('completedAt' in updates) || data.completed_at === (updates.completedAt ?? null));
+            if (error || !confirmed) {
+              if (error) toast.error(taskWriteErrorText(error.message));
+              await refreshTasks().catch(() => {});
+              return false;
+            }
+            updateLocalTask();
+          } else {
+            const { error } = await write;
+            if (error) {
+              toast.error(taskWriteErrorText(error.message));
+              await refreshTasks();
+              return false;
+            }
           }
         }
 
@@ -228,7 +256,7 @@ export function useTaskCRUD({
           const { error: logError } = await supabase.from('status_logs').insert({
             id: logId,
             task_id: taskId,
-            from_status_id: oldTask?.statusId || null,
+            from_status_id: expectedStatus?.statusId ?? oldTask?.statusId ?? null,
             to_status_id: updates.statusId!,
             changed_by: currentMemberId || 'unknown',
             changed_at: changedAt,
@@ -239,7 +267,7 @@ export function useTaskCRUD({
             appendStatusLog({
               id: logId,
               taskId,
-              fromStatusId: oldTask?.statusId,
+              fromStatusId: expectedStatus?.statusId ?? oldTask?.statusId,
               toStatusId: updates.statusId!,
               changedBy: currentMemberId || 'unknown',
               changedAt,

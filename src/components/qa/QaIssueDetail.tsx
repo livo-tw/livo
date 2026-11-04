@@ -15,7 +15,7 @@ import { getDepartmentPreferenceIds, getProjectDeveloperPreferenceIds } from '@/
 import { ProjectBadge } from '@/components/ui/badges';
 import { QaPriorityBadge, QaSeverityBadge, QaStateBadge, qaPriorities, qaStateColors } from './QaBadges';
 import QaTargetEditor, { type QaTargetDraft } from './QaTargetEditor';
-import QaVerificationPanel from './QaVerificationPanel';
+import QaVerificationPanel, { type QaVerificationCommand } from './QaVerificationPanel';
 import QaIssueSidebarFields from './QaIssueSidebarFields';
 import { QaText } from './QaText';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -74,6 +74,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const { setSelectedTask } = useUIContext();
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const [acknowledgedIssue, setAcknowledgedIssue] = useState<QaDetail['issue'] | null>(null);
+  const [acknowledgedVerification, setAcknowledgedVerification] = useState<QaVerificationCommand>();
   const issue = acknowledgedIssue && acknowledgedIssue.version > detail.issue.version ? acknowledgedIssue : detail.issue;
   const actor = detail.coordination?.coordinatorId === baseActor.id ? { ...baseActor, qaCoordinatorProjectIds: [...new Set([...(baseActor.qaCoordinatorProjectIds || []), detail.issue.projectId])] } : baseActor;
   const fields = useQaFieldConfiguration(client);
@@ -208,7 +209,10 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       saved = true; setAcknowledgedIssue(updated); pendingCommand.current = undefined; setUnknownCommand(false); setAction(null);
       if (pending.command.type === 'submit_fix') setFixSummary('');
       if (pending.command.type === 'set_state') toast.success(t('qa.stateChanged'));
-      if (pending.command.type === 'record_verification' && pending.command.result === 'pass' && updated.state === 'closed' && updated.resolution === 'fixed') toast.success(t('qa.verificationAutoClosed'));
+      if (pending.command.type === 'record_verification') {
+        setAcknowledgedVerification(pending.command);
+        if (pending.command.result === 'pass' && updated.state === 'closed' && updated.resolution === 'fixed') toast.success(t('qa.verificationAutoClosed'));
+      }
       // Invalidate personal assignments once the write is acknowledged, even if
       // a subsequent detail reload fails. An unknown write stays unannounced.
       window.dispatchEvent(new Event('livo:qa-changed'));
@@ -346,7 +350,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         <QaSection title={t('qa.targets')}>
           {issue.fixSummary && <p className="mb-3 whitespace-pre-wrap break-words text-sm">{issue.fixSummary}</p>}
           {!issue.targets.length && <p className="text-sm text-muted-foreground">{t('qa.noTargets')}</p>}
-          <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} canDeploy={can('record_deployment')} canVerify={can('record_verification') && !(issue.state === 'verified' && canResolveFixed)} busy={busy} onCommand={command => send(command).then(() => {})} />
+          <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} acknowledgedVerification={acknowledgedVerification} canDeploy={can('record_deployment')} canVerify={can('record_verification') && !(issue.state === 'verified' && canResolveFixed)} busy={busy} onCommand={command => send(command).then(() => {})} />
         </QaSection>
         <QaSection title={t('qa.runs')}>
           {!issue.runs.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}

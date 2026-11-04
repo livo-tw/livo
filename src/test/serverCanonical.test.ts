@@ -1,14 +1,14 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 
 let dir: string, child: ChildProcess, port: number;
-const get = (target: string, headers: Record<string, string> = {}, method = 'GET') => new Promise<{ status: number; location?: string; cacheControl?: string; body: string }>((resolve, reject) => {
-  const request = http.request({ host: '127.0.0.1', port, path: target, method, headers }, response => {
+const get = (target: string, headers: Record<string, string> = {}, method = 'GET', targetPort = port) => new Promise<{ status: number; location?: string; cacheControl?: string; body: string }>((resolve, reject) => {
+  const request = http.request({ host: '127.0.0.1', port: targetPort, path: target, method, headers }, response => {
     let body = ''; response.on('data', value => body += value); response.on('end', () => resolve({ status: response.statusCode || 0, location: response.headers.location, cacheControl: response.headers['cache-control'], body }));
   }); request.on('error', reject); request.end();
 });
@@ -52,4 +52,39 @@ describe('customer canonical entry', () => {
     expect((await get('/', { Accept: 'text/html' }, 'POST')).location).toBeUndefined();
     expect((await get('/missing.js', { Accept: '*/*' })).location).toBeUndefined();
   });
+});
+
+it('keeps the standalone static server within its asset directory and survives invalid paths', async () => {
+  writeFileSync(path.join(dir, 'deploy-local', 'index.html'), '<h1>Example website</h1>');
+  const outside = path.join(dir, 'fixture-outside');
+  mkdirSync(outside);
+  writeFileSync(path.join(outside, 'sample.txt'), 'example outside content');
+  if (process.platform !== 'win32') symlinkSync(outside, path.join(dir, 'deploy-local', 'linked'), 'dir');
+  const standalone = spawn(process.execPath, [path.join(dir, 'server.cjs')], {
+    env: { ...process.env, PORT: '0', LIVO_APP_AT_ROOT: '', LIVO_API_UPSTREAM: '', APP_BASE_URL: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const standalonePort = await new Promise<number>((resolve, reject) => {
+      let output = '';
+      standalone.stdout.on('data', chunk => {
+        output += chunk;
+        const match = /localhost:(\d+)/.exec(output);
+        if (match) resolve(Number(match[1]));
+      });
+      standalone.on('error', reject);
+      standalone.on('exit', code => reject(new Error(`Example standalone server exited ${code}`)));
+    });
+    const request = (target: string) => get(target, {}, 'GET', standalonePort);
+    for (const target of ['/%2e%2e/fixture-outside/sample.txt', '/%ZZ', '/%00']) {
+      expect(await request(target)).toMatchObject({ status: 404, body: 'Not found' });
+    }
+    if (process.platform !== 'win32') expect((await request('/linked/sample.txt')).body).not.toContain('example outside content');
+    expect(await request('/')).toMatchObject({ status: 200, body: '<h1>Example website</h1>' });
+    expect(await request('/demo/auth')).toMatchObject({ status: 200, body: '<h1>Example app</h1>' });
+  } finally {
+    if (standalone.exitCode === null && standalone.signalCode === null) {
+      await new Promise<void>(resolve => { standalone.once('exit', () => resolve()); standalone.kill(); });
+    }
+  }
 });

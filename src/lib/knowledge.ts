@@ -29,11 +29,14 @@ export function buildKnowledgeTree(pages: KnowledgePage[]): KnowledgeNode[] {
 }
 
 /** True when the page or one of its ancestors is a private draft. */
-export function knowledgeInsidePrivateDraft(pages: Pick<KnowledgePage, 'id' | 'parent_id' | 'private_draft_owner_id'>[], id: string | null | undefined): boolean {
+export function knowledgeInsidePrivateDraft(
+  pages: Pick<KnowledgePage, 'id' | 'parent_id' | 'private_draft_owner_id'>[] | ReadonlyMap<string, Pick<KnowledgePage, 'parent_id' | 'private_draft_owner_id'>>,
+  id: string | null | undefined,
+): boolean {
   const seen = new Set<string>();
   for (let cursor = id || null; cursor && !seen.has(cursor) && seen.size < 10;) {
     seen.add(cursor);
-    const page = pages.find(p => p.id === cursor);
+    const page = Array.isArray(pages) ? pages.find(p => p.id === cursor) : pages.get(cursor);
     if (!page) return false;
     if (page.private_draft_owner_id) return true;
     cursor = page.parent_id;

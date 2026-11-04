@@ -213,12 +213,27 @@ const BoardView = () => {
   }, [unscopedTasks, scopeSprintId]);
   const otherSprintTotal = unscopedTasks.length - filteredTasks.length;
 
-  const visibleProjects = useMemo(() =>
-    selectedProjectId
-      ? allProjects.filter(p => p.id === selectedProjectId)
-      : allProjects.filter(p => filteredTasks.some(t => t.projectId === p.id)),
-    [selectedProjectId, allProjects, filteredTasks]
-  );
+  const visibleProjects = useMemo(() => {
+    if (selectedProjectId) return allProjects.filter(project => project.id === selectedProjectId);
+    const projectIds = new Set(filteredTasks.map(task => task.projectId));
+    return allProjects.filter(project => projectIds.has(project.id));
+  }, [selectedProjectId, allProjects, filteredTasks]);
+
+  const tasksByProject = useMemo(() => {
+    const grouped = new Map<string, { count: number; byStatus: Map<string, Task[]> }>();
+    for (const task of boardTasks) {
+      let project = grouped.get(task.projectId);
+      if (!project) {
+        project = { count: 0, byStatus: new Map() };
+        grouped.set(task.projectId, project);
+      }
+      project.count++;
+      const statusTasks = project.byStatus.get(task.statusId);
+      if (statusTasks) statusTasks.push(task);
+      else project.byStatus.set(task.statusId, [task]);
+    }
+    return grouped;
+  }, [boardTasks]);
 
   const totalFiltered = filteredTasks.length;
 
@@ -268,11 +283,14 @@ const BoardView = () => {
         type: 'status_change',
         description: t('undo.statusChanged', { key: task.taskKey, from: oldStatus?.name || '—', to: status?.name || '—' }),
         undo: async () => {
-          const revert: Record<string, unknown> = { statusId: oldStatusId };
-          if (updates.startedAt && !task.startedAt) revert.startedAt = undefined;
-          if ('completedAt' in updates) revert.completedAt = task.completedAt ?? undefined;
-          setAllTasks(prev => prev.map(t2 => t2.id !== taskId ? t2 : { ...t2, statusId: oldStatusId }));
-          await updateTaskInDb(taskId, revert as Record<string, string | undefined>);
+          const revert: Partial<Task> = { statusId: oldStatusId };
+          if ('startedAt' in updates) revert.startedAt = task.startedAt;
+          if ('completedAt' in updates) revert.completedAt = task.completedAt;
+          const moved = { ...task, ...updates };
+          const restored = await updateTaskInDb(taskId, revert, {
+            projectId: moved.projectId, statusId: newStatusId, startedAt: moved.startedAt, completedAt: moved.completedAt,
+          });
+          if (restored !== true) throw new Error('task_undo_conflict');
         },
       });
 
@@ -440,14 +458,8 @@ const BoardView = () => {
       <div className="px-3 md:px-5 pb-4 space-y-4 md:space-y-5">
         {visibleProjects.map(project => {
           const line = productLines.find(l => l.id === project.lineId);
-          const projectTasks = boardTasks.filter(t => t.projectId === project.id);
+          const projectTasks = tasksByProject.get(project.id);
           const isCollapsed = collapsedProjects.includes(project.id);
-          // Pre-group tasks by statusId to avoid O(n²) filtering
-          const tasksByStatus = new Map<string, Task[]>();
-          for (const t of projectTasks) {
-            const arr = tasksByStatus.get(t.statusId);
-            if (arr) arr.push(t); else tasksByStatus.set(t.statusId, [t]);
-          }
 
           return (
             <div key={project.id} className="bg-card rounded-xl border border-border/80 shadow-sm overflow-x-clip overflow-y-hidden">
@@ -483,14 +495,14 @@ const BoardView = () => {
                     <span className="hidden sm:inline">{t('board.otherSprintsShort', { count: otherSprintCounts.get(project.id) })}</span>
                   </span>
                 )}
-                <span className={`text-[13px] text-muted-foreground font-medium flex-shrink-0 ${(otherSprintCounts.get(project.id) || 0) > 0 ? '' : 'ml-auto'}`}>({projectTasks.length})</span>
+                <span className={`text-[13px] text-muted-foreground font-medium flex-shrink-0 ${(otherSprintCounts.get(project.id) || 0) > 0 ? '' : 'ml-auto'}`}>({projectTasks?.count ?? 0})</span>
               </div>
 
               {!isCollapsed && (
                 <div className={`px-2 md:px-3 pb-3 pt-1.5 overflow-x-auto overscroll-x-contain board-columns ${activeId ? 'snap-none' : 'snap-x snap-proximity md:snap-none'}`} style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
                   <div className="flex gap-3 md:gap-4 min-w-max md:min-w-0">
                     {statuses.map(status => {
-                      const statusTasks = tasksByStatus.get(status.id) || [];
+                      const statusTasks = projectTasks?.byStatus.get(status.id) ?? [];
                       return (
                         <DroppableColumn key={`${project.id}::${status.id}`} id={`${project.id}::${status.id}`}>
                           <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/40">

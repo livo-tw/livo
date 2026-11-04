@@ -2,14 +2,14 @@ import type { ReactNode } from 'react';
 import type { Task } from '@/types';
 import type { BoardFilterState } from '@/hooks/useBoardFilters';
 import type { ApprovalConfirmPayload } from '@/components/board/BoardApprovalModal';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   tasks: [] as Task[],
   standupMode: false, standupUserId: null as string | null, projectId: null as string | null,
   update: vi.fn(), setTasks: vi.fn(), open: vi.fn(), gate: vi.fn(), refusal: vi.fn(),
-  announce: vi.fn(), undo: vi.fn(), info: vi.fn(), error: vi.fn(), approval: vi.fn(),
+  toast: vi.fn<(title: string, options: { action: { onClick: () => Promise<void> } }) => void>(), success: vi.fn(), announce: vi.fn(), undo: vi.fn(), info: vi.fn(), error: vi.fn(), approval: vi.fn(),
 }));
 const task: Task = { id: 'example-task', taskKey: 'EX-1', title: 'Example title available for long press', projectId: 'example-project', statusId: 'open', priority: 'medium', creatorId: 'example-member', assigneeId: 'example-member', createdAt: '2026-10-07T00:00:00Z', sortOrder: 0, commentCount: 0, attachmentCount: 0, deployments: [] };
 const otherTask = { ...task, id: 'other-task', taskKey: 'EX-2', title: 'Other project task', projectId: 'other-project' };
@@ -35,7 +35,11 @@ vi.mock('@/hooks/useProjectScope', () => ({ useProjectScope: () => ({ projectIds
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => true }));
 vi.mock('@/hooks/useSprintFlow', () => ({ useSprintFlow: () => ({ showCompleteModal: false, showStartModal: false }) }));
 vi.mock('@/hooks/useStatusChangeGate', () => ({ useStatusChangeGate: () => ({ check: state.gate, refusal: state.refusal }) }));
-vi.mock('@/hooks/useUndoStack', () => ({ useUndoStack: () => ({ push: state.undo }) }));
+vi.mock('@/hooks/useUndoStack', async importOriginal => ({
+  ...await importOriginal<typeof import('@/hooks/useUndoStack')>(),
+  useUndoStack: () => ({ push: state.undo }),
+}));
+import { useUndoStackState } from '@/hooks/useUndoStack';
 vi.mock('@/hooks/useApprovalRules', () => ({ useApprovalRules: () => ({ getRuleForTransition: vi.fn() }) }));
 vi.mock('@/hooks/useApprovalWorkflow', () => ({ useApprovalWorkflow: () => ({ requestApproval: vi.fn() }) }));
 vi.mock('@/hooks/useTaskAnnouncements', () => ({ useTaskAnnouncements: () => ({}) }));
@@ -43,7 +47,8 @@ vi.mock('@/components/board/useBoardApproval', () => ({ useBoardApproval: () => 
 vi.mock('@/components/notifications/NotificationToastProvider', () => ({ useNotificationToast: () => ({ triggerNotification: vi.fn() }) }));
 vi.mock('@/lib/taskAnnouncements', () => ({ announceStatusChange: state.announce, announceAssignment: vi.fn() }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
-vi.mock('sonner', () => ({ toast: { info: state.info, error: state.error } }));
+vi.mock('sonner', () => ({ toast: Object.assign(state.toast, { info: state.info, error: state.error, success: state.success, dismiss: vi.fn() }) }));
+vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
 vi.mock('@/components/board/BoardSprintHeader', () => ({ default: (): null => null }));
 vi.mock('@/components/board/BoardFilters', () => ({ default: ({ filters }: { filters: BoardFilterState }) =>
   <button onClick={() => filters.setFilterAssignees(['example-member'])}>Filter to example assignee</button>
@@ -138,6 +143,29 @@ describe('general task board touch interaction', () => {
     expect(state.update).toHaveBeenCalledExactlyOnceWith(task.id, { statusId: 'progress', startedAt: expect.any(String) });
     expect(state.undo).toHaveBeenCalledTimes(1); expect(state.announce).toHaveBeenCalledTimes(1);
     expect(state.open).not.toHaveBeenCalled(); expect(overlayVisible()).toBe(false);
+  });
+
+  it('reports a refused guarded undo as failed without an optimistic rollback', async () => {
+    state.update.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const { result } = renderHook(useUndoStackState);
+    state.undo.mockImplementationOnce(result.current.push);
+    mount();
+    await drop();
+
+    const originalStart = state.update.mock.calls[0][1].startedAt;
+    const undoAction = state.toast.mock.calls[0][1].action;
+    const trace = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await act(async () => undoAction.onClick());
+    } finally {
+      trace.mockRestore();
+    }
+    expect(state.update).toHaveBeenLastCalledWith(task.id, { statusId: 'open', startedAt: undefined }, {
+      projectId: task.projectId, statusId: 'progress', startedAt: originalStart, completedAt: undefined,
+    });
+    expect(state.setTasks).toHaveBeenCalledOnce();
+    expect(state.error).toHaveBeenCalledWith('undo.failed');
+    expect(state.success).not.toHaveBeenCalled();
   });
 
   it.each([1, 4, 7])('never captures a slow vertical card swipe of %s px after the handle activation delay', (distance) => {

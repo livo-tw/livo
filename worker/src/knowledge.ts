@@ -35,12 +35,16 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
   if (Array.isArray(req.values) && req.values.length!==1) return fail('kb_invalid_request');
   const row=Array.isArray(req.values) ? req.values[0] : req.values;
   const values=row && typeof row==='object' && !Array.isArray(row) ? row as Record<string,unknown> : {};
-  // A new page may carry its client-generated id: the Docker backend cannot return the
-  // inserted row through RLS (the view check looks the page up by id), so the web app
-  // names the page itself and reads it back. Ids are globally unique keys; a clash fails.
-  const clientId=req.op==='insert' && req.table==='kb_pages' && typeof values.id==='string' && /^[A-Za-z0-9-]{8,64}$/.test(values.id) ? values.id : null;
-  const id=req.op==='insert' ? clientId ?? crypto.randomUUID() : req.filters?.find(f=>f.col==='id' && f.op==='eq')?.val;
-  if (typeof id!=='string' || req.filters?.some(f=>f.op!=='eq' || !['id','version','created_by'].includes(f.col))) return fail('kb_invalid_request');
+  // The client names pages and attachment references so it can read an
+  // exact insert back. Old clients may still omit the id.
+  const clientNamedInsert = req.op==='insert' && ['kb_pages','kb_attachments'].includes(req.table);
+  const clientId = clientNamedInsert && typeof values.id==='string' && /^[A-Za-z0-9-]{8,64}$/.test(values.id) ? values.id : null;
+  if (req.op==='insert' && req.table==='kb_attachments' && values.id!==undefined && !clientId) return fail('kb_invalid_request');
+  const filters = req.filters ?? [];
+  const id = req.op==='insert' ? clientId ?? crypto.randomUUID() : filters.find(f=>f.col==='id' && f.op==='eq')?.val;
+  const allowedFilters = ['id','version','created_by'];
+  if (req.table==='kb_attachments' && req.op==='delete') allowedFilters.push('page_id','storage_path');
+  if (typeof id!=='string' || filters.some(f=>f.op!=='eq' || !allowedFilters.includes(f.col))) return fail('kb_invalid_request');
   const stamp=new Date().toISOString();
   const edit=knowledgePermissionSql('kb_pages.id','edit',auth), view=knowledgePermissionSql('kb_pages.id','view',auth);
   const lock=`NOT EXISTS (SELECT 1 FROM field_locks WHERE workspace_id=? AND lock_key='kb:'||kb_pages.id AND locked_by!=? AND expires_at>?)`;
@@ -124,8 +128,11 @@ export async function writeKnowledge(env: Env, ctx: Ctx, auth: AuthCtx, req: Que
         SELECT ?,?,id,?,?,?,?,?,?,? FROM kb_pages WHERE workspace_id=? AND id=? AND ${editable} RETURNING *`)
         .bind(id,ws,values.file_name,values.file_size,values.file_type??'',path,'kb-files',member,stamp,ws,pageId,...editableParams);
     } else if (req.op==='delete') {
-      statement=env.DB.prepare(`DELETE FROM kb_attachments WHERE workspace_id=? AND id=? AND page_id IN (SELECT id FROM kb_pages WHERE workspace_id=? AND ${editable}) RETURNING *`)
-        .bind(ws,id,ws,...editableParams);
+      const reference = filters.filter(filter => filter.col==='page_id' || filter.col==='storage_path');
+      if (reference.some(filter => typeof filter.val!=='string')) return fail('kb_invalid_request');
+      const referenceSql = reference.map(filter => filter.col==='page_id' ? ' AND page_id=?' : ' AND storage_path=?').join('');
+      statement=env.DB.prepare(`DELETE FROM kb_attachments WHERE workspace_id=? AND id=?${referenceSql} AND page_id IN (SELECT id FROM kb_pages WHERE workspace_id=? AND ${editable}) RETURNING *`)
+        .bind(ws,id,...reference.map(filter => filter.val),ws,...editableParams);
     } else return fail('kb_forbidden');
   } else if (req.table==='kb_comments') {
     if (Object.keys(values).some(k=>!['body','page_id','created_by'].includes(k))) return fail('kb_forbidden');

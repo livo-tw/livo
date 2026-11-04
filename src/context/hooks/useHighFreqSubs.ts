@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchBoardRows, type BoardTaskEvent } from '@/lib/boardQueries';
 import type { Task, TaskDeployment, Comment, TaskSpec, TaskCheck, TaskTodo } from '@/types';
 import {
   mapTask, mapComment, mapTaskSpec, mapTaskCheck, mapTaskTodo,
@@ -8,6 +9,7 @@ import {
 
 export interface HighFreqSubsDeps {
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+  recordBoardTaskEvent: (event: BoardTaskEvent) => void;
   setSelectedTask: (fn: (prev: Task | null) => Task | null) => void;
   setComments: React.Dispatch<React.SetStateAction<Comment[]>>;
   setTaskSpecs: React.Dispatch<React.SetStateAction<TaskSpec[]>>;
@@ -21,17 +23,22 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
   const tagTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let active = true;
+    let deployRead = 0;
+    let tagRead = 0;
     const tasksChannel = supabase
       .channel('tasks-comments-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
         if (payload.eventType === 'INSERT') {
           const newTask = { ...mapTask(payload.new), deployments: [] };
+          deps.recordBoardTaskEvent({ kind: 'insert', task: newTask });
           deps.setAllTasks(prev => {
             if (prev.find(t => t.id === newTask.id)) return prev;
             return [...prev, newTask];
           });
         } else if (payload.eventType === 'UPDATE') {
           const updated = mapTask(payload.new);
+          deps.recordBoardTaskEvent({ kind: 'update', task: updated });
           deps.setAllTasks(prev => prev.map(t =>
             t.id === updated.id ? { ...updated, deployments: t.deployments, attachmentCount: t.attachmentCount, tagIds: t.tagIds } : t
           ));
@@ -43,6 +50,7 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
           });
         } else if (payload.eventType === 'DELETE') {
           const deletedId = (payload.old as { id: string }).id;
+          deps.recordBoardTaskEvent({ kind: 'delete', id: deletedId });
           deps.setAllTasks(prev => prev.filter(t => t.id !== deletedId));
           deps.setSelectedTask(prev => (prev && prev.id === deletedId ? null : prev));
         }
@@ -118,10 +126,11 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_deployments' }, () => {
+        const read = ++deployRead;
         if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current);
         deployTimeoutRef.current = setTimeout(async () => {
-          const { data: deployRows } = await supabase.from('task_deployments').select('*');
-          if (deployRows) {
+          const { data: deployRows, error } = await fetchBoardRows(options => supabase.from('task_deployments').select('*', options));
+          if (active && read === deployRead && !error && deployRows) {
             const dm = new Map<string, TaskDeployment[]>();
             deployRows.forEach(d => {
               const arr = dm.get(d.task_id) || [];
@@ -138,10 +147,11 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
         }, 500);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_tags' }, () => {
+        const read = ++tagRead;
         if (tagTimeoutRef.current) clearTimeout(tagTimeoutRef.current);
         tagTimeoutRef.current = setTimeout(async () => {
-          const { data: taskTagRows } = await supabase.from('task_tags').select('*');
-          if (taskTagRows) {
+          const { data: taskTagRows, error } = await fetchBoardRows(options => supabase.from('task_tags').select('*', options));
+          if (active && read === tagRead && !error && taskTagRows) {
             const tagMap = new Map<string, string[]>();
             (taskTagRows as TaskTagRow[]).forEach(tt => {
               const arr = tagMap.get(tt.task_id) || [];
@@ -159,6 +169,7 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
       .subscribe();
 
     return () => {
+      active = false;
       if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current);
       if (tagTimeoutRef.current) clearTimeout(tagTimeoutRef.current);
       supabase.removeChannel(tasksChannel);

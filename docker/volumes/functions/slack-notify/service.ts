@@ -8,6 +8,7 @@
 // task, project, actor and DM recipients are read from the database as the
 // caller sees them, every message is built here, and errors stay generic.
 import { shouldPostChannel } from '../slack-interact/core.ts';
+import { typedMentions, withoutPickedMentionLabels, type MentionPerson } from './mentionMatching.ts';
 import { constantTimeSecret, Database, type Environment } from '../slack-interact/backend.ts';
 import { commentMentionIds, commentPlainText, dmRecipients, notifyChannelId, notifyDetails, NOTIFY_TASK_TYPES, reportMessage,
   requestedEmails, memberEmailIdentityVerified, slackDmEligible, slackErrorCode, taskChannelMessage, taskDmMessage, type DmReason, type NotifyFields } from './core.ts';
@@ -112,6 +113,7 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       ? (await reader.rows(table, { select, id: `eq.${id}`, limit: '1' }))[0] : undefined;
     const [project, status, assignee] = await Promise.all([one('projects', task.project_id), one('statuses', task.status_id), one('members', task.assignee_id)]);
     const details = notifyDetails(payload);
+    const requested = requestedEmails(payload.dmTargets);
     let actorId: string, actorName: string, mentioned: string[] = [], preview = details.commentPreview;
     if (service) {
       actorId = typeof payload.actorId === 'string' ? payload.actorId : '';
@@ -140,6 +142,25 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       if (queued.length) return json({ accepted: true, managedBy: 'database' });
       mentioned = commentMentionIds(comment.content);
       preview = commentPlainText(comment.content);
+      if (requested.size && settings.dm_notify_enabled !== false && preview.includes('@') && mentioned.length < 40) {
+        const typedText = commentPlainText(withoutPickedMentionLabels(comment.content));
+        if (typedText.includes('@')) {
+          const directory: MentionPerson[] = [];
+          let offset = 0;
+          // PostgREST may cap each page below our limit. Read to exhaustion so
+          // a same-name active member on a later page still blocks the match.
+          while (true) {
+            const page = await admin.rows('members', {
+              select: 'id,name,email', is_active: 'eq.true', order: 'id.asc', limit: '500', offset: String(offset),
+            });
+            if (!page.length) break;
+            directory.push(...page.map(row => ({ id: row.id, name: row.name, email: row.email })));
+            offset += page.length;
+          }
+          const typed = typedMentions(typedText, directory).map(person => person.id).filter(id => ID.test(id));
+          mentioned = [...new Set([...mentioned, ...typed])].slice(0, 40);
+        }
+      }
     }
     const fields: NotifyFields = { ...details, type, taskKey: task.task_key, taskTitle: task.title, projectName: project?.name || '',
       actorName, priority: task.priority || 'medium', commentPreview: preview,
@@ -163,7 +184,7 @@ export async function handleSlackNotify(req: Request, env: Environment, fetcher:
       }
     }
 
-    const allowed = dmRecipients(type, task, actorId, mentioned), requested = requestedEmails(payload.dmTargets);
+    const allowed = dmRecipients(type, task, actorId, mentioned);
     if (allowed.size && requested.size) {
       const dmEnabled = settings.dm_notify_enabled ?? true;
       const startHour = settings.dm_notify_start_hour ?? 0, endHour = settings.dm_notify_end_hour ?? 24;

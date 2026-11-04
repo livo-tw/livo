@@ -32,7 +32,11 @@ function serve(res, filePath) {
   const ext = path.extname(filePath);
   const mime = MIME[ext] || "application/octet-stream";
   try {
-    const data = fs.readFileSync(filePath);
+    const realFile = fs.realpathSync(filePath);
+    const relative = path.relative(fs.realpathSync(ROOT), realFile);
+    if (!relative || relative === '..' || relative.startsWith('..' + path.sep) ||
+        path.isAbsolute(relative) || !fs.statSync(realFile).isFile()) return false;
+    const data = fs.readFileSync(realFile);
     res.writeHead(200, { "Content-Type": mime });
     res.end(data);
   } catch {
@@ -80,9 +84,7 @@ function serveAppAtRoot(req, res, url) {
   if (redirectOldAppPath(req, res)) return;
   const appDir = path.join(ROOT, "demo");
   const filePath = path.join(appDir, url);
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile() && serve(res, filePath)) return;
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() &&
-      serve(res, path.join(filePath, "index.html"))) return;
+  if (serve(res, filePath) || serve(res, path.join(filePath, "index.html"))) return;
   // Other page requests are client-side routes such as /auth or /set-password.
   // A missing script or image, or any non-page request (/pg/meta and the like),
   // gets a 404 instead of the page.
@@ -93,34 +95,30 @@ function serveAppAtRoot(req, res, url) {
   res.end("Not found");
 }
 
+function requestPath(target) {
+  let pathname;
+  try { pathname = decodeURIComponent(target.split('?')[0]); } catch { return null; }
+  if (!pathname.startsWith('/') || pathname.startsWith('//') || /[\\\x00-\x1f\x7f]/.test(pathname) ||
+      (process.platform === 'win32' && pathname.includes(':')) ||
+      pathname.split('/').some((part) => part === '.' || part === '..')) return null;
+  return pathname;
+}
+
+function notFound(res) {
+  res.writeHead(404);
+  res.end('Not found');
+}
+
 const server = http.createServer((req, res) => {
+  // Validate before either static serving or canonical redirects can normalize the path.
+  const url = requestPath(req.url);
+  if (url === null) return notFound(res);
   if (proxy && proxyModule.isAllowedApiPath(req.url)) return proxy.proxyHttp(req, res);
-  if (proxy || APP_AT_ROOT) {
-    // The Docker package serves the app and its static files. Kong's other
-    // routes (Studio, metadata, analytics, etc.) must never reach its upstream.
-    let pathname;
-    try { pathname = decodeURIComponent(req.url.split('?')[0]); } catch { /* reject below */ }
-    if (!pathname?.startsWith('/') || /[\\\x00-\x1f\x7f]/.test(pathname) ||
-        pathname.split('/').some((part) => part === '.' || part === '..')) {
-      res.writeHead(404); res.end('Not found'); return;
-    }
-  }
   if (redirectCanonicalApp(req, res)) return;
-  const url = decodeURIComponent(req.url.split("?")[0]);
   if (APP_AT_ROOT) return serveAppAtRoot(req, res, url);
 
-  // Try serving the exact static file first
   const filePath = path.join(ROOT, url);
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-    serve(res, filePath);
-    return;
-  }
-
-  // If path is a directory, try index.html inside it
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-    const idx = path.join(filePath, "index.html");
-    if (fs.existsSync(idx)) { serve(res, idx); return; }
-  }
+  if (serve(res, filePath) || serve(res, path.join(filePath, "index.html"))) return;
 
   // Browsers ask the origin root for /favicon.ico on pages that declare no
   // icon, such as an attachment image opened in its own tab. Use the app's.
@@ -128,13 +126,11 @@ const server = http.createServer((req, res) => {
 
   // SPA fallback: /demo/* -> /demo/index.html, everything else -> /index.html
   if (url.startsWith("/demo/") || url === "/demo") {
-    serve(res, path.join(ROOT, "demo", "index.html"));
-  } else if (proxy && url !== '/') {
-    res.writeHead(404);
-    res.end('Not found');
-  } else {
-    serve(res, path.join(ROOT, "index.html"));
+    if (serve(res, path.join(ROOT, "demo", "index.html"))) return;
+  } else if ((!proxy || url === '/') && serve(res, path.join(ROOT, "index.html"))) {
+    return;
   }
+  notFound(res);
 });
 if (proxy) {
   server.requestTimeout = 0;

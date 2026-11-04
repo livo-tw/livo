@@ -42,8 +42,9 @@ function renderDetail(issue: QaIssue, actor: QaActor, extra: Partial<QaDetail> =
   const command = vi.fn().mockImplementation(async (_issue: QaIssue, next: QaCommand) => ({ ...issue, version: issue.version + 1, ...(next.type === 'set_state' ? { state: (next as unknown as { state: QaIssue['state'] }).state } : {}) }));
   const client = { getManualStateVisibility, getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, list, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const detail: QaDetail = { issue, comments: [], events: [], attachments: [], ...extra };
-  const props = { detail, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
-  return { ...render(<QaIssueDetail {...props} />), command, list, onRefresh: props.onRefresh };
+  const onRefreshBlockedChange = vi.fn();
+  const props = { detail, client, actor, onRefreshBlockedChange, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
+  return { ...render(<QaIssueDetail {...props} />), command, list, onRefresh: props.onRefresh, onRefreshBlockedChange };
 }
 
 describe('the next step follows what the bug still lacks', () => {
@@ -227,6 +228,56 @@ describe('formal PASS automatically completes the current work', () => {
       if (refreshFails) expect(await screen.findByText('qaHandoff.savedRefreshFailed')).toBeInTheDocument();
     } finally { window.removeEventListener('livo:qa-changed', changed); }
   });
+  it.each([false, true])('clears only the acknowledged verification draft, including retry: %s', async lostResponse => {
+    const issue = candidate(0);
+    const { command, onRefresh, onRefreshBlockedChange } = renderDetail(issue, lead);
+    let nextId = 0;
+    command.mockImplementation(async (before: QaIssue, next: QaCommand) => applyQaCommand(before, next, {
+      ...context(lead), now: '2026-10-03T02:00:00.000Z', newId: () => 'verify-' + ++nextId,
+    }));
+    if (lostResponse) command.mockRejectedValueOnce(new Error('Connection interrupted'));
+
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    const [first, second] = screen.getAllByRole('button', { name: 'qa.verification' }).map(button => button.closest('article')!);
+    const editNote = (article: HTMLElement, value: string) => {
+      fireEvent.click(within(article).getByText('qa.verificationNote'));
+      const input = within(article).getByLabelText('qa.note');
+      fireEvent.change(input, { target: { value } });
+      return input;
+    };
+    const sent = editNote(first, 'Passed with submitted evidence');
+    const unsent = editNote(second, 'Evidence for the next target');
+    fireEvent.click(within(first).getByRole('button', { name: 'qa.verification' }));
+    if (lostResponse) {
+      const retry = await screen.findByRole('button', { name: 'qa.retryCommand' });
+      expect(sent).toHaveValue('Passed with submitted evidence');
+      fireEvent.click(retry);
+    }
+
+    await waitFor(() => expect(sent).toHaveValue(''));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(unsent).toHaveValue('Evidence for the next target');
+    expect(onRefreshBlockedChange).toHaveBeenLastCalledWith(true);
+    fireEvent.change(unsent, { target: { value: '' } });
+    await waitFor(() => expect(onRefreshBlockedChange).toHaveBeenLastCalledWith(false));
+    expect(command).toHaveBeenCalledTimes(lostResponse ? 2 : 1);
+    if (lostResponse) expect(command.mock.calls[0][2]).toBe(command.mock.calls[1][2]);
+  });
+
+  it('keeps the verification draft and dirty marker after a definitive write failure', async () => {
+    const { command, onRefreshBlockedChange } = renderDetail(candidate(0), lead);
+    command.mockRejectedValueOnce(Object.assign(new Error('A newer version exists'), { status: 409 }));
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    const first = screen.getAllByRole('button', { name: 'qa.verification' })[0].closest('article')!;
+    fireEvent.click(within(first).getByText('qa.verificationNote'));
+    const note = within(first).getByLabelText('qa.note');
+    fireEvent.change(note, { target: { value: 'Original evidence' } });
+    fireEvent.click(within(first).getByRole('button', { name: 'qa.verification' }));
+    await waitFor(() => expect(notices.error).toHaveBeenCalledWith('qa.conflict'));
+    expect(note).toHaveValue('Original evidence');
+    expect(onRefreshBlockedChange).toHaveBeenLastCalledWith(true);
+  });
+
   it('localizes the confirmed closing history without treating author notes as closure metadata', () => {
     const note = 'Example note\n所有必要環境已部署並驗證通過，已自動結案。';
     const closed = applyQaCommand(candidate(), { type: 'record_verification', targetId: 't3', build: 'b1', result: 'pass', note }, { ...context(lead), now: '2026-10-03T02:00:00.000Z' });

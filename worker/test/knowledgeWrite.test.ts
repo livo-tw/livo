@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 vi.mock('../src/notify', () => ({ notifyChanges: vi.fn() }));
 import { writeKnowledge } from '../src/knowledge';
+import { runQuery } from '../src/db';
 import type { AuthCtx, Ctx, Env } from '../src/env';
 import type { QueryRequest } from '../src/protocol';
 
@@ -54,5 +55,54 @@ describe('saving a knowledge page on the cloud backend', () => {
     lock('boss');
     const result = await writeKnowledge(env, ctx, admin, save(admin, { title: 'Guide', body: '<p>admin</p>', parent_id: null, access_policy: { mode: 'inherit' } }));
     expect(result.error).toBeNull();
+  });
+});
+
+describe('cloud knowledge attachment references', () => {
+  const storagePath = 'ws/alpha/kb/page-1/example.txt';
+  const attachment = {
+    page_id: 'page-1', file_name: 'example.txt', file_size: 7,
+    storage_path: storagePath, storage_bucket: 'kb-files',
+  };
+  const insert = (values: Record<string, unknown>) =>
+    writeKnowledge(env, ctx, editor, { table: 'kb_attachments', op: 'insert', values: [values] });
+
+  it('stores the client-generated ID so it can be read back after an uncertain insert', async () => {
+    const id = 'e440b7b7-5559-4a1a-810e-91f9354b2c1a';
+    expect((await insert({ ...attachment, id })).error).toBeNull();
+    const stored = await runQuery(env, ctx, editor, {
+      table: 'kb_attachments', op: 'select', filters: [{ col: 'id', op: 'eq', val: id }], maybeSingle: true,
+    });
+    expect(stored.error).toBeNull();
+    expect(stored.data).toMatchObject({ id, page_id: attachment.page_id, storage_path: storagePath, uploaded_by: editor.member.id });
+  });
+
+  it('allows legacy inserts without an ID but rejects an invalid supplied ID', async () => {
+    expect((await insert({ ...attachment, id: 'invalid id' })).error?.message).toBe('kb_invalid_request');
+    const legacy = await insert(attachment);
+    expect(legacy.error).toBeNull();
+    expect(legacy.data).toMatchObject([{ id: expect.stringMatching(/^[0-9a-f-]{36}$/) }]);
+  });
+
+  it('acknowledges an exact guarded delete and keeps metadata for a stale path, page or lock', async () => {
+    const id = 'cf-attachment-1';
+    expect((await insert({ ...attachment, id })).error).toBeNull();
+    const remove = (page: string, storage: string) => writeKnowledge(env, ctx, editor, {
+      table: 'kb_attachments', op: 'delete', single: true, filters: [
+        { col: 'id', op: 'eq', val: id },
+        { col: 'page_id', op: 'eq', val: page },
+        { col: 'storage_path', op: 'eq', val: storage },
+      ],
+    });
+    expect((await remove('page-2', storagePath)).error?.message).toBe('kb_conflict');
+    expect((await remove(attachment.page_id, 'ws/alpha/kb/page-1/stale.txt')).error?.message).toBe('kb_conflict');
+    lock('boss');
+    expect((await remove(attachment.page_id, storagePath)).error?.message).toBe('kb_conflict');
+    expect(db.prepare('SELECT id FROM kb_attachments WHERE id=?').get(id)).toMatchObject({ id });
+    lock('writer');
+    const result = await remove(attachment.page_id, storagePath);
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ id, page_id: attachment.page_id, storage_path: storagePath, storage_bucket: 'kb-files' });
+    expect(db.prepare('SELECT id FROM kb_attachments WHERE id=?').get(id)).toBeUndefined();
   });
 });

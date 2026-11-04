@@ -2,11 +2,12 @@ import type {
   Task, TaskDeployment, Comment, TaskSpec, TaskCheck, TaskTodo,
   TaskCustomFieldValue, TaskDependency, Project,
 } from '@/types';
-import { useHighFreqSubs } from './useHighFreqSubs';
+import { useHighFreqSubs, type HighFreqSubsDeps } from './useHighFreqSubs';
 import { useConfigSubs } from './useConfigSubs';
 
 interface RealtimeSubsDeps {
   setAllTasks: React.Dispatch<React.SetStateAction<Task[]>>;
+  recordBoardTaskEvent: HighFreqSubsDeps['recordBoardTaskEvent'];
   setSelectedTask: (fn: (prev: Task | null) => Task | null) => void;
   setComments: React.Dispatch<React.SetStateAction<Comment[]>>;
   setTaskSpecs: React.Dispatch<React.SetStateAction<TaskSpec[]>>;

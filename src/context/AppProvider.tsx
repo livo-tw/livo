@@ -67,8 +67,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     setTaskTodos: task.setTaskTodos,
     setComments: task.setComments,
     setStatusLogs: task.setStatusLogs,
-    setAllTasks: task.setAllTasks,
-    setDeployMap: task.setDeployMap,
+    beginBoardRead: task.beginBoardRead,
     setCustomFields: task.setCustomFields,
     setCustomFieldValues: task.setCustomFieldValues,
     setTaskTemplates: task.setTaskTemplates,
@@ -85,6 +84,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   // ─── Realtime Subscriptions ───
   useRealtimeSubs({
     setAllTasks: task.setAllTasks,
+    recordBoardTaskEvent: task.recordBoardTaskEvent,
     setSelectedTask: ui.setSelectedTask,
     setComments: task.setComments,
     setTaskSpecs: task.setTaskSpecs,

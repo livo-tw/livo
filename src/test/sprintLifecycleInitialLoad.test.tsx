@@ -16,7 +16,7 @@ vi.mock('@/lib/commentQueries', () => ({ fetchComments: async (): Promise<{ data
 vi.mock('@/lib/themes', () => ({ applyTheme: vi.fn() }));
 vi.mock('@/context/UIContext', () => ({ DEFAULT_REQUIRED_FIELDS: { title: true, project: true } }));
 const dependencies = (): Parameters<typeof useInitialLoad>[0] => ({
-  setUsers: vi.fn(), setStatuses: vi.fn(), setProductLines: vi.fn(), setAllProjects: vi.fn(), setTags: vi.fn(), setTaskSpecs: vi.fn(), setTaskChecks: vi.fn(), setTaskTodos: vi.fn(), setComments: vi.fn(), setStatusLogs: vi.fn(), setAllTasks: vi.fn(), setDeployMap: vi.fn(), setCustomFields: vi.fn(), setCustomFieldValues: vi.fn(), setTaskTemplates: vi.fn(), setTaskDependencies: vi.fn(), setUserThemeState: vi.fn(), setRequiredFields: vi.fn(), refreshFeatureToggles: vi.fn(async () => {}), setIsLoading: vi.fn(), setSprintActive: vi.fn(), refreshSprints: vi.fn(async () => {}),
+  setUsers: vi.fn(), setStatuses: vi.fn(), setProductLines: vi.fn(), setAllProjects: vi.fn(), setTags: vi.fn(), setTaskSpecs: vi.fn(), setTaskChecks: vi.fn(), setTaskTodos: vi.fn(), setComments: vi.fn(), setStatusLogs: vi.fn(), beginBoardRead: () => ({ isCurrent: () => true, publish: vi.fn(), close: vi.fn() }), setCustomFields: vi.fn(), setCustomFieldValues: vi.fn(), setTaskTemplates: vi.fn(), setTaskDependencies: vi.fn(), setUserThemeState: vi.fn(), setRequiredFields: vi.fn(), refreshFeatureToggles: vi.fn(async () => {}), setIsLoading: vi.fn(), setSprintActive: vi.fn(), refreshSprints: vi.fn(async () => {}),
 });
 beforeEach(() => { api.writes.length = 0; api.rpc.mockClear(); api.from.mockClear(); api.error.mockClear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });

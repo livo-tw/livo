@@ -78,6 +78,7 @@ const SHARED = [
   { source: 'docker/volumes/functions/slack-interact/index.ts', copies: ['supabase/functions/slack-interact/index.ts'] },
   ...['index.ts', 'handler.ts'].map(file => ({ source: `docker/volumes/functions/slack-actions-config/${file}`, copies: [`supabase/functions/slack-actions-config/${file}`] })),
   { source: 'src/lib/slackNotifyCore.ts', copies: ['worker/src/slackNotifyCore.ts', 'docker/volumes/functions/slack-notify/core.ts', 'supabase/functions/slack-notify/core.ts'] },
+  { source: 'src/lib/mentionMatching.ts', copies: ['worker/src/mentionMatching.ts', 'docker/volumes/functions/slack-notify/mentionMatching.ts', 'supabase/functions/slack-notify/mentionMatching.ts'] },
   ...['index.ts', 'service.ts'].map(file => ({ source: `docker/volumes/functions/slack-notify/${file}`, copies: [`supabase/functions/slack-notify/${file}`] })),
   { source: 'docker/volumes/functions/scheduled-backup/index.ts', copies: ['supabase/functions/scheduled-backup/index.ts'] },
   {

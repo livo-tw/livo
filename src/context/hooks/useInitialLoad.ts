@@ -3,9 +3,10 @@ import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { fetchComments } from '@/lib/commentQueries';
+import { fetchBoardRows, type BeginBoardRead } from '@/lib/boardQueries';
 import { applyTheme, type ThemeKey } from '@/lib/themes';
 import type {
-  Task, User, Status, ProductLine, Project, Tag,
+  User, Status, ProductLine, Project, Tag,
   TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog,
   TaskDeployment, CustomField, TaskCustomFieldValue,
   TaskTemplate, TaskDependency,
@@ -30,8 +31,7 @@ interface InitialLoadDeps {
   setTaskTodos: (t: TaskTodo[]) => void;
   setComments: (c: Comment[]) => void;
   setStatusLogs: (l: StatusLog[]) => void;
-  setAllTasks: (t: Task[]) => void;
-  setDeployMap: (m: Map<string, TaskDeployment[]>) => void;
+  beginBoardRead: BeginBoardRead;
   setCustomFields: (f: CustomField[]) => void;
   setCustomFieldValues: (v: TaskCustomFieldValue[]) => void;
   setTaskTemplates: (t: TaskTemplate[]) => void;
@@ -69,6 +69,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
     activeRef.current = true;
     if (loadedRef.current) return () => { activeRef.current = false; };
     loadedRef.current = true;
+    const boardRead = deps.beginBoardRead('startup');
 
     const loadAll = async () => {
       deps.setIsLoading(true);
@@ -130,10 +131,10 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         required(supabase.from('task_todos').select('*').order('sort_order'), 'task_todos'),
         required(fetchComments(supabase), 'comments'),
         required(supabase.from('status_logs').select('*'), 'status_logs'),
-        required(supabase.from('tasks').select('*'), 'tasks'),
-        required(supabase.from('task_deployments').select('*'), 'task_deployments'),
-        required(supabase.from('task_attachments').select('task_id'), 'task_attachments'),
-        required(supabase.from('task_tags').select('*'), 'task_tags'),
+        required(fetchBoardRows(options => supabase.from('tasks').select('*', options)), 'tasks'),
+        required(fetchBoardRows(options => supabase.from('task_deployments').select('*', options)), 'task_deployments'),
+        required(fetchBoardRows(options => supabase.from('task_attachments').select('id,task_id', options)), 'task_attachments'),
+        required(fetchBoardRows(options => supabase.from('task_tags').select('*', options)), 'task_tags'),
         safe(supabase.from('custom_fields').select('*').order('sort_order'), 'custom_fields'),
         safe(supabase.from('task_custom_field_values').select('*'), 'custom_field_values'),
         safe(supabase.from('task_templates').select('*').order('created_at', { ascending: false }), 'task_templates'),
@@ -168,7 +169,6 @@ export function useInitialLoad(deps: InitialLoadDeps) {
           arr.push({ environment: d.environment, status: d.status, deployDate: d.deploy_date || undefined });
           dm.set(d.task_id, arr);
         });
-        deps.setDeployMap(dm);
         const attCounts = new Map<string, number>();
         (attRows || []).forEach(a => {
           attCounts.set(a.task_id, (attCounts.get(a.task_id) || 0) + 1);
@@ -184,7 +184,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
           arr.push(tt.tag_id);
           tagMap.set(tt.task_id, arr);
         });
-        deps.setAllTasks(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: attCounts.get(r.id) || 0, tagIds: tagMap.get(r.id) || undefined })));
+        boardRead.publish(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: attCounts.get(r.id) || 0, tagIds: tagMap.get(r.id) || undefined })), dm);
       }
 
       const [sprintReads] = await Promise.all([sprintsPromise, featureTogglesPromise]);
@@ -205,7 +205,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         setLoadFailed(true);
         deps.setIsLoading(false);
       }
-    });
+    }).finally(boardRead.close);
     return () => { activeRef.current = false; };
   }, []);
   return { loadFailed };

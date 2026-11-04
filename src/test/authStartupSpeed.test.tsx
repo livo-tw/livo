@@ -37,6 +37,8 @@ vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: false, su
       then: reply.then.bind(reply),
       select: (columns: string) => { selected = columns; return query; },
       order: () => query,
+      limit: () => query,
+      gt: () => query,
       eq: (column: string, value: string) => { if (column === 'auth_id') authId = value; return query; },
       maybeSingle: async () => {
         if (table !== 'members' || selected !== 'id') return { data: null, error: null };
@@ -75,7 +77,7 @@ function useStartup() {
     setUsers: member.setUsers, readAuthUser: auth.readAuthUser,
     setStatuses: vi.fn(), setProductLines: vi.fn(), setAllProjects: vi.fn(), setTags: vi.fn(),
     setTaskSpecs: vi.fn(), setTaskChecks: vi.fn(), setTaskTodos: vi.fn(), setComments: vi.fn(),
-    setStatusLogs: vi.fn(), setAllTasks: vi.fn(), setDeployMap: vi.fn(), setCustomFields: vi.fn(),
+    setStatusLogs: vi.fn(), beginBoardRead: () => ({ isCurrent: () => true, publish: vi.fn(), close: vi.fn() }), setCustomFields: vi.fn(),
     setCustomFieldValues: vi.fn(), setTaskTemplates: vi.fn(), setTaskDependencies: vi.fn(),
     setUserThemeState: auth.setUserThemeState, setRequiredFields: vi.fn(),
     refreshFeatureToggles: async () => {}, setIsLoading, setSprintActive: vi.fn(), refreshSprints: async () => {},

@@ -2,6 +2,8 @@ import { createContext, useContext, type Dispatch, type SetStateAction } from 'r
 import type { SubtaskCreateValues } from '@/lib/taskWork/subtaskDefaults';
 import type { Task, Status, Tag, TaskSpec, TaskCheck, TaskTodo, Comment, StatusLog, CustomField, TaskCustomFieldValue, TaskTemplate, TaskDependency } from '@/types';
 
+export type TaskStatusSnapshot = Pick<Task, 'projectId' | 'statusId' | 'startedAt' | 'completedAt'>;
+
 export interface TaskContextType {
   allTasks: Task[];
   setAllTasks: Dispatch<SetStateAction<Task[]>>;
@@ -20,7 +22,7 @@ export interface TaskContextType {
   refreshTaskTodos: () => Promise<void>;
   refreshStatuses: () => Promise<void>;
   refreshTags: () => Promise<void>;
-  updateTaskInDb: (taskId: string, updates: Partial<Task>) => Promise<boolean | void>;
+  updateTaskInDb: (taskId: string, updates: Partial<Task>, expectedStatus?: TaskStatusSnapshot) => Promise<boolean | void>;
   /** The confirmed task, or null for a rejected insert or a superseded session. */
   createTaskInDb: (task: Task, attempt: { recovering: boolean; isCurrent: () => boolean }) => Promise<Task | null>;
   createSubtask: (parentTaskId: string, title: string, projectId: string, statusId: string, parentTaskOverride?: Task, values?: SubtaskCreateValues) => Promise<Task | null>;

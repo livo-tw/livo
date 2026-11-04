@@ -47,6 +47,10 @@ describe('mentioned members in editor HTML', () => {
     expect(ids(mentionedMembers('<span class="mention" data-id="twin2">@Sam</span>', people))).toEqual(['twin2']);
     expect(mentionedMembers('<span data-id="gone">@Old Member</span><span data-id="nobody">@X</span>', people)).toEqual([]);
   });
+  it('uses a picked id even when its saved label now belongs to a different person', () => {
+    const html = '<p><span class="mention" data-id="ann">@Anna Lee</span> please check.</p>';
+    expect(ids(mentionedMembers(html, people))).toEqual(['ann']);
+  });
   it('does not join words across paragraphs', () => {
     expect(ids(mentionedMembers('<p>@Ann</p><p>exed</p>', people))).toEqual(['ann']);
   });

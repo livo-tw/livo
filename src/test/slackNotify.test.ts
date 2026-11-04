@@ -11,7 +11,7 @@ const environment: Record<string, string> = { SUPABASE_URL: 'https://db.example.
 const env = { get: (name: string) => environment[name] };
 afterEach(() => vi.unstubAllGlobals());
 
-function backend(tables: Record<string, Row[]> = {}) {
+function backend(tables: Record<string, Row[]> = {}, directoryPageSize = Number.MAX_SAFE_INTEGER) {
   const db: Record<string, Row[]> = {
     members: [
       { id: 'actor', name: 'Example actor', email: 'actor@example.com', role: 'member', is_active: true, email_identity_verified: true, auth_id: 'auth-actor' },
@@ -61,12 +61,13 @@ function backend(tables: Record<string, Row[]> = {}) {
       return Response.json([row]);
     }
     const rows = (db[table] || []).filter(row => [...url.searchParams].every(([key, value]) => {
-      if (['select', 'limit', 'order'].includes(key)) return true;
+      if (['select', 'limit', 'order', 'offset'].includes(key)) return true;
       if (value.startsWith('eq.')) return String(row[key]) === value.slice(3);
       if (value.startsWith('in.(')) return value.slice(4, -1).split(',').includes(String(row[key]));
       return true;
     }));
-    return Response.json(rows);
+    const offset = url.searchParams.get('offset');
+    return Response.json(offset === null ? rows : rows.slice(Number(offset), Number(offset) + directoryPageSize));
   });
   vi.stubGlobal('fetch', fetcher);
   const send = async (payload: Row, token = 'member-jwt') => {
@@ -166,6 +167,23 @@ describe('Docker slack-notify', () => {
     expect(t.slack.some(call => call.method === 'users.list')).toBe(false);
     expect(t.text(dms[0])).toContain('你的任務有新留言');
     expect(t.text(dms[0])).not.toContain('Spoofed');
+  });
+  it('sends a manually typed mention in a stored comment without trusting the request preview', async () => {
+    const t = backend({ comments: [recent('<p>@Example&nbsp;outsider, please check.</p>')] });
+    await t.send({ ...commentEvent(), commentPreview: '@Example reviewer',
+      dmTargets: [{ email: 'outsider@example.com' }] });
+    expect(t.posts().map(post => post.channel)).toEqual(['C0NOTIFY', 'DUOUTSIDER']);
+    expect(t.text(t.posts()[1])).toContain('你在留言中被提及');
+    expect(t.slack.filter(call => call.method === 'users.lookupByEmail').map(call => call.args.email))
+      .toEqual(['outsider@example.com']);
+  });
+  it('keeps a typed name ambiguous when another active match is on a later directory page', async () => {
+    const t = backend({ comments: [recent('<p>@Example outsider, please check.</p>')] }, 4);
+    t.db.members.push({ id: 'same-name', name: 'Example outsider', email: 'same-name@example.com',
+      role: 'member', is_active: true, email_identity_verified: false });
+    await t.send({ ...commentEvent(), dmTargets: [{ email: 'outsider@example.com' }] });
+    expect(t.posts().map(post => post.channel)).toEqual(['C0NOTIFY']);
+    expect(t.slack.some(call => call.method === 'users.lookupByEmail')).toBe(false);
   });
   it('uses the exact delayed comment and ignores repeats even after a newer comment', async () => {
     const first = { ...recent('<p>Earlier note <span data-id="outsider">@Example outsider</span></p>'), id: 'first',

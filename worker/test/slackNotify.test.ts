@@ -114,6 +114,27 @@ describe('cloud slack-notify', () => {
     expect(f.text(dms[0])).toContain('你的任務有新留言');
     expect(f.text(dms[0])).not.toContain('Spoofed');
   });
+  it('sends a manually typed mention from the stored comment to the matched workspace member', async () => {
+    const f = fixture();
+    f.db.exec("INSERT INTO members(id,workspace_id,name,avatar,email) VALUES('foreign','two','Example outsider','','foreign@example.com')");
+    f.db.prepare('INSERT INTO comments(id,workspace_id,task_id,user_id,content) VALUES(?,?,?,?,?)')
+      .run('c1', 'one', 'task', 'actor', '<p>Check with @Example&nbsp;outsider.</p>');
+    await f.send({ ...commentEvent('c1'), commentPreview: '@Example reviewer',
+      dmTargets: [{ email: 'outsider@example.com' }] });
+    expect(f.posts().map(post => post.channel)).toEqual(['C0NOTIFY', 'DUOUTSIDER']);
+    expect(f.text(f.posts()[1])).toContain('你在留言中被提及');
+    expect(f.calls.filter(call => call.method === 'users.lookupByEmail').map(call => call.args.email))
+      .toEqual(['outsider@example.com']);
+  });
+  it('keeps a typed name ambiguous even when only one of the matching members can receive Slack DMs', async () => {
+    const f = fixture();
+    f.db.exec("INSERT INTO members(id,workspace_id,name,avatar,email,email_identity_verified) VALUES('same-name','one','Example outsider','','same-name@example.com',0)");
+    f.db.prepare('INSERT INTO comments(id,workspace_id,task_id,user_id,content) VALUES(?,?,?,?,?)')
+      .run('c1', 'one', 'task', 'actor', '<p>@Example outsider, please check.</p>');
+    await f.send({ ...commentEvent('c1'), dmTargets: [{ email: 'outsider@example.com' }] });
+    expect(f.posts().map(post => post.channel)).toEqual(['C0NOTIFY']);
+    expect(f.calls.some(call => call.method === 'users.lookupByEmail')).toBe(false);
+  });
   it('uses the delayed comment and its own mentions, then suppresses its replay', async () => {
     const f = fixture();
     addComment(f.db, 'first', '<p>Earlier note <span data-id="outsider">@Example outsider</span></p>',

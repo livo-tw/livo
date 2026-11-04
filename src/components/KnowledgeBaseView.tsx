@@ -1,6 +1,6 @@
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, History, Lock, Paperclip, Trash2, ArrowLeft, ShieldCheck, FileText, Pencil, BadgeCheck, MoreHorizontal, Archive, ArchiveRestore, FileUp, FilePlus } from 'lucide-react';
 import { IconAction } from '@/components/ui/icon-action';
@@ -12,7 +12,7 @@ import { useAuthContext } from '@/context/AuthContext';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
 import { usePresenceLock } from '@/hooks/usePresenceLock';
-import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile } from '@/hooks/useKnowledgeBase';
+import { useKnowledgeBase, uploadKnowledgeFile, downloadKnowledgeFile, deleteKnowledgeFile } from '@/hooks/useKnowledgeBase';
 import { validateKnowledgeTree, knowledgeInsidePrivateDraft, knowledgeDeleteErrorKey, knowledgeDirectoryPages } from '@/lib/knowledge';
 import KnowledgeNavigation, { KnowledgePageActions } from '@/components/knowledge/KnowledgeNavigation';
 import KnowledgeSidebar from '@/components/knowledge/KnowledgeSidebar';
@@ -36,7 +36,7 @@ import KnowledgeComments from '@/components/KnowledgeComments';
 import KnowledgeWorkPanel from '@/components/knowledge-work/KnowledgeWorkPanel';
 import KnowledgeWorkSpace from '@/components/knowledge-work/KnowledgeWorkSpace';
 import { createKnowledgeWorkClient, type KnowledgeSearchItem } from '@/lib/knowledgeWork/client';
-import { knowledgeCan, parseKnowledgePolicy } from '../../worker/src/knowledgeAccess';
+import { knowledgeCan, knowledgeCanFromIndex, parseKnowledgePolicy } from '../../worker/src/knowledgeAccess';
 import { KNOWLEDGE_DEPTH } from '../../worker/src/knowledgeModel';
 import type { KnowledgePage, KnowledgeRevision, KnowledgePolicy } from '@/types/knowledge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -78,19 +78,27 @@ export default function KnowledgeBaseView() {
   const [newScope, setNewScope] = useState(selectedProjectId || 'shared');
   const fileInput = useRef<HTMLInputElement>(null);
   const member = users.find(u => u.id === currentMemberId) || currentMember;
-  const actor = member && currentMemberId ? { id: currentMemberId, role: member.role || currentMember?.role || '', jobTitle: member.jobTitle || '', is_active: member.isActive !== false } : null;
+  const hasMember = !!member;
+  const role = member?.role || currentMember?.role || '';
+  const jobTitle = member?.jobTitle || '';
+  const isActive = member?.isActive !== false;
+  const actor = useMemo(() => hasMember && currentMemberId ? { id: currentMemberId, role, jobTitle, is_active: isActive } : null,
+    [hasMember, currentMemberId, role, jobTitle, isActive]);
   const hasActor = !!actor;
-  const { pages, attachments, revisions, comments, loading, error, ready, refresh } = useKnowledgeBase(selectedId, actor);
+  const { pages, attachments, revisions, comments, detailsError, retryDetails, loading, error, ready, refresh } = useKnowledgeBase(selectedId, actor);
   const importCapability = useKnowledgeImportCapability(JSON.stringify(actor));
   const locks = usePresenceLock('knowledge-base');
   const activeLock = useRef<string | null>(null);
   const admin = actor?.role === 'admin' || actor?.role === 'super_admin';
-  const page = pages.find(p => p.id === selectedId && knowledgeCan(pages, p.id, actor, 'view'));
+  const pagesById = useMemo(() => new Map(pages.map(page => [page.id, page])), [pages]);
+  const page = selectedId ? pagesById.get(selectedId) : undefined;
   const lockedBy = page ? locks.isLockedBy(`kb:${page.id}`) : null;
-  const hasEditAccess = !!page && knowledgeCan(pages, page.id, actor, 'edit');
+  const hasEditAccess = !!page && knowledgeCanFromIndex(pagesById, page.id, actor, 'edit');
   const canEdit = hasEditAccess && !lockedBy;
-  const canArchive = !!page && admin && knowledgeCan(pages.map(p => p.id === page.id ? { ...p, is_archived: false } : p), page.id, actor, 'edit') && !lockedBy;
-  const canComment = !!page && knowledgeCan(pages, page.id, actor, 'comment');
+  const canArchive = !!page && admin && !lockedBy && (page.is_archived
+    ? knowledgeCan(pages.map(p => p.id === page.id ? { ...p, is_archived: false } : p), page.id, actor, 'edit')
+    : hasEditAccess);
+  const canComment = !!page && knowledgeCanFromIndex(pagesById, page.id, actor, 'comment');
   const canDelete = !!page && canEdit && (admin || page.created_by === currentMemberId);
   const pagePolicy = useMemo(() => parseKnowledgePolicy(page?.access_policy) || { mode: 'inherit' } as KnowledgePolicy, [page?.access_policy]);
   const scopeName = (id: string | null) => id ? allProjects.find(p => p.id === id)?.name || t('kb.unknownProject') : t('kb.shared');
@@ -98,7 +106,8 @@ export default function KnowledgeBaseView() {
   // search still covers every scope (kb.searchAll).
   const { projectIds: sidebarScope } = useProjectScope();
   const inLine = (projectId: string | null) => !sidebarScope || (!!projectId && sidebarScope.has(projectId));
-  const visible = pages.filter(p => knowledgeCan(pages, p.id, actor, 'view') && (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category));
+  const visible = useMemo(() => pages.filter(p => (showArchived || !p.is_archived) && (category === 'all' || (p.category || 'general') === category)),
+    [pages, showArchived, category]);
   const navigation = useKnowledgeNavigation(currentMemberId || '', pages);
   // A private draft belongs to no project. With a sidebar project or line selected the shared
   // pages are left out of the directory (search still covers every scope), but the member's
@@ -122,7 +131,7 @@ export default function KnowledgeBaseView() {
     const url = new URL(window.location.href), requestedId = url.searchParams.get('knowledge');
     if (!requestedId) return;
     const target = pages.find(candidate => candidate.id === requestedId && !candidate.is_archived);
-    if (target && knowledgeCan(pages, target.id, actor, 'view')) {
+    if (target) {
       setScope('all'); setCategory('all'); setQuery(''); setSelectedId(target.id);
     }
     // Do not retain a restricted document id in the URL or reveal its existence.
@@ -258,9 +267,21 @@ export default function KnowledgeBaseView() {
   }
   // Pages a new page can go under: same scope, shared (not a private draft), editable, and not
   // already at the deepest level. Members may add subpages wherever they can edit.
-  const depth = (id: string) => { let level = 0; let current = pages.find(p => p.id === id); while (current && level <= KNOWLEDGE_DEPTH) { level++; const parentId = current.parent_id; current = parentId ? pages.find(p => p.id === parentId) : undefined; } return level; };
-  const parentChoices = pages.filter(p => (p.project_id || 'shared') === newScope && !p.is_archived && !knowledgeInsidePrivateDraft(pages, p.id)
-    && !!actor && knowledgeCan(pages, p.id, actor, 'edit') && depth(p.id) < KNOWLEDGE_DEPTH);
+  const depth = useCallback((id: string) => {
+    let level = 0;
+    let current = pagesById.get(id);
+    while (current && level <= KNOWLEDGE_DEPTH) {
+      level++;
+      current = current.parent_id ? pagesById.get(current.parent_id) : undefined;
+    }
+    return level;
+  }, [pagesById]);
+  const parentChoices = useMemo(() => creating ? pages.filter(p => (p.project_id || 'shared') === newScope && !p.is_archived
+    && !knowledgeInsidePrivateDraft(pagesById, p.id) && knowledgeCanFromIndex(pagesById, p.id, actor, 'edit')
+    && depth(p.id) < KNOWLEDGE_DEPTH) : [], [creating, pages, pagesById, newScope, actor, depth]);
+  const editableWorkParents = useMemo(() => workPanelOpen
+    ? pages.filter(candidate => knowledgeCanFromIndex(pagesById, candidate.id, actor, 'edit')) : [],
+  [workPanelOpen, pages, pagesById, actor]);
   // The landing page's recent list follows the scope; no heading when the scope has no pages.
   const recentPages = visible.filter(candidate => scope === 'all' ? inLine(candidate.project_id) : (candidate.project_id || 'shared') === scope)
     .slice().sort((left, right) => right.updated_at.localeCompare(left.updated_at)).slice(0, 6);
@@ -345,6 +366,10 @@ export default function KnowledgeBaseView() {
           <div className="mb-8 text-center text-muted-foreground"><BookOpen size={30} className="mx-auto mb-3 text-primary/60" /><h2 className="font-semibold text-foreground">{t(selectedId && !loading ? 'kb.sharing.unavailable' : 'kb.emptyTitle')}</h2><p className="mt-2 text-sm">{t('kb.emptyHint')}</p></div>
           {!selectedId && !loading && recentPages.length > 0 && <section aria-label={t('kb.navigation.recentPages')}><h3 className="mb-3 text-sm font-medium">{t('kb.navigation.recentPages')}</h3><div className="grid gap-3 lg:grid-cols-2">{recentPages.map(candidate => <button key={candidate.id} type="button" aria-label={t('kb.navigation.openRecent', { title: candidate.title })} className="flex items-start gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5" onClick={() => void selectPage(candidate.id)}><FileText size={18} className="mt-0.5 shrink-0 text-primary" /><span className="min-w-0"><span className="block break-words text-sm font-medium">{candidate.title}</span><span className="mt-1.5 block text-xs text-muted-foreground">{scopeName(candidate.project_id)} · {t(`kb.categories.${candidate.category || 'general'}`)}</span></span></button>)}</div></section>}
         </div> : <div className="w-full max-w-5xl mx-auto space-y-5">
+          {detailsError && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+            <span>{t(`kb.errors.${detailsError}`)}</span>
+            <Button type="button" variant="outline" size="sm" onClick={retryDetails}>{t('common.retry')}</Button>
+          </div>}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0"><p className="text-xs text-primary mb-2">{scopeName(page.project_id)} · {t(`kb.categories.${page.category || 'general'}`)}</p><h2 className="text-2xl font-bold break-words">{page.title}</h2>
               <p className="text-xs text-muted-foreground mt-2">{t('kb.updated', { name: users.find(u => u.id === page.updated_by)?.name || t('kb.member'), date: new Date(page.updated_at).toLocaleString() })}</p>
@@ -361,7 +386,7 @@ export default function KnowledgeBaseView() {
                 {(canEdit || canArchive || canDelete) && <DropdownMenu>
                   <DropdownMenuTrigger asChild><IconAction label={t('kb.moreActions')} disabled={busy}><MoreHorizontal size={16} /></IconAction></DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {canEdit && !page.is_archived && !knowledgeInsidePrivateDraft(pages, page.id) && depth(page.id) < KNOWLEDGE_DEPTH && <DropdownMenuItem onSelect={() => openCreate(page)}><FilePlus size={15} />{t('kb.newChildPage')}</DropdownMenuItem>}
+                    {canEdit && !page.is_archived && !knowledgeInsidePrivateDraft(pagesById, page.id) && depth(page.id) < KNOWLEDGE_DEPTH && <DropdownMenuItem onSelect={() => openCreate(page)}><FilePlus size={15} />{t('kb.newChildPage')}</DropdownMenuItem>}
                     {canEdit && importCapability.allowed && <DropdownMenuItem onSelect={() => { setImportTargetId(page.id); setImportOpen(true); }}><FileUp size={15} />{t('kb.navigation.importVersion', { defaultValue: 'Import source revision' })}</DropdownMenuItem>}
                     {canArchive && <DropdownMenuItem disabled={!!lockedBy} onSelect={() => void archive()}>{page.is_archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}{page.is_archived ? t('kb.unarchive') : t('kb.archive')}</DropdownMenuItem>}
                     {canDelete && <DropdownMenuItem className="text-destructive hover:text-destructive focus:text-destructive" onSelect={() => void remove()}><Trash2 size={15} />{t('kb.delete')}</DropdownMenuItem>}
@@ -377,7 +402,7 @@ export default function KnowledgeBaseView() {
           {page.access_policy?.mode === 'custom' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck size={14} />{t('kb.permissions.restricted')}</p>}
           {page.admin_only && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Lock size={14} />{t('kb.adminOnly')}</p>}
           {page.private_draft_owner_id && <p className="text-sm text-muted-foreground">{t('knowledgeWork.privateDraft')}</p>}
-          {workPanelOpen && <KnowledgeWorkPanel key={`${currentMemberId}:${page.id}`} client={workClient} pageId={page.id} pageVersion={page.version} parents={pages.filter(candidate => knowledgeCan(pages, candidate.id, actor, 'edit'))} disabled={busy || !!draft || !!lockedBy} onChanged={refresh} />}
+          {workPanelOpen && <KnowledgeWorkPanel key={`${currentMemberId}:${page.id}`} client={workClient} pageId={page.id} pageVersion={page.version} parents={editableWorkParents} disabled={busy || !!draft || !!lockedBy} onChanged={refresh} />}
           {draft ? <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
             <label className="block text-sm space-y-1"><span>{t('kb.pageTitle')}</span><Input value={draft.title} maxLength={200} disabled={busy} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
             <label className="flex flex-col gap-1 text-xs">{t('kb.category')}<SearchableSelect disabled={busy} className={selectStyle} value={draft.category || 'general'} onChange={e => setDraft({ ...draft, category: e.target.value as 'general' | 'meeting' })}><option value="general">{t('kb.categories.general')}</option><option value="meeting">{t('kb.categories.meeting')}</option></SearchableSelect></label>
@@ -390,7 +415,7 @@ export default function KnowledgeBaseView() {
                 <label className="flex flex-col gap-1 text-xs">{t('kb.parent')}<SearchableSelect disabled={busy || !admin} className={selectStyle} value={draft.parent_id || ''} onChange={e => setDraft({ ...draft, parent_id: e.target.value || null })}>
                   <option value="">{t('kb.noParent')}</option>{pages.filter(p => p.id !== draft.id && p.project_id === draft.project_id && (!p.is_archived || p.id === draft.parent_id)
                     // A shared page cannot be moved into a private draft.
-                    && (p.id === draft.parent_id || knowledgeInsidePrivateDraft(pages, draft.id) || !knowledgeInsidePrivateDraft(pages, p.id))).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    && (p.id === draft.parent_id || knowledgeInsidePrivateDraft(pagesById, draft.id) || !knowledgeInsidePrivateDraft(pagesById, p.id))).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                 </SearchableSelect></label>
                 <label className="flex flex-col gap-1 text-xs">{t('kb.order')}<Input disabled={busy} type="number" step="1" value={draft.sort_order} onChange={e => setDraft({ ...draft, sort_order: Number(e.target.value) })} /></label>
               </div>
@@ -426,18 +451,13 @@ export default function KnowledgeBaseView() {
               const files = Array.from(e.target.files || []); e.target.value = '';
               void run(() => withFileLock(async () => { for (const file of files) await uploadKnowledgeFile(page.id, currentMemberId, file); }));
             }} />
-            {!attachments.length && <p className="text-sm text-muted-foreground">{t('kb.noFiles')}</p>}
+            {!detailsError && !attachments.length && <p className="text-sm text-muted-foreground">{t('kb.noFiles')}</p>}
             {attachments.map(file => <div key={file.id} className="flex items-center gap-3 text-sm border-t pt-2">
               <button disabled={busy} className="flex-1 min-w-0 truncate text-left text-primary hover:underline" onClick={() => void run(() => downloadKnowledgeFile(file))}>{file.file_name}</button>
               <span className="text-xs text-muted-foreground">{(file.file_size / 1024).toFixed(1)} KB</span>
               {canEdit && <Button size="icon" variant="ghost" disabled={busy} aria-label={t('kb.deleteFile', { name: file.file_name })} onClick={() => {
                 if (!window.confirm(t('kb.deleteFile', { name: file.file_name }))) return;
-                void run(() => withFileLock(async () => {
-                  const removed = await supabase.storage.from(file.storage_bucket || 'task-images').remove([file.storage_path]);
-                  if (removed.error) throw removed.error;
-                  const result = await supabase.from('kb_attachments').delete().eq('id', file.id).select('*').single();
-                  if (result.error) throw result.error;
-                }));
+                void run(() => withFileLock(() => deleteKnowledgeFile(file)));
               }}><Trash2 size={14} /></Button>}
             </div>)}
           </section>}
