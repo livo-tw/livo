@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import stat
 import subprocess
 import sys
@@ -299,6 +300,54 @@ class Fixture:
         self.expect(self.protected() == protected, 'refusal_changed_protected_data')
         self.tests.append(name)
 
+    def ordered_cloudflare_batches(self, config):
+        self.stage = 'ordered_cloudflare_batches'
+        spec = importlib.util.spec_from_file_location('livo_retention_ordered_fixture', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        item = next(row for row in config['binding']['sources'] if row['source_name'] == 'cloudflare.logs.prod')
+        rel = relation(item['table_name'])
+        cutoff = '2000-01-04T00:00:00'
+        ids = ['order-locked', 'order-next', 'order-other', 'order-boundary', 'order-future', 'order-null']
+        # Reverse physical insertion order so LIMIT alone cannot satisfy oldest-first.
+        self.sql('INSERT INTO ' + rel + " (id,timestamp) VALUES "
+            "('order-other','2000-01-03'),('order-next','2000-01-02'),('order-locked','2000-01-01'),"
+            "('order-boundary','2000-01-04'),('order-future','2000-01-05'),('order-null',NULL);")
+        locker = subprocess.Popen(DOCKER + ['exec', '-i', self.cid, 'psql', '-X', '-qAt', '-w',
+            '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', '_supabase'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+        try:
+            locker.stdin.write("SET idle_in_transaction_session_timeout=15000; BEGIN; SELECT 'locked' FROM "
+                + rel + " WHERE id='order-locked' FOR UPDATE;\n")
+            locker.stdin.flush()
+            readable, _, _ = select.select([locker.stdout], [], [], 10)
+            self.expect(bool(readable) and locker.stdout.readline().strip() == 'locked', 'ordered_fixture_lock_unavailable')
+            result = self.json_sql(helper.delete_batch_sql(config, item, cutoff, 1))
+            self.expect(result == {'deleted_rows': 1}, 'ordered_batch_limit')
+            remaining = self.json_sql('SELECT jsonb_agg(id ORDER BY id) FROM ' + rel
+                + " WHERE id LIKE 'order-%';")
+            self.expect('order-locked' in remaining and 'order-next' not in remaining
+                and 'order-other' in remaining, 'ordered_oldest_unlocked_row_not_selected')
+        finally:
+            try:
+                locker.stdin.write('ROLLBACK;\n\\q\n')
+                locker.stdin.flush()
+                locker.communicate(timeout=10)
+            except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                locker.kill()
+                locker.communicate(timeout=5)
+        self.expect(locker.returncode == 0, 'ordered_fixture_lock_cleanup')
+        result = self.json_sql(helper.delete_batch_sql(config, item, cutoff, 1))
+        self.expect(result == {'deleted_rows': 1}, 'ordered_second_batch_limit')
+        self.expect(self.sql('SELECT count(*) FROM ' + rel + " WHERE id='order-locked';").strip() == '0',
+                    'ordered_oldest_row_not_selected_after_unlock')
+        result = self.json_sql(helper.delete_batch_sql(config, item, cutoff, 1000))
+        self.expect(result == {'deleted_rows': 1}, 'ordered_remaining_expired_count')
+        remaining = self.json_sql('SELECT jsonb_agg(id ORDER BY id) FROM ' + rel + " WHERE id LIKE 'order-%';")
+        self.expect(remaining == ['order-boundary', 'order-future', 'order-null'], 'ordered_cutoff_or_null_changed')
+        self.sql('DELETE FROM ' + rel + ' WHERE id IN (' + ','.join(quoted(value) for value in ids) + ');')
+        self.tests.append('ordered_cf_oldest_unlocked_bounded_cutoff')
+
     def exercise(self):
         self.stage = 'bind_disabled'
         result = self.helper('bind', '--config', str(self.config_path), '--container', self.name,
@@ -310,6 +359,7 @@ class Fixture:
         self.expect(config['compose_service'] == 'db' and config['database'] == '_supabase', 'binding_target_contract')
         self.expect(stat.S_IMODE(self.config_path.stat().st_mode) == 0o600 and self.config_path.stat().st_uid == 0, 'binding_permissions')
         self.tests.append('bind_disabled_root_owned')
+        self.ordered_cloudflare_batches(config)
         protected = self.protected()
         before = self.old_count()
         self.stage = 'default_preview'

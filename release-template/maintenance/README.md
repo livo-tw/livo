@@ -8,6 +8,8 @@
 
 `selfhost-log-retention.py` 只處理白名單的九種 Supabase 技術來源，從 `_analytics.sources` 即時核對資料表、OID、時間欄位和叢集身分；不修改 LIVO 業務、Slack、來源設定或其他資料表。NULL／未來時間不刪。每次有筆數、時間、WAL 與空間界線，狀態如實區分 disabled/refused/partial/success，不把剩餘過期資料當清完。
 
+Cloudflare 來源 `cloudflare.logs.prod` 的批次先按 `timestamp` 排序，再套用原本的筆數上限與 `FOR UPDATE SKIP LOCKED`；其他八種來源的 SQL 不變。排序不保證每個環境都更快：helper、bind 和安裝程式不建立或保證時間欄位的 B-tree 索引，只有 BRIN 的巨表可能仍須掃描及排序，超過原本 15 秒界線。啟用前應以該實例的索引 metadata 與唯讀 `EXPLAIN` 評估可用的時間欄位 B-tree 和執行成本；新增索引是另外核准的維護工作，本工具不自動執行 DDL。小型無 B-tree fixture 只驗證排序、鎖定與保留邊界，未驗證大型無 B-tree 環境的效能。
+
 ## 先準備，再在維護時段啟用
 
 出廠範例 `enabled=false`，安裝與升級程式不會啟用 timer 或刪除事件。容器重建、首次過期清理和既有巨大資料表的實體縮減，都先完成新的快照、完整 DB 與 storage 備份，確認維護時段和足夠空間。既有巨表整理是獨立工作；空間不足時不得執行 VACUUM FULL、TRUNCATE 或刪 `pg_wal`。日常按已核准保留政策執行，不每天再備份一份巨大事件表。

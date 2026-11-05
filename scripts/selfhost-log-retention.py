@@ -301,6 +301,7 @@ def preview(client, cfg, cutoff=None):
 
 def delete_batch_sql(cfg, item, cutoff, limit):
     table = identifier(item["table_name"])
+    order = "\n  ORDER BY timestamp" if item["source_name"] == "cloudflare.logs.prod" else ""
     valid = """(SELECT system_identifier::text FROM pg_control_system())=CLUSTER
  AND (SELECT oid::bigint FROM pg_database WHERE datname=current_database())=DATABASEOID
  AND current_database()='_supabase'
@@ -331,7 +332,7 @@ BEGIN
  PERFORM 1 FROM _analytics.sources WHERE name={literal(item['source_name'])} AND token::text={literal(item['token'])} FOR SHARE;
  IF NOT ({valid}) THEN RAISE EXCEPTION 'retention_binding_changed'; END IF;
  WITH expired AS (
-  SELECT ctid FROM ONLY {table} WHERE timestamp < {literal(cutoff)}::timestamp
+  SELECT ctid FROM ONLY {table} WHERE timestamp < {literal(cutoff)}::timestamp{order}
   LIMIT {int(limit)} FOR UPDATE SKIP LOCKED
  ), removed_rows AS (
   DELETE FROM ONLY {table} t USING expired e WHERE t.ctid=e.ctid RETURNING 1
@@ -639,6 +640,26 @@ def self_test():
             self.assertFalse(DEFAULTS["enabled"])
             self.assertEqual(DEFAULTS["retention_days"], 7)
             self.assertEqual(DEFAULTS["db_user"], "supabase_admin")
+
+        def test_cloudflare_order_is_the_only_batch_sql_change(self):
+            cfg = {**DEFAULTS, "binding": {"cluster_id": "12345", "database_oid": 1}}
+            legacy_sql = []
+            for i, name in enumerate(SOURCE_NAMES):
+                token = str(uuid.UUID(int=i + 1))
+                item = {"source_name": name, "token": token,
+                        "table_name": "log_events_" + token.replace("-", "_"),
+                        "oid": i + 100, "columns": dict(EXPECTED_COLUMNS)}
+                sql = delete_batch_sql(cfg, item, "2000-01-04T00:00:00", 3)
+                if name == "cloudflare.logs.prod":
+                    self.assertEqual(sql.count("\n  ORDER BY timestamp\n  LIMIT 3 FOR UPDATE SKIP LOCKED"), 1)
+                    sql = sql.replace("\n  ORDER BY timestamp", "", 1)
+                else:
+                    self.assertNotIn("ORDER BY", sql)
+                legacy_sql.append(sql)
+            # Frozen before this fix: protects all nine source bindings, guards,
+            # cutoffs, locking, transaction and DELETE/ctid SQL byte for byte.
+            self.assertEqual(hashlib.sha256("\0".join(legacy_sql).encode()).digest().hex(":"),
+                             "2f:2f:3a:1f:0f:c6:9f:e3:73:bb:3a:c7:0d:fe:20:aa:8d:a2:2b:be:74:5a:f7:12:aa:16:d1:41:cf:b3:65:da")
 
         def test_lsn(self):
             self.assertEqual(lsn_number("1/0") - lsn_number("0/FFFFFFFE"), 2)
