@@ -1,3 +1,5 @@
+import { matchingChannels } from './slackTaskRoutes.ts';
+export { matchingChannels } from './slackTaskRoutes.ts';
 export type Row = Record<string, any>;
 export interface Job extends Row {
   id: number; team_id: string; task_id: string; target_type: 'channel' | 'member';
@@ -139,13 +141,6 @@ export function notificationMessage(payload: Row, appBase: string) {
       ...(!approval && payload.taskKey ? [{ type: 'button', action_id: 'livo_task_open', text: { type: 'plain_text', text: '處理任務' },
         value: JSON.stringify({ key: payload.taskKey }) }] : [])] }],
     unfurl_links: false, unfurl_media: false };
-}
-export function matchingChannels(config: Row | undefined, project: Row | undefined): string[] {
-  if (!project || project.is_archived) return [];
-  const routes = Array.isArray(config?.routes) ? config.routes : [];
-  return [...new Set<string>(routes.filter((r: Row) => r.enabled !== false && /^[CG][A-Z0-9]+$/.test(r.channelId || '') &&
-    ((r.projectId && r.projectId === project.id) || (r.lineId && r.lineId === project.line_id)))
-    .map((r: Row) => r.channelId))];
 }
 export function routeAllowed(config: Row | undefined, project: Row | undefined, job: Job): boolean {
   if (config?.enabled !== true || config.teamId !== job.team_id) return false;

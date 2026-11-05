@@ -24,7 +24,7 @@ export function qaSlackClient(env: Env, ws: string) {
   return async (method: string, body: Record<string, unknown>): Promise<Record<string, any>> => {
     token ??= resolveSlackToken(env, ws);
     if (!(await token)) throw new Error('qa_slack_not_configured');
-    const read = ['users.info', 'chat.getPermalink'].includes(method);
+    const read = ['users.info', 'chat.getPermalink', 'conversations.info'].includes(method);
     const query = new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]));
     const response = await fetch(`https://slack.com/api/${method}${read ? '?' + query : ''}`, { method: read ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${await token}`, 'Content-Type': 'application/json; charset=utf-8' },

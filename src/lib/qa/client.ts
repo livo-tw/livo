@@ -55,7 +55,7 @@ export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'f
   if (!extensions || (cloud && !extensions.includes(file.name.split('.').pop()!.toLowerCase()))) return 'file_type';
 }
 
-export type QaProjectPerson = { id: string; name: string; avatar?: string; color?: string; jobTitle?: string; isActive: boolean };
+export type QaProjectPerson = { id: string; name: string; avatar?: string; color?: string; jobTitle?: string; isActive: boolean; isExternal?: boolean };
 export type QaTaskReference = { id: string; taskKey: string; title: string };
 
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }

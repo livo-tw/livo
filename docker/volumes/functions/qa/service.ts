@@ -102,7 +102,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       ? (await db.rows('external_qa_accounts', { select: 'id,name,is_active', auth_id: 'eq.' + user.id, limit: 1 }))[0]
       : members[0];
     if (!account || account.is_active !== true) fail('qa_forbidden', 403);
-    if (external && user.user_metadata?.livo_password_change_required === true) fail('qa_password_change_required', 403);
+    if (external && user.app_metadata?.livo_external_qa_password_change_required !== false) fail('qa_password_change_required', 403);
     if (!profileOnly && settings[0]?.value?.qa !== true) fail('qa_disabled', 403);
     let slackIdentity = null;
     let slackSource = null;
@@ -256,10 +256,22 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const projectId = id(request.projectId);
         const offset=request.offset??0,search=typeof request.search==='string'?request.search.trim():'';
         if(!Number.isSafeInteger(offset)||offset<0||offset>100000||search.length>100)fail('qa_invalid_request');
-        if (actor.external) return externalRead(actor, 'members', { projectId, offset, search });
-        if (request.action === 'project_people') return db.rpc('livo_qa_internal_external_people', {
-          p_auth_id: actor.authId, p_project_id: projectId, p_search: search, p_offset: offset,
-        });
+        if (actor.external) {
+          const page = await externalRead(actor, 'members', { projectId, offset, search });
+          // Classify only the already-authorized display IDs. Internal member IDs
+          // may legitimately start with eqa-; a name prefix is not a role proof.
+          const ids = page.members.map((person: Row) => id(person.id));
+          const internal = new Set((ids.length ? await db.rows('members', {
+            select: 'id', id: `in.(${ids.join(',')})`,
+          }) : []).map((person: Row) => person.id));
+          return { ...page, members: page.members.map((person: Row) => ({ ...person, isExternal: !internal.has(person.id) })) };
+        }
+        if (request.action === 'project_people') {
+          const page = await db.rpc('livo_qa_internal_external_people', {
+            p_auth_id: actor.authId, p_project_id: projectId, p_search: search, p_offset: offset,
+          });
+          return { ...page, members: page.members.map((person: Row) => ({ ...person, isExternal: true })) };
+        }
         await coordination(projectId);
         const rows=await db.rows('members',{select:'id,name',is_active:'eq.true',order:'name,id',offset,limit:100,...(search?{name:`ilike.*${search.replace(/[\\%_*]/g,'\\$&')}*`}:{})});
         return {members:rows,hasMore:rows.length===100};

@@ -20,7 +20,15 @@ beforeEach(()=>{
   db=new DatabaseSync(':memory:');objects=new Map();putFailure=false;deleteFailure=false;onPut=null;listCalls=[];
   db.exec(`CREATE TABLE workspaces(id TEXT PRIMARY KEY,storage_limit_mb REAL,storage_used_bytes INTEGER DEFAULT 0);
     INSERT INTO workspaces VALUES('team',1,0),('other',1,0);
-    CREATE TABLE qa_upload_sessions(workspace_id TEXT,expected_size INTEGER,state TEXT,expires_at TEXT);
+    CREATE TABLE qa_upload_sessions(workspace_id TEXT NOT NULL,id TEXT NOT NULL,issue_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,mime_type TEXT NOT NULL,expected_size INTEGER NOT NULL CHECK(expected_size>0 AND expected_size<=209715200),
+      storage_key TEXT NOT NULL,multipart_id TEXT,state TEXT NOT NULL DEFAULT 'initializing'
+        CHECK(state IN ('initializing','uploading','finalizing','aborting','complete','aborted')),
+      created_at TEXT NOT NULL,expires_at TEXT NOT NULL,cleanup_token TEXT,cleanup_lease_until TEXT,
+      cleanup_last_attempt_at TEXT,cleanup_completed_at TEXT,PRIMARY KEY(workspace_id,id));
+    CREATE TABLE qa_attachments(workspace_id TEXT NOT NULL,id TEXT NOT NULL,issue_id TEXT NOT NULL,uploaded_by TEXT NOT NULL,
+      file_name TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,storage_key TEXT NOT NULL,created_at TEXT NOT NULL,
+      restored_by TEXT,PRIMARY KEY(workspace_id,id));
     CREATE TABLE projects(workspace_id TEXT,id TEXT);
     CREATE TABLE qa_issues(workspace_id TEXT,id TEXT,project_id TEXT,data TEXT);
     INSERT INTO projects VALUES('team','project');
@@ -44,11 +52,11 @@ afterEach(()=>db.close());
 describe('import object quota and durable payloads on actual SQLite',()=>{
   it('counts original/assets/payload atomically against ordinary and QA reservations',async()=>{
     await ensureKnowledgeImportUsageReconciled(env,'team');
-    db.prepare('INSERT INTO qa_upload_sessions(workspace_id,expected_size,state) VALUES(?,?,?)').run('team',300000,'uploading');
+    db.exec("INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,state,created_at,expires_at) VALUES('team','quota-active','issue','actor','proof.txt','text/plain',300000,'qa/team/issue/quota-active','uploading','2026-11-01','2099-01-01')");
     const results=await Promise.allSettled([putKnowledgeImportObject(env,'team',key(),bytes(500000),'text/plain'),reserveStorageBytes(env,'team',500000)]);
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);expect(usage()).toBe(500000);
     await expect(putKnowledgeImportObject(env,'team',key('asset'),bytes(300000),'image/png')).rejects.toThrow('storage_quota_exceeded');
-    expect(()=>db.prepare('INSERT INTO qa_upload_sessions(workspace_id,expected_size,state) VALUES(?,?,?)').run('team',300000,'initializing')).toThrow('qa_storage_quota_exceeded');
+    expect(()=>db.exec("INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,state,created_at,expires_at) VALUES('team','quota-blocked','issue','actor','proof.txt','text/plain',300000,'qa/team/issue/quota-blocked','initializing','2026-11-01','2099-01-01')")).toThrow('qa_storage_quota_exceeded');
     expect(usage('other')).toBe(0);
   });
   it('releases failed PUT bytes, but failed delete retains charge until one successful retry',async()=>{

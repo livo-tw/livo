@@ -134,8 +134,8 @@ function enforceWritePolicy(
     const queueKey = 'deployment_queue';
     const rows = valuesAsRows(req.values);
     const superOnlyKeys = meta.superOnlyKeys || [queueKey];
-    if (rank < 2 && (rows.some(row => superOnlyKeys.includes(String(row.key)))
-      || req.filters?.some(filter => filter.col === 'key' && filter.op === 'eq' && superOnlyKeys.includes(String(filter.val))))) return permissionDenied(table);
+    if (rank < 2 && (rows.some(row => Object.entries(row).some(([col, value]) => col.toLowerCase() === 'key' && superOnlyKeys.includes(String(value))))
+      || req.filters?.some(filter => filter.col.toLowerCase() === 'key' && filter.op === 'eq' && superOnlyKeys.includes(String(filter.val))))) return permissionDenied(table);
     if (rank < 2 && req.op === 'update') req.filters = [...(req.filters || []), ...superOnlyKeys.map(key => ({ col: 'key', op: 'neq' as const, val: key }))];
     const touchesQueue = rows.some(row => row.key === queueKey)
       || req.filters?.some(filter => filter.col === 'key' && filter.op === 'eq' && filter.val === queueKey);
@@ -701,7 +701,7 @@ export async function runQuery(
 
     // Server-side permission floor (role-based write rules + own-row scoping).
     // A cached role must not let a demoted administrator grant themselves an ACL position or login identity.
-    if (table === 'members' && req.op !== 'select') {
+    if (['members', 'system_settings'].includes(table) && req.op !== 'select') {
       const live = await env.DB.prepare('SELECT role,is_active FROM members WHERE workspace_id=? AND id=?')
         .bind(ws,auth.member.id).first<{role:string;is_active:number}>();
       if (!live?.is_active) return permissionDenied(table);

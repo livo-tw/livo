@@ -34,6 +34,7 @@ import { runApprovalDeliveries } from './approvalDelivery';
 import { handleKnowledgeWorkflow } from './knowledgeWorkflow';
 import { handleKnowledgeImport } from './functions/knowledgeImport';
 import { runKnowledgeImportCleanup } from './functions/knowledgeImportCleanup';
+import { runScheduledQaUploadCleanup } from './functions/qaUploadCleanup';
 import { ImportError } from './knowledgeImport';
 import { handleQaSlackHttp, runQaSlackInbox } from './qaSlack';
 import { handleManageMember } from './functions/manageMember';
@@ -264,6 +265,7 @@ export default {
     ctx.waitUntil(
       Promise.allSettled([
         runKnowledgeImportCleanup(env), // system retention: all tenants, including disabled importers
+        runScheduledQaUploadCleanup(env),
         runScheduledBackup(env, ctx),
         runQaSlackInbox(env, ctx),
         runApprovalDeliveries(env),

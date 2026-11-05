@@ -203,7 +203,7 @@ describe('partially created task recovery', () => {
 
   it('closes normally only when all content writes have succeeded', async () => {
     state.deniedTable = ''; const { result } = prepare(); await act(async () => result.current.handleSubmitAttempt());
-    await waitFor(() => expect(state.success).toHaveBeenCalledWith('task.created'));
+    await waitFor(() => expect(state.success).toHaveBeenCalledWith('task.created', expect.any(Object)));
     expect(state.close).toHaveBeenCalledWith(false); expect(result.current.partialCreation).toBeNull();
   });
 });

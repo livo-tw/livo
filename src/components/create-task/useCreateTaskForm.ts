@@ -23,6 +23,7 @@ import { groupProjectsByLine } from '@/lib/projectGroups';
 import { Task, Priority, TaskDeployment } from '@/types';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { showTaskCreatedToast } from '@/lib/taskCreatedToast';
 import { randomUUID } from '@/lib/generateId';
 
 interface PendingFile {
@@ -358,7 +359,7 @@ export function useCreateTaskForm() {
           .catch(() => { if (current()) toast.info(t('taskCreate.recovery.refreshFailed')); });
         if (!current()) return;
         childSubmission.current = null; setUncertainSubtask(false); setRetainedChildParentId(null);
-        setIsSubmitting(false); toast.success(t('task.created'));
+        setIsSubmitting(false); showTaskCreatedToast(created, t);
         setShowCreateTask(false); setSelectedTask(created);
       } catch (error) {
         if (current()) {
@@ -485,7 +486,7 @@ export function useCreateTaskForm() {
         .catch(() => { if (activeCreationScope.current === creationScope) toast.info(t('taskCreate.recovery.refreshFailed')); });
       assertCurrentScope();
       createdTask.current = null; retryPrimary.current = null; setUncertainTask(false); setRecoverySprintConflict(false);
-      toast.success(t('task.created'));
+      showTaskCreatedToast(created, t);
       setShowCreateTask(false);
     } catch (err) {
       if (activeCreationScope.current !== creationScope) return;

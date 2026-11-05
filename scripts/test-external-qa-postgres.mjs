@@ -1,9 +1,11 @@
+import { addAssignmentCases } from './lib/external-qa-assignment-postgres.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { plan as qaPlan } from './test-qa-auto-close-postgres.mjs';
 import { runPostgres } from './task-work-postgres-runtime.mjs';
 import { runNativePostgres } from './native-postgres-runtime.mjs';
+import { addAuthRecoveryCases } from './lib/external-qa-auth-recovery-postgres.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = name => fs.readFileSync(path.join(root, 'supabase/migrations', name), 'utf8');
@@ -13,7 +15,7 @@ const auth = "'00000000-0000-0000-0000-000000000011'::uuid";
 const admin = "'00000000-0000-0000-0000-000000000003'::uuid";
 const actor = 'eqa-example';
 const names = ['20261110_external_qa_scope.sql', '20261110_qa_external_reads.sql', '20261111_external_qa_admin.sql',
-  '20261112_external_qa_gateway_privacy.sql'];
+  '20261112_external_qa_gateway_privacy.sql', '20261113_external_qa_auth_recovery.sql', '20261116_external_qa_assignment_directory.sql'];
 
 export function plan() {
   const baseline = qaPlan();
@@ -55,6 +57,7 @@ export function plan() {
     "INSERT INTO external_qa_accounts(id,auth_id,name) VALUES('eqa-conflict'," + admin + ",'Conflict')", '42501', 'qa_external_identity_conflict');
   cases.push("INSERT INTO qa_issues(id,project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data) SELECT 'issue-external-other','p-other',state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data || '{\"id\":\"issue-external-other\",\"projectId\":\"p-other\"}'::jsonb FROM qa_issues WHERE id='example-stale';");
   check('profile lists only granted projects', read('profile') + "->'projects'->0->>'id'='p-test' AND jsonb_array_length(" + read('profile') + "->'projects')=1");
+  addAssignmentCases({ cases, check, error, auth, quote, json });
   check('mixed project query cannot count other project', read('list', { projectIds: ['p-other'] }) + "->>'total'='0'");
   check('current issue read works inside project', read('issue', { id: 'example-stale' }) + "->>'id'='example-stale'");
   error('known issue outside scope is hidden', 'SELECT ' + read('issue', { id: 'issue-external-other' }), 'P0002', 'qa_issue_not_found');
@@ -86,9 +89,16 @@ export function plan() {
 
   cases.push('RESET ROLE;', migrations, 'SET ROLE service_role;');
   check('second application keeps grants and command receipts', read('receipt', { id: 'example-stale', commandId: 'external-comment-command' }) + "->>'actor_id'=" + quote(actor));
+  check('second application preserves published commit OID owner ACL and dependency guard',
+    "(SELECT p.oid=b.oid AND p.proowner=b.proowner AND p.proacl=b.proacl FROM pg_proc p CROSS JOIN qa_test.commit_identity b WHERE p.oid='public.livo_qa_commit(uuid,text,text,text,integer,text,jsonb,jsonb)'::regprocedure) AND COALESCE(current_setting('livo.qa_assignment_enforce',true),'false')<>'true'");
   check('super admin revokes projects and increments the revision', adminUpdate(admin, 'ARRAY[]::text[]', 1) + "->>'revision'='2'");
   error('stale admin revision cannot overwrite a revocation', 'SELECT ' + adminUpdate(admin, "ARRAY['p-test']", 1), 'PT409', 'external_qa_stale');
   check('revoked account profile has no granted projects', "jsonb_array_length(" + read('profile') + "->'projects')=0");
+  check('revoked account has no assignment directory through profile', "jsonb_array_length(" + read('profile') + "->'members')=0");
+  error('same login loses the project assignment directory after revocation', 'SELECT ' + read('members', { projectId: 'p-test' }), 'P0002', 'qa_project_unavailable');
+  cases.push("UPDATE external_qa_accounts SET is_active=false WHERE id='eqa-example';");
+  error('disabled external login cannot read even the profile directory', 'SELECT ' + read('profile'), '42501', 'qa_forbidden');
+  cases.push("UPDATE external_qa_accounts SET is_active=true WHERE id='eqa-example';");
   error('revocation invalidates a signed upload reservation at object write',
     "INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('qa-evidence','default/example-stale/external-pending','{\"size\":7,\"mimetype\":\"text/plain\"}')",
     '42501', 'qa_upload_unavailable');
@@ -112,20 +122,29 @@ export function plan() {
   check('legacy task assets are no longer public', "(SELECT NOT public FROM storage.buckets WHERE id='task-images')");
   check('create and revoke each produced one actor-attributed audit event',
     "(SELECT count(*) FROM public.external_qa_admin_events WHERE account_id='eqa-example' AND actor_id='m-super')=2");
+  addAuthRecoveryCases({ cases, check, error, admin, quote, json, migrations });
   cases.push("RESET ROLE; SELECT json_build_object('status','passed','assertions',(SELECT count(*) FROM qa_test.results));");
 
   const fixture = [
     'RESET ROLE;',
-    "ALTER TABLE members ADD COLUMN email text NOT NULL DEFAULT '', ADD COLUMN name text NOT NULL DEFAULT 'Example member', ADD COLUMN avatar text NOT NULL DEFAULT '', ADD COLUMN color text NOT NULL DEFAULT '', ADD COLUMN job_title text NOT NULL DEFAULT '';",
+    "ALTER TABLE members ADD COLUMN email text NOT NULL DEFAULT '', ADD COLUMN name text NOT NULL DEFAULT 'Example member', ADD COLUMN avatar text NOT NULL DEFAULT '', ADD COLUMN color text NOT NULL DEFAULT '', ADD COLUMN job_title text NOT NULL DEFAULT '', ADD COLUMN is_qa_admin boolean NOT NULL DEFAULT false;",
     "ALTER TABLE projects ADD COLUMN name text NOT NULL DEFAULT 'Example project', ADD COLUMN line_id text NOT NULL DEFAULT 'line-test', ADD COLUMN color text NOT NULL DEFAULT '';",
     "ALTER TABLE tasks ADD COLUMN task_key text NOT NULL DEFAULT 'EX-1', ADD COLUMN title text NOT NULL DEFAULT 'Example task';",
-    "CREATE TABLE auth.users(id uuid PRIMARY KEY,email text); INSERT INTO auth.users VALUES (" + auth + ",'external@example.com');",
+    "CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,encrypted_password text,raw_app_meta_data jsonb NOT NULL DEFAULT '{}',raw_user_meta_data jsonb NOT NULL DEFAULT '{}',last_sign_in_at timestamptz,updated_at timestamptz); INSERT INTO auth.users(id,email) VALUES (" + auth + ",'external@example.com');",
+    "CREATE TABLE auth.sessions(id uuid PRIMARY KEY,user_id uuid); CREATE TABLE auth.refresh_tokens(id bigint PRIMARY KEY,user_id text);",
+    "CREATE TABLE auth.audit_log_entries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),payload jsonb);",
     "INSERT INTO storage.buckets(id,name,public) VALUES ('task-images','task-images',true) ON CONFLICT(id) DO UPDATE SET public=true;",
     "INSERT INTO storage.objects(bucket_id,name) VALUES ('task-images','internal/example.png');",
     "CREATE SCHEMA realtime; CREATE TABLE realtime.messages(extension text NOT NULL); ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;",
     "GRANT USAGE ON SCHEMA realtime TO anon,authenticated; GRANT SELECT,INSERT ON realtime.messages TO anon,authenticated;",
     "CREATE POLICY legacy_presence_all ON realtime.messages TO anon,authenticated USING(true) WITH CHECK(true);",
     "INSERT INTO realtime.messages VALUES ('presence');",
+    migration('20261015_qa_custom_fields.sql'),
+    "CREATE TABLE qa_test.commit_identity AS SELECT oid,proowner,proacl FROM pg_proc WHERE oid='public.livo_qa_commit(uuid,text,text,text,integer,text,jsonb,jsonb)'::regprocedure; GRANT SELECT ON qa_test.commit_identity TO service_role;",
+    `CREATE FUNCTION qa_test.commit_by_dependency(a uuid,b text,c text,d text,e integer,f text,g jsonb,h jsonb)
+      RETURNS jsonb LANGUAGE sql BEGIN ATOMIC SELECT public.livo_qa_commit(a,b,c,d,e,f,g,h); END;
+      REVOKE ALL ON FUNCTION qa_test.commit_by_dependency(uuid,text,text,text,integer,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+      GRANT EXECUTE ON FUNCTION qa_test.commit_by_dependency(uuid,text,text,text,integer,text,jsonb,jsonb) TO service_role;`,
     migration('20261019_active_member_gate.sql'),
     migrations,
   ];

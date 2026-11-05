@@ -1,3 +1,4 @@
+import { qaRepairAssigneeOptions } from '@/lib/qa/assignmentPeople';
 import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
 import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import { useEffect, useRef, useState } from 'react';
@@ -54,7 +55,7 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand, assig
     {configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={issue.severity} disabled={disabled} onChange={event => update({ severity: event.target.value as QaSeverity })}>
       {['untriaged', 'low', 'medium', 'high'].map(value => <option key={value} value={value}>{t(`qa.severityNames.${value}`)}</option>)}
     </QaSelect>}
-    <UserSelect label={t('qa.assignee')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
+    <UserSelect label={t('qa.assignee')} options={qaRepairAssigneeOptions(assignmentOptions)} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
       onChange={value => update({ assigneeId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} size="md" />
     <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}

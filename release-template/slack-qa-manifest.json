@@ -1,6 +1,7 @@
 {
   "display_information": { "name": "LIVO", "description": "LIVO 任務與 QA Bug", "background_color": "#172B4D" },
   "features": {
+    "unfurl_domains": ["example.com"],
     "bot_user": { "display_name": "LIVO", "always_online": false },
     "shortcuts": [
       { "name": "建立 LIVO 卡片", "type": "message", "callback_id": "livo_create_task", "description": "將訊息建立為 LIVO 任務" },
@@ -10,10 +11,10 @@
     ],
     "slash_commands": [{ "command": "/livo", "description": "建立任務、QA Bug 或搜尋知識庫", "usage_hint": "kb 關鍵字 | bug new 問題標題", "should_escape": false }]
   },
-  "oauth_config": { "scopes": { "bot": ["commands", "chat:write", "chat:write.customize", "channels:read", "groups:read", "channels:history", "groups:history", "im:write", "users:read", "users:read.email"] } },
+  "oauth_config": { "scopes": { "bot": ["commands", "links:read", "links:write", "chat:write", "chat:write.customize", "channels:read", "groups:read", "channels:history", "groups:history", "im:write", "users:read", "users:read.email"] } },
   "settings": {
     "socket_mode_enabled": true,
     "interactivity": { "is_enabled": true },
-    "event_subscriptions": { "bot_events": ["message.channels", "message.groups"] }
+    "event_subscriptions": { "bot_events": ["message.channels", "message.groups", "link_shared"] }
   }
 }

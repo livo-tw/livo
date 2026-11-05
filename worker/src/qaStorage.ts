@@ -4,6 +4,7 @@ import { QaError, QA_MAX_FILE_BYTES, QA_PART_BYTES, type QaAttachment } from './
 import { getQaIssue, qaHash, qaId, qaReadBody, requireQaEnabled } from './qa';
 import { ensureKnowledgeImportUsageReconciled } from './knowledgeImportStorage';
 import { ImportError } from './knowledgeImport';
+import { cleanupExpiredQaUploads } from './functions/qaUploadCleanup';
 
 type C=Context<AppContext>;
 interface Session {
@@ -49,33 +50,22 @@ async function session(c:C,id:string):Promise<Session>{
 }
 /** Cleanup remains tenant-scoped and only releases reservation after R2 cleanup succeeds. */
 export async function cleanupQaExpiredUploads(env:Env,ws:string):Promise<void>{
-  const now=new Date().toISOString();
-  const expired=await env.DB.prepare("SELECT * FROM qa_upload_sessions WHERE workspace_id=? AND state IN ('initializing','uploading','finalizing','aborting') AND expires_at<=? LIMIT 30").bind(ws,now).all<Session>();
-  for(const item of expired.results){
-    const claimed=await env.DB.prepare("UPDATE qa_upload_sessions SET state='aborting' WHERE workspace_id=? AND id=? AND state IN ('initializing','uploading','finalizing','aborting') AND expires_at<=? RETURNING id").bind(ws,item.id,now).first();
-    if(!claimed)continue;
-    try{
-      if(item.multipart_id){try{await env.ATTACHMENTS.resumeMultipartUpload(item.storage_key,item.multipart_id).abort();}catch(error){
-        if(!/NoSuchUpload|does not exist|not found|already.*(?:abort|complet)/i.test(String(error)))throw error;
-      }}
-      await env.ATTACHMENTS.delete(item.storage_key);
-      await env.DB.prepare("UPDATE qa_upload_sessions SET state='aborted' WHERE workspace_id=? AND id=? AND state='aborting'").bind(ws,item.id).run();
-    }catch{/* Keep reservation and retry cleanup; never free quota before cleanup. */}
-  }
+  await cleanupExpiredQaUploads(env,ws);
 }
 async function init(c:C,body:Record<string,unknown>):Promise<Response>{
   const auth=c.get('auth'),ws=auth.member.workspaceId,id=qaId(body.id);
   const issue=await getQaIssue(c.env,ws,id),file=qaFileInput(body.fileName,body.mimeType,body.size);
-  await cleanupQaExpiredUploads(c.env,ws);
   try{await ensureKnowledgeImportUsageReconciled(c.env,ws);}catch(error){
     if(error instanceof ImportError&&error.code==='storage_reconciliation_pending')return c.json({data:null,error:{code:error.code,message:'附件容量帳務正在核對，請稍後再試'}},409);
     throw error;
   }
+  await cleanupQaExpiredUploads(c.env,ws);
   const uploadId=crypto.randomUUID(),storageKey=`qa/${ws}/${id}/${uploadId}`,now=new Date().toISOString(),expiry=new Date(Date.now()+24*60*60*1000).toISOString();
   await c.env.DB.prepare('INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(ws,uploadId,issue.id,auth.member.id,file.fileName,file.mimeType,file.size,storageKey,now,expiry).run();
   try{
     const upload=await c.env.ATTACHMENTS.createMultipartUpload(storageKey,{httpMetadata:{contentType:file.mimeType,contentDisposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`},customMetadata:{workspace:ws,issue:id,upload:uploadId}});
-    await c.env.DB.prepare("UPDATE qa_upload_sessions SET multipart_id=?,state='uploading' WHERE workspace_id=? AND id=? AND state='initializing'").bind(upload.uploadId,ws,uploadId).run();
+    const saved=await c.env.DB.prepare("UPDATE qa_upload_sessions SET multipart_id=?,state='uploading' WHERE workspace_id=? AND id=? AND state='initializing' RETURNING id").bind(upload.uploadId,ws,uploadId).first();
+    if(!saved){await upload.abort();throw new QaError('qa_upload_conflict',409);}
   }catch(error){
     await c.env.DB.prepare("UPDATE qa_upload_sessions SET expires_at=? WHERE workspace_id=? AND id=?").bind(now,ws,uploadId).run();
     // If R2 creation's response was lost, bucket multipart lifecycle rules are a secondary safeguard.
@@ -134,7 +124,18 @@ async function complete(c:C,body:Record<string,unknown>):Promise<Response>{
       c.env.DB.prepare('INSERT INTO qa_attachments(workspace_id,id,issue_id,uploaded_by,file_name,mime_type,size,storage_key,created_at) VALUES(?,?,?,?,?,?,?,?,?)').bind(ws,id,row.issue_id,auth.member.id,row.file_name,row.mime_type,object.size,row.storage_key,now),
       c.env.DB.prepare("INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) SELECT ?,?,?,?,'attachment_added',?,version,? FROM qa_issues WHERE workspace_id=? AND id=?").bind(ws,crypto.randomUUID(),row.issue_id,auth.member.id,JSON.stringify({attachmentId:id,fileName:row.file_name}),now,ws,row.issue_id),
     ]);
-  }catch(err){const won=await c.env.DB.prepare('SELECT * FROM qa_attachments WHERE workspace_id=? AND id=?').bind(ws,id).first();if(won)return c.json(qaAttachmentWire(won));throw err;}
+  }catch(err){
+    const won=await c.env.DB.prepare('SELECT * FROM qa_attachments WHERE workspace_id=? AND id=?').bind(ws,id).first();
+    if(won)return c.json(qaAttachmentWire(won));
+    const cleaning=await c.env.DB.prepare(`SELECT id FROM qa_upload_sessions WHERE workspace_id=? AND id=?
+      AND state IN ('aborting','aborted') AND cleanup_token IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM qa_attachments a WHERE a.workspace_id=? AND (a.id=? OR a.storage_key=?))`)
+      .bind(ws,id,ws,id,row.storage_key).first();
+    // A multipart completion accepted before the cleanup claim may finish after
+    // its first delete. The reference guard prevents publication; remove late bytes.
+    if(cleaning)await c.env.ATTACHMENTS.delete(row.storage_key).catch(()=>undefined);
+    throw err;
+  }
   return c.json({id,issueId:row.issue_id,fileName:row.file_name,mimeType:row.mime_type,size:object.size,uploadedBy:auth.member.id,createdAt:now});
 }
 export function qaRange(header:string|null,size:number):{offset:number;length:number}|undefined{

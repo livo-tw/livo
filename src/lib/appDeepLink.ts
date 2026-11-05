@@ -9,3 +9,10 @@ export function appDeepLinkSearch(search: string): string {
   const encoded = output.toString();
   return encoded ? `?${encoded}` : '';
 }
+
+/** Use the saved ID so a concurrent task-key change cannot point at another task. */
+export function taskDeepLinkUrl(taskId: string): string {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  url.searchParams.set('task', taskId);
+  return url.toString();
+}

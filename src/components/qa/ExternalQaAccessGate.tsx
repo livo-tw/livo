@@ -1,7 +1,8 @@
 import { lazy, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/integrations/supabase/client';
-import { readWorkspaceProfile } from '@/lib/qa/externalProfile';
+import { QaProfilePasswordChangeRequired, readWorkspaceProfile } from '@/lib/qa/externalProfile';
+import RequiredPasswordChange from '@/components/RequiredPasswordChange';
 
 const ExternalQaShell = lazy(() => import('./ExternalQaShell'));
 
@@ -21,6 +22,7 @@ export default function ExternalQaAccessGate({ internal, accessToken }: { intern
   const { t } = useTranslation();
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof readWorkspaceProfile>> | null>(null);
   const [failed, setFailed] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(false);
   const [assetsInitialized, setAssetsInitialized] = useState(!accessToken || import.meta.env.MODE !== 'customer');
   const pending = useRef<AbortController>();
   const reload = useCallback(async () => {
@@ -28,11 +30,16 @@ export default function ExternalQaAccessGate({ internal, accessToken }: { intern
     const request = new AbortController();
     pending.current = request;
     setFailed(false);
+    setPasswordRequired(false);
     try {
       const value = await readWorkspaceProfile(request.signal);
       if (!request.signal.aborted) setProfile(value);
-    } catch {
-      if (!request.signal.aborted) { setProfile(null); setFailed(true); }
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setProfile(null);
+        if (error instanceof QaProfilePasswordChangeRequired) setPasswordRequired(true);
+        else setFailed(true);
+      }
     } finally {
       if (pending.current === request) pending.current = undefined;
     }
@@ -41,7 +48,7 @@ export default function ExternalQaAccessGate({ internal, accessToken }: { intern
   useEffect(() => {
     void reload();
     return () => pending.current?.abort();
-  }, [reload]);
+  }, [reload, accessToken]);
   useEffect(() => {
     if (!accessToken || import.meta.env.MODE !== 'customer') return;
     let cancelled = false;
@@ -71,6 +78,7 @@ export default function ExternalQaAccessGate({ internal, accessToken }: { intern
     };
   }, [external, reload]);
 
+  if (passwordRequired) return <RequiredPasswordChange />;
   if (assetsInitialized && profile?.external === false) return <>{internal}</>;
   if (assetsInitialized && profile?.external) {
     const scope = JSON.stringify([profile.id, ...profile.projects.map(project => project.id).sort()]);

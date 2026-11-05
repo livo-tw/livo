@@ -16,9 +16,15 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source:'src/lib/slackTaskUnfurl.ts', copies:['worker/src/slackTaskUnfurl.ts','docker/volumes/functions/slack-interact/slackTaskUnfurl.ts','supabase/functions/slack-interact/slackTaskUnfurl.ts'] },
+  { source:'src/lib/slackTaskRoutes.ts', copies:['worker/src/slackTaskRoutes.ts','docker/volumes/functions/slack-interact/slackTaskRoutes.ts','supabase/functions/slack-interact/slackTaskRoutes.ts','docker/volumes/functions/slack-deliver/slackTaskRoutes.ts','supabase/functions/slack-deliver/slackTaskRoutes.ts'] },
+  { source:'src/lib/slackNotifyCore.ts', copies:['docker/volumes/functions/slack-interact/slackNotifyCore.ts','supabase/functions/slack-interact/slackNotifyCore.ts'] },
+  { source:'docker/volumes/functions/slack-interact/task-unfurl-backend.ts', copies:['supabase/functions/slack-interact/task-unfurl-backend.ts'] },
+  { source:'docker/volumes/functions/og-task/index.ts', copies:['supabase/functions/og-task/index.ts'] },
+  { source:'docker/volumes/functions/og-task/handler.ts', copies:['supabase/functions/og-task/handler.ts'] },
   { source:'src/lib/memberInvitationsCore.ts', copies:['worker/src/memberInvitationsCore.ts','docker/volumes/functions/member-invitations/core.ts','supabase/functions/member-invitations/core.ts'] },
   ...['index.ts','backend.ts','handler.ts'].map(file=>({source:`docker/volumes/functions/member-invitations/${file}`,copies:[`supabase/functions/member-invitations/${file}`]})),
-  { source:'docker/volumes/functions/external-qa-admin/index.ts', copies:['supabase/functions/external-qa-admin/index.ts'] },
+  ...['index.ts', 'handler.ts'].map(file => ({ source: 'docker/volumes/functions/external-qa-admin/' + file, copies: ['supabase/functions/external-qa-admin/' + file] })),
   ...['core.ts','engine.ts'].map(file=>({source:`src/lib/knowledgeWork/${file}`,copies:[`worker/src/knowledgeWork/${file}`,`docker/volumes/functions/knowledge-work/${file}`,`supabase/functions/knowledge-work/${file}`]})),
   {source:'worker/src/knowledgeAccess.ts',copies:['src/lib/knowledgeWork/access.ts','worker/src/knowledgeWork/access.ts','docker/volumes/functions/knowledge-work/access.ts','supabase/functions/knowledge-work/access.ts']},
   {source:'docker/volumes/functions/knowledge-work/index.ts',copies:['supabase/functions/knowledge-work/index.ts']},
@@ -38,6 +44,8 @@ const SHARED = [
   { source: 'src/lib/taskPlanning/core.ts', copies: ['worker/src/taskPlanningCore.ts', 'docker/volumes/functions/slack-interact/planning-core.ts', 'supabase/functions/slack-interact/planning-core.ts'] },
   { source: 'worker/src/knowledgeImportCleanup.ts', copies: ['docker/volumes/functions/knowledge-import-cleanup/knowledgeImportCleanup.ts', 'supabase/functions/knowledge-import-cleanup/knowledgeImportCleanup.ts'] },
   { source: 'docker/volumes/functions/knowledge-import-cleanup/index.ts', copies: ['supabase/functions/knowledge-import-cleanup/index.ts'] },
+  { source: 'worker/src/qaUploadCleanup.ts', copies: ['docker/volumes/functions/qa-upload-cleanup/qaUploadCleanup.ts', 'supabase/functions/qa-upload-cleanup/qaUploadCleanup.ts'] },
+  { source: 'docker/volumes/functions/qa-upload-cleanup/index.ts', copies: ['supabase/functions/qa-upload-cleanup/index.ts'] },
   { source: 'src/lib/customFieldTypes.ts', copies: ['src/lib/qa/customFieldTypes.ts', 'worker/src/qa/customFieldTypes.ts', 'docker/volumes/functions/qa/customFieldTypes.ts', 'supabase/functions/qa/customFieldTypes.ts'] },
   { source: 'src/lib/qa/fields.ts', copies: ['worker/src/qa/fields.ts', 'docker/volumes/functions/qa/fields.ts', 'supabase/functions/qa/fields.ts'] },
   { source: 'worker/src/knowledgeImport.ts', copies: ['docker/volumes/functions/knowledge-import/knowledgeImport.ts', 'supabase/functions/knowledge-import/knowledgeImport.ts'], denoAccess: true },

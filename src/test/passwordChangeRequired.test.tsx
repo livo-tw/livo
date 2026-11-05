@@ -41,6 +41,17 @@ describe('a password an admin set', () => {
     expect(lib.passwordChangeRequired(session({ [lib.PASSWORD_CHANGE_FLAG]: true }))).toBe(false);
   });
 
+  it('honors the trusted external gate even when user metadata was cleared or stale', () => {
+    const external = (required?: boolean) => ({ user: {
+      user_metadata: { [lib.PASSWORD_CHANGE_FLAG]: false },
+      app_metadata: { livo_external_qa: true, livo_external_qa_password_change_required: required },
+    } });
+    expect(lib.passwordChangeRequired(external(true))).toBe(true);
+    expect(lib.passwordChangeRequired(external())).toBe(true);
+    expect(lib.passwordChangeRequired(external(false))).toBe(false);
+    state.cloud = true;
+    expect(lib.passwordChangeRequired(external(true))).toBe(false);
+  });
   it('uses the same key as the Docker member functions', () => {
     const source = readFileSync(path.resolve(__dirname, '../../docker/volumes/functions/manage-member/memberAccounts.ts'), 'utf8');
     expect(source).toContain(`export const PASSWORD_CHANGE_FLAG = '${lib.PASSWORD_CHANGE_FLAG}';`);

@@ -158,6 +158,8 @@ services:
       API_EXTERNAL_URL: ${API_EXTERNAL_URL}
 
       GOTRUE_DB_DRIVER: postgres
+      # First-password completion consumes the trusted same-transaction audit event.
+      GOTRUE_AUDIT_LOG_DISABLE_POSTGRES: "false"
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
 
       GOTRUE_SITE_URL: ${SITE_URL}
@@ -525,6 +527,7 @@ services:
           post http://kong:8000/functions/v1/scheduled-backup
           post http://kong:8000/functions/v1/due-reminders
           post --max-time 300 http://kong:8000/functions/v1/knowledge-import-cleanup
+          post --max-time 300 http://kong:8000/functions/v1/qa-upload-cleanup
           sleep 3600
         done
 

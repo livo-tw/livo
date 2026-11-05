@@ -1270,10 +1270,13 @@ CREATE TABLE IF NOT EXISTS qa_upload_sessions (
   file_name TEXT NOT NULL, mime_type TEXT NOT NULL, expected_size INTEGER NOT NULL CHECK(expected_size>0 AND expected_size<=209715200),
   storage_key TEXT NOT NULL, multipart_id TEXT, state TEXT NOT NULL DEFAULT 'initializing'
     CHECK(state IN ('initializing','uploading','finalizing','aborting','complete','aborted')),
-  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(workspace_id,id),
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+  cleanup_token TEXT, cleanup_lease_until TEXT, cleanup_last_attempt_at TEXT, cleanup_completed_at TEXT,
+  PRIMARY KEY(workspace_id,id),
   FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
 );
 CREATE INDEX IF NOT EXISTS idx_qa_uploads_expiry ON qa_upload_sessions(workspace_id,state,expires_at);
+CREATE TABLE IF NOT EXISTS qa_upload_maintenance_state (id TEXT PRIMARY KEY, cursor TEXT NOT NULL DEFAULT '');
 CREATE TRIGGER IF NOT EXISTS qa_upload_reserve_guard BEFORE INSERT ON qa_upload_sessions BEGIN
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
     AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
@@ -1304,6 +1307,20 @@ CREATE TABLE IF NOT EXISTS qa_attachments (
   FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
 );
 CREATE INDEX IF NOT EXISTS idx_qa_attachments_issue ON qa_attachments(workspace_id,issue_id,created_at);
+DROP TRIGGER IF EXISTS qa_attachment_retention_guard;
+CREATE TRIGGER qa_attachment_retention_guard BEFORE INSERT ON qa_attachments BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM qa_upload_sessions s
+    WHERE s.workspace_id=NEW.workspace_id AND (s.id=NEW.id OR s.storage_key=NEW.storage_key)
+      AND (s.cleanup_token IS NOT NULL OR s.state IN ('aborting','aborted')))
+    THEN RAISE(ABORT,'qa_upload_cleanup_in_progress') END;
+END;
+DROP TRIGGER IF EXISTS qa_attachment_retention_update_guard;
+CREATE TRIGGER qa_attachment_retention_update_guard BEFORE UPDATE OF storage_key,id ON qa_attachments BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM qa_upload_sessions s
+    WHERE s.workspace_id=NEW.workspace_id AND (s.id=NEW.id OR s.storage_key=NEW.storage_key)
+      AND (s.cleanup_token IS NOT NULL OR s.state IN ('aborting','aborted')))
+    THEN RAISE(ABORT,'qa_upload_cleanup_in_progress') END;
+END;
 CREATE TRIGGER IF NOT EXISTS qa_attachment_finalize_guard BEFORE INSERT ON qa_attachments WHEN NEW.restored_by IS NULL BEGIN
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
     AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;

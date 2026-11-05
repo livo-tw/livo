@@ -6,6 +6,7 @@ import { ProjectCheckboxList } from '@/components/project/ProjectOptions';
 import { useProjectContext } from '@/context/ProjectContext';
 import { callFunction } from '@/lib/callFunction';
 import { groupProjectsByLine } from '@/lib/projectGroups';
+import { randomUUID } from '@/lib/generateId';
 
 interface ExternalQaAccount {
   id: string;
@@ -14,9 +15,12 @@ interface ExternalQaAccount {
   isActive: boolean;
   projectIds: string[];
   revision: number;
+  registrationId?: string;
+  registrationPending?: boolean;
+  credentialRecoveryAvailable?: boolean;
 }
 type AccountDraft = Omit<ExternalQaAccount, 'id' | 'revision' | 'email'> & {
-  id?: string; revision?: number; email: string;
+  id?: string; revision?: number; email: string; initialPassword: string; requestId?: string; recover?: boolean;
 };
 interface AdminResponse {
   accounts?: ExternalQaAccount[];
@@ -24,8 +28,8 @@ interface AdminResponse {
   temporaryPassword?: string;
   error?: string;
 }
-const newDraft = (): AccountDraft => ({ name: '', email: '', isActive: true, projectIds: [] });
-const editable = (account: ExternalQaAccount): AccountDraft => ({ ...account, email: account.email || '' });
+const newDraft = (): AccountDraft => ({ name: '', email: '', isActive: true, projectIds: [], initialPassword: '', requestId: randomUUID() });
+const editable = (account: ExternalQaAccount): AccountDraft => ({ ...account, email: account.email || '', initialPassword: '' });
 
 export default function ExternalQaAdminPanel() {
   const { t } = useTranslation();
@@ -54,18 +58,27 @@ export default function ExternalQaAdminPanel() {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!draft || saving) return;
+    if (draft.initialPassword && ([...draft.initialPassword].length < 8 || new TextEncoder().encode(draft.initialPassword).length > 72)) {
+      setError('external_qa_invalid_password');
+      return;
+    }
     setError('');
     setSaving(true);
     try {
-      const { email, ...fields } = draft;
-      const result = await callFunction<AdminResponse>('external-qa-admin',
-        fields.id ? { action: 'update', ...fields } : { action: 'create', ...fields, email });
+      const { email, name, isActive, projectIds, initialPassword, requestId, id, revision, registrationId, recover } = draft;
+      const password = initialPassword ? { initialPassword } : {};
+      const payload = recover
+        ? { action: 'recover', registrationId, id, revision, ...password }
+        : id ? { action: 'update', id, revision, name, isActive, projectIds }
+          : { action: 'create', requestId, name, email, isActive, projectIds, ...password };
+      const result = await callFunction<AdminResponse>('external-qa-admin', payload);
       const { account, temporaryPassword } = result.data ?? {};
       if (!result.ok || !account) {
         setError(result.data?.error || 'external_qa_request_failed');
         return;
       }
-      setAccounts(previous => [...(previous ?? []).filter(a => a.id !== account.id), account]
+      setAccounts(previous => [...(previous ?? []).filter(a => a.id !== account.id),
+        { ...(previous ?? []).find(a => a.id === account.id), ...account }]
         .sort((a, b) => a.name.localeCompare(b.name)));
       setDraft(null);
       if (temporaryPassword && account.email) {
@@ -99,25 +112,32 @@ export default function ExternalQaAdminPanel() {
         <div className="min-w-0 text-sm">
           <div className="flex flex-wrap items-center gap-x-2">
             <strong className="break-all">{account.name}</strong>
-            <span className="text-xs text-muted-foreground">{t(account.isActive ? 'externalQaAdmin.active' : 'externalQaAdmin.inactive')}</span>
+            <span className="text-xs text-muted-foreground">{t(account.registrationPending ? 'externalQaAdmin.pending' : account.isActive ? 'externalQaAdmin.active' : 'externalQaAdmin.inactive')}</span>
           </div>
           <p className="break-all text-xs text-muted-foreground">{account.email}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {account.projectIds.map(id => projectNames.get(id) ?? id).join(' · ') || t('externalQaAdmin.noProjects')}
           </p>
         </div>
-        <button type="button" disabled={saving} onClick={() => { setError(''); setDraft(editable(account)); }}
+        <div className="flex flex-wrap justify-end gap-2">
+        {account.credentialRecoveryAvailable && <button type="button" disabled={saving}
+          onClick={() => { setError(''); setDraft({ ...editable(account), recover: true }); }}
+          aria-label={`${t('externalQaAdmin.recover')}: ${account.name}`} className="rounded-md border border-border px-3 py-2 text-sm">
+          {t('externalQaAdmin.recover')}
+        </button>}
+        <button type="button" disabled={saving || account.registrationPending} onClick={() => { setError(''); setDraft(editable(account)); }}
           aria-label={`${t('common.edit')}: ${account.name}`} className="rounded-md border border-border px-3 py-2 text-sm">
           {t('common.edit')}
         </button>
+        </div>
       </li>)}
     </ul>}
     {draft && <form onSubmit={save} className="space-y-3 rounded-md border border-border p-3">
       <fieldset disabled={saving} className="space-y-3 disabled:opacity-70">
-        <legend className="text-sm font-semibold">{t(draft.id ? 'externalQaAdmin.edit' : 'externalQaAdmin.create')}</legend>
+        <legend className="text-sm font-semibold">{t(draft.recover ? 'externalQaAdmin.recover' : draft.id ? 'externalQaAdmin.edit' : 'externalQaAdmin.create')}</legend>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="space-y-1 text-sm"><span>{t('accountCredentials.name')}</span>
-            <input required maxLength={200} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })}
+            <input required readOnly={draft.recover} maxLength={200} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })}
               className="w-full rounded-md border border-border bg-background px-2 py-1.5" />
           </label>
           <label className="space-y-1 text-sm"><span>Email</span>
@@ -126,6 +146,15 @@ export default function ExternalQaAdminPanel() {
               className="w-full rounded-md border border-border bg-background px-2 py-1.5" />
           </label>
         </div>
+        {(!draft.id || draft.recover) && <label className="block space-y-1 text-sm"><span>{t('externalQaAdmin.initialPassword')}</span>
+          <input type="password" autoComplete="new-password" aria-label={t('externalQaAdmin.initialPassword')}
+            aria-describedby="external-qa-initial-password-hint" value={draft.initialPassword}
+            onChange={event => setDraft({ ...draft, initialPassword: event.target.value })}
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5" />
+          <span id="external-qa-initial-password-hint" className="block text-xs text-muted-foreground">{t('externalQaAdmin.initialPasswordHint')}</span>
+        </label>}
+        {draft.recover && <p className="text-sm text-muted-foreground">{t('externalQaAdmin.recoverHint')}</p>}
+        <fieldset disabled={draft.recover} className="space-y-3">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.isActive}
           onChange={event => setDraft({ ...draft, isActive: event.target.checked })} />{t('externalQaAdmin.active')}</label>
         <div className="text-sm font-medium">{t('externalQaAdmin.projects')}</div>
@@ -135,10 +164,11 @@ export default function ExternalQaAdminPanel() {
               ? draft.projectIds.filter(value => value !== id) : [...draft.projectIds, id] })} />
             : <p className="p-2 text-sm text-muted-foreground">{t('externalQaAdmin.noProjects')}</p>}
         </div>
+        </fieldset>
         <div className="flex gap-2">
           <button type="submit" className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground">{t('common.save')}</button>
           <button type="button" onClick={() => { setError(''); setDraft(null); }} className="rounded-md border border-border px-3 py-2 text-sm">{t('common.cancel')}</button>
-          {error === 'external_qa_stale' && <button type="button" onClick={() => { setDraft(null); void readAccounts(); }}
+          {['external_qa_stale', 'external_qa_registration_pending'].includes(error) && <button type="button" onClick={() => { setDraft(null); void readAccounts(); }}
             className="rounded-md border border-border px-3 py-2 text-sm">{t('common.retry')}</button>}
         </div>
       </fieldset>

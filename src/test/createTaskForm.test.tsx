@@ -8,11 +8,13 @@ const state = vi.hoisted(() => ({
   sprint: null as { id: string; name: string } | null,
   sprintReadState: 'ready' as SprintReadState, refreshSprints: vi.fn<() => Promise<void>>(),
   failCreateWithSprintConflict: false, error: vi.fn(),
+  failCreate: false, storedKey: null as string | null, createdToast: vi.fn(),
   fields: [] as CustomField[], saved: [] as Array<{ taskId: string; fieldId: string; value: unknown }>,
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/i18n', () => ({ default: { t: (key: string) => key } }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: state.error, info: vi.fn() } }));
+vi.mock('@/lib/taskCreatedToast', () => ({ showTaskCreatedToast: state.createdToast }));
 vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironments: () => ({ ready: true, values: [] as string[] }) }));
 vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMemberId: 'me', currentMember: { id: 'me', name: 'Me' } }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as unknown[] }) }));
@@ -22,8 +24,9 @@ vi.mock('@/context/TaskContext', () => ({ useTaskContext: () => ({
   allTasks: [] as Task[], setAllTasks: vi.fn(), statuses: [{ id: 'todo', name: 'To do' }], tags: [] as unknown[], refreshTags: vi.fn(),
   createTaskInDb: async (task: Task) => {
     if (state.failCreateWithSprintConflict) throw new Error('sprint_conflict');
+    if (state.failCreate) return null;
     state.created.push(task);
-    return task;
+    return state.storedKey ? { ...task, taskKey: state.storedKey } : task;
   }, createSubtask: vi.fn(),
   refreshTaskSpecs: vi.fn(), refreshTaskChecks: vi.fn(), refreshTaskTodos: vi.fn(), refreshStatusLogs: vi.fn(), taskTemplates: [] as unknown[],
   customFields: state.fields, upsertCustomFieldValue: async (taskId: string, fieldId: string, value: unknown) => { state.saved.push({ taskId, fieldId, value }); },
@@ -50,9 +53,28 @@ beforeEach(() => {
   state.sprint = { id: 'sprint-1', name: 'Sprint 1' }; state.sprintReadState = 'ready';
   state.refreshSprints.mockReset().mockResolvedValue(undefined); state.error.mockClear();
   state.failCreateWithSprintConflict = false;
+  state.failCreate = false; state.storedKey = null; state.createdToast.mockClear();
 });
 
 describe('the create task form', () => {
+  it('notifies with the confirmed task ID and the key actually kept by the server', async () => {
+    state.storedKey = 'EX-99';
+    const { result } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Confirmed task'));
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    await waitFor(() => expect(state.createdToast).toHaveBeenCalledTimes(1));
+    expect(state.createdToast).toHaveBeenCalledWith(expect.objectContaining({ id: state.created[0].id, taskKey: 'EX-99' }), expect.any(Function));
+  });
+
+  it('does not show a created-task link when the insert is refused', async () => {
+    state.failCreate = true;
+    const { result } = renderHook(() => useCreateTaskForm());
+    act(() => result.current.setTitle('Refused task'));
+    await act(async () => { result.current.handleSubmitAttempt(); });
+    expect(state.createdToast).not.toHaveBeenCalled();
+    expect(result.current.title).toBe('Refused task');
+  });
+
   it('keeps what was typed when projects change elsewhere while it is open', () => {
     const { result, rerender } = renderHook(() => useCreateTaskForm());
     act(() => result.current.setTitle('Checkout fails on Safari'));

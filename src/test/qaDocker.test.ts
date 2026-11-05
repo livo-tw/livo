@@ -30,16 +30,20 @@ let externalAccount = false;
 let requiredPasswordChange = false;
 const externalProfile = { external: true, id: 'eqa-example', name: 'Example tester', qaEnabled: true,
   environments: ['Stage'], projects: [{ id: 'project-1', name: 'Allowed project' }], members: [] as unknown[] };
+let externalPeople: Array<Record<string, unknown>>;
+let internalDirectory: Array<Record<string, unknown>>;
 let calls: { url: URL; body: any; headers: Headers; method: string }[];
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
+  externalPeople = [{ id: 'member-2', name: 'Example member', isActive: true }];
+  internalDirectory = [{ id: 'member-1' }, { id: 'member-2' }];
   issue = fixture(); enabled = true; active = true; role = 'member'; receipt = undefined; rpcError = undefined; workflowSetting = undefined; fieldSetting = undefined; qaAdmin = false; externalAccount = false; requiredPasswordChange = false; calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
     const call = { url: new URL(url), body: init.body ? JSON.parse(String(init.body)) : undefined, headers: new Headers(init.headers), method: init.method || 'GET' };
     calls.push(call);
     const endpoint = call.url.pathname;
-    if (endpoint === '/auth/v1/user') return json({ id: AUTH, user_metadata: { livo_password_change_required: requiredPasswordChange } });
+    if (endpoint === '/auth/v1/user') return json({ id: AUTH, user_metadata: { livo_password_change_required: false }, app_metadata: { livo_external_qa_password_change_required: requiredPasswordChange } });
     if (endpoint === '/rest/v1/external_qa_accounts') return json(externalAccount
       ? [{ id: externalProfile.id, name: externalProfile.name, is_active: true }] : []);
     if (endpoint === '/rest/v1/rpc/livo_qa_internal_external_people') return json({
@@ -51,7 +55,7 @@ beforeEach(() => {
       if (action === 'list') return json({ issues: [issue], total: 1, hasMore: false });
       if (action === 'get' && request.id === issue.id) return json({ issue });
       if (action === 'task_references') return json({ tasks: [], hasMore: false });
-      if (action === 'members') return json({ members: [{ id: 'member-2', name: 'Example member', isActive: true }], hasMore: false });
+      if (action === 'members') return json({ members: externalPeople, hasMore: false });
       return json({ code: 'P0002', message: 'qa_issue_not_found' }, 404);
     }
     if (endpoint === '/rest/v1/system_settings' && call.url.searchParams.get('key') === 'eq.deployment_environments') return json([]);
@@ -60,7 +64,7 @@ beforeEach(() => {
       ? workflowSetting === undefined ? [] : [{ value: workflowSetting }] : [{ value: { qa: enabled } }]);
     if (endpoint === '/rest/v1/members') return json(call.url.searchParams.has('auth_id')
       ? active ? [{ id: 'member-1', role, auth_id: AUTH, is_active: true, is_qa_admin: qaAdmin }] : []
-      : [{ id: 'member-1' }, { id: 'member-2' }]);
+      : internalDirectory);
     if (endpoint === '/rest/v1/projects') return json([{ id: 'project-1' }]);
     if (endpoint === '/rest/v1/qa_commands') return json(receipt ? [receipt] : []);
     if (endpoint === '/rest/v1/qa_issues') return json(call.url.searchParams.get('select')?.startsWith('workspaceId:')
@@ -552,4 +556,24 @@ describe('Docker formal PASS auto closure',()=>{
     expect(await service().handle(body)).toEqual(first);
     expect(calls.filter(item=>item.url.pathname.endsWith('/rpc/livo_qa_commit'))).toHaveLength(1);
   });
+});
+
+it.each(['member', 'admin', 'super_admin'])('a newly assigned internal RD can read and start the bug under the existing %s rules', async currentRole => {
+  role = currentRole;
+  issue = { ...fixture(), reporterId: 'member-2', assigneeId: 'member-1', qaOwnerId: 'member-2' };
+  expect(await service().handle({ action: 'get', id: issue.id })).toMatchObject({ issue: { assigneeId: 'member-1' } });
+  expect(await service().handle({ action: 'command', id: issue.id, commandId: 'new-internal-rd-start', expectedVersion: 1,
+    command: { type: 'start_fix' } })).toMatchObject({ state: 'in_progress', assigneeId: 'member-1' });
+  expect(calls.some(call => call.url.pathname.endsWith('/rpc/livo_qa_external_read'))).toBe(false);
+});
+
+it('classifies project people using actual membership, including internal eqa-prefixed IDs', async () => {
+  active = false; externalAccount = true;
+  externalPeople = [{ id: 'eqa-internal-member', name: 'Example engineer', isActive: true },
+    { id: 'eqa-example', name: 'Example tester', isActive: true }];
+  internalDirectory = [{ id: 'eqa-internal-member' }];
+  expect(await service().handle({ action: 'project_people', projectId: 'project-1' })).toEqual({ hasMore: false,
+    members: [{ ...externalPeople[0], isExternal: false }, { ...externalPeople[1], isExternal: true }] });
+  const directory = calls.filter(call => call.url.pathname === '/rest/v1/members' && call.url.searchParams.get('id')?.startsWith('in.'));
+  expect(directory).toHaveLength(1); expect(directory[0].url.searchParams.get('select')).toBe('id');
 });

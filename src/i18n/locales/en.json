@@ -10,14 +10,22 @@
     "projects": "Granted projects",
     "noProjects": "No project access",
     "saved": "External QA settings saved",
+    "initialPassword": "Initial password (optional)",
+    "initialPasswordHint": "Leave empty to generate a password. A custom password needs at least 8 characters and at most 72 UTF-8 bytes. It must be changed at first sign-in.",
+    "recover": "Reissue initial password",
+    "recoverHint": "Available until the account completes its first password change. Hand over the new password shown after reissue.",
+    "pending": "Registration pending",
     "errors": {
+      "external_qa_invalid_password": "Use at least 8 characters and at most 72 UTF-8 bytes for the initial password.",
+      "api_key_forbidden": "Sign in as an administrator. Personal API keys cannot create or recover logins.",
+      "external_qa_already_onboarded": "This account has completed its first password change and cannot receive another initial password.",
       "external_qa_request_failed": "Could not manage external QA settings. Try again.",
       "external_qa_forbidden": "Only super admins can manage external QA.",
       "external_qa_invalid": "Check the name and email address.",
       "external_qa_invalid_projects": "A selected project has changed. Refresh and try again.",
       "external_qa_email_in_use": "This email belongs to another account. Verify the account before continuing.",
       "external_qa_stale": "Someone updated this account. Reload it before editing.",
-      "external_qa_registration_pending": "A login was created, but its project access is unconfirmed. Reload the list and ask an administrator to review before retrying."
+      "external_qa_registration_pending": "The registration result is unconfirmed. Reload the account list and use Reissue initial password for this account."
     }
   },
   "qaHandoff": {
@@ -979,6 +987,7 @@
     "overdueDays": "{{days}} days overdue",
     "remainingDays": "{{days}} days remaining",
     "created": "Task created",
+    "viewCreatedTask": "View task",
     "createFailed": "Failed to create task: ",
     "deleted": "Task deleted",
     "deleteConfirm": "Delete \"{{title}}\"? Its comments, attachments and specs are deleted too, and its subtasks become standalone tasks. This cannot be undone.",

@@ -10,14 +10,22 @@
     "projects": "授权项目",
     "noProjects": "无项目授权",
     "saved": "已保存外包 QA 设置",
+    "initialPassword": "初始密码（选填）",
+    "initialPasswordHint": "留空时由系统生成。自行设置须至少 8 个字符、最多 72 个 UTF-8 字节。首次登录仍须更换。",
+    "recover": "重新发放初始密码",
+    "recoverHint": "仅适用于尚未完成首次改密的账号。重新发放后，请交付画面中显示的新密码。",
+    "pending": "账号创建待确认",
     "errors": {
+      "external_qa_invalid_password": "初始密码须至少 8 个字符、最多 72 个 UTF-8 字节。",
+      "api_key_forbidden": "请使用管理员账号登录后操作，个人 API 密钥不能创建或恢复登录。",
+      "external_qa_already_onboarded": "此账号已完成首次改密，无法重新发放初始密码。",
       "external_qa_request_failed": "无法处理外包 QA 设置，请重试。",
       "external_qa_forbidden": "只有超级管理员能管理外包 QA。",
       "external_qa_invalid": "请检查姓名和 Email。",
       "external_qa_invalid_projects": "所选项目已更改，请刷新后重试。",
       "external_qa_email_in_use": "此 Email 已用于其他账号。请确认账号后再处理。",
       "external_qa_stale": "设置已由其他人更新，请重新加载后再编辑。",
-      "external_qa_registration_pending": "登录已创建，但尚未确认项目授权。请重新加载外包名单并请管理员核查，避免重复创建。"
+      "external_qa_registration_pending": "登录创建结果待确认。请重新读取外包名单，使用该账号的“重新发放初始密码”。"
     }
   },
   "qaHandoff": {
@@ -979,6 +987,7 @@
     "overdueDays": "逾期 {{days}} 天",
     "remainingDays": "还剩 {{days}} 天",
     "created": "任务已建立",
+    "viewCreatedTask": "查看任务",
     "createFailed": "建立任务失败：",
     "deleted": "任务已删除",
     "deleteConfirm": "确定要删除「{{title}}」？留言、附件与需求内容会一并删除，子任务会变成独立任务。此操作无法复原。",

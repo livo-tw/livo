@@ -4,9 +4,9 @@ import { useMemberContext } from '@/context/MemberContext';
 import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import type { QaClient, QaProjectPerson } from '@/lib/qa/client';
-import type { User } from '@/types';
+import type { QaAssignmentUser } from '@/lib/qa/assignmentPeople';
 
-const NO_PEOPLE: User[] = [];
+const NO_PEOPLE: QaAssignmentUser[] = [];
 type PeopleClient = Partial<Pick<QaClient, 'projectPeople'>>;
 
 export function useQaProjectPeople(client: PeopleClient, projectId: string) {
@@ -37,11 +37,12 @@ export function useQaProjectPeople(client: PeopleClient, projectId: string) {
 
   return useMemo(() => {
     if (!enabled || snapshot?.projectId !== projectId) return externalQa ? NO_PEOPLE : undefined;
-    const choices = new Map<string, User>(externalQa ? [] : users.map(user => [user.id, user]));
+    const choices = new Map<string, QaAssignmentUser>(externalQa ? [] : users.map(user => [user.id, user]));
     for (const person of snapshot.members) {
       if (!choices.has(person.id)) choices.set(person.id, {
         id: person.id, name: person.name, avatar: person.avatar ?? '', color: person.color ?? '',
         jobTitle: person.jobTitle ?? '', isActive: person.isActive, email: '', role: 'member', sortOrder: 0,
+        qaExternal: person.isExternal !== false,
       });
     }
     return [...choices.values()];

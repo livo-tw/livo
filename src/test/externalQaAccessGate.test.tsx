@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import ExternalQaAccessGate from '@/components/qa/ExternalQaAccessGate';
-import { parseWorkspaceProfile } from '@/lib/qa/externalProfile';
+import { parseWorkspaceProfile, QaProfilePasswordChangeRequired } from '@/lib/qa/externalProfile';
 import { QaExternalLinkedTasks, QaExternalTaskPicker } from '@/components/qa/QaExternalTaskReferences';
 
 const api = vi.hoisted(() => ({ profile: vi.fn(), signOut: vi.fn() }));
@@ -25,6 +25,7 @@ vi.mock('@/components/qa/QaWorkspace', async () => {
     return <p>{mine ? 'Mine' : 'QA'}: {projects.allProjects.map(project => project.name).join(', ')} · {projects.selectedProjectId || 'all'} · {members.users.map(member => member.name).join(', ')} · {values.join(', ')}</p>;
   } };
 });
+vi.mock('@/components/RequiredPasswordChange', () => ({ default: () => <p>Choose own password</p> }));
 
 const granted = parseWorkspaceProfile({
   external: true, id: 'external-example', name: 'External Example', qaEnabled: true, environments: ['Stage'],
@@ -36,6 +37,20 @@ const gate = () => render(<Suspense fallback={<p>Loading shell</p>}>
 </Suspense>);
 
 beforeEach(() => { api.profile.mockReset(); api.signOut.mockClear(); });
+
+it('shows the own-password form for a stale session and rechecks after its token refreshes', async () => {
+  api.profile.mockRejectedValueOnce(new QaProfilePasswordChangeRequired()).mockResolvedValueOnce({ external: false });
+  const result = render(<Suspense fallback={<p>Loading shell</p>}>
+    <ExternalQaAccessGate accessToken="previous-example" internal={<p>Internal application</p>} />
+  </Suspense>);
+  expect(await screen.findByText('Choose own password')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  result.rerender(<Suspense fallback={<p>Loading shell</p>}>
+    <ExternalQaAccessGate accessToken="refreshed-example" internal={<p>Internal application</p>} />
+  </Suspense>);
+  expect(await screen.findByText('Internal application')).toBeInTheDocument();
+  expect(api.profile).toHaveBeenCalledTimes(2);
+});
 
 it('resolves the authenticated audience before mounting the internal application', async () => {
   let complete: ((value: { external: false }) => void) | undefined;

@@ -286,7 +286,7 @@ export const TABLES: TableRegistry = {
     wsConflict: true,
     wsPk: true, // physical PRIMARY KEY (workspace_id, key)
     write: { insert: 'admin', update: 'admin', delete: 'none' },
-    superOnlyKeys: ['deployment_queue'],
+    superOnlyKeys: ['deployment_queue', 'slack_delivery'],
   },
   team_settings: {
     pk: 'key',
@@ -556,6 +556,7 @@ export const TABLES: TableRegistry = {
   member_invitations: { pk: 'id', clientAccess: 'none', boolCols: ['is_qa_admin'] },
   member_invitation_confirmations: { pk: 'id', clientAccess: 'none' },
   member_invitation_send_attempts: { pk: 'id', clientAccess: 'none' },
+  qa_upload_maintenance_state: { pk: 'id', clientAccess: 'none' },
   cloud_waitlist: {
     pk: 'email',
     clientAccess: 'none',

@@ -8,6 +8,7 @@ import i18n from '@/i18n';
 import { createNotification, type EnvName } from '../utils';
 import type { Task, Status, User, Project, TaskCustomFieldValue } from '@/types';
 import { copyText } from '@/lib/clipboard';
+import { showTaskCreatedToast } from '@/lib/taskCreatedToast';
 import { applyTaskUpdate } from '@/lib/taskWork/projectMove';
 
 export interface UseTaskActionsParams {
@@ -172,6 +173,7 @@ export function useTaskActions(params: UseTaskActionsParams) {
     try {
       const created = await createSubtask(task.id, title, task.projectId, task.statusId);
       if (!created || activeSubtaskScope.current !== subtaskScope) return;
+      showTaskCreatedToast(created, i18n.t);
       if (activeSubtaskTitle.current.trim() === title) { setSidebarNewSubtaskTitle(''); setSidebarAddingSubtask(false); }
     } finally { pendingSubtasks.current.delete(subtaskScope); }
   };

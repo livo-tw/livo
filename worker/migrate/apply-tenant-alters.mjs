@@ -56,6 +56,10 @@ for (const [table, column, definition] of [
   ['kb_attachments', 'storage_bucket', "TEXT NOT NULL DEFAULT 'task-images'"],
   ['auth_login_reservations', 'pair_key', 'TEXT'],
   ['auth_login_reservations', 'pair_window', 'TEXT'],
+  ['qa_upload_sessions', 'cleanup_token', 'TEXT'],
+  ['qa_upload_sessions', 'cleanup_lease_until', 'TEXT'],
+  ['qa_upload_sessions', 'cleanup_last_attempt_at', 'TEXT'],
+  ['qa_upload_sessions', 'cleanup_completed_at', 'TEXT'],
 ]) {
   const result = tryWrangler(`--command "SELECT ${column} FROM ${table} LIMIT 0"`);
   if (!result.ok && /no such column/i.test(result.out)) {

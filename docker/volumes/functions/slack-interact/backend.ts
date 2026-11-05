@@ -1,3 +1,4 @@
+import { createTaskUnfurlActions } from './task-unfurl-backend.ts';
 import { createKnowledgeWorkData } from './knowledge-work-backend.ts';
 import { createWorkData, executeSlackWorkCommand } from './work-backend.ts';
 import { createReleaseData } from './release-backend.ts';
@@ -91,7 +92,7 @@ export function slackClient(env: Environment, admin = new Database(env)) {
     return row?.bot_token || env.get('SLACK_BOT_TOKEN') || fail('請管理員先連接 Slack Bot');
   })();
   return async (method: string, body: Row): Promise<Row> => {
-    const read = ['users.info', 'users.list', 'chat.getPermalink'].includes(method);
+    const read = ['users.info', 'users.list', 'chat.getPermalink', 'conversations.info'].includes(method);
     const authorization = `Bearer ${await token()}`;
     let res: Response, result: Row;
     try {
@@ -293,5 +294,6 @@ export function createActions(env: Environment, background: (work: Promise<unkno
     link: page => `${(env.get('APP_BASE_URL') || '').replace(/\/$/, '')}/?kb=${encodeURIComponent(page.id)}`,
     slack, background,
   };
+  actions.taskUnfurl = createTaskUnfurlActions(env.get('APP_BASE_URL') || '', actions, memberDb, () => admin.setting('slack_delivery'));
   return actions;
 }

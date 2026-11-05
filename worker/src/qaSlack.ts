@@ -1,3 +1,5 @@
+import { handleTaskUnfurl, isTaskUnfurlPayload } from './slackTaskUnfurl';
+import { createCloudTaskUnfurlActions } from './taskUnfurl';
 import { parseDeploymentEnvironments } from './qa/environments';
 import { groupProjectsByLine } from './qa/projectGroups';
 import type { Context } from 'hono';
@@ -160,6 +162,12 @@ export async function handleQaSlackHttp(c: Context<AppContext>): Promise<Respons
     const form = new URLSearchParams(body);
     const payload = c.req.header('content-type')?.includes('application/json') ? JSON.parse(body) : form.has('payload') ? JSON.parse(form.get('payload')!) : Object.fromEntries(form);
     if (payload.type === 'url_verification') return c.json({challenge:payload.challenge});
+    if (isTaskUnfurlPayload(payload)) {
+      const actions = createCloudQaSlackActions(c.env, ws, c.executionCtx);
+      c.executionCtx.waitUntil(handleTaskUnfurl(payload, createCloudTaskUnfurlActions(c.env, ws, c.executionCtx, actions.actor))
+        .catch(() => { console.error('task_unfurl_failed'); }));
+      return c.json({});
+    }
     if (isKnowledgeSlackPayload(payload)) return c.json(await handleKnowledgeSlack(payload, createCloudKnowledgeSlackActions(c.env,ws,c.executionCtx)) || {});
     if (!isQaSlackPayload(payload)) return c.json({response_type:'ephemeral',text:'LIVO：/livo kb 搜尋知識庫；/livo bug new 或 /livo bug show BUG_ID'});
     const actions = createCloudQaSlackActions(c.env,ws,c.executionCtx);

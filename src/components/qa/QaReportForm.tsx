@@ -1,3 +1,4 @@
+import { qaRepairAssigneeOptions } from '@/lib/qa/assignmentPeople';
 import { useDeploymentEnvironments } from '@/context/DeploymentEnvironmentContext';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -67,7 +68,7 @@ export default function QaReportForm({ initial, projectId, defaultQaOwnerId, pro
         <QaVersionField label={t('qa.observedVersion')} value={form.observedVersion || ''} onChange={value => change('observedVersion', value)} suggestions={versions} />
         {!initial && display.configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={form.severity} onChange={e => change('severity', e.target.value as QaSeverity)}>{['untriaged', 'low', 'medium', 'high'].map(s => <option key={s} value={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
         {!initial && <>
-          <UserSelect label={t('qa.assignee')} options={assignmentOptions} activeOnly allowEmpty disabled={busy || readOnly} value={form.assigneeId || ''} onChange={value => setForm(previous => ({ ...previous, assigneeId: value || null }))} />
+          <UserSelect label={t('qa.assignee')} options={qaRepairAssigneeOptions(assignmentOptions)} activeOnly allowEmpty disabled={busy || readOnly} value={form.assigneeId || ''} onChange={value => setForm(previous => ({ ...previous, assigneeId: value || null }))} />
           <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={busy || readOnly} value={form.qaOwnerId || ''} onChange={value => setForm(previous => ({ ...previous, qaOwnerId: value || null }))} />
           <p className="text-xs text-muted-foreground">{t('qa.qaOwnerReporterDefaultHint')}</p>
           <QaSelect label={t('qa.priority')} value={form.priority} onChange={event => setForm(previous => ({ ...previous, priority: Number(event.target.value) }))}>
