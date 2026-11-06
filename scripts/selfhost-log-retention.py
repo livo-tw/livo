@@ -419,8 +419,14 @@ def apply(client, cfg, initial, progress=None):
                 raise Refused("maintenance_inhibited")
             fresh(client, cfg, start_lsn=initial["wal_lsn"], check_space=True)
             client.sql(f"SET statement_timeout={cfg['statement_timeout_ms']};\n"
-                       f"SET lock_timeout={cfg['lock_timeout_ms']};\nVACUUM (ANALYZE) {identifier(table)};",
+                       f"SET lock_timeout={cfg['lock_timeout_ms']};\nVACUUM (PARALLEL 0) {identifier(table)};",
                        "ordinary_vacuum", timeout=cfg["statement_timeout_ms"] / 1000 + 10)
+            if Path(cfg["maintenance_inhibit_path"]).exists():
+                raise Refused("maintenance_inhibited")
+            fresh(client, cfg, start_lsn=initial["wal_lsn"], check_space=True)
+            client.sql(f"SET statement_timeout={cfg['statement_timeout_ms']};\n"
+                       f"SET lock_timeout={cfg['lock_timeout_ms']};\nANALYZE {identifier(table)};",
+                       "ordinary_analyze", timeout=cfg["statement_timeout_ms"] / 1000 + 10)
             vacuumed.append(table)
         return {"status": "partial" if reason else "completed", "reason": reason,
                 "deleted_rows": deleted, "batches": batches, "max_batch_rows": cfg["batch_rows"],
@@ -763,6 +769,55 @@ def self_test():
             with self.assertRaises(Refused) as refusal:
                 fresh(client, cfg, check_space=True, start_lsn="0/0")
             self.assertEqual(refusal.exception.code, "wal_growth_gate")
+
+        def test_ordinary_vacuum_is_serial_and_keeps_failure_evidence(self):
+            cfg = config()
+            cfg["binding"]["sources"] = cfg["binding"]["sources"][:1]
+            table = cfg["binding"]["sources"][0]["table_name"]
+            # Both maintenance commands have separate budgets. Failure of either
+            # must keep the earlier DELETE acknowledgements known and partial.
+            for failures, expected_calls in ((None, 2), (Refused("postgres_command_failed"), 1),
+                                             ([None, Refused("postgres_command_failed")], 2)):
+                client = mock.Mock()
+                client.remaining.return_value = 100
+                client.json_sql.side_effect = [{"deleted_rows": 1}, {"deleted_rows": 0}]
+                client.sql.side_effect = failures
+                with mock.patch.object(module, "fresh"), mock.patch.object(module, "write_json"), \
+                        mock.patch.object(module, "preview", return_value={"sources": [{"expired_count_bounded": 0}]}):
+                    result = apply(client, cfg, {"wal_lsn": "0/0", "cutoff_utc": "2000-01-01T00:00:00"})
+                expected = [mock.call(
+                    f"SET statement_timeout=15000;\nSET lock_timeout=1000;\nVACUUM (PARALLEL 0) {identifier(table)};",
+                    "ordinary_vacuum", timeout=25), mock.call(
+                    f"SET statement_timeout=15000;\nSET lock_timeout=1000;\nANALYZE {identifier(table)};",
+                    "ordinary_analyze", timeout=25)]
+                self.assertEqual(client.sql.call_args_list, expected[:expected_calls])
+                self.assertEqual(result["deleted_rows"], 1)
+                self.assertEqual(result["batches"], 2)
+                self.assertIsNone(result["pending_batch"])
+                self.assertFalse(result["result_unknown"])
+                self.assertEqual(result["status"], "partial" if failures else "completed")
+                self.assertEqual(result["reason"], "postgres_command_failed" if failures else None)
+
+        def test_maintenance_inhibit_between_vacuum_and_analyze_stops_safely(self):
+            cfg = config()
+            cfg["binding"]["sources"] = cfg["binding"]["sources"][:1]
+            with tempfile.TemporaryDirectory() as directory:
+                marker = Path(directory) / "maintenance-inhibit"
+                cfg["maintenance_inhibit_path"] = str(marker)
+                client = mock.Mock()
+                client.remaining.return_value = 100
+                client.json_sql.side_effect = [{"deleted_rows": 1}, {"deleted_rows": 0}]
+                client.sql.side_effect = lambda *a, **kw: marker.write_text("fixture")
+                with mock.patch.object(module, "fresh"), mock.patch.object(module, "write_json"), \
+                        mock.patch.object(module, "preview", return_value={"sources": [{"expired_count_bounded": 0}]}):
+                    result = apply(client, cfg, {"wal_lsn": "0/0", "cutoff_utc": "2000-01-01T00:00:00"})
+                self.assertEqual(client.sql.call_count, 1)
+                self.assertEqual(client.sql.call_args.args[1], "ordinary_vacuum")
+                self.assertEqual(result["status"], "partial")
+                self.assertEqual(result["reason"], "maintenance_inhibited")
+                self.assertEqual(result["deleted_rows"], 1)
+                self.assertIsNone(result["pending_batch"])
+                self.assertFalse(result["result_unknown"])
 
         def test_commit_ack_loss_is_partial_unknown(self):
             cfg = config()

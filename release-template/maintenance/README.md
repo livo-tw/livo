@@ -10,6 +10,8 @@
 
 Cloudflare 來源 `cloudflare.logs.prod` 的批次先按 `timestamp` 排序，再套用原本的筆數上限與 `FOR UPDATE SKIP LOCKED`；其他八種來源的 SQL 不變。排序不保證每個環境都更快：helper、bind 和安裝程式不建立或保證時間欄位的 B-tree 索引，只有 BRIN 的巨表可能仍須掃描及排序，超過原本 15 秒界線。啟用前應以該實例的索引 metadata 與唯讀 `EXPLAIN` 評估可用的時間欄位 B-tree 和執行成本；新增索引是另外核准的維護工作，本工具不自動執行 DDL。小型無 B-tree fixture 只驗證排序、鎖定與保留邊界，未驗證大型無 B-tree 環境的效能。
 
+刪除後的一般維護分開執行 `VACUUM (PARALLEL 0)` 和 `ANALYZE`，避免平行索引清理在 Docker 預設的小型共享記憶體區配置失敗，也避免把兩項維護塞入同一個 statement timeout。每項仍使用原本 15 秒 statement、1 秒 lock timeout 與 25 秒傳輸上限；兩項之間重新核對維護抑制、身分、WAL 與空間。每輪總時間與筆數上限不變。任一項逾時或被安全限制擋下都保留 partial 與實際 DELETE ACK 證據，不得宣稱完成。工具不調高容器共享記憶體、不修改全域 PostgreSQL 設定，也不執行 `VACUUM FULL`。
+
 ## 先準備，再在維護時段啟用
 
 出廠範例 `enabled=false`，安裝與升級程式不會啟用 timer 或刪除事件。容器重建、首次過期清理和既有巨大資料表的實體縮減，都先完成新的快照、完整 DB 與 storage 備份，確認維護時段和足夠空間。既有巨表整理是獨立工作；空間不足時不得執行 VACUUM FULL、TRUNCATE 或刪 `pg_wal`。日常按已核准保留政策執行，不每天再備份一份巨大事件表。

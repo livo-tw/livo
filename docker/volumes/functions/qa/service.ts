@@ -375,6 +375,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           db.all(table, { issue_id: `eq.${issue.id}`, order: 'created_at,id' })));
         const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter(Boolean))].map(id);
         const names=people.length?await db.rows('members',{select:'id,name',id:`in.(${people.join(',')})`}):[];
+        const named = new Set(names.map(person => person.id));
+        const missing = new Set(people.filter(person => !named.has(person)));
+        if (missing.size) {
+          // The canonical roster limits external accounts to this issue's project.
+          // Preserve real member names even when their IDs use an external-looking prefix.
+          const roster: Row[] = await db.rpc('livo_qa_external_roster', { p_project_id: issue.projectId });
+          names.push(...roster.filter(person => missing.has(person.id)).map(person => ({ id: person.id, name: person.name })));
+        }
         return { issue, memberNames:Object.fromEntries(names.map(m=>[m.id,m.name])), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
           events: events.map(e => ({ id: e.id, issueId: e.issue_id, actorId: e.actor_id, type: e.type, detail: e.detail, version: e.version, createdAt: e.created_at })),
           attachments: attachments.map(attachment) };

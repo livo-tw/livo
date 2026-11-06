@@ -164,7 +164,7 @@ export async function handleQaSlackHttp(c: Context<AppContext>): Promise<Respons
     if (payload.type === 'url_verification') return c.json({challenge:payload.challenge});
     if (isTaskUnfurlPayload(payload)) {
       const actions = createCloudQaSlackActions(c.env, ws, c.executionCtx);
-      c.executionCtx.waitUntil(handleTaskUnfurl(payload, createCloudTaskUnfurlActions(c.env, ws, c.executionCtx, actions.actor))
+      c.executionCtx.waitUntil(handleTaskUnfurl(payload, createCloudTaskUnfurlActions(c.env, ws, c.executionCtx, actions.actor, actions))
         .catch(() => { console.error('task_unfurl_failed'); }));
       return c.json({});
     }

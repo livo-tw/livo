@@ -123,7 +123,9 @@ class Fixture:
             '--label', 'livo.retention-fixture=' + self.owner,
             '--label', 'com.docker.compose.project=' + self.project,
             '--label', 'com.docker.compose.service=db', '--network', 'none',
-            '--env', 'POSTGRES_HOST_AUTH_METHOD=trust', IMAGE],
+            '--shm-size', '64m', '--memory', '1g', '--cpus', '2',
+            '--env', 'POSTGRES_HOST_AUTH_METHOD=trust', IMAGE, 'postgres',
+            '-c', 'maintenance_work_mem=64MB', '-c', 'max_parallel_maintenance_workers=2'],
             timeout=120, stage='fixture_container_create').strip()
         if not re.fullmatch(r'[0-9a-f]{64}', self.cid):
             raise FixtureFailure('fixture_container_id')
@@ -245,6 +247,37 @@ class Fixture:
     def invoke(self, *args, expected=('preview',)):
         return self.helper(*args, '--config', str(self.config_path), expected=expected)
 
+    def invoke_post_ack_wal_guard(self):
+        # A one-byte limit can be crossed by unrelated catalog/background WAL
+        # before DELETE. Keep headroom for that noise and generate real WAL only
+        # after the real COMMIT ACK, without altering any helper metadata/limits.
+        spec = importlib.util.spec_from_file_location('livo_retention_post_ack_wal_fixture', HELPER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original = module.Docker.json_sql
+        acknowledgements = []
+        limit = json_file(self.config_path)['max_wal_growth_bytes']
+
+        def observed_sql(client, sql, operation='postgres_metadata', timeout=30):
+            result = original(client, sql, operation, timeout)
+            if operation == 'delete_expired_batch':
+                self.expect(not acknowledgements and result.get('deleted_rows') == 1,
+                    'post_ack_wal_fixture_requires_one_real_ack')
+                acknowledgements.append(result['deleted_rows'])
+                start = self.sql('SELECT pg_current_wal_lsn()::text;').strip()
+                self.sql('INSERT INTO public.fixture_wal_guard_marker(payload) '
+                    "SELECT string_agg(md5(g::text),'') FROM generate_series(1,262144) g;")
+                generated = int(self.sql('SELECT pg_wal_lsn_diff(pg_current_wal_lsn(),'
+                    + quoted(start) + ')::bigint;').strip())
+                self.expect(generated > limit, 'post_ack_wal_fixture_did_not_cross_real_limit')
+            return result
+
+        output = io.StringIO()
+        with mock.patch.object(module.Docker, 'json_sql', new=observed_sql), contextlib.redirect_stdout(output):
+            code = module.main(['--scheduled', '--config', str(self.config_path)])
+        self.expect(acknowledgements == [1], 'post_ack_wal_fixture_ack_boundary')
+        return self.check_helper_result(json.loads(output.getvalue()), code, ('partial',))
+
     def save(self, **changes):
         config = json_file(self.config_path)
         config.update(changes)
@@ -348,6 +381,56 @@ class Fixture:
         self.sql('DELETE FROM ' + rel + ' WHERE id IN (' + ','.join(quoted(value) for value in ids) + ');')
         self.tests.append('ordered_cf_oldest_unlocked_bounded_cutoff')
 
+    def serial_vacuum_with_small_shared_memory(self):
+        self.stage = 'serial_vacuum_64m_shm'
+        config = self.save(enabled=True, batch_rows=1, max_rows_per_run=1)
+        item = next(row for row in config['binding']['sources'] if row['source_name'] == 'cloudflare.logs.prod')
+        rel = relation(item['table_name'])
+        # Dispose only expired rows in these nine synthetic fixture tables.
+        self.sql('\n'.join('DELETE FROM ' + relation(name)
+            + " WHERE timestamp < (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '7 days';"
+            for name in self.tables))
+        self.sql('ALTER TABLE ' + rel + ' SET (autovacuum_enabled=false);\n'
+            'CREATE INDEX fixture_serial_timestamp ON ' + rel + ' (timestamp);\n'
+            'CREATE INDEX fixture_serial_id ON ' + rel + ' (id);\n'
+            'CREATE INDEX fixture_serial_brin ON ' + rel + ' USING brin(timestamp);\n'
+            'INSERT INTO ' + rel + " (id,body,event_message,timestamp) SELECT 'serial-'||g,'{}',repeat('x',800),"
+            "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') FROM generate_series(1,450000) g;\n"
+            'DELETE FROM ' + rel + " WHERE id LIKE 'serial-%' AND substring(id FROM 8)::integer <= 300000;\n"
+            'INSERT INTO ' + rel + " VALUES ('serial-expired','{}','Fixture expired event',"
+            "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '8 days');")
+        count = int(self.sql('SELECT count(*) FROM ' + rel).strip())
+        # Execute the real helper and real PostgreSQL commands; observe only the
+        # maintenance transport boundary, without a production-only test switch.
+        spec = importlib.util.spec_from_file_location('livo_retention_serial_fixture', HELPER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        original_sql = module.Docker.sql
+        maintenance = []
+
+        def observed_sql(client, sql, operation='postgres_metadata', timeout=30):
+            if operation in ('ordinary_vacuum', 'ordinary_analyze'):
+                maintenance.append((sql, operation, timeout))
+            return original_sql(client, sql, operation, timeout)
+
+        output = io.StringIO()
+        with mock.patch.object(module.Docker, 'sql', new=observed_sql), contextlib.redirect_stdout(output):
+            code = module.main(['--scheduled', '--config', str(self.config_path)])
+        result = self.check_helper_result(json.loads(output.getvalue()), code, ('partial',))
+        self.expect(maintenance == [
+            ('SET statement_timeout=15000;\nSET lock_timeout=1000;\nVACUUM (PARALLEL 0) ' + rel + ';',
+             'ordinary_vacuum', 25),
+            ('SET statement_timeout=15000;\nSET lock_timeout=1000;\nANALYZE ' + rel + ';',
+             'ordinary_analyze', 25)], 'split_maintenance_limits_or_command_order_changed')
+        self.expect(result.get('reason') == 'row_budget' and result.get('vacuumed_tables') == 1,
+            'serial_vacuum_did_not_finish_with_64m_shm')
+        self.expect(result.get('deleted_rows') == 1 and result.get('batches') == 1
+            and result.get('pending_batch') is None and not result.get('result_unknown'), 'serial_vacuum_ack_scope')
+        self.expect(int(self.sql('SELECT count(*) FROM ' + rel).strip()) == count - 1,
+            'ordinary_vacuum_changed_live_rows')
+        self.tests.append('serial_ordinary_vacuum_64m_shm_keeps_limits_and_live_rows')
+        self.tests.append('separate_vacuum_analyze_keep_per_command_timeouts')
+
     def exercise(self):
         self.stage = 'bind_disabled'
         result = self.helper('bind', '--config', str(self.config_path), '--container', self.name,
@@ -450,15 +533,18 @@ class Fixture:
 
         self.seed_old()
         before = self.old_count()
-        self.save(batch_rows=1, max_wal_growth_bytes=1)
+        self.sql('CREATE TABLE public.fixture_wal_guard_marker(payload text);'
+            'ALTER TABLE public.fixture_wal_guard_marker ALTER COLUMN payload SET STORAGE EXTERNAL;')
+        self.save(batch_rows=1, max_wal_growth_bytes=4 * 1024**2)
         self.stage = 'real_ack_then_wal_guard'
-        result = self.invoke('--scheduled', expected=('partial',))
+        result = self.invoke_post_ack_wal_guard()
         self.expect(result.get('reason') == 'wal_growth_gate', 'normal_guard_reason')
         self.expect(result.get('deleted_rows') == 1 and result.get('batches') == 1, 'real_ack_count')
         self.expect(not result.get('result_unknown') and not result.get('result_unknown_until_readback')
             and result.get('pending_batch') is None, 'acked_guard_falsely_unknown')
         self.expect(self.old_count() == before - 1 and self.protected() == protected, 'acked_guard_scope')
         self.tests.append('real_commit_ack_then_normal_wal_guard_known_partial')
+        self.sql('DROP TABLE public.fixture_wal_guard_marker;')
         self.save(max_wal_growth_bytes=512 * 1024**2, max_rows_per_run=2)
         self.stage = 'known_partial_next_bounded_pass'
         result = self.invoke('--scheduled', expected=('partial',))
@@ -512,6 +598,7 @@ class Fixture:
             # Explicit test-only evidence archive after count-only readback of
             # the owned fixture; production CLI has no auto-clear/force option.
             self.status_path.rename(self.scratch / (fault + '.status.json'))
+        self.serial_vacuum_with_small_shared_memory()
 
 
 def root_main():
