@@ -1,4 +1,4 @@
-import { handleTaskUnfurl, isTaskUnfurlPayload } from './slackTaskUnfurl';
+import { handleTaskUnfurl, isTaskUnfurlOpenPayload, isTaskUnfurlPayload } from './slackTaskUnfurl';
 import { createCloudTaskUnfurlActions } from './taskUnfurl';
 import { parseDeploymentEnvironments } from './qa/environments';
 import { groupProjectsByLine } from './qa/projectGroups';
@@ -162,6 +162,7 @@ export async function handleQaSlackHttp(c: Context<AppContext>): Promise<Respons
     const form = new URLSearchParams(body);
     const payload = c.req.header('content-type')?.includes('application/json') ? JSON.parse(body) : form.has('payload') ? JSON.parse(form.get('payload')!) : Object.fromEntries(form);
     if (payload.type === 'url_verification') return c.json({challenge:payload.challenge});
+    if (isTaskUnfurlOpenPayload(payload)) return c.json({});
     if (isTaskUnfurlPayload(payload)) {
       const actions = createCloudQaSlackActions(c.env, ws, c.executionCtx);
       c.executionCtx.waitUntil(handleTaskUnfurl(payload, createCloudTaskUnfurlActions(c.env, ws, c.executionCtx, actions.actor, actions))

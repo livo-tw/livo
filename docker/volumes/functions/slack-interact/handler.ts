@@ -1,4 +1,4 @@
-import { handleTaskUnfurl, isTaskUnfurlPayload, type TaskUnfurlActions } from './slackTaskUnfurl.ts';
+import { handleTaskUnfurl, isTaskUnfurlOpenPayload, isTaskUnfurlPayload, type TaskUnfurlActions } from './slackTaskUnfurl.ts';
 import { handleKnowledgeWork } from './knowledge-work-handler.ts';
 import type { KnowledgeWorkData } from './knowledge-work-backend.ts';
 import { handleWork } from './work-handler.ts';
@@ -110,6 +110,7 @@ const safeError = (error: unknown) => error instanceof Error && error.name === '
 
 /** The transport never interprets commands. All ACK response payloads originate here. */
 export async function handleInteraction(p: Row, envelopeId: string, d: Actions): Promise<Row> {
+  if (isTaskUnfurlOpenPayload(p)) return {};
   if (isTaskUnfurlPayload(p)) return handleTaskUnfurl(p, d.taskUnfurl);
   if (d.qa && isQaSlackPayload(p)) return handleQaSlack(p, envelopeId, d.qa);
   if (d.knowledgeSearch) {

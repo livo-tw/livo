@@ -22,6 +22,17 @@ type RecordReference = { kind: 'task' | 'qa'; id: string };
 export function isTaskUnfurlPayload(payload: Row): boolean {
   return payload?.type === 'event_callback' && payload.event?.type === 'link_shared';
 }
+const OPEN_LINK_ACTION = 'livo_unfurl_open_link';
+/** URL buttons only navigate. ACK their signed unfurl interaction without resolving
+ * an actor, opening a modal, or producing any message or business command. */
+export function isTaskUnfurlOpenPayload(payload: Row): boolean {
+  const isAppUnfurl = payload?.is_app_unfurl === true || payload?.container?.is_app_unfurl === true ||
+    payload?.app_unfurl?.is_app_unfurl === true;
+  return payload?.type === 'block_actions' && isAppUnfurl &&
+    payload.container?.type === 'message_attachment' && Array.isArray(payload.actions) &&
+    payload.actions.length === 1 && payload.actions[0]?.type === 'button' &&
+    payload.actions[0].action_id === OPEN_LINK_ACTION;
+}
 
 /** Parse locally: neither this function nor its adapters fetch a supplied URL. */
 export function recordFromUnfurlUrl(value: unknown, appUrl: string): RecordReference | undefined {
@@ -65,6 +76,43 @@ function qaText(card: QaUnfurlCard): string {
   if (card.dueDate) lines.push('截止：' + mrkdwnLine(card.dueDate, 40));
   return lines.join('\n');
 }
+function previewField(label: string, value: unknown, limit = 100): Row {
+  return { type: 'mrkdwn', verbatim: true, text: '*' + label + '*\n' + mrkdwnLine(value, limit) };
+}
+function ownerLabel(id: unknown, name: unknown): string {
+  return typeof name === 'string' && name ? name : id ? '待確認' : '未指派';
+}
+function previewAttachment(url: string, kind: RecordReference['kind'], title: unknown,
+  fields: Row[], fallback: string, taskKey?: unknown): Row {
+  // Keep the title in a section (300 characters), not the 150-character header.
+  // Plain-text header content must not contain mrkdwn's escaped HTML entities.
+  const key = typeof taskKey === 'string'
+    ? taskKey.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').replace(/\s+/gu, ' ').trim().slice(0, 80) : '';
+  const isTask = kind === 'task';
+  return {
+    color: isTask ? '#3B82F6' : '#D97706',
+    fallback,
+    blocks: [
+      { type: 'header', text: { type: 'plain_text', emoji: false,
+        text: isTask ? 'LIVO · 任務' + (key ? ' ' + key : '') : 'LIVO · Bug' } },
+      { type: 'section', text: { type: 'mrkdwn', verbatim: true, text: '*' + mrkdwnLine(title, 300) + '*' } },
+      { type: 'divider' },
+      { type: 'section', fields },
+      { type: 'actions', elements: [{ type: 'button', action_id: OPEN_LINK_ACTION,
+        text: { type: 'plain_text', emoji: false, text: isTask ? '開啟任務' : '開啟 Bug' },
+        url: new URL(url).toString(),
+        accessibility_label: isTask ? '在 LIVO 開啟任務卡片' : '在 LIVO 開啟 Bug 卡片' }] },
+    ],
+  };
+}
+function qaAttachment(url: string, card: QaUnfurlCard): Row {
+  const fields = [previewField('專案', card.project.name), previewField('狀態', card.stateLabel),
+    previewField('修復負責人', ownerLabel(card.issue.assigneeId, card.assigneeName)),
+    previewField('QA 負責人', ownerLabel(card.issue.qaOwnerId, card.qaOwnerName)),
+    previewField('優先級', card.priorityLabel || '未設定'), previewField('嚴重度', card.severityLabel || '未設定')];
+  if (card.dueDate) fields.push(previewField('截止日', card.dueDate, 40));
+  return previewAttachment(url, 'qa', card.issue.title, fields, qaText(card));
+}
 
 /** Only the actor's readable card and its kind's approved notification audience
  * may be unfurled. Composer and all DMs skip. Repeated calls update the same
@@ -90,7 +138,7 @@ export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions
   const channel = (await actions.slack('conversations.info', { channel: event.channel })).channel;
   if (!channel || channel.id !== event.channel || channel.is_im !== false || channel.is_mpim !== false ||
     !(channel.is_channel === true || channel.is_group === true) || channel.is_member !== true) return {};
-  const cards: Array<{ url: string; kind: RecordReference['kind']; project: Row; text: string }> = [];
+  const cards: Array<{ url: string; kind: RecordReference['kind']; project: Row; attachment: Row }> = [];
   const seen = new Set<string>();
   for (const link of links) {
     if (seen.has(link.url)) continue;
@@ -99,24 +147,26 @@ export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions
       const card = await actions.qaCard?.(actor, link.reference.id);
       if (!card || !card.issue?.projectId || card.project.id !== card.issue.projectId ||
         card.issue.id !== link.reference.id || !card.stateLabel || !audience(config, card.project, 'qa').includes(event.channel)) continue;
-      cards.push({ url: link.url, kind: 'qa', project: card.project, text: qaText(card) });
+      cards.push({ url: link.url, kind: 'qa', project: card.project, attachment: qaAttachment(link.url, card) });
     } else {
       const card = await actions.card(actor, link.reference.id);
       if (!card || !card.task.project_id || card.project.id !== card.task.project_id ||
         card.status.id !== card.task.status_id || !audience(config, card.project, 'task').includes(event.channel)) continue;
       const key = mrkdwnLine(card.task.task_key, 80), title = mrkdwnLine(card.task.title, 300);
+      const fallback = '*' + (key ? key + ' · ' : '') + title + '*\n專案：' + mrkdwnLine(card.project.name, 100) +
+        '　狀態：' + mrkdwnLine(card.status.name, 100);
       cards.push({ url: link.url, kind: 'task', project: card.project,
-        text: '*' + (key ? key + ' · ' : '') + title + '*\n專案：' + mrkdwnLine(card.project.name, 100) +
-          '　狀態：' + mrkdwnLine(card.status.name, 100) });
+        attachment: previewAttachment(link.url, 'task', card.task.title,
+          [previewField('專案', card.project.name), previewField('狀態', card.status.name)], fallback, card.task.task_key) });
     }
   }
   if (!cards.length) return {};
   const freshConfig = await actions.config();
   if (freshConfig?.enabled !== true || freshConfig.teamId !== team) return {};
   const unfurls: Row = {};
-  for (const { url, kind, project, text } of cards) {
+  for (const { url, kind, project, attachment } of cards) {
     if (!audience(freshConfig, project, kind).includes(event.channel)) continue;
-    unfurls[url] = { blocks: [{ type: 'section', text: { type: 'mrkdwn', verbatim: true, text } }] };
+    unfurls[url] = attachment;
   }
   if (Object.keys(unfurls).length) await actions.slack('chat.unfurl', { channel: event.channel, ts: event.message_ts, unfurls });
   return {};
