@@ -15,8 +15,8 @@ export function handoffReplyTime(value: string): string | null {
 }
 
 type Draft = { version: number; reason: string; nextOwnerId: string; replyBy: string; externalDependency: string };
-export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignmentOptions }: {
-  issue: QaIssue; actor: QaActor; busy: boolean; assignmentOptions?: readonly User[];
+export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignmentOptions, memberNames }: {
+  issue: QaIssue; actor: QaActor; busy: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>;
   onCommand: (command: QaCommand, expectedVersion?: number) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
@@ -27,7 +27,8 @@ export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignme
   const submitting = useRef(false);
   const handoff = issue.handoff;
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const name = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name || t('qaHandoff.unavailableMember');
+  const name = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name
+    || (id && typeof memberNames?.[id] === 'string' ? memberNames[id].trim() : '') || t('qaHandoff.unavailableMember');
   const run = async (command: QaCommand, version: number) => {
     if (busy || submitting.current) return;
     if (version !== issue.version) { setError(t('qaHandoff.draftConflict')); return; }
@@ -49,11 +50,13 @@ export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignme
     <p className="mb-3 text-xs text-muted-foreground">{t('qaHandoff.roleHint')}</p>
     {handoff ? <dl className="space-y-3 text-sm">
       <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.nextOwner')}</dt><dd>{name(handoff.nextOwnerId)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.requestedBy')}</dt><dd>{name(handoff.requestedBy)} · {new Date(handoff.requestedAt).toLocaleString()}</dd></div>
       <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.reason')}</dt><dd className="whitespace-pre-wrap break-words">{handoff.reason}</dd></div>
       <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.replyBy')}</dt><dd>{handoff.replyBy ? new Date(handoff.replyBy).toLocaleString() : t('qaHandoff.noDeadline')}</dd></div>
       {handoff.externalDependency && <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.externalDependency')}</dt><dd className="whitespace-pre-wrap break-words">{handoff.externalDependency}</dd></div>}
       <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.status')}</dt><dd>{t(handoff.resolvedAt ? 'qaHandoff.resolved' : handoff.acceptedAt ? 'qaHandoff.accepted' : 'qaHandoff.pending')}{handoff.acceptedAt && ` · ${name(handoff.acceptedBy)} · ${new Date(handoff.acceptedAt).toLocaleString()}`}</dd></div>
       {handoff.resolvedAt && <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.evidence')}</dt><dd className="whitespace-pre-wrap break-words">{handoff.resolutionEvidence}</dd></div>}
+      {handoff.resolvedAt && <div><dt className="text-xs text-muted-foreground">{t('qaHandoff.resolvedBy')}</dt><dd>{name(handoff.resolvedBy)} · {new Date(handoff.resolvedAt).toLocaleString()}</dd></div>}
     </dl> : <p className="text-sm text-muted-foreground">{t('qaHandoff.empty')}</p>}
     <div className="mt-4 flex flex-wrap gap-2">
       {canQaCommand(issue, actor, 'request_handoff') && <button type="button" className={qaButton} disabled={busy} onClick={openRequest}>{t(handoff && !handoff.resolvedAt ? 'qaHandoff.replace' : 'qaHandoff.request')}</button>}

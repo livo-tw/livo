@@ -10,6 +10,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { useUIContext } from '@/context/UIContext';
 import { useBrowserNotification } from '@/hooks/useBrowserNotification';
 import { parseQaNotification } from '@/lib/qa/notifications';
+import { qaNotificationPeople } from '@/lib/qa/notificationPeople';
 import { formatApprovalNotification, parseApprovalNotification } from '@/lib/approvalNotifications';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
@@ -45,6 +46,12 @@ interface Notification {
   content: string;
   isRead: boolean;
   createdAt: string;
+  senderName?: string;
+}
+
+function senderLabel(names: Record<string, string>, id: string): string | undefined {
+  const value = Object.prototype.hasOwnProperty.call(names, id) ? names[id] : undefined;
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,6 +101,9 @@ const NotificationPanel = () => {
   const panelId = useId();
   const closePanel = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
   const { permission, requestPermission, sendNotification } = useBrowserNotification();
+  const memberScope = useRef(currentMemberId);
+  memberScope.current = currentMemberId;
+  const notificationRead = useRef<AbortController>();
 
   // ── Lookup maps (O(1) lookups instead of O(n) in render) ─────────────────
 
@@ -101,6 +111,8 @@ const NotificationPanel = () => {
     () => new Map(users.map(u => [u.id, u])),
     [users],
   );
+  const userMapRef = useRef(userMap);
+  userMapRef.current = userMap;
 
   const taskMap = useMemo(
     () => new Map(allTasks.map(t => [t.id, t])),
@@ -109,7 +121,13 @@ const NotificationPanel = () => {
 
   // ── Data fetching ─────────────────────────────────────────────────────────
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async (signal?: AbortSignal) => {
+    notificationRead.current?.abort();
+    const request = new AbortController();
+    notificationRead.current = request;
+    if (signal?.aborted) return;
+    signal?.addEventListener('abort', () => request.abort(), { once: true });
+    signal = request.signal;
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
@@ -122,7 +140,8 @@ const NotificationPanel = () => {
       return;
     }
     if (data) {
-      setNotifications(data.map(r => ({
+      if (signal?.aborted || memberScope.current !== currentMemberId) return;
+      const loaded = data.map(r => ({
         id: r.id,
         recipientId: r.recipient_id,
         senderId: r.sender_id,
@@ -131,20 +150,32 @@ const NotificationPanel = () => {
         content: r.content,
         isRead: r.is_read,
         createdAt: r.created_at,
-      })));
+      }));
+      setNotifications(loaded);
+      const missing = loaded.filter(notification => notification.type === 'qa_update' && !userMapRef.current.has(notification.senderId));
+      if (missing.length && qaEnabled) void qaNotificationPeople(missing, signal).then(names => {
+        if (!signal?.aborted && memberScope.current === currentMemberId) setNotifications(previous => previous.map(notification => ({ ...notification,
+          senderName: senderLabel(names, notification.senderId) || notification.senderName })));
+      }).catch(() => { if (!signal?.aborted && memberScope.current === currentMemberId) toast.error(t('notification.loadFailed')); });
     }
-  }, [currentMemberId]);
+  }, [currentMemberId, qaEnabled]);
 
   useEffect(() => {
-    if (currentMemberId) fetchNotifications();
+    const request = new AbortController();
+    setNotifications([]);
+    if (currentMemberId) void fetchNotifications(request.signal);
+    return () => { request.abort(); notificationRead.current?.abort(); };
   }, [currentMemberId, fetchNotifications]);
 
   // ── Realtime subscription + browser notification ──────────────────────────
 
   useEffect(() => {
+    let active = true;
+    const request = new AbortController();
     const channel = supabase
       .channel('notifications-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        if (!active || request.signal.aborted || memberScope.current !== currentMemberId) return;
         const r = payload.new as { id: string; recipient_id: string; sender_id: string; type: string; task_id: string; content: string; is_read: boolean; created_at: string };
         if (r.recipient_id === currentMemberId && isEventEnabled(r.type, approvalsEnabled) && (r.type !== 'qa_update' || qaEnabled)) {
           const newNotif: Notification = {
@@ -154,14 +185,24 @@ const NotificationPanel = () => {
           };
           setNotifications(prev => [newNotif, ...prev]);
 
-          const senderName = userMap.get(r.sender_id)?.name || t('notification.systemSender');
           const action = notificationAction(r.type, r.content || '');
-          sendNotification(`${senderName} ${action}`, { body: notificationText(r.type, r.content || ''), tag: r.id });
+          const announce = (label?: string) => {
+            if (!active || memberScope.current !== currentMemberId) return;
+            if (label) setNotifications(previous => previous.map(notification => notification.id === r.id ? { ...notification, senderName: label } : notification));
+            const senderName = userMapRef.current.get(r.sender_id)?.name || label || t('notification.unknownSender');
+            sendNotification(`${senderName} ${action}`, { body: notificationText(r.type, r.content || ''), tag: r.id });
+          };
+          if (r.type === 'qa_update' && !userMapRef.current.has(r.sender_id)) {
+            void qaNotificationPeople([newNotif], request.signal).then(names => announce(senderLabel(names, r.sender_id))).catch(() => announce());
+          } else {
+            const senderName = userMapRef.current.get(r.sender_id)?.name || t('notification.systemSender');
+            sendNotification(`${senderName} ${action}`, { body: notificationText(r.type, r.content || ''), tag: r.id });
+          }
         }
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [approvalsEnabled, qaEnabled, currentMemberId, userMap, sendNotification]);
+    return () => { active = false; request.abort(); supabase.removeChannel(channel); };
+  }, [approvalsEnabled, qaEnabled, currentMemberId, sendNotification]);
 
   // ── Close on click outside ────────────────────────────────────────────────
 
@@ -331,11 +372,11 @@ const NotificationPanel = () => {
                           {sender.avatar}
                         </span>
                       ) : (
-                        <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">?</span>
+                        <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">{n.senderName?.slice(0, 1) || '?'}</span>
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-foreground leading-snug">
-                          {!isDueSoon && <span className="font-bold">{sender?.name || t('notification.unknownSender')} </span>}
+                          {!isDueSoon && <span className="font-bold">{sender?.name || n.senderName || t('notification.unknownSender')} </span>}
                           {notificationAction(n.type, n.content)}
                         </p>
                         {task && (

@@ -72,4 +72,99 @@ export function addAssignmentCases({ cases, check, error, auth, quote, json }) {
   check('inactive historical participants are not offered for new assignment',
     `NOT (${read('members', { projectId: 'p-test' })}->'members' @> '[{"id":"m-assignee"}]'::jsonb)`);
   cases.push("UPDATE members SET is_active=true WHERE id IN ('m-assignee','m-other-project');");
+
+  // Paired aggregates differ only in reporter identity. Exercise the shipped
+  // commit wrapper, actual internal actors and the same required deployment.
+  const internalAuth = n => `'00000000-0000-0000-0000-${String(n).padStart(12, '0')}'::uuid`;
+  const commit = (who, data, type, expected = null, recipients = []) =>
+    `public.livo_qa_commit(${who},${quote(data.id)},${quote(data.id + '-' + type + '-command')},${quote('d'.repeat(64))},${expected === null ? 'NULL' : expected},${quote(type === 'create' ? 'create' : 'command')},${json(data)},${json({ type, id: data.id + '-' + type + '-event', recipients })})`;
+  for (const [origin, reporter, reporterAuth] of [['internal', 'm-member', internalAuth(1)], ['external', 'eqa-example', auth]]) {
+    const initial = { ...base('parity-' + origin), reporterId: reporter, assigneeId: 'm-assignee', qaOwnerId: 'm-qa' };
+    const started = { ...initial, state: 'in_progress', version: 2 };
+    const target = { id: 'parity-target-' + origin, environment: 'Stage', component: 'API', build: 'example-build', required: true,
+      deployedAt: null, deployedBy: null, deploymentEvidence: '' };
+    const submitted = { ...started, state: 'verification', version: 3, fixCycle: 1, fixSummary: 'Example repair', targets: [target] };
+    const deployed = { ...submitted, version: 4, targets: [{ ...target, deployedAt: initial.updatedAt, deployedBy: 'm-assignee' }] };
+    const closed = { ...deployed, version: 5, state: 'closed', resolution: 'fixed', closedAt: initial.updatedAt, closedBy: 'm-qa', runs: [
+      { id: 'parity-run-' + origin, sequence: 1, fixCycle: 1, targetId: target.id, environment: 'Stage', component: 'API', build: 'example-build',
+        result: 'pass', note: '', testerId: 'm-qa', createdAt: initial.updatedAt },
+    ] };
+    check(`${origin} reporter: create preserves the assigned internal RD and QA`,
+      `${commit(reporterAuth, initial, 'create', null, ['m-assignee', 'm-qa'])}->>'id'=${quote(initial.id)}`);
+    check(`${origin} reporter: internal RD starts through the real commit wrapper`,
+      `${commit(internalAuth(4), started, 'start_fix', 1)}=${json(started)}`);
+    check(`${origin} reporter: internal RD submits the same required repair target`,
+      `${commit(internalAuth(4), submitted, 'submit_fix', 2, ['m-qa'])}=${json(submitted)}`);
+    error(`${origin} reporter: assigned RD cannot impersonate the internal verifier`,
+      `SELECT ${commit(internalAuth(4), closed, 'record_verification', 3)}`, '42501', 'member_inactive');
+    check(`${origin} reporter: internal RD records a real deployment`,
+      `${commit(internalAuth(4), deployed, 'record_deployment', 3, ['m-qa'])}=${json(deployed)}`);
+    check(`${origin} reporter: internal QA PASS atomically closes with the actual verifier`,
+      `${commit(internalAuth(5), closed, 'record_verification', 4, ['m-assignee'])}=${json(closed)}`);
+    check(`${origin} reporter: persisted aggregate and receipt retain the real evidence`,
+      `(SELECT state='closed' AND version=5 AND data=${json(closed)} FROM qa_issues WHERE id=${quote(initial.id)})
+       AND (SELECT count(*)=5 FROM qa_commands WHERE issue_id=${quote(initial.id)})
+       AND (SELECT count(*)=5 FROM qa_events WHERE issue_id=${quote(initial.id)})`);
+    check(`${origin} reporter: internal actionable notification recipients are unchanged`,
+      `(SELECT count(*)=5 AND bool_and(task_id IS NULL) AND count(*) FILTER(WHERE recipient_id='m-assignee')=2 AND count(*) FILTER(WHERE recipient_id='m-qa')=3
+        FROM notifications WHERE CASE WHEN type='qa_update' THEN content::jsonb->>'issueId' END=${quote(initial.id)})`);
+    const uploadId = 'parity-upload-' + origin, storagePath = `default/${initial.id}/${uploadId}`;
+    cases.push(`INSERT INTO qa_uploads(id,issue_id,actor_id,file_name,mime_type,size,storage_path,created_at,expires_at)
+      VALUES(${quote(uploadId)},${quote(initial.id)},'m-assignee','example.txt','text/plain',7,${quote(storagePath)},now(),now()+interval '1 hour');
+      INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('qa-evidence',${quote(storagePath)},'{"size":7,"mimetype":"text/plain"}');`);
+    check(`${origin} reporter: internal upload finalization preserves actual uploader on the same private bucket`,
+      `(WITH finalized AS MATERIALIZED (SELECT public.livo_qa_finalize_upload(${internalAuth(4)},${quote(uploadId)}) AS item)
+        SELECT item->>'uploaded_by'='m-assignee' AND item->>'issue_id'=${quote(initial.id)}
+          AND item->>'storage_path'=${quote(storagePath)} FROM finalized)`);
+    error(`${origin} reporter: an unrelated internal member cannot delete the completed bug`,
+      `SELECT public.livo_qa_delete(${internalAuth(13)},${quote(initial.id)},5)`, '42501', 'qa_forbidden');
+    check(`${origin} reporter: an internal admin deletes through the same guarded entry point`,
+      `(WITH deleted AS MATERIALIZED (SELECT public.livo_qa_delete(${internalAuth(2)},${quote(initial.id)},5) AS item)
+        SELECT item->>'deleted'='true' AND item->'paths' @> ${json([storagePath])} FROM deleted)`);
+  }
+
+  // Historical filter identities are labels for internal QA, never new member
+  // accounts, external project grants or repair-assignment candidates.
+  const filter = (who, projects = 'NULL', offset = 0) =>
+    `public.livo_qa_filter_people(${who},${projects},${offset})`;
+  cases.push(`INSERT INTO external_qa_accounts(id,auth_id,name,is_active) VALUES
+    ('eqa-filter-history','00000000-0000-0000-0000-000000000021','Example historical tester',false),
+    ('eqa-filter-other','00000000-0000-0000-0000-000000000022','Example other-project tester',true),
+    ('eqa-filter-comment','00000000-0000-0000-0000-000000000023','Example comment author',true);
+    INSERT INTO external_qa_project_grants(account_id,project_id) VALUES('eqa-filter-other','p-other');`);
+  const historical = { ...base('filter-history-example'), reporterId: 'eqa-filter-history', assigneeId: 'm-assignee', qaOwnerId: 'm-qa' };
+  cases.push(`INSERT INTO qa_issues(id,project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data)
+    VALUES(${quote(historical.id)},'p-test','new','m-assignee','m-qa','eqa-filter-history',${quote(historical.title)},1,${quote(historical.updatedAt)},${json(historical)});
+    INSERT INTO qa_comments(id,issue_id,actor_id,body,created_at)
+    VALUES('filter-comment-example',${quote(historical.id)},'eqa-filter-comment','Example historical comment',now());`);
+  for (const [role, who] of [['member', internalAuth(1)], ['admin', internalAuth(2)], ['super_admin', internalAuth(3)]]) {
+    check(`${role} uses the same scoped external reporter and QA-owner filter directory`,
+      `${filter(who, "ARRAY['p-test']")}->'members' @> '[{"id":"eqa-example","isActive":true},{"id":"eqa-filter-history","isActive":false}]'::jsonb`);
+  }
+  check('filter RPC is service-only without member or anonymous direct access',
+    "has_function_privilege('service_role','public.livo_qa_filter_people(uuid,text[],integer)','EXECUTE') AND NOT has_function_privilege('authenticated','public.livo_qa_filter_people(uuid,text[],integer)','EXECUTE') AND NOT has_function_privilege('anon','public.livo_qa_filter_people(uuid,text[],integer)','EXECUTE')");
+  check('filter directory does not return unrelated projects or comment-only identities',
+    `NOT (${filter(internalAuth(1), "ARRAY['p-test']")}->'members' @> '[{"id":"eqa-filter-other"}]'::jsonb)
+     AND NOT (${filter(internalAuth(1), "ARRAY['p-test']")}->'members' @> '[{"id":"eqa-filter-comment"}]'::jsonb)`);
+  check('filter labels expose only id name and live display status',
+    `NOT EXISTS(SELECT 1 FROM jsonb_array_elements(${filter(internalAuth(1))}->'members') person
+      WHERE (person-ARRAY['id','name','isActive'])<>'{}'::jsonb)`);
+  check('filter empty scope returns no identities while all-project scope contains readable projects',
+    `${filter(internalAuth(1), 'ARRAY[]::text[]')}->'members'='[]'::jsonb
+     AND ${filter(internalAuth(1))}->'members' @> '[{"id":"eqa-filter-other"},{"id":"eqa-filter-history"}]'::jsonb`);
+  check('filter directory in another readable project excludes the first-project historical reporter',
+    `${filter(internalAuth(1), "ARRAY['p-other']")}->'members' @> '[{"id":"eqa-filter-other"}]'::jsonb
+     AND NOT (${filter(internalAuth(1), "ARRAY['p-other']")}->'members' @> '[{"id":"eqa-filter-history"}]'::jsonb)`);
+  cases.push("UPDATE members SET is_qa_admin=true WHERE id='m-other-project';");
+  check('QA administrator keeps the ordinary internal display scope',
+    `${filter(internalAuth(13), "ARRAY['p-test']")}->'members' @> '[{"id":"eqa-filter-history","isActive":false}]'::jsonb`);
+  cases.push("UPDATE members SET is_qa_admin=false,is_active=false WHERE id='m-other-project';");
+  error('inactive internal caller cannot reuse the filter directory', `SELECT ${filter(internalAuth(13))}`, '42501', 'qa_forbidden');
+  cases.push("UPDATE members SET is_active=true WHERE id='m-other-project';");
+  error('external login cannot use the internal filter directory', `SELECT ${filter(auth)}`, '42501', 'qa_forbidden');
+  error('negative filter offset is rejected', `SELECT ${filter(internalAuth(1), 'NULL', -1)}`, '22023', 'qa_invalid_request');
+  error('duplicate filter scope identifiers are rejected', `SELECT ${filter(internalAuth(1), "ARRAY['p-test','p-test']")}`, '22023', 'qa_invalid_request');
+  cases.push("UPDATE system_settings SET value=jsonb_set(value,'{qa}','false'::jsonb) WHERE key='feature_toggles';");
+  error('disabled QA does not return internal filter identities', `SELECT ${filter(internalAuth(1))}`, '42501', 'qa_disabled');
+  cases.push("UPDATE system_settings SET value=jsonb_set(value,'{qa}','true'::jsonb) WHERE key='feature_toggles';");
 }

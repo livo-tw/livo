@@ -84,7 +84,7 @@ export interface QaListInput {
   priorities?: number[]; severities?: QaSeverity[];
   sort?: QaSortField; direction?: QaSortDirection;
 }
-export interface QaListResult { issues: QaIssue[]; total: number; hasMore: boolean; }
+export interface QaListResult { issues: QaIssue[]; total: number; hasMore: boolean; memberNames?: Record<string, string>; }
 export interface QaUpload { id: string; provider: 'r2' | 'supabase'; partSize: number; bucket?: string; path?: string; token?: string; }
 export class QaError extends Error {
   constructor(public readonly code: string, public readonly status = 400) { super(code); this.name = 'QaError'; }

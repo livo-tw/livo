@@ -10,6 +10,8 @@ import { parseQaDisplaySettings, validateQaDisplaySettings } from './displaySett
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './fields.ts';
 import { qaVersionSuggestions } from './versions.ts';
 import { isDeploymentQueueOperator } from './deploymentQueue.ts';
+import { qaNotificationReferences } from './notificationText.ts';
+import { loadQaNotificationPeople } from './notificationPeople.ts';
 
 export interface QaEnvironment { get(name: string): string | undefined }
 type Row = Record<string, any>;
@@ -127,6 +129,52 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
   const externalRead = (actor: Row, action: string, input: Row = {}) => db.rpc('livo_qa_external_read', {
     p_auth_id: actor.authId, p_action: action, p_input: input,
   });
+  /** Display metadata for an already-authorized page, never assignment candidates. */
+  async function listMemberNames(issues: QaIssue[]): Promise<Record<string, string>> {
+    const byProject = new Map<string, Set<string>>();
+    for (const issue of issues) {
+      const people = [issue.assigneeId, issue.qaOwnerId].filter((value): value is string =>
+        typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value));
+      if (!people.length) continue;
+      const refs = byProject.get(issue.projectId) || new Set<string>();
+      people.forEach(person => refs.add(person));
+      byProject.set(issue.projectId, refs);
+    }
+    const ids = [...new Set([...byProject.values()].flatMap(refs => [...refs]))];
+    if (!ids.length) return {};
+    // Internal members keep their names even when an id resembles an external id.
+    const internal = await db.rows('members', { select: 'id,name', id: `in.(${ids.join(',')})`, limit: ids.length });
+    const internalIds = new Set(internal.map(person => person.id));
+    const labels = new Map<string, string>(internal.filter(person => ids.includes(person.id)
+      && typeof person.name === 'string' && person.name.trim()).map(person => [person.id, person.name]));
+    await Promise.all([...byProject].map(async ([projectId, refs]) => {
+      const missing = new Set([...refs].filter(person => !internalIds.has(person)));
+      if (!missing.size) return;
+      // One directory read per distinct project; never one lookup per card or a
+      // global external-account scan. Revoked/ungranted strangers stay unknown.
+      const roster: Row[] = await db.rpc('livo_qa_external_roster', { p_project_id: projectId });
+      for (const person of roster) if (missing.has(person.id) && typeof person.name === 'string' && person.name.trim())
+        labels.set(person.id, person.name);
+    }));
+    return Object.fromEntries(labels);
+  }
+  async function detailMemberNames(people: string[]): Promise<Record<string, string>> {
+    const names: Row[] = [];
+    for (let offset = 0; offset < people.length; offset += 100) {
+      const ids = people.slice(offset, offset + 100);
+      const internal = await db.rows('members', { select: 'id,name', id: `in.(${ids.join(',')})`, limit: 100 });
+      const named = new Set(internal.map(person => person.id));
+      const missing = ids.filter(person => !named.has(person));
+      const external = missing.length ? await db.rows('external_qa_accounts', {
+        select: 'id,name', id: `in.(${missing.join(',')})`, limit: 100,
+      }) : [];
+      // The authorized detail itself proves these historical participants. An
+      // inactive/revoked author stays a named author, never an assignment option.
+      names.push(...internal.filter(person => ids.includes(person.id)), ...external.filter(person => missing.includes(person.id)));
+    }
+    return Object.fromEntries(names.filter(person => typeof person.name === 'string' && person.name.trim())
+      .map(person => [person.id, person.name]));
+  }
   async function getIssue(issueId: string, actor: Row): Promise<QaIssue> {
     if (actor.external) return externalRead(actor, 'issue', { id: id(issueId) });
     const row = (await db.qaRows('qa_issues', { select: 'data', id: `eq.${id(issueId)}`, limit: 1 }))[0];
@@ -276,6 +324,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const rows=await db.rows('members',{select:'id,name',is_active:'eq.true',order:'name,id',offset,limit:100,...(search?{name:`ilike.*${search.replace(/[\\%_*]/g,'\\$&')}*`}:{})});
         return {members:rows,hasMore:rows.length===100};
       }
+      case 'filter_people': {
+        const offset = request.offset ?? 0, projectIds = request.projectIds;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000 || projectIds !== undefined &&
+          (!Array.isArray(projectIds) || projectIds.length > 1000 || new Set(projectIds).size !== projectIds.length)) fail('qa_invalid_request');
+        return db.rpc('livo_qa_filter_people', { p_auth_id: actor.authId,
+          p_project_ids: projectIds === undefined ? null : projectIds.map(id), p_offset: offset });
+      }
+      case 'notification_people': return loadQaNotificationPeople(db, actor.id, request.notificationIds);
       case 'save_coordination': {
         const projectId=id(request.projectId),coordinatorId=request.coordinatorId===null?null:id(request.coordinatorId);
         if(!Number.isSafeInteger(request.expectedVersion)||request.expectedVersion<0)fail('qa_invalid_version');
@@ -363,27 +419,32 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         anyOf('project_id', filters.projectIds); anyOf('assignee_id', filters.assigneeIds); anyOf('qa_owner_id', filters.qaOwnerIds);
         anyOf('reporter_id', filters.reporterIds); anyOf('data->>priority', filters.priorities); anyOf('data->>severity', filters.severities);
         if (none) return { issues: [], total: 0, hasMore: false } satisfies QaListResult;
-        if (actor.external) return externalRead(actor, 'list', { ...input, ...filters, offset, limit });
+        if (actor.external) {
+          // The scoped RPC must finish authorizing/filtering the page before
+          // its participant IDs may be used for display metadata.
+          const result: QaListResult = await externalRead(actor, 'list', { ...input, ...filters, offset, limit });
+          return { ...result, memberNames: await listMemberNames(result.issues) } satisfies QaListResult;
+        }
         const response = await db.raw('/rest/v1/qa_issues', 'GET', undefined, query, { Prefer: 'count=exact' });
         const rows = await response.json(), total = Number(response.headers.get('Content-Range')?.split('/')[1] ?? rows.length);
-        return { issues: rows.map((r: Row) => r.data), total, hasMore: offset + rows.length < total } satisfies QaListResult;
+        const issues: QaIssue[] = rows.map((r: Row) => r.data);
+        return { issues, memberNames: await listMemberNames(issues), total, hasMore: offset + rows.length < total } satisfies QaListResult;
       }
       case 'get': {
         if (actor.external) return externalRead(actor, 'get', { id: id(request.id) });
         const issue = await getIssue(request.id, actor);
         const [comments, events, attachments] = await Promise.all(['qa_comments', 'qa_events', 'qa_attachments'].map(table =>
           db.all(table, { issue_id: `eq.${issue.id}`, order: 'created_at,id' })));
-        const people=[...new Set([issue.assigneeId,issue.qaOwnerId,issue.handoff?.nextOwnerId,issue.handoff?.requestedBy,issue.handoff?.acceptedBy,issue.handoff?.resolvedBy].filter(Boolean))].map(id);
-        const names=people.length?await db.rows('members',{select:'id,name',id:`in.(${people.join(',')})`}):[];
-        const named = new Set(names.map(person => person.id));
-        const missing = new Set(people.filter(person => !named.has(person)));
-        if (missing.size) {
-          // The canonical roster limits external accounts to this issue's project.
-          // Preserve real member names even when their IDs use an external-looking prefix.
-          const roster: Row[] = await db.rpc('livo_qa_external_roster', { p_project_id: issue.projectId });
-          names.push(...roster.filter(person => missing.has(person.id)).map(person => ({ id: person.id, name: person.name })));
-        }
-        return { issue, memberNames:Object.fromEntries(names.map(m=>[m.id,m.name])), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
+        // Display labels come only from this authorized issue and its actual
+        // comments, immutable history and evidence. Free-form text is not an ID list.
+        const people = [...new Set([issue.reporterId, issue.assigneeId, issue.qaOwnerId, issue.closedBy,
+          issue.handoff?.nextOwnerId, issue.handoff?.requestedBy, issue.handoff?.acceptedBy, issue.handoff?.resolvedBy,
+          ...issue.targets.map(target => target.deployedBy), ...issue.runs.map(run => run.testerId),
+          ...comments.map(comment => comment.actor_id), ...events.map(event => event.actor_id),
+          ...events.flatMap(event => qaNotificationReferences(event.type, event.detail).members),
+          ...attachments.map(item => item.uploaded_by),
+        ].filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value)))];
+        return { issue, memberNames: await detailMemberNames(people), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
           events: events.map(e => ({ id: e.id, issueId: e.issue_id, actorId: e.actor_id, type: e.type, detail: e.detail, version: e.version, createdAt: e.created_at })),
           attachments: attachments.map(attachment) };
       }

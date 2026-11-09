@@ -14,6 +14,8 @@ export interface QaEventTextContext {
   t: TFunction;
   /** Member name for an id; unknown ids come back unchanged. */
   member: (id: string) => string;
+  /** Safe display label when the input is a structured member id. */
+  memberLabel?: (id: string) => string;
   /** Task key and title for an id; unknown ids come back unchanged. */
   task: (id: string) => string;
   project?: (id: string) => string;
@@ -42,6 +44,8 @@ function names(text: string, ctx: QaEventTextContext): string {
   return text.replace(/[A-Za-z0-9][A-Za-z0-9_-]{2,}/g, token => ctx.member(token)).replace(ISO, value => ctx.date(value));
 }
 
+const memberLabel = (id: string, ctx: QaEventTextContext) => ctx.memberLabel?.(id) ?? ctx.member(id);
+
 function handoff(type: string, detail: string, ctx: QaEventTextContext): string | null {
   let value: Record<string, unknown>;
   try { value = JSON.parse(detail); } catch { return null; }
@@ -49,12 +53,12 @@ function handoff(type: string, detail: string, ctx: QaEventTextContext): string 
   const text = (key: string) => typeof value[key] === 'string' ? String(value[key]) : '';
   const { t } = ctx;
   if (type === 'request_handoff') return [
-    t('qa.historyHandoffTo', { name: ctx.member(text('nextOwnerId')) }),
+    t('qa.historyHandoffTo', { name: memberLabel(text('nextOwnerId'), ctx) }),
     text('reason'),
     text('replyBy') && `${t('qaHandoff.replyBy')}：${ctx.date(text('replyBy'))}`,
     text('externalDependency') && `${t('qaHandoff.externalDependency')}：${text('externalDependency')}`,
   ].filter(Boolean).join('\n');
-  if (type === 'accept_handoff') return t('qa.historyHandoffAccepted', { name: ctx.member(text('acceptedBy') || text('nextOwnerId')) });
+  if (type === 'accept_handoff') return t('qa.historyHandoffAccepted', { name: memberLabel(text('acceptedBy') || text('nextOwnerId'), ctx) });
   return [t('qaHandoff.evidence') + '：', text('resolutionEvidence')].join('\n');
 }
 
@@ -73,7 +77,7 @@ export function qaEventText(event: { type: string; detail: string; version?: num
     const display = (key: string, input: unknown): string => {
       if (input === null || input === undefined || input === '') return key === 'assigneeId' || key === 'qaOwnerId' ? t('qa.unassigned') : t('common.notSet');
       if (typeof input === 'string' && ['projectId', 'assigneeId', 'qaOwnerId'].includes(key)) {
-        const label = key === 'projectId' ? ctx.project?.(input) : ctx.member(input);
+        const label = key === 'projectId' ? ctx.project?.(input) : memberLabel(input, ctx);
         return label && label !== input ? label : t('common.unknown');
       }
       if (key === 'severity' && SEVERITIES.includes(String(input))) return t(`qa.severityNames.${input}`);
@@ -90,7 +94,7 @@ export function qaEventText(event: { type: string; detail: string; version?: num
   if (event.type === 'triage') {
     const match = /^RD: (\S+) · QA: (\S+)\n(\w+) · P(\d)(?:\n(\S+))?$/.exec(detail);
     if (match && SEVERITIES.includes(match[3])) return [
-      `${t('qa.assignee')}：${ctx.member(match[1])} · ${t('qa.qaOwner')}：${ctx.member(match[2])}`,
+      `${t('qa.assignee')}：${memberLabel(match[1], ctx)} · ${t('qa.qaOwner')}：${memberLabel(match[2], ctx)}`,
       `${ctx.showSeverity !== false ? `${t('qa.severity')}：${t(`qa.severityNames.${match[3]}`)} · ` : ''}${t('qa.priority')}：${t(`priority.${qaPriorities[Number(match[4]) - 1] ?? 'medium'}`)}`,
       match[5] ? `${t('qa.dueDate')}：${match[5]}` : '',
     ].filter(Boolean).join('\n');

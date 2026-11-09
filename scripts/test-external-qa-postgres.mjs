@@ -15,11 +15,20 @@ const auth = "'00000000-0000-0000-0000-000000000011'::uuid";
 const admin = "'00000000-0000-0000-0000-000000000003'::uuid";
 const actor = 'eqa-example';
 const names = ['20261110_external_qa_scope.sql', '20261110_qa_external_reads.sql', '20261111_external_qa_admin.sql',
-  '20261112_external_qa_gateway_privacy.sql', '20261113_external_qa_auth_recovery.sql', '20261116_external_qa_assignment_directory.sql'];
+  '20261112_external_qa_gateway_privacy.sql', '20261113_external_qa_auth_recovery.sql', '20261116_external_qa_assignment_directory.sql',
+  '20261117_qa_participant_display.sql'];
 
 export function plan() {
   const baseline = qaPlan();
   const migrations = names.map(migration).join('\n');
+  // Deletion now exercises dependencies the inherited auto-close suite did not
+  // call. Keep their released definitions and ACLs, not a substitute helper.
+  const recordDelete = migration('20261025_record_delete.sql');
+  const helperStart = recordDelete.indexOf('CREATE OR REPLACE FUNCTION public.livo_qa_notification_issue(');
+  const helperEnd = recordDelete.indexOf('CREATE OR REPLACE FUNCTION public.livo_qa_delete(');
+  const activity = migration('20260310044327_7e8def58-e082-4b3a-a28a-7a89f825960b.sql');
+  const publicationStart = activity.indexOf('ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_logs;');
+  if (helperStart < 0 || helperEnd <= helperStart || publicationStart < 0) throw new Error('Released QA deletion fixture dependencies changed');
   const cases = [];
   let assertions = baseline.summary.assertions;
   const check = (label, sql) => { assertions++; cases.push("SELECT qa_test.check((" + sql + ")," + quote(label) + ");"); };
@@ -127,6 +136,14 @@ export function plan() {
 
   const fixture = [
     'RESET ROLE;',
+    // The shared base fixture intentionally retains the released original
+    // NOT NULL column. Load the real upgrade before exercising QA recipients.
+    migration('20261017_notifications_task_optional.sql'),
+    recordDelete.slice(helperStart, helperEnd),
+    // This isolated plan has no Realtime publication. The complete original
+    // table, UUID default, indexes and RLS policies still apply unchanged.
+    activity.slice(0, publicationStart),
+    'GRANT ALL ON TABLE public.activity_logs TO service_role;',
     "ALTER TABLE members ADD COLUMN email text NOT NULL DEFAULT '', ADD COLUMN name text NOT NULL DEFAULT 'Example member', ADD COLUMN avatar text NOT NULL DEFAULT '', ADD COLUMN color text NOT NULL DEFAULT '', ADD COLUMN job_title text NOT NULL DEFAULT '', ADD COLUMN is_qa_admin boolean NOT NULL DEFAULT false;",
     "ALTER TABLE projects ADD COLUMN name text NOT NULL DEFAULT 'Example project', ADD COLUMN line_id text NOT NULL DEFAULT 'line-test', ADD COLUMN color text NOT NULL DEFAULT '';",
     "ALTER TABLE tasks ADD COLUMN task_key text NOT NULL DEFAULT 'EX-1', ADD COLUMN title text NOT NULL DEFAULT 'Example task';",

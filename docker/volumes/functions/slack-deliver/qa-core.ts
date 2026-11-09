@@ -1,4 +1,4 @@
-import { qaNotificationRecipients, type QaCommand, type QaIssue } from '../qa/domain.ts';
+import { isQaTerminal, qaNotificationRecipients, type QaCommand, type QaIssue } from '../qa/domain.ts';
 import { qaSlackCard, qaSlackTargetSummary } from '../qa/slack.ts';
 import { qaSlackCurrentState } from '../qa/slackWorkspace.ts';
 import { parseQaWorkflow } from '../qa/workflow.ts';
@@ -9,7 +9,7 @@ import { activeThread, DeliveryError, escapeSlack, failureResult, matchingChanne
 export interface QaDeliveryState { issue: QaIssue; project: Row; triagers: string[]; members: Row[]; memberNames?: Record<string, string>; projectNames?: Record<string, string>; displaySettings?: QaDisplaySettings }
 export interface QaDeliveryStore extends Pick<DeliveryStore, 'config' | 'token' | 'binding' | 'canSend' | 'finish'> {
   enabled(): Promise<boolean>;
-  state(issueId: string, eventType?: string, eventDetail?: unknown): Promise<QaDeliveryState | undefined>;
+  state(issueId: string, eventType?: string, eventDetail?: unknown, actorId?: string): Promise<QaDeliveryState | undefined>;
   canRead(memberId: string, teamId: string, issueId: string): Promise<boolean>;
   thread(issueId: string, teamId: string, channelId: string): Promise<string | undefined>;
   workflow(): Promise<Row | undefined>;
@@ -66,7 +66,9 @@ export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase:
     const detail = bounded(readable, 1500);
     return detail ? [detail] : [];
   })();
-  const targets = qaSlackTargetSummary(issue), deployment = targets ? `*修復部署與驗證*\n${bounded(targets, 1500)}` : '';
+  const targets = qaSlackTargetSummary(issue), deployment = targets ? `*修復部署與驗證*\n${bounded(targets, 1500)}`
+    : !isQaTerminal(issue.state) && !['verification', 'verified'].includes(issue.state)
+      ? '*修復部署與驗證*\n尚未回報修復與部署，完成後由指定 QA 驗證。' : '';
   const blocks = [section(summary), ...detailSections.map(section), ...(deployment ? [section(deployment)] : []),
     ...qaSlackCard(issue, url, flow, display).slice(3)];
   return { text: [summary, ...detailSections, deployment].filter(Boolean).join('\n\n'), blocks, unfurl_links: false, unfurl_media: false };
@@ -75,7 +77,7 @@ export function qaNotificationMessage(state: QaDeliveryState, job: Job, appBase:
 export async function deliverQaJob(job: Job, owner: string, store: QaDeliveryStore, appBase: string, fetcher: typeof fetch = fetch, now = Date.now()): Promise<string> {
   let result: Row;
   try {
-    let state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail);
+    let state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail, job.payload.actorId);
     if (!await store.enabled() || !qaRouteAllowed(await store.config(), state, job)) result = { status: 'skipped', error: 'route_no_longer_allowed' };
     else if (job.target_type === 'member' && !qaRecipientResponsible(state!, job)) result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
     else {
@@ -96,7 +98,7 @@ export async function deliverQaJob(job: Job, owner: string, store: QaDeliverySto
       const thread = job.target_type === 'channel' ? activeThread(await store.thread(job.payload.issueId, job.team_id, channel), now) : undefined;
       const workflow = await store.workflow();
       if (!await store.canSend(job, owner)) throw new DeliveryError('delivery_lease_lost', false, true);
-      state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail);
+      state = await store.state(job.payload.issueId, job.payload.eventType, job.payload.detail, job.payload.actorId);
       if (!await store.enabled() || !qaRouteAllowed(await store.config(), state, job)) result = { status: 'skipped', error: 'route_no_longer_allowed' };
       else if (job.target_type === 'member' && !qaRecipientResponsible(state!, job)) result = { status: 'skipped', error: 'recipient_no_longer_responsible' };
       else {

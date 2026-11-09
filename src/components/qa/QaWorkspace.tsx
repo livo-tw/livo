@@ -33,6 +33,7 @@ import { canManageQaConfiguration } from '@/lib/qa/fields';
 import { qaPriorities, qaStateColors } from './QaBadges';
 import { toast } from 'sonner';
 import { useQaDisplaySettings } from '@/hooks/useQaDisplaySettings';
+import { useQaFilterPeople } from '@/hooks/useQaFilterPeople';
 import { QaDisplaySettingsContext } from '@/context/QaDisplaySettingsContext';
 import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
 import QaDisplaySettingsNotice from './QaDisplaySettingsNotice';
@@ -56,6 +57,8 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   const { allProjects, productLines, selectedProjectId } = useProjectContext();
   const { users } = useMemberContext();
   const scope = useProjectScope();
+  const filterPeople = useQaFilterPeople(client, selectedProjectId ? [selectedProjectId]
+    : allProjects.filter(project => !scope.projectIds || scope.projectIds.has(project.id)).map(project => project.id), baseActor.id);
   const [issueId, setIssueId] = useState(() => new URLSearchParams(window.location.search).get('qa') || '');
   const [creating, setCreating] = useState(false);
   const background = useRef<HTMLDivElement>(null);
@@ -152,7 +155,14 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   }, [selectedProjectId, scope.projectIds, owner, search, users, filterDept, filterAssignees, filterStatuses, filterPriorities, filterReviewers, filterProjects, reporters, severities, sort, display.configuration?.showSeverity]);
   const filterKey = JSON.stringify(filters);
   useEffect(() => { setOffset(0); }, [filterKey]);
-  const memberOptions = useMemo(() => sortUsersByDept(users).map(user => ({ id: user.id, label: user.name, avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle })), [users]);
+  const memberOptions = useMemo(() => {
+    const label = (name: string, active: boolean) => active ? name : `${name} (${t('common.inactive')})`;
+    const options = new Map(sortUsersByDept(users).map(user => [user.id, { id: user.id, label: label(user.name, user.isActive), avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle }]));
+    for (const person of [...(filterPeople.people ?? [])].sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!options.has(person.id)) options.set(person.id, { id: person.id, label: label(person.name, person.isActive), avatar: '', avatarColor: '', subtitle: '' });
+    }
+    return [...options.values()];
+  }, [users, filterPeople.people, t]);
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) => setter(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
   const clearAll = () => { boardFilters.clearFilters(); setSeverities([]); setReporters([]); setSearch(''); setSearchDraft(''); };
   const createIds = useRef({ id: qaId(), commandId: qaId() });
@@ -211,7 +221,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   useEffect(() => {
     if (issueId || creating || view !== 'list') return;
     if (noMatch) { setList({ issues: [], total: 0, hasMore: false }); setLoading(false); return; }
-    const controller = new AbortController(); setLoading(true); setError(null);
+    const controller = new AbortController(); setLoading(true); setError(null); setList(previous => ({ ...previous, memberNames: undefined }));
     void client.list({ ...filters, offset, limit: 25 }, controller.signal)
       .then(result => { if (!controller.signal.aborted) setList(result); })
       .catch(failure => { if (!controller.signal.aborted) setError(failure); })
@@ -267,7 +277,9 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
             <button disabled={busy} className={qaButton}>{t('qa.searchButton')}</button>
             {mine && <QaSelect disabled={busy} label={t('qa.myTitle')} value={owner} onChange={event => { setOwner(event.target.value as QaListInput['mine'] | ''); setOffset(0); }}>{['involved', 'assigned', 'testing', 'reported'].map(value => <option key={value} value={value}>{t(`qa.${value}`)}</option>)}</QaSelect>}
           </form>
-          <BoardFilterChips users={users} allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters}
+          {filterPeople.loading && <p role="status" className="text-xs text-muted-foreground">{t('qa.filterPeopleLoading')}</p>}
+          {filterPeople.failed && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{t('qa.filterPeopleFailed')}</span><button type="button" className={qaButton} onClick={filterPeople.retry}>{t('qa.retry')}</button></div>}
+          <BoardFilterChips users={users} reviewerOptions={memberOptions} allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters}
             statusOptions={workflow.order.map(value => ({ id: value, label: workflow.labels[value] || t(`qa.state.${value}`), color: qaStateColors[value] }))}
             priorityChoices={display.configuration ? [...new Set([...getQaPriorityChoices(display.configuration).map(priority => qaPriorities[priority - 1]), ...filterPriorities])] : []}
             assigneeLabel={t('qa.assignee')} reviewerLabel={t('qa.qaOwner')}
@@ -288,7 +300,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
         </div>}
         {noMatch ? <div className="py-12 text-center text-sm text-muted-foreground">{t('qa.empty')} <button type="button" className="text-primary hover:underline" onClick={clearAll}>{t('qa.clearFilters')}</button></div>
         : view === 'board' ? <QaKanban key={JSON.stringify({ ...filters, revision, actor: actor.id })} client={client} actor={actor} workflow={workflow} filters={filters} reloadToken={boardRevision} onPendingChange={setBoardBusy} onOpen={openIssue} /> : <>
-          {loading ? <p role="status" className="py-8 text-center text-sm">{t('qa.loading')}</p> : !list.issues.length ? <p className="py-12 text-center text-muted-foreground">{t('qa.empty')}</p> : <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{list.issues.map(issue => <li key={issue.id}><QaIssueCard list issue={issue} actor={actor} stateLabel={workflow.labels[issue.state] || t(`qa.state.${issue.state}`)} onOpen={openIssue} /></li>)}</ul>}
+          {loading ? <p role="status" className="py-8 text-center text-sm">{t('qa.loading')}</p> : !list.issues.length ? <p className="py-12 text-center text-muted-foreground">{t('qa.empty')}</p> : <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{list.issues.map(issue => <li key={issue.id}><QaIssueCard list issue={issue} actor={actor} memberNames={list.memberNames} stateLabel={workflow.labels[issue.state] || t(`qa.state.${issue.state}`)} onOpen={openIssue} /></li>)}</ul>}
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{t('qa.count', { count: list.total })}</span><div className="flex gap-2"><button className={qaButton} disabled={loading || offset === 0} onClick={() => setOffset(value => Math.max(0, value - 25))}>{t('qa.previous')}</button><button className={qaButton} disabled={loading || !list.hasMore} onClick={() => setOffset(value => value + 25)}>{t('qa.next')}</button></div></div>
         </>}
       </>}

@@ -10,6 +10,7 @@ import QaIssueDetail from '@/components/qa/QaIssueDetail';
 import { qaEventText, qaEventTitle } from '@/components/qa/qaEventText';
 import type { TFunction } from 'i18next';
 import QaIssueSidebarFields from '@/components/qa/QaIssueSidebarFields';
+import UserSelect from '@/components/UserSelect';
 
 const state = vi.hoisted(() => ({ projects: [] as Project[], users: [] as User[] }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key === 'qa.error.qa_triage_required' ? 'Choose active fix and QA owners first.' : key }) }));
@@ -43,6 +44,29 @@ function renderDetail(initial: QaIssue, actorId = 'dev', initialAction?: QaComma
   render(<QaIssueDetail detail={{ issue: initial, comments: [], events: [], attachments: [] }} client={client} actor={{ id: actorId, role: actorRole }} initialAction={initialAction} onRefresh={vi.fn().mockResolvedValue(undefined)} onBack={vi.fn()} />);
   return command;
 }
+
+describe('scoped owner display labels', () => {
+  it('shows a historical label without making that unavailable identity selectable or submitting it', () => {
+    const change = vi.fn();
+    const view = render(<form><UserSelect label="Verification owner" name="qaOwnerId" value="eqa-example-revoked"
+      fallbackLabel="Historical tester" activeOnly options={state.users} onChange={change} /></form>);
+    const owner = screen.getByRole('combobox', { name: 'Verification owner' });
+    expect(owner).toHaveTextContent('Historical tester');
+    expect(view.container).not.toHaveTextContent('eqa-example-revoked');
+    expect(new FormData(view.container.querySelector('form')!).get('qaOwnerId')).toBe('');
+    fireEvent.click(owner);
+    expect(screen.queryByRole('option', { name: 'Historical tester' })).not.toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it('uses a safe label for assigned QA identities absent from both scoped names and the directory', () => {
+    const view = render(<QaIssueSidebarFields issue={{ ...issue, qaOwnerId: 'eqa-example-unknown' }}
+      assignmentOptions={state.users} disabled={false} onCommand={vi.fn(async () => true)} />);
+    expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('qa.memberUnavailable');
+    expect(view.container).not.toHaveTextContent('eqa-example-unknown');
+    expect(screen.queryByText('qa.unassigned')).not.toBeInTheDocument();
+  });
+});
 
 describe('optional QA target labels', () => {
   it.each([

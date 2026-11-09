@@ -46,6 +46,14 @@ describe('QA notification channel routing and personal permissions', () => {
     expect(t.posts[0].text).toContain('Example member'); expect(t.posts[0].text).toContain('&lt;!channel&gt;');
     expect(t.posts[0].blocks.some((b: Row) => b.elements?.some((e: Row) => e.action_id === 'livo_qa_comment'))).toBe(true);
   });
+  it('loads the trusted queued actor label on both reads before delivery', async () => {
+    const t = setup();
+    t.store.state = vi.fn(async () => state);
+    expect(await deliverQaJob(job, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
+    expect(t.store.state).toHaveBeenCalledTimes(2);
+    expect(t.store.state).toHaveBeenNthCalledWith(1, issue.id, job.payload.eventType, job.payload.detail, job.payload.actorId);
+    expect(t.store.state).toHaveBeenNthCalledWith(2, issue.id, job.payload.eventType, job.payload.detail, job.payload.actorId);
+  });
   it('delivers responsible-member DMs without channel membership or channel routes', async () => {
     const t = setup(); t.reroute(); expect(await deliverQaJob(personal, 'owner', t.store, 'https://example.com', t.fetcher)).toBe('sent');
     expect(t.posts[0].channel).toBe('DEXAMPLE'); expect(t.posts[0]).not.toHaveProperty('thread_ts'); expect(t.store.canRead).toHaveBeenCalledTimes(2);

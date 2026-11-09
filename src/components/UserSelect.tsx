@@ -13,6 +13,7 @@ interface UserSelectProps {
   onChange?: (value: string) => void;
   allowEmpty?: boolean;
   emptyLabel?: string;
+  fallbackLabel?: string;
   className?: string;
   size?: 'sm' | 'md';
   name?: string;
@@ -25,7 +26,7 @@ interface UserSelectProps {
 }
 
 const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, allowEmpty = false,
-  emptyLabel = '—', className = '', size = 'sm', name, label, required = false, disabled = false,
+  emptyLabel = '—', fallbackLabel, className = '', size = 'sm', name, label, required = false, disabled = false,
   activeOnly = false, preferredUserIds = [], options }: UserSelectProps) => {
   const { t } = useTranslation();
   const { users } = useMemberContext();
@@ -72,7 +73,7 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
           {selected ? <>
             <span aria-hidden="true" className={`${avatarSize} flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ backgroundColor: selected.color }}>{selected.avatar}</span>
             <span className="truncate text-xs">{selected.name}{selected.isActive === false && <span className="ml-1 text-muted-foreground">({t('common.inactive')})</span>}</span>
-          </> : <span className="truncate text-xs text-muted-foreground">{value ? `${t('common.memberUnavailable')} · ${value}` : emptyLabel}</span>}
+          </> : <span className="truncate text-xs text-muted-foreground">{value ? fallbackLabel ?? `${t('common.memberUnavailable')} · ${value}` : emptyLabel}</span>}
           <ChevronDown size={12} className="ml-auto shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
       </PopoverTrigger>

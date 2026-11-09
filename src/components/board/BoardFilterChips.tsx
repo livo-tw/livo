@@ -16,9 +16,9 @@ type Options = ComponentProps<typeof MultiSelectDropdown>['options'];
  * status, priority, reviewer and (without a selected project) project. A board
  * adds its own chips through `extra` and its controls through `trailing`.
  */
-export default function BoardFilterChips({ users, statusOptions, allProjects, showProjects, filters, assigneeLabel, reviewerLabel, extra, extraActive = false, onClear, trailing, priorityChoices }: {
+export default function BoardFilterChips({ users, statusOptions, allProjects, showProjects, filters, assigneeLabel, reviewerLabel, reviewerOptions, extra, extraActive = false, onClear, trailing, priorityChoices }: {
   users: User[]; statusOptions: Options; allProjects: Project[]; showProjects: boolean; filters: BoardFilterState;
-  assigneeLabel?: string; reviewerLabel?: string; priorityChoices?: string[];
+  assigneeLabel?: string; reviewerLabel?: string; reviewerOptions?: Options; priorityChoices?: string[];
   extra?: ReactNode; extraActive?: boolean; onClear?: () => void; trailing?: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -33,7 +33,7 @@ export default function BoardFilterChips({ users, statusOptions, allProjects, sh
     <MultiSelectDropdown label={assigneeLabel || (isMobile ? t('filter.assigneeMobile') : t('filter.assignee'))} options={memberOptions} selected={filters.filterAssignees} onToggle={toggle(filters.setFilterAssignees)} />
     <MultiSelectDropdown label={t('filter.status')} options={statusOptions} selected={filters.filterStatuses} onToggle={toggle(filters.setFilterStatuses)} />
     <MultiSelectDropdown label={isMobile ? t('filter.priorityMobile') : t('filter.priority')} options={priorityOptions} selected={filters.filterPriorities} onToggle={toggle(filters.setFilterPriorities)} />
-    <MultiSelectDropdown label={reviewerLabel || (isMobile ? t('filter.reviewerMobile') : t('filter.reviewer'))} options={memberOptions} selected={filters.filterReviewers} onToggle={toggle(filters.setFilterReviewers)} />
+    <MultiSelectDropdown label={reviewerLabel || (isMobile ? t('filter.reviewerMobile') : t('filter.reviewer'))} options={reviewerOptions ?? memberOptions} selected={filters.filterReviewers} onToggle={toggle(filters.setFilterReviewers)} />
     {showProjects && <ProjectMultiSelect label={t('filter.project')} projects={allProjects} selected={filters.filterProjects} onToggle={toggle(filters.setFilterProjects)} />}
     {extra}
     {(filters.hasFilters || extraActive) && <button type="button" onClick={onClear || filters.clearFilters} className="text-[13px] text-primary hover:text-primary/80 font-medium">{t('button.clearFilters')}</button>}

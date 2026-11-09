@@ -323,7 +323,17 @@ export async function handleQa(c:C):Promise<Response> {
     let body:Body;try{body=JSON.parse(new TextDecoder().decode(await qaReadBody(c,10*1024*1024)));}catch(e){if(e instanceof QaError)throw e;throw new QaError('qa_invalid_json');}
     if(!body||typeof body!=='object'||Array.isArray(body))throw new QaError('qa_invalid_request');
     const action=String(body.action??'');
-    if(!['list','get','download','get_workflow','get_field_configuration','get_display_settings','versions','get_coordination','my_coordination'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(!['list','get','download','get_workflow','get_field_configuration','get_display_settings','versions','get_coordination','my_coordination','filter_people','notification_people'].includes(action)&&isDemoMember(c.env,auth))throw new QaError(DEMO_BLOCKED_MESSAGE,403);
+    if(action==='notification_people')return c.json({memberNames:{}});
+    if(action==='filter_people') {
+      const offset=body.offset??0,projectIds=body.projectIds;
+      if(!Number.isSafeInteger(offset)||Number(offset)<0||Number(offset)>100000||projectIds!==undefined&&
+        (!Array.isArray(projectIds)||projectIds.length>1000||new Set(projectIds).size!==projectIds.length))throw new QaError('qa_invalid_request');
+      if(Array.isArray(projectIds))projectIds.forEach(qaId);
+      // Cloud has no external QA principal model. Normal active-member and
+      // workspace authentication above still applies to this display-only read.
+      return c.json({members:[],hasMore:false});
+    }
     if(action==='versions') {
       const projectId=qaId(body.projectId);
       const project=await c.env.DB.prepare('SELECT id FROM projects WHERE workspace_id=? AND id=?').bind(ws,projectId).first();

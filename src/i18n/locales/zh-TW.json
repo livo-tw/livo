@@ -29,6 +29,8 @@
     }
   },
   "qaHandoff": {
+    "requestedBy": "交接建立者",
+    "resolvedBy": "交接解決者",
     "coordinatorSaved": "協調人已更新",
     "coordinatorButtonHint": "指定一位成員負責這個專案的 Bug：新 Bug 會通知他，他也能安排交接與記錄阻礙（設定負責人人人都可以）。不會變更對方的系統角色。",
     "title": "QA 交接",
@@ -3488,6 +3490,12 @@
     "priority": "優先度",
     "dueDate": "預計日期",
     "assignee": "修復負責人",
+    "memberUnavailable": "成員資料暫時無法顯示",
+    "verificationRequiresFix": "請先由修復負責人提交修復。進入待驗證並回報部署完成後，才會顯示驗證結果欄位。",
+    "verificationReadOnly": "只有指定的 QA 負責人或管理員可回報驗證結果；你仍可查看部署與驗證紀錄。",
+    "verificationAwaitingDeployment": "這個環境尚未回報部署完成；部署完成後才會顯示驗證結果欄位。",
+    "filterPeopleLoading": "正在載入完整的 QA 人員篩選名單…",
+    "filterPeopleFailed": "無法載入完整的 QA 人員篩選名單，請重試。",
     "qaOwner": "QA 負責人",
     "reporter": "回報人",
     "choose": "請選擇…",

@@ -17,6 +17,23 @@ function fillRequest() {
   fireEvent.change(screen.getByLabelText(/qaHandoff.reason/), { target: { value: 'Need a response' } });
 }
 describe('QA handoff UI boundaries', () => {
+  it('displays scoped historical handoff participants without adding them to new handoff choices', () => {
+    const record = handed();
+    record.handoff = { ...record.handoff!, nextOwnerId: 'eqa-example-next', requestedBy: 'eqa-example-requester',
+      acceptedBy: 'eqa-example-next', acceptedAt: record.createdAt, resolvedBy: 'eqa-example-resolver', resolvedAt: record.updatedAt, resolutionEvidence: 'Example resolution' };
+    const onCommand = vi.fn(async () => true);
+    render(<QaHandoffPanel issue={record} actor={{ id: 'admin', role: 'admin' }} busy={false} onCommand={onCommand}
+      memberNames={{ 'eqa-example-next': 'Historical recipient', 'eqa-example-requester': 'Historical requester', 'eqa-example-resolver': 'Historical resolver' }} />);
+    expect(screen.getAllByText(/Historical recipient/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Historical requester/)).toBeInTheDocument();
+    expect(screen.getByText(/Historical resolver/)).toBeInTheDocument();
+    expect(screen.queryByText('qaHandoff.unavailableMember')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'qaHandoff.request' }));
+    expect(screen.queryByRole('option', { name: 'Historical recipient' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Historical requester' })).not.toBeInTheDocument();
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
   it('converts an explicit local time and rejects nonexistent calendar dates', () => {
     vi.stubEnv('TZ', 'Asia/Taipei');
     expect(handoffReplyTime('2026-10-03T09:30')).toBe('2026-10-03T01:30:00.000Z');

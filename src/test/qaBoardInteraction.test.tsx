@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createQaIssue, QA_STATES, type QaActor, type QaIssue, type QaState } from '@/lib/qa/domain';
+import { createQaIssue, QA_STATES, type QaActor, type QaIssue, type QaListResult, type QaState } from '@/lib/qa/domain';
 import { getQaDropIntent } from '@/lib/qa/boardInteraction';
 import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
@@ -22,7 +22,7 @@ vi.mock('@dnd-kit/core', () => ({
   useDraggable: (options: unknown) => { dnd.draggable(options); return { attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }; },
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/components/qa/QaIssueCard', () => ({ default: ({ issue, onOpen }: { issue: QaIssue; onOpen: (id: string) => void }) => <button onClick={() => onOpen(issue.id)}>{issue.title}</button> }));
+vi.mock('@/components/qa/QaIssueCard', () => ({ default: ({ issue, onOpen, memberNames }: { issue: QaIssue; onOpen: (id: string) => void; memberNames?: Record<string, string> }) => <><button onClick={() => onOpen(issue.id)}>{issue.title}</button><span data-testid={`owner-${issue.id}`}>{memberNames?.[issue.qaOwnerId || ''] || 'name-unavailable'}</span></> }));
 vi.mock('@/components/qa/QaIssueDetail', () => ({ QaFailure: () => <p role="alert">Command failed</p> }));
 import QaKanban from '@/components/qa/QaKanban';
 
@@ -209,5 +209,58 @@ describe('QA board state updates provide visible feedback and recover safely', (
     await screen.findByText(next.title);
     expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: 'example-project-b', states: ['triaged'], offset: 0 }), expect.any(AbortSignal));
     expect(screen.queryByText(old.title)).toBeNull();
+  });
+});
+
+describe('QA board scoped member labels', () => {
+  const first = { ...issue(), qaOwnerId: 'eqa-example-first' };
+  const second = { ...issue(), id: 'example-second-bug', title: 'Another example bug', qaOwnerId: 'eqa-example-second' };
+  const empty: QaListResult = { issues: [], total: 0, hasMore: false };
+  const column = () => within(screen.getByRole('region', { name: 'qa.state.triaged' }));
+
+  it('merges labels across pages and discards them when page zero refreshes', async () => {
+    let refreshing = false;
+    let resolveRefresh!: (page: QaListResult) => void;
+    const list = vi.fn(({ states, offset }: { states: QaState[]; offset: number }): Promise<QaListResult> => {
+      if (!states.includes('triaged')) return Promise.resolve(empty);
+      if (refreshing) return new Promise(resolve => { resolveRefresh = resolve; });
+      return Promise.resolve(offset === 0
+        ? { issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'First scoped tester' } }
+        : { issues: [second], total: 2, hasMore: false, memberNames: { [second.qaOwnerId]: 'Second scoped tester' } });
+    });
+    const props = { client: { list } as unknown as QaClient, actor: admin, workflow: DEFAULT_QA_WORKFLOW, filters: {}, onOpen: vi.fn() };
+    const view = render(<QaKanban {...props} reloadToken={0} />);
+    expect(await screen.findByTestId(`owner-${first.id}`)).toHaveTextContent('First scoped tester');
+    fireEvent.click(column().getByRole('button', { name: 'qa.loadMore' }));
+    expect(await screen.findByTestId(`owner-${second.id}`)).toHaveTextContent('Second scoped tester');
+    expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('First scoped tester');
+
+    refreshing = true;
+    view.rerender(<QaKanban {...props} reloadToken={1} />);
+    await waitFor(() => expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable'));
+    expect(screen.queryByText('Second scoped tester')).not.toBeInTheDocument();
+    await act(async () => resolveRefresh({ issues: [first], total: 1, hasMore: false }));
+    expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable');
+    expect(screen.queryByTestId(`owner-${second.id}`)).not.toBeInTheDocument();
+  });
+
+  it('does not restore old labels when a previous project page returns after the scope changes', async () => {
+    let resolveOldPage!: (page: QaListResult) => void;
+    const list = vi.fn(({ states, offset, projectId }: { states: QaState[]; offset: number; projectId: string }): Promise<QaListResult> => {
+      if (!states.includes('triaged')) return Promise.resolve(empty);
+      if (projectId === 'example-next-project') return Promise.resolve({ issues: [{ ...first, projectId }], total: 1, hasMore: false });
+      if (offset > 0) return new Promise(resolve => { resolveOldPage = resolve; });
+      return Promise.resolve({ issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'Previous scoped tester' } });
+    });
+    const props = { client: { list } as unknown as QaClient, actor: admin, workflow: DEFAULT_QA_WORKFLOW, onOpen: vi.fn() };
+    const view = render(<QaKanban {...props} filters={{ projectId: first.projectId }} />);
+    expect(await screen.findByTestId(`owner-${first.id}`)).toHaveTextContent('Previous scoped tester');
+    fireEvent.click(column().getByRole('button', { name: 'qa.loadMore' }));
+    view.rerender(<QaKanban {...props} filters={{ projectId: 'example-next-project' }} />);
+    await waitFor(() => expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable'));
+    await act(async () => resolveOldPage({ issues: [second], total: 2, hasMore: false, memberNames: { [first.qaOwnerId]: 'Late old tester', [second.qaOwnerId]: 'Late second tester' } }));
+    expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable');
+    expect(screen.queryByTestId(`owner-${second.id}`)).not.toBeInTheDocument();
+    expect(screen.queryByText('Late old tester')).not.toBeInTheDocument();
   });
 });

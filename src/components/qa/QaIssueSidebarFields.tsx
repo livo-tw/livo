@@ -19,8 +19,8 @@ import { useQaDetailDraft } from './QaDetailDraftContext';
 
 type Fields = Pick<QaIssue, 'projectId' | 'assigneeId' | 'qaOwnerId' | 'severity' | 'priority' | 'dueDate'>;
 
-export default function QaIssueSidebarFields({ issue, disabled, onCommand, assignmentOptions }: {
-  issue: QaIssue; disabled: boolean; assignmentOptions?: readonly User[]; onCommand: (command: QaCommand) => Promise<boolean>;
+export default function QaIssueSidebarFields({ issue, disabled, onCommand, assignmentOptions, memberNames }: {
+  issue: QaIssue; disabled: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>; onCommand: (command: QaCommand) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const configuration = useQaDisplayConfiguration();
@@ -28,6 +28,7 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand, assig
   const { allProjects, productLines } = useProjectContext();
   const externalQa = useExternalQa();
   const allTasks = useTaskContext(externalQa)?.allTasks ?? NO_QA_TASKS;
+  const scopedMemberName = (id: string | null) => id && typeof memberNames?.[id] === 'string' ? memberNames[id].trim() : undefined;
   const [dueDate, setDueDate] = useState(issue.dueDate || '');
   useQaDetailDraft(dueDate !== (issue.dueDate || ''));
   const dateBaseline = useRef({ id: issue.id, value: issue.dueDate || '' });
@@ -56,9 +57,11 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand, assig
       {['untriaged', 'low', 'medium', 'high'].map(value => <option key={value} value={value}>{t(`qa.severityNames.${value}`)}</option>)}
     </QaSelect>}
     <UserSelect label={t('qa.assignee')} options={qaRepairAssigneeOptions(assignmentOptions)} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
+      fallbackLabel={scopedMemberName(issue.assigneeId) || t('qa.memberUnavailable')}
       onChange={value => update({ assigneeId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} size="md" />
     <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}
+      fallbackLabel={scopedMemberName(issue.qaOwnerId) || t('qa.memberUnavailable')}
       onChange={value => update({ qaOwnerId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} size="md" />
     <QaField label={t('qa.dueDate')} type="date" disabled={disabled} value={dueDate}

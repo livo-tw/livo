@@ -50,6 +50,7 @@ function QaVerificationTarget({ target, initialResult, acknowledgedVerification,
     <div><h3 className="break-words text-sm font-semibold">{[target.environment, target.component, target.build].filter(Boolean).join(' / ')}</h3>
       <p className="mt-1 text-xs text-muted-foreground">{t(target.deployedAt ? 'qa.deployed' : 'qa.notDeployed')}{target.deployedAt && ` · ${new Date(target.deployedAt).toLocaleString()}`}{target.required && ` · ${t('qa.required')}`}</p>
       {target.deploymentEvidence && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{target.deploymentEvidence}</p>}
+      {canVerify && !target.deployedAt && <p className="mt-2 text-sm text-muted-foreground">{t('qa.verificationAwaitingDeployment')}</p>}
     </div>
     {canDeploy && !target.deployedAt && <form className="space-y-2" onSubmit={event => {
       event.preventDefault();

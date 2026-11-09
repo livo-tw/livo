@@ -16,9 +16,9 @@ vi.mock('@/context/DeploymentEnvironmentContext', () => ({ useDeploymentEnvironm
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
 vi.mock('@/components/knowledge/RelatedKnowledge', () => ({ default: (): null => null }));
 import QaIssueDetail from '@/components/qa/QaIssueDetail';
-import { getQaNextAction } from '@/components/qa/QaIssueCard';
+import QaIssueCard, { getQaNextAction } from '@/components/qa/QaIssueCard';
 import { qaEventText, qaEventTitle } from '@/components/qa/qaEventText';
-import { applyQaCommand, createQaIssue, qaEventDetail, qaIdSearch, qaNotificationRecipients, type QaContext, type QaHandoff, type QaIssue, type QaTarget, type QaCommand } from '@/lib/qa/domain';
+import { applyQaCommand, canQaCommand, canQaDelete, createQaIssue, qaEventDetail, qaIdSearch, qaNotificationRecipients, type QaContext, type QaHandoff, type QaIssue, type QaTarget, type QaCommand } from '@/lib/qa/domain';
 import type { QaActor, QaDetail } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import { buildMyAssignments } from '@/lib/myAssignments';
@@ -64,6 +64,110 @@ describe('the next step follows what the bug still lacks', () => {
     expect(screen.queryByLabelText('qa.resultField')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'qa.verification' })).not.toBeInTheDocument();
     expect(getQaNextAction({ ...owned, state: 'closed' }, lead)?.command).toBe('reopen');
+  });
+});
+
+describe('QA ownership and verification availability', () => {
+  it.each([{ state: 'in_progress' as const, actorId: 'dev' }, { state: 'verification' as const, actorId: 'qa' }])('keeps internal fields, controls and assignments equal for $state bugs regardless of reporter account kind', async ({ state: issueState, actorId }) => {
+    const actor: QaActor = { id: actorId, role: 'member' };
+    const internal = { ...owned, state: issueState, targets: [target()] };
+    const external = { ...internal, reporterId: 'eqa-example-reporter' };
+    const attachment = { id: 'example-file', issueId: internal.id, fileName: 'example-proof.png', mimeType: 'image/png', size: 100, uploadedBy: internal.reporterId, createdAt: internal.createdAt };
+    const collectControls = () => screen.getAllByRole('button').map(button => [button.getAttribute('aria-label') || button.textContent, button.hasAttribute('disabled')]);
+    const first = renderDetail(internal, actor, { attachments: [attachment] });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
+    expect(screen.getByText('qa.reporter').parentElement).toHaveTextContent('Robin');
+    expect(screen.getByText('example-proof.png')).toBeInTheDocument();
+    const internalControls = collectControls();
+    const internalFields = screen.getAllByRole('combobox').map(field => [field.getAttribute('aria-label'), field.hasAttribute('disabled')]);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    const internalActions = (await screen.findAllByRole('menuitem')).map(item => item.textContent);
+    first.unmount();
+
+    renderDetail(external, actor, { memberNames: { [external.reporterId]: 'Scoped reporter' }, attachments: [{ ...attachment, uploadedBy: external.reporterId }] });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.changeState' })).not.toBeDisabled());
+    expect(screen.getByText('qa.reporter').parentElement).toHaveTextContent('Scoped reporter');
+    expect(screen.getByText('example-proof.png')).toBeInTheDocument();
+    expect(collectControls()).toEqual(internalControls);
+    expect(screen.getAllByRole('combobox').map(field => [field.getAttribute('aria-label'), field.hasAttribute('disabled')])).toEqual(internalFields);
+    fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
+    expect((await screen.findAllByRole('menuitem')).map(item => item.textContent)).toEqual(internalActions);
+    for (const type of ['update_fields', 'edit', 'triage', 'start_fix', 'submit_fix', 'record_deployment', 'record_verification', 'set_state', 'close', 'reopen', 'hold', 'link_tasks', 'request_handoff'] as const) {
+      expect(canQaCommand(external, actor, type)).toBe(canQaCommand(internal, actor, type));
+    }
+    expect(canQaDelete(external, actor)).toBe(canQaDelete(internal, actor));
+    const assignments = (record: QaIssue) => buildMyAssignments([], [], [record], actor.id).map(({ issue: _record, ...item }) => item);
+    expect(assignments(external)).toEqual(assignments(internal));
+  });
+
+  it('displays scoped external names while keeping known directory names authoritative', () => {
+    const issue = { ...owned, qaOwnerId: 'eqa-example-visible' };
+    const props = { issue, actor: { id: 'reporter', role: 'member' as const }, onOpen: vi.fn() };
+    const view = render(<QaIssueCard {...props} memberNames={{ [issue.qaOwnerId]: 'Scoped external tester', dev: 'Unexpected directory override' }} />);
+    expect(screen.getByText('Scoped external tester')).toBeInTheDocument();
+    expect(screen.getByText('Alex')).toBeInTheDocument();
+    expect(screen.queryByText('Unexpected directory override')).not.toBeInTheDocument();
+    view.rerender(<QaIssueCard {...props} issue={{ ...issue, qaOwnerId: 'constructor' }} memberNames={{}} />);
+    expect(screen.getByText('qa.memberUnavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Scoped external tester')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes an assigned owner whose directory entry is missing from an unassigned owner', () => {
+    const issue = { ...owned, qaOwnerId: 'eqa-example-missing' };
+    const view = render(<QaIssueCard issue={issue} actor={{ id: 'reporter', role: 'member' }} onOpen={vi.fn()} />);
+    expect(screen.getByText('qa.memberUnavailable')).toBeInTheDocument();
+    expect(screen.queryByText('qa.unassigned')).not.toBeInTheDocument();
+    expect(view.container).not.toHaveTextContent('eqa-example-missing');
+    view.rerender(<QaIssueCard issue={{ ...issue, qaOwnerId: null }} actor={{ id: 'reporter', role: 'member' }} onOpen={vi.fn()} />);
+    expect(screen.getByText('qa.unassigned')).toBeInTheDocument();
+    expect(screen.queryByText('qa.memberUnavailable')).not.toBeInTheDocument();
+  });
+
+  it('explains that a new bug has no submitted fix instead of showing verification inputs', () => {
+    const { command } = renderDetail({ ...base, qaOwnerId: 'eqa-example-tester' }, { id: 'eqa-example-tester', role: 'member' });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.getByText('qa.noTargets')).toBeInTheDocument();
+    expect(screen.getByText('qa.verificationRequiresFix')).toBeInTheDocument();
+    expect(screen.queryByLabelText('qa.resultField')).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('explains verification permissions while preserving read access to a deployed target', () => {
+    const { command } = renderDetail({ ...owned, state: 'verification', targets: [target()] }, { id: 'reporter', role: 'member' });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.getByText('qa.verificationReadOnly')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Stage / b1' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('qa.resultField')).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('explains that a reopened repair needs to be submitted again before verification', () => {
+    renderDetail({ ...owned, targets: [target()] }, { id: 'qa', role: 'member' });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.getByText('qa.verificationRequiresFix')).toBeInTheDocument();
+    expect(screen.queryByLabelText('qa.resultField')).not.toBeInTheDocument();
+  });
+
+  it('uses scoped historical names only as labels and hides unknown member identifiers', () => {
+    const historicalId = 'eqa-example-historical';
+    const unknownId = 'eqa-example-unknown';
+    const issue = { ...owned, qaOwnerId: historicalId, state: 'verification' as const, targets: [target()], fixCycle: 1,
+      runs: [{ id: 'example-historical-run', sequence: 1, fixCycle: 1, targetId: 't1', environment: 'Stage', component: '', build: 'b1', result: 'blocked' as const, note: '', testerId: historicalId, createdAt: owned.createdAt }] };
+    const { command } = renderDetail(issue, { id: 'reporter', role: 'member' }, {
+      memberNames: { [historicalId]: 'Historical tester' },
+      comments: [{ id: 'example-comment', issueId: issue.id, actorId: unknownId, body: 'Example note', createdAt: owned.createdAt }],
+    });
+    expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Historical tester');
+    fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
+    expect(screen.queryByRole('option', { name: 'Historical tester' })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'qa.qaOwner' }), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('Historical tester');
+    expect(screen.getByRole('tabpanel')).not.toHaveTextContent(historicalId);
+    fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('qa.memberUnavailable');
+    expect(screen.getByRole('tabpanel')).not.toHaveTextContent(unknownId);
+    expect(command).not.toHaveBeenCalled();
   });
 });
 
@@ -124,6 +228,22 @@ describe('readable history', () => {
   const t = translate as unknown as TFunction;
   const names: Record<string, string> = { dev: 'Alex', qa: 'Blair' };
   const ctx = { t, member: (id: string) => names[id] ?? id, task: (id: string) => id === 'task-1' ? 'EX-1 · Fix checkout' : id, stateLabel: (value: string) => `state:${value}`, date: () => 'Oct 3' };
+  it('keeps English summaries and version text intact while using safe labels only for structured member ids', () => {
+    const safe = { ...ctx, memberLabel: (id: string) => names[id] ?? 'qa.memberUnavailable' };
+    const summary = 'Fixed loading retry for build release-2026-11-09\nStage · login · sha123abc · 必要';
+    expect(qaEventText({ type: 'submit_fix', detail: summary }, safe)).toBe(summary);
+    expect(qaEventText({ type: 'record_deployment', detail: 'Stage · login · release-2026-11-09\n2026-11-09T08:00:00.000Z · dev\nSmoke test passed' }, safe))
+      .toBe('Stage · login · release-2026-11-09\nOct 3 · Alex\nSmoke test passed');
+    expect(qaEventText({ type: 'triage', detail: 'RD: dev · QA: eqa-missing\nhigh · P2' }, safe)).toContain('qa.qaOwner：qa.memberUnavailable');
+  });
+
+  it('keeps actual detail history prose when an unrelated member label is unavailable', async () => {
+    renderDetail(owned, { id: 'dev', role: 'member' }, { events: [{ id: 'example-event', issueId: owned.id, actorId: 'eqa-example-author', type: 'submit_fix', detail: 'Fixed English summary for release-2026-11-09\nStage · login · sha123abc', version: 2, createdAt: owned.createdAt }] });
+    fireEvent.click(screen.getByRole('tab', { name: /qa.history/ }));
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('Fixed English summary for release-2026-11-09');
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('Stage · login · sha123abc');
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('qa.memberUnavailable');
+  });
   it('turns stored ids and codes into names and words', () => {
     expect(qaEventText({ type: 'triage', detail: 'RD: dev · QA: qa\nhigh · P2\n2026-10-10' }, ctx)).toBe('qa.assignee：Alex · qa.qaOwner：Blair\nqa.severity：qa.severityNames.high · qa.priority：priority.high\nqa.dueDate：2026-10-10');
     expect(qaEventText({ type: 'close', detail: 'duplicate\nSame failure\nbug-0000-9999ffff' }, ctx)).toBe('qa.resolution.duplicate\nSame failure\nqa.duplicateOf(id=#9999ffff)');

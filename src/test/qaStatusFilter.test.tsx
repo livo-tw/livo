@@ -8,7 +8,7 @@ import { QA_STATES, type QaListInput } from '@/lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { ProductLine, Project } from '@/types';
 
-const mocks = vi.hoisted(() => ({ getDisplaySettings: vi.fn().mockResolvedValue({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), list: vi.fn().mockResolvedValue({ issues: [], total: 0, hasMore: false }) }));
+const mocks = vi.hoisted(() => ({ people: [] as Array<{ id: string; name: string; isActive: boolean }>, getDisplaySettings: vi.fn().mockResolvedValue({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), list: vi.fn().mockResolvedValue({ issues: [], total: 0, hasMore: false }) }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -19,11 +19,12 @@ vi.mock('@/context/UIContext', () => ({ useUIContext: () => ({ featureToggles: {
 vi.mock('@/context/ProjectContext', () => ({ useProjectContext: () => ({ allProjects: [] as Project[], productLines: [] as ProductLine[], selectedProjectId: null as string | null, selectedLineId: null as string | null, setSelectedProjectId: vi.fn(), setSelectedLineId: vi.fn() }) }));
 vi.mock('@/context/MemberContext', () => ({ useMemberContext: () => ({ users: [] as never[] }) }));
 vi.mock('@/integrations/supabase/client', () => ({ USING_MOCK_BACKEND: true, supabase: {} }));
+vi.mock('@/hooks/useQaFilterPeople', () => ({ useQaFilterPeople: () => ({ people: mocks.people, loading: false, failed: false, retry: vi.fn() }) }));
 vi.mock('@/hooks/useQa', () => {
   const client = { getDisplaySettings: mocks.getDisplaySettings, getWorkflow: mocks.getWorkflow, list: mocks.list };
   return { useQa: () => ({ client, actor: { id: 'example-admin', role: 'admin' } }) };
 });
-vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <output aria-label="Filtered canonical state">{filters.states?.join(',') || 'all'}</output> }));
+vi.mock('@/components/qa/QaKanban', () => ({ default: ({ filters }: { filters: QaListInput }) => <><output aria-label="Filtered canonical state">{filters.states?.join(',') || 'all'}</output><output aria-label="Filtered QA people">{JSON.stringify({ qaOwnerIds: filters.qaOwnerIds, reporterIds: filters.reporterIds })}</output></> }));
 vi.mock('@/components/qa/QaIssueDetail', () => ({ default: (): null => null, QaFailure: (): null => null }));
 vi.mock('@/components/qa/QaCreatePanel', () => ({ default: (): null => null }));
 vi.mock('@/components/qa/QaWorkflowSettings', () => ({ default: (): null => null }));
@@ -36,7 +37,7 @@ afterAll(() => {
   if (originalScrollIntoView) Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
   else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
 });
-afterEach(() => { cleanup(); vi.clearAllMocks(); window.history.replaceState({}, '', '/'); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.people = []; window.history.replaceState({}, '', '/'); });
 
 async function open(label: string) {
   const trigger = screen.getByRole('combobox', { name: label });
@@ -86,6 +87,27 @@ describe('shared coloured status select', () => {
 });
 
 describe('QA status filtering', () => {
+  it('filters by scoped external QA owners and historical reporters without offering them as repair assignees', async () => {
+    mocks.people = [{ id: 'eqa-example-active', name: 'Example scoped tester', isActive: true }, { id: 'eqa-example-history', name: 'Example historical tester', isActive: false }];
+    mocks.getWorkflow.mockResolvedValue(DEFAULT_QA_WORKFLOW);
+    render(<QaWorkspace />);
+    await screen.findByLabelText('Filtered QA people');
+    const owner = screen.getByRole('button', { name: 'common.all qa.qaOwner' });
+    fireEvent.click(owner);
+    fireEvent.click(within(owner.parentElement!).getByRole('button', { name: 'Example historical tester (common.inactive)' }));
+    await waitFor(() => expect(screen.getByLabelText('Filtered QA people')).toHaveTextContent('"qaOwnerIds":["eqa-example-history"]'));
+    fireEvent.click(owner);
+    const reporter = screen.getByRole('button', { name: 'common.all qa.reporter' });
+    fireEvent.click(reporter);
+    fireEvent.click(within(reporter.parentElement!).getByRole('button', { name: 'Example scoped tester' }));
+    await waitFor(() => expect(screen.getByLabelText('Filtered QA people')).toHaveTextContent('"reporterIds":["eqa-example-active"]'));
+    fireEvent.click(reporter);
+    const assignee = screen.getByRole('button', { name: 'common.all qa.assignee' });
+    fireEvent.click(assignee);
+    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example scoped tester' })).not.toBeInTheDocument();
+    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example historical tester (common.inactive)' })).not.toBeInTheDocument();
+  });
+
   it('provides a list shortcut for bugs hidden from the default board', async () => {
     mocks.getDisplaySettings.mockResolvedValueOnce({ version: 1, showSeverity: false, hiddenPriorityChoices: [1, 5], hiddenBoardStates: ['triaged', 'closed'] } satisfies QaDisplaySettings);
     mocks.getWorkflow.mockResolvedValue(DEFAULT_QA_WORKFLOW);

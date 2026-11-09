@@ -89,6 +89,7 @@ describe('verification intent and evidence guard', () => {
     fireEvent.click(within(first).getByRole('button', { name: 'qa.verification' }));
     expect(command).toHaveBeenCalledWith({ type: 'record_verification', targetId: 'first', build: 'build-first', result: 'fail', note: 'Still reproduces' });
     const waiting = screen.getByRole('heading', { name: 'waiting / build-waiting' }).closest('article')!;
+    expect(within(waiting).getByText('qa.verificationAwaitingDeployment')).toBeInTheDocument();
     expect(within(waiting).queryByLabelText('qa.resultField')).toBeNull();
     expect(within(waiting).getByLabelText(/qa.deploymentEvidence/)).not.toBeRequired();
     fireEvent.click(within(waiting).getByRole('button', { name: 'qa.deployment' }));

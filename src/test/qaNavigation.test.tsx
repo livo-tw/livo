@@ -57,6 +57,23 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 describe('QA navigation preserves pending work', () => {
+  it('shows scoped external names in the list and clears prior page labels when the next result omits them', async () => {
+    const assigned = { ...issue, assigneeId: 'admin', qaOwnerId: 'eqa-example-list-owner' };
+    mocks.list.mockImplementation(async ({ offset }: { offset: number }) => offset === 0
+      ? { issues: [assigned], total: 26, hasMore: true, memberNames: { [assigned.qaOwnerId]: 'Scoped list tester', admin: 'Unexpected directory override' } }
+      : { issues: [{ ...assigned, id: 'example-second-page', title: 'Second page bug' }], total: 26, hasMore: false });
+    render(<QaWorkspace />);
+    fireEvent.click(await screen.findByRole('button', { name: 'qa.list' }));
+    expect(await screen.findByText('Scoped list tester')).toBeInTheDocument();
+    expect(screen.getByText('Example admin')).toBeInTheDocument();
+    expect(screen.queryByText('Unexpected directory override')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'qa.next' }));
+    expect(await screen.findByText('Second page bug')).toBeInTheDocument();
+    expect(screen.getByText('qa.memberUnavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Scoped list tester')).not.toBeInTheDocument();
+    expect(screen.queryByText('eqa-example-list-owner')).not.toBeInTheDocument();
+  });
+
   const handoffIssue = (): QaDetail['issue'] & { handoff: NonNullable<QaDetail['issue']['handoff']> } => ({ ...issue, version: 4, handoff: { id: 'handoff-one', reason: 'Need another owner', nextOwnerId: 'admin', replyBy: null, externalDependency: '', requestedBy: 'reporter', requestedAt: issue.createdAt, acceptedBy: null, acceptedAt: null, resolvedBy: null, resolvedAt: null, resolutionEvidence: '' } });
   it('retries an uncertain handoff with its original issue version and command identity after incoming updates', async () => {
     const current = handoffIssue(), accepted = { ...current, version: 5, handoff: { ...current.handoff, acceptedBy: 'admin', acceptedAt: issue.createdAt } };

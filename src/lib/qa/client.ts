@@ -56,6 +56,7 @@ export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'f
 }
 
 export type QaProjectPerson = { id: string; name: string; avatar?: string; color?: string; jobTitle?: string; isActive: boolean; isExternal?: boolean };
+export type QaFilterPerson = { id: string; name: string; isActive: boolean };
 export type QaTaskReference = { id: string; taskKey: string; title: string };
 
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }
@@ -99,6 +100,11 @@ export function createQaClient(options: QaClientOptions) {
     return clone(demoCoordination.get(`${ctx.workspaceId}:${projectId}`) ?? {projectId,coordinatorId:null,version:0});
   };
   const api = {
+    async filterPeople(input: { projectIds?: string[]; offset?: number }, signal?: AbortSignal): Promise<{ members: QaFilterPerson[]; hasMore: boolean }> {
+      ensureEnabled();
+      if (mock) return { members: [], hasMore: false };
+      return request('filter_people', input, signal);
+    },
     async projectPeople(projectId: string, offset = 0, signal?: AbortSignal): Promise<{ members: QaProjectPerson[]; hasMore: boolean }> {
       if (mock) return { members: [], hasMore: false };
       return request('project_people', { projectId, offset }, signal);

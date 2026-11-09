@@ -104,7 +104,7 @@ describe('human-readable QA notices from immutable audit snapshots', () => {
     expect(loaded?.memberNames?.['old-developer']).toBe('Alex'); expect(loaded?.projectNames?.['old-project']).toBe('Atlas');
     expect(loaded?.triagers).toEqual(['new-developer']); expect(loaded?.members).toEqual(state.members);
     for (const [table, query] of rows.mock.calls) if (['members', 'projects'].includes(table) && query.id?.startsWith('in.')) {
-      expect(query).toMatchObject({ select: 'id,name', limit: '10' }); expect(query).not.toHaveProperty('workspace_id'); expect(query).not.toHaveProperty('is_active');
+      expect(query).toMatchObject({ select: 'id,name', limit: table === 'members' ? '20' : '10' }); expect(query).not.toHaveProperty('workspace_id'); expect(query).not.toHaveProperty('is_active');
     }
   });
 });

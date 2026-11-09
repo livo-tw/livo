@@ -143,9 +143,10 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const sourceUrl = !externalQa && source?.recordUrl && /^https:\/\/[^/]+\.slack\.com\//i.test(source.recordUrl) ? source.recordUrl : null;
   const nextAction = getQaNextAction(issue, actor);
   const can = (type: ActionType) => canQaCommand(issue, actor, type);
-  const member = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name || id || '—';
-  const memberNames = new Map([...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name]));
-  const eventText = { t, issue, showSeverity: display.configuration?.showSeverity ?? false, member: (id: string) => memberNames.get(id) ?? id, date: displayDate,
+  // Scoped historical names are display labels, never assignment candidates.
+  const memberNames = new Map([...Object.entries(detail.memberNames ?? {}), ...[...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name] as const)]);
+  const member = (id: string | null) => id ? memberNames.get(id) || t('qa.memberUnavailable') : '—';
+  const eventText = { t, issue, showSeverity: display.configuration?.showSeverity ?? false, member: (id: string) => memberNames.get(id) ?? id, memberLabel: member, date: displayDate,
     task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
     project: (id: string) => allProjects.find(project => project.id === id)?.name || id,
     stateLabel: (state: string) => workflow?.labels[state as keyof QaWorkflow['labels']] || t(`qa.state.${state}`) };
@@ -356,6 +357,9 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         <QaSection title={t('qa.targets')}>
           {issue.fixSummary && <p className="mb-3 whitespace-pre-wrap break-words text-sm">{issue.fixSummary}</p>}
           {!issue.targets.length && <p className="text-sm text-muted-foreground">{t('qa.noTargets')}</p>}
+          {!isQaTerminal(issue.state) && (!['verification', 'verified'].includes(issue.state)
+            ? <p className="mb-3 text-sm text-muted-foreground">{t('qa.verificationRequiresFix')}</p>
+            : !can('record_verification') && <p className="mb-3 text-sm text-muted-foreground">{t('qa.verificationReadOnly')}</p>)}
           <QaVerificationPanel key={issue.fixCycle} targets={issue.targets} initialResult={initialDefaults?.result} acknowledgedVerification={acknowledgedVerification} canDeploy={can('record_deployment')} canVerify={can('record_verification') && !(issue.state === 'verified' && canResolveFixed)} busy={busy} onCommand={command => send(command).then(() => {})} />
         </QaSection>
         <QaSection title={t('qa.runs')}>
@@ -380,7 +384,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {!isMobile && actionSection}
         <QaSection title={t('qa.properties')}>
           {!isMobile && stateControl}
-          <QaIssueSidebarFields issue={issue} assignmentOptions={assignmentOptions} disabled={busy || !can('update_fields')} onCommand={send} />
+          <QaIssueSidebarFields issue={issue} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} disabled={busy || !can('update_fields')} onCommand={send} />
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
@@ -430,7 +434,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {error !== null && <QaFailure error={error} />}
         {commandRetryNotice}
         {notice && <div className="space-y-2"><p role="status" className="text-sm text-muted-foreground">{notice}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
-        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} assignmentOptions={assignmentOptions} busy={busy} onCommand={send} />
+        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} busy={busy} onCommand={send} />
       </DialogContent>
     </Dialog>
     {ConfirmDialog}
