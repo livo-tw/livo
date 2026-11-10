@@ -188,6 +188,7 @@ const AdminImportExportSection = ({ currentMemberId, hasFeature, refreshAll }: A
               {t('adminImportExport.exportTitle')}
             </CardTitle>
             <CardDescription>{t('adminImportExport.exportDesc')}</CardDescription>
+            <p className="text-sm text-muted-foreground">{t('commentAttachments.backupCoverage')}</p>
           </CardHeader>
           <CardContent>
             <Button onClick={handleExport} disabled={exporting} variant="outline" className="gap-2">

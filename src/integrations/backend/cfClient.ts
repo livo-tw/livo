@@ -30,6 +30,7 @@ import type {
   RpcResponse,
   ServerMsg,
 } from '../../../worker/src/protocol';
+import { observeApiFetch } from '@/lib/apiReachability';
 
 // Re-exported so app code can swap `import type { Session } from '@supabase/supabase-js'`
 // for `import type { Session } from '@/integrations/backend/cfClient'`.
@@ -37,6 +38,14 @@ export type Session = AuthSession;
 export type { AuthSession, AuthUser };
 
 export const API_URL = (import.meta.env.VITE_API_URL as string) || '';
+
+// Observe only existing JSON SDK calls; storage/Realtime retain their own contracts.
+function fetchApiJson(input: string, init: RequestInit): Promise<Response> {
+  let origin: string | undefined;
+  try { origin = new URL(input, typeof document === 'undefined' ? undefined : document.baseURI).origin; }
+  catch { /* Relative requests outside a browser do not provide reachability evidence. */ }
+  return observeApiFetch(() => fetch(input, { ...init, cache: 'no-store' }), origin, init.signal);
+}
 
 const AUTH_STORAGE_KEY = 'livo-auth';
 
@@ -137,7 +146,7 @@ function refreshSession(): Promise<AuthSession | null> {
     if (!current || !current.refresh_token) return null;
     let res: Response;
     try {
-      res = await fetch(`${API_URL}/api/auth/refresh`, {
+      res = await fetchApiJson(`${API_URL}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: current.refresh_token }),
@@ -203,7 +212,7 @@ interface JsonResult {
 
 async function postJson(path: string, payload: unknown): Promise<JsonResult> {
   const headers = await authHeaders({ 'Content-Type': 'application/json' });
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchApiJson(`${API_URL}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
@@ -904,7 +913,7 @@ const auth = {
     error: ApiError | null;
   }> {
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
+      const res = await fetchApiJson(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(creds),
@@ -948,7 +957,7 @@ const auth = {
     try {
       const current = await ensureFreshSession();
       if (!current) return { error: { message: 'Not signed in' } };
-      const res = await fetch(`${API_URL}/api/auth/change-password`, {
+      const res = await fetchApiJson(`${API_URL}/api/auth/change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1007,7 +1016,7 @@ const auth = {
     }
     if (s) {
       // best-effort server-side refresh-token revocation
-      fetch(`${API_URL}/api/auth/logout`, {
+      fetchApiJson(`${API_URL}/api/auth/logout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1081,7 +1090,7 @@ const auth = {
     displayName: string;
   }): Promise<{ data: { user: AuthUser | null; session: AuthSession | null }; error: ApiError | null }> {
     try {
-      const res = await fetch(`${API_URL}/api/auth/signup`, {
+      const res = await fetchApiJson(`${API_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1124,7 +1133,7 @@ const auth = {
    */
   async verifySetPasswordToken(token: string): Promise<{ email: string | null; error: ApiError | null }> {
     try {
-      const res = await fetch(`${API_URL}/api/auth/set-password/verify`, {
+      const res = await fetchApiJson(`${API_URL}/api/auth/set-password/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
@@ -1152,7 +1161,7 @@ const auth = {
     password: string
   ): Promise<{ data: { user: AuthUser | null; session: AuthSession | null }; error: ApiError | null }> {
     try {
-      const res = await fetch(`${API_URL}/api/auth/set-password`, {
+      const res = await fetchApiJson(`${API_URL}/api/auth/set-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, password }),

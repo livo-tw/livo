@@ -1,3 +1,4 @@
+import { qaPersonDisplay } from '@/lib/qa/peopleDisplay';
 import QaRecordView from './QaRecordView';
 import { Bug, Settings2, LayoutGrid, List, Search, RefreshCw, MessageSquare } from 'lucide-react';
 import QaCreatePanel from './QaCreatePanel';
@@ -157,9 +158,9 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   useEffect(() => { setOffset(0); }, [filterKey]);
   const memberOptions = useMemo(() => {
     const label = (name: string, active: boolean) => active ? name : `${name} (${t('common.inactive')})`;
-    const options = new Map(sortUsersByDept(users).map(user => [user.id, { id: user.id, label: label(user.name, user.isActive), avatar: user.avatar, avatarColor: user.color, subtitle: user.jobTitle }]));
+    const options = new Map(sortUsersByDept(users).map(user => { const display = qaPersonDisplay(user); return [user.id, { id: user.id, label: label(user.name, user.isActive), avatar: display.avatar, avatarColor: display.color, subtitle: display.jobTitle }] as const; }));
     for (const person of [...(filterPeople.people ?? [])].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!options.has(person.id)) options.set(person.id, { id: person.id, label: label(person.name, person.isActive), avatar: '', avatarColor: '', subtitle: '' });
+      if (!options.has(person.id)) { const display = qaPersonDisplay(person); options.set(person.id, { id: person.id, label: label(person.name, person.isActive), avatar: display.avatar, avatarColor: display.color, subtitle: display.jobTitle }); }
     }
     return [...options.values()];
   }, [users, filterPeople.people, t]);
@@ -221,7 +222,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   useEffect(() => {
     if (issueId || creating || view !== 'list') return;
     if (noMatch) { setList({ issues: [], total: 0, hasMore: false }); setLoading(false); return; }
-    const controller = new AbortController(); setLoading(true); setError(null); setList(previous => ({ ...previous, memberNames: undefined }));
+    const controller = new AbortController(); setLoading(true); setError(null); setList(previous => ({ ...previous, memberNames: undefined, memberProfiles: undefined }));
     void client.list({ ...filters, offset, limit: 25 }, controller.signal)
       .then(result => { if (!controller.signal.aborted) setList(result); })
       .catch(failure => { if (!controller.signal.aborted) setError(failure); })
@@ -279,7 +280,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
           </form>
           {filterPeople.loading && <p role="status" className="text-xs text-muted-foreground">{t('qa.filterPeopleLoading')}</p>}
           {filterPeople.failed && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{t('qa.filterPeopleFailed')}</span><button type="button" className={qaButton} onClick={filterPeople.retry}>{t('qa.retry')}</button></div>}
-          <BoardFilterChips users={users} reviewerOptions={memberOptions} allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters}
+          <BoardFilterChips users={users} displayMember={qaPersonDisplay} reviewerOptions={memberOptions} allProjects={scope.projectIds ? allProjects.filter(project => scope.projectIds!.has(project.id)) : allProjects} showProjects={!selectedProjectId} filters={boardFilters}
             statusOptions={workflow.order.map(value => ({ id: value, label: workflow.labels[value] || t(`qa.state.${value}`), color: qaStateColors[value] }))}
             priorityChoices={display.configuration ? [...new Set([...getQaPriorityChoices(display.configuration).map(priority => qaPriorities[priority - 1]), ...filterPriorities])] : []}
             assigneeLabel={t('qa.assignee')} reviewerLabel={t('qa.qaOwner')}
@@ -300,12 +301,12 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
         </div>}
         {noMatch ? <div className="py-12 text-center text-sm text-muted-foreground">{t('qa.empty')} <button type="button" className="text-primary hover:underline" onClick={clearAll}>{t('qa.clearFilters')}</button></div>
         : view === 'board' ? <QaKanban key={JSON.stringify({ ...filters, revision, actor: actor.id })} client={client} actor={actor} workflow={workflow} filters={filters} reloadToken={boardRevision} onPendingChange={setBoardBusy} onOpen={openIssue} /> : <>
-          {loading ? <p role="status" className="py-8 text-center text-sm">{t('qa.loading')}</p> : !list.issues.length ? <p className="py-12 text-center text-muted-foreground">{t('qa.empty')}</p> : <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{list.issues.map(issue => <li key={issue.id}><QaIssueCard list issue={issue} actor={actor} memberNames={list.memberNames} stateLabel={workflow.labels[issue.state] || t(`qa.state.${issue.state}`)} onOpen={openIssue} /></li>)}</ul>}
+          {loading ? <p role="status" className="py-8 text-center text-sm">{t('qa.loading')}</p> : !list.issues.length ? <p className="py-12 text-center text-muted-foreground">{t('qa.empty')}</p> : <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{list.issues.map(issue => <li key={issue.id}><QaIssueCard list issue={issue} actor={actor} memberNames={list.memberNames} memberProfiles={list.memberProfiles} stateLabel={workflow.labels[issue.state] || t(`qa.state.${issue.state}`)} onOpen={openIssue} /></li>)}</ul>}
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{t('qa.count', { count: list.total })}</span><div className="flex gap-2"><button className={qaButton} disabled={loading || offset === 0} onClick={() => setOffset(value => Math.max(0, value - 25))}>{t('qa.previous')}</button><button className={qaButton} disabled={loading || !list.hasMore} onClick={() => setOffset(value => value + 25)}>{t('qa.next')}</button></div></div>
         </>}
       </>}
     </div>
-    {(creating || !!issueId) && <QaRecordView title={creating ? t('qa.reportTitle') : detail?.issue.title || t('qa.details')} creating={creating} busy={busy} suspended={recordSuspended} onClose={() => { if (recordBusy || hasQaNavigationGuard()) return; creatingRef.current = false; setCreating(false); openIssue(''); }}>
+    {(creating || !!issueId) && <QaRecordView copyRecord={detail && detail.issue.id === issueId ? detail.issue : undefined} title={creating ? t('qa.reportTitle') : detail?.issue.title || t('qa.details')} creating={creating} busy={busy} suspended={recordSuspended} onClose={() => { if (recordBusy || hasQaNavigationGuard()) return; creatingRef.current = false; setCreating(false); openIssue(''); }}>
       {creating ? <div className="h-full min-h-0 p-4 md:p-6"><QaCreatePanel fixedFooter client={client} productLines={productLines} projects={allProjects} projectId={selectedProjectId || undefined} issueId={createIds.current.id} commandId={createIds.current.commandId} onCreated={id => { setBoardRevision(value => value + 1); openIssue(id, undefined, undefined, true); }} onBusyChange={value => { creatingBusy.current = value; setRecordBusy(value); }} onCancel={() => { if (!recordBusy) { creatingRef.current = false; setCreating(false); setError(null); } }} /></div> : detail && workflow ? <QaIssueDetail key={`${issueId}:${detailScope}`} externalUpdatePending={externalRefresh.pending} externalRefreshError={externalRefresh.error} onRefreshBlockedChange={onRefreshBlockedChange} detail={detail} client={client} actor={actor} workflow={workflow} initialAction={initialAction} initialDefaults={initialDefaults} onRefresh={refreshDetail} onBusyChange={setRecordBusy} onBack={() => openIssue('')} onDeleted={() => { setBoardRevision(value => value + 1); window.dispatchEvent(new Event('livo:qa-changed')); openIssue('', undefined, undefined, true); }} /> : <div className="p-6">{error !== null ? <><QaFailure error={error} /><button className={qaButton} onClick={() => setRevision(value => value + 1)}>{t('qa.refresh')}</button></> : <p role="status">{t('qa.loading')}</p>}</div>}
     </QaRecordView>}
   </div></QaDisplaySettingsContext.Provider>;

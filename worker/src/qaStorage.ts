@@ -9,7 +9,7 @@ import { cleanupExpiredQaUploads } from './functions/qaUploadCleanup';
 type C=Context<AppContext>;
 interface Session {
   workspace_id:string;id:string;issue_id:string;actor_id:string;file_name:string;mime_type:string;
-  expected_size:number;storage_key:string;multipart_id:string|null;state:string;expires_at:string;
+  expected_size:number;storage_key:string;multipart_id:string|null;state:string;expires_at:string;purpose:'issue'|'comment';
 }
 const TYPES:Record<string,string[]>={
   'image/png':['png'],'image/jpeg':['jpg','jpeg'],'image/webp':['webp'],'image/gif':['gif'],
@@ -38,7 +38,7 @@ export function qaCheckSignature(mime:string,bytes:Uint8Array):void {
   if(!valid)throw new QaError('qa_file_signature_mismatch');
 }
 export function qaAttachmentWire(row:Record<string,unknown>):QaAttachment {
-  return {id:String(row.id),issueId:String(row.issue_id),fileName:String(row.file_name),mimeType:String(row.mime_type),size:Number(row.size),uploadedBy:String(row.uploaded_by),createdAt:String(row.created_at)};
+  return {id:String(row.id),issueId:String(row.issue_id),fileName:String(row.file_name),mimeType:String(row.mime_type),size:Number(row.size),uploadedBy:String(row.uploaded_by),createdAt:String(row.created_at),commentId:row.comment_id==null?null:String(row.comment_id)};
 }
 async function session(c:C,id:string):Promise<Session>{
   const auth=c.get('auth'),ws=auth.member.workspaceId;
@@ -55,13 +55,14 @@ export async function cleanupQaExpiredUploads(env:Env,ws:string):Promise<void>{
 async function init(c:C,body:Record<string,unknown>):Promise<Response>{
   const auth=c.get('auth'),ws=auth.member.workspaceId,id=qaId(body.id);
   const issue=await getQaIssue(c.env,ws,id),file=qaFileInput(body.fileName,body.mimeType,body.size);
+  const purpose=body.purpose??'issue';if(purpose!=='issue'&&purpose!=='comment')throw new QaError('qa_invalid_file');
   try{await ensureKnowledgeImportUsageReconciled(c.env,ws);}catch(error){
     if(error instanceof ImportError&&error.code==='storage_reconciliation_pending')return c.json({data:null,error:{code:error.code,message:'附件容量帳務正在核對，請稍後再試'}},409);
     throw error;
   }
   await cleanupQaExpiredUploads(c.env,ws);
   const uploadId=crypto.randomUUID(),storageKey=`qa/${ws}/${id}/${uploadId}`,now=new Date().toISOString(),expiry=new Date(Date.now()+24*60*60*1000).toISOString();
-  await c.env.DB.prepare('INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(ws,uploadId,issue.id,auth.member.id,file.fileName,file.mimeType,file.size,storageKey,now,expiry).run();
+  await c.env.DB.prepare('INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,created_at,expires_at,purpose) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(ws,uploadId,issue.id,auth.member.id,file.fileName,file.mimeType,file.size,storageKey,now,expiry,purpose).run();
   try{
     const upload=await c.env.ATTACHMENTS.createMultipartUpload(storageKey,{httpMetadata:{contentType:file.mimeType,contentDisposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`},customMetadata:{workspace:ws,issue:id,upload:uploadId}});
     const saved=await c.env.DB.prepare("UPDATE qa_upload_sessions SET multipart_id=?,state='uploading' WHERE workspace_id=? AND id=? AND state='initializing' RETURNING id").bind(upload.uploadId,ws,uploadId).first();
@@ -118,6 +119,12 @@ async function complete(c:C,body:Record<string,unknown>):Promise<Response>{
   if(!object||object.size!==row.expected_size||object.customMetadata?.workspace!==ws||object.customMetadata?.upload!==id)throw new QaError('qa_upload_size_mismatch');
   await requireQaEnabled(c.env,ws);
   const now=new Date().toISOString();
+  // Comment files remain private reservations until the comment transaction publishes them.
+  if(row.purpose==='comment'){
+    const ready=await c.env.DB.prepare("UPDATE qa_upload_sessions SET comment_ready_at=coalesce(comment_ready_at,?) WHERE workspace_id=? AND id=? AND purpose='comment' AND state='finalizing' AND expires_at>? AND cleanup_token IS NULL RETURNING id").bind(now,ws,id,now).first();
+    if(!ready)throw new QaError('qa_upload_conflict',409);
+    return c.json({id,issueId:row.issue_id,fileName:row.file_name,mimeType:row.mime_type,size:object.size,uploadedBy:auth.member.id,createdAt:now});
+  }
   try{
     // Finalize trigger rechecks quota/state and transfers reserved→used exactly once.
     await c.env.DB.batch([
@@ -149,7 +156,8 @@ export function qaRange(header:string|null,size:number):{offset:number;length:nu
 }
 async function download(c:C,body:Record<string,unknown>):Promise<Response>{
   const ws=c.get('auth').member.workspaceId,id=qaId(body.attachmentId);
-  const row=await c.env.DB.prepare('SELECT * FROM qa_attachments WHERE workspace_id=? AND id=?').bind(ws,id).first<Record<string,unknown>>();
+  let row=await c.env.DB.prepare('SELECT * FROM qa_attachments WHERE workspace_id=? AND id=?').bind(ws,id).first<Record<string,unknown>>();
+  if(!row)row=await c.env.DB.prepare("SELECT id,issue_id,actor_id AS uploaded_by,file_name,mime_type,expected_size AS size,storage_key,created_at FROM qa_upload_sessions WHERE workspace_id=? AND id=? AND actor_id=? AND purpose='comment' AND state='finalizing' AND comment_ready_at IS NOT NULL AND expires_at>? AND cleanup_token IS NULL").bind(ws,id,c.get('auth').member.id,new Date().toISOString()).first<Record<string,unknown>>();
   if(!row)throw new QaError('qa_attachment_not_found',404);await getQaIssue(c.env,ws,String(row.issue_id));
   const range=qaRange(c.req.raw.headers.get('range'),Number(row.size));
   const object=await c.env.ATTACHMENTS.get(String(row.storage_key),range?{range}:undefined);

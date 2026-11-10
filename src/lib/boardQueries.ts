@@ -67,6 +67,7 @@ export function applyBoardTaskChanges(tasks: Task[], changes: BoardTaskChanges):
         ...change.task,
         deployments: fetched.deployments,
         attachmentCount: fetched.attachmentCount,
+        attachmentSummaryKnown: fetched.attachmentSummaryKnown,
         tagIds: fetched.tagIds,
       });
     } else if (change.inserted) {

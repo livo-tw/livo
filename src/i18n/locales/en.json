@@ -1924,6 +1924,18 @@
     }
   },
   "integrations": {
+    "slackPreviews": {
+      "title": "Shared card link previews",
+      "projectRoutes": "Project notification channels",
+      "internalChannels": "Joined internal channels",
+      "projectHint": "Show card previews in Slack channels configured for the project’s task or Bug notifications.",
+      "internalHint": "Cards you can read in LIVO can be previewed in internal channels the LIVO bot has joined. DMs, group DMs and externally shared channels show ordinary links.",
+      "notificationsHint": "Automatic notifications follow the task and Bug notification channel settings.",
+      "adminOnly": "Only a super administrator can change the card link preview scope.",
+      "loadFailed": "The current preview setting could not be verified. Reload to try again.",
+      "saved": "Card link preview setting saved.",
+      "requirementsHint": "Complete the existing Slack activation and workspace setup first. This control saves the channel scope for card previews."
+    },
     "title": "Integrations",
     "desc": "Configure external service connections and notification behavior",
     "servicesTab": "Integrations",
@@ -4489,5 +4501,31 @@
       "network_failed": "Could not connect. Check your connection and try again.",
       "invalid_response": "The server returned an unexpected response. Refresh and try again."
     }
+  },
+  "commentAttachments": {
+    "heading": "Comment attachments",
+    "add": "Add attachments",
+    "drop": "Choose or drop images, videos or files",
+    "hint": "Up to 200 MB per file and {{count}} attachments per comment.",
+    "countLimit": "A comment can contain up to {{count}} files.",
+    "preview": "Preview {{name}}",
+    "remove": "Remove {{name}}",
+    "progress": "Upload progress {{percent}}%",
+    "retry": "Retry unfinished attachments",
+    "closePreview": "Close preview",
+    "loading": "Loading…",
+    "view": "View / download",
+    "download": "Download",
+    "cancelDownload": "Cancel download",
+    "pendingReceipt": "The submission result is still being checked. Retrying checks the same comment without adding a duplicate.",
+    "status": {
+      "pending": "Pending upload",
+      "uploading": "Uploading",
+      "complete": "Uploaded; send the comment to publish",
+      "failed": "Upload failed"
+    },
+    "backupCoverage": "JSON/CSV exports exclude reservation records and files for private task comment attachments. Full recovery requires database and private storage backups.",
+    "restoreBlockedPrivate": "This workspace still has private task comment attachments or upload reservations. Destructive JSON restore was stopped. Use full database and private storage backups.",
+    "restoreCoverageUnknown": "Private task comment attachment coverage could not be verified, so restore was stopped. Try again later or use full database and private storage backups."
   }
 }

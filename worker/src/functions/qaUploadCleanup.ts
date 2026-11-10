@@ -1,4 +1,5 @@
 import type { Env } from '../env';
+import { cleanupExpiredTaskCommentUploads } from '../taskComments';
 import { QA_UPLOAD_CLEANUP_LIMIT, QA_UPLOAD_SETTLE_MS, QA_UPLOAD_TOMBSTONE_MS, runQaUploadCleanup,
   type QaCleanupUpload, type QaUploadCleanupRepository } from '../qaUploadCleanup';
 
@@ -90,6 +91,11 @@ export async function runScheduledQaUploadCleanup(env: CleanupEnv) {
   for (const workspace of workspaces.results) {
     if (remaining === 0) break;
     try {
+      // Reserve a small fair share before a permanent QA backlog can consume the tick.
+      const task = await cleanupExpiredTaskCommentUploads(env,workspace.id,Math.min(4,remaining));
+      for(const key of ['claimed','removed','retained','failed']as const)summary[key]+=task[key];
+      remaining-=task.claimed;
+      if(remaining===0){summary.workspaces++;lastWorkspace=workspace.id;break;}
       const result = await cleanupExpiredQaUploads(env, workspace.id, remaining);
       for (const key of ['claimed', 'removed', 'retained', 'failed'] as const) summary[key] += result[key];
       remaining -= result.claimed;

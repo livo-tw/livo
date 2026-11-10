@@ -433,3 +433,39 @@ describe('formal PASS automatically completes the current work', () => {
     } finally { window.removeEventListener('livo:qa-changed', changed); }
   });
 });
+
+
+describe('QA scoped person profiles', () => {
+  it('renders a standard initial/avatar and QA subtitle on cards, preserving real internal profiles', () => {
+    const issue = { ...owned, qaOwnerId: 'historical-external' };
+    const view = render(<QaIssueCard issue={issue} actor={{ id: 'reporter', role: 'member' }} onOpen={vi.fn()}
+      memberProfiles={{ [issue.qaOwnerId]: { name: 'Example tester', isExternal: true }, dev: { name: 'Wrong name', avatar: 'X', jobTitle: 'Wrong title', isExternal: true } }} />);
+    const badge = screen.getByTitle('Example tester · QA');
+    expect(within(badge).getByText('E')).toHaveStyle({ backgroundColor: '#64748b' });
+    expect(screen.getByTitle('Alex · Engineer')).toBeInTheDocument();
+    expect(screen.queryByText('Wrong title')).not.toBeInTheDocument();
+    view.rerender(<QaIssueCard issue={{ ...issue, qaOwnerId: 'constructor' }} actor={{ id: 'reporter', role: 'member' }} onOpen={vi.fn()} memberProfiles={{}} />);
+    expect(screen.queryByTitle('Example tester · QA')).not.toBeInTheDocument();
+    expect(screen.getByText('qa.memberUnavailable')).toBeInTheDocument();
+  });
+
+  it('shows historical external owners and comment authors without adding an assignment candidate or changing raw job titles', async () => {
+    const historical = 'historical-external';
+    const priorUsers = structuredClone(state.users);
+    renderDetail({ ...owned, qaOwnerId: historical }, { id: 'dev', role: 'member' }, {
+      memberNames: { [historical]: 'Historical tester' },
+      memberProfiles: { [historical]: { name: 'Historical tester', isExternal: true } },
+      comments: [{ id: 'comment-profile', issueId: owned.id, actorId: historical, body: 'Example comment', createdAt: owned.createdAt }],
+    });
+    const owner = screen.getByRole('combobox', { name: 'qa.qaOwner' });
+    expect(owner).toHaveTextContent('Historical tester');
+    expect(owner).toHaveTextContent('QA');
+    expect(within(owner).getByText('H')).toHaveStyle({ backgroundColor: '#64748b' });
+    fireEvent.click(owner);
+    expect(screen.queryByRole('option', { name: /Historical tester/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('tab', { name: /^qa\.comments(?:\s|$)/ }));
+    expect(await screen.findByTitle('Historical tester · QA')).toBeInTheDocument();
+    expect(state.users).toEqual(priorUsers);
+  });
+});

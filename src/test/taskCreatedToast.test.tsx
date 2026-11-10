@@ -6,7 +6,7 @@ import { showTaskCreatedToast } from '@/lib/taskCreatedToast';
 import { appDeepLinkSearch, taskDeepLinkUrl } from '@/lib/appDeepLink';
 
 const translate = ((key: string) => key) as TFunction;
-const savedTask = { id: 'saved-task-id', taskKey: 'EX-99' };
+const savedTask = { id: 'saved-task-id', taskKey: 'EX-99', title: 'Example saved task' };
 const execCopy = vi.fn<() => boolean>();
 let previousUrl: string;
 
@@ -57,7 +57,9 @@ describe('created task links', () => {
   it('copies through the HTTP fallback and keeps the view link available', async () => {
     let copied = '';
     execCopy.mockImplementation(() => {
-      copied = document.querySelector('textarea')?.value ?? '';
+      const event = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: { setData: (type: string, value: string) => { if (type === 'text/plain') copied = value; } } });
+      document.dispatchEvent(event);
       return true;
     });
     await notifyCreated();

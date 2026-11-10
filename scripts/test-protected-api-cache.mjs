@@ -14,10 +14,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isAbsolute, dirname, basename, parse, resolve } from 'node:path';
 import ts from 'typescript';
 function options() {
-  const result = { playwrightModule: 'playwright', reportPath: null };
+  const result = { playwrightModule: 'playwright', reportPath: null, fixtureSelfTest: false };
   const args = process.argv.slice(2);
   while (args.length) {
     const name = args.shift();
+    if (name === '--fixture-self-test') { result.fixtureSelfTest = true; continue; }
     const value = args.shift();
     if (!value || !isAbsolute(value)) throw new Error('Arguments require absolute paths');
     if (name === '--playwright-module') result.playwrightModule = pathToFileURL(value).href;
@@ -58,11 +59,43 @@ async function outsideGitReportPath(path) {
 }
 
 const helperUrl = new URL('../src/lib/protectedApiFetch.ts', import.meta.url);
+const reachabilityUrl = new URL('../src/lib/apiReachability.ts', import.meta.url);
+const fixtureImports = { '@/lib/apiReachability': '/fixture/api-reachability.js' };
 const report = { passed: false, checks: [], stage: 'load_production_helper' };
 let browser;
 let cli;
 let reportPath;
 const servers = [];
+
+async function productionFixtureModules() {
+  const modules = new Map();
+  const hashes = {};
+  for (const [path, url, name] of [
+    ['/fixture/protected-api-fetch.js', helperUrl, 'helper'],
+    ['/fixture/api-reachability.js', reachabilityUrl, 'api_reachability'],
+  ]) {
+    const source = await readFile(url, 'utf8');
+    hashes[`${name}_sha256`] = createHash('sha256').update(source).digest('hex');
+    const result = ts.transpileModule(source, {
+      fileName: fileURLToPath(url), reportDiagnostics: true,
+      compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+    });
+    assert.equal(result.diagnostics?.some(d => d.category === ts.DiagnosticCategory.Error) ?? false,
+      false, 'production fixture transpiles without errors');
+    modules.set(path, result.outputText);
+  }
+  validateFixtureImports(modules, fixtureImports);
+  return { modules, hashes };
+}
+
+function validateFixtureImports(modules, imports) {
+  for (const source of modules.values()) {
+    for (const dependency of ts.preProcessFile(source, true, true).importedFiles) {
+      assert.equal(modules.has(imports[dependency.fileName]), true,
+        'production fixture dependency has an explicit served import-map target');
+    }
+  }
+}
 
 function check(name, condition) {
   assert.equal(condition, true, name);
@@ -108,15 +141,26 @@ async function main() {
   report.stage = 'validate_arguments';
   cli = options();
   if (cli.reportPath) reportPath = await outsideGitReportPath(cli.reportPath);
+  report.stage = 'transpile_production_fixture_modules';
+  const { modules: fixtureModules, hashes } = await productionFixtureModules();
+  Object.assign(report, hashes);
+  if (cli.fixtureSelfTest) {
+    report.mode = 'fixture_source_only_self_test';
+    report.browser_executed = false;
+    check('actual_helper_import_map_target_is_served', fixtureModules.has(fixtureImports['@/lib/apiReachability']));
+    check('actual_helper_keeps_production_dependency_import',
+      ts.preProcessFile(fixtureModules.get('/fixture/protected-api-fetch.js'), true, true)
+        .importedFiles.some(item => item.fileName === '@/lib/apiReachability'));
+    assert.throws(() => validateFixtureImports(fixtureModules, {}),
+      { code: 'ERR_ASSERTION' }, 'missing production dependency mapping is refused');
+    check('missing_dependency_mapping_is_refused', true);
+    report.stage = 'fixture_source_verified';
+    report.passed = true;
+    return;
+  }
+  report.mode = 'chromium_http_cache_regression';
   report.stage = 'load_isolated_playwright';
   const { chromium } = await import(cli.playwrightModule);
-  report.stage = 'load_production_helper';
-  const helperSource = await readFile(helperUrl, 'utf8');
-  report.helper_sha256 = createHash('sha256').update(helperSource).digest('hex');
-  const helperJs = ts.transpileModule(helperSource, {
-    fileName: fileURLToPath(helperUrl),
-    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
   const loopPaths = new Map();
   const hits = new Map();
   const hit = (path) => hits.set(path, (hits.get(path) ?? 0) + 1);
@@ -130,10 +174,11 @@ async function main() {
     hit(path);
     if (path === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.end('<!doctype html><title>Isolated API cache fixture</title><link rel="icon" href="data:,">');
-    } else if (path === '/fixture/protected-api-fetch.js') {
+      res.end('<!doctype html><title>Isolated API cache fixture</title><link rel="icon" href="data:,">' +
+        '<script type="importmap">' + JSON.stringify({ imports: fixtureImports }) + '</script>');
+    } else if (fixtureModules.has(path)) {
       res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
-      res.end(helperJs);
+      res.end(fixtureModules.get(path));
     } else if (loopPaths.has(path)) {
       if (loopPaths.get(path) === 'loop') {
         res.writeHead(308, {
@@ -208,10 +253,13 @@ async function main() {
   // and its disposable OS-temp profile, never the user's Chrome or saved state.
   browser = await chromium.launch({ headless: true });
   report.chromium = browser.version();
+  report.stage = 'create_isolated_context';
   const context = await browser.newContext({ serviceWorkers: 'block' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
+  report.stage = 'load_fixture_document';
   await page.goto(appOrigin);
+  report.stage = 'import_production_fixture_modules';
   await page.evaluate(async (gateway) => {
     const { createProtectedApiFetch } = await import('/fixture/protected-api-fetch.js');
     globalThis.fixtureFetch = createProtectedApiFetch(gateway);

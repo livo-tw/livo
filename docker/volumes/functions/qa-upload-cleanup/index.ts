@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
 import { runQaUploadCleanup, type QaCleanupUpload, type QaUploadCleanupRepository } from './qaUploadCleanup.ts';
+import { runTaskCommentUploadCleanup } from './taskCommentCleanup.ts';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -29,6 +30,11 @@ Deno.serve(async (request: Request) => {
     },
     finish: upload => db('finish', identity(upload)),
   };
-  try { return json(await runQaUploadCleanup(repository)); }
+  try {
+    // A bounded task share runs before QA, so a permanent QA backlog cannot starve it.
+    const task=await runTaskCommentUploadCleanup(client,4),remaining=25-task.claimed;
+    const qa=remaining>0?await runQaUploadCleanup(repository,remaining):{claimed:0,removed:0,retained:0,failed:0};
+    return json({claimed:task.claimed+qa.claimed,removed:task.removed+qa.removed,retained:task.retained+qa.retained,failed:task.failed+qa.failed,task,qa});
+  }
   catch { return json({ error: 'qa_cleanup_failed' }, 503); }
 });

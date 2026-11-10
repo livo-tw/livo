@@ -22,7 +22,7 @@ vi.mock('@dnd-kit/core', () => ({
   useDraggable: (options: unknown) => { dnd.draggable(options); return { attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }; },
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/components/qa/QaIssueCard', () => ({ default: ({ issue, onOpen, memberNames }: { issue: QaIssue; onOpen: (id: string) => void; memberNames?: Record<string, string> }) => <><button onClick={() => onOpen(issue.id)}>{issue.title}</button><span data-testid={`owner-${issue.id}`}>{memberNames?.[issue.qaOwnerId || ''] || 'name-unavailable'}</span></> }));
+vi.mock('@/components/qa/QaIssueCard', () => ({ default: ({ issue, onOpen, memberNames, memberProfiles }: { issue: QaIssue; onOpen: (id: string) => void; memberNames?: Record<string, string>; memberProfiles?: QaListResult['memberProfiles'] }) => <><button onClick={() => onOpen(issue.id)}>{issue.title}</button><span data-testid={`owner-${issue.id}`}>{memberNames?.[issue.qaOwnerId || ''] || 'name-unavailable'}</span><span data-testid={`profile-${issue.id}`}>{memberProfiles?.[issue.qaOwnerId || '']?.name || 'profile-unavailable'}</span></> }));
 vi.mock('@/components/qa/QaIssueDetail', () => ({ QaFailure: () => <p role="alert">Command failed</p> }));
 import QaKanban from '@/components/qa/QaKanban';
 
@@ -225,8 +225,8 @@ describe('QA board scoped member labels', () => {
       if (!states.includes('triaged')) return Promise.resolve(empty);
       if (refreshing) return new Promise(resolve => { resolveRefresh = resolve; });
       return Promise.resolve(offset === 0
-        ? { issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'First scoped tester' } }
-        : { issues: [second], total: 2, hasMore: false, memberNames: { [second.qaOwnerId]: 'Second scoped tester' } });
+        ? { issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'First scoped tester' }, memberProfiles: { [first.qaOwnerId]: { name: 'First scoped profile', isExternal: true } } }
+        : { issues: [second], total: 2, hasMore: false, memberNames: { [second.qaOwnerId]: 'Second scoped tester' }, memberProfiles: { [second.qaOwnerId]: { name: 'Second scoped profile', isExternal: true } } });
     });
     const props = { client: { list } as unknown as QaClient, actor: admin, workflow: DEFAULT_QA_WORKFLOW, filters: {}, onOpen: vi.fn() };
     const view = render(<QaKanban {...props} reloadToken={0} />);
@@ -234,10 +234,13 @@ describe('QA board scoped member labels', () => {
     fireEvent.click(column().getByRole('button', { name: 'qa.loadMore' }));
     expect(await screen.findByTestId(`owner-${second.id}`)).toHaveTextContent('Second scoped tester');
     expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('First scoped tester');
+    expect(screen.getByTestId(`profile-${first.id}`)).toHaveTextContent('First scoped profile');
+    expect(screen.getByTestId(`profile-${second.id}`)).toHaveTextContent('Second scoped profile');
 
     refreshing = true;
     view.rerender(<QaKanban {...props} reloadToken={1} />);
     await waitFor(() => expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable'));
+    expect(screen.getByTestId(`profile-${first.id}`)).toHaveTextContent('profile-unavailable');
     expect(screen.queryByText('Second scoped tester')).not.toBeInTheDocument();
     await act(async () => resolveRefresh({ issues: [first], total: 1, hasMore: false }));
     expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable');
@@ -250,7 +253,7 @@ describe('QA board scoped member labels', () => {
       if (!states.includes('triaged')) return Promise.resolve(empty);
       if (projectId === 'example-next-project') return Promise.resolve({ issues: [{ ...first, projectId }], total: 1, hasMore: false });
       if (offset > 0) return new Promise(resolve => { resolveOldPage = resolve; });
-      return Promise.resolve({ issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'Previous scoped tester' } });
+      return Promise.resolve({ issues: [first], total: 2, hasMore: true, memberNames: { [first.qaOwnerId]: 'Previous scoped tester' }, memberProfiles: { [first.qaOwnerId]: { name: 'Previous scoped profile', isExternal: true } } });
     });
     const props = { client: { list } as unknown as QaClient, actor: admin, workflow: DEFAULT_QA_WORKFLOW, onOpen: vi.fn() };
     const view = render(<QaKanban {...props} filters={{ projectId: first.projectId }} />);
@@ -258,9 +261,11 @@ describe('QA board scoped member labels', () => {
     fireEvent.click(column().getByRole('button', { name: 'qa.loadMore' }));
     view.rerender(<QaKanban {...props} filters={{ projectId: 'example-next-project' }} />);
     await waitFor(() => expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable'));
-    await act(async () => resolveOldPage({ issues: [second], total: 2, hasMore: false, memberNames: { [first.qaOwnerId]: 'Late old tester', [second.qaOwnerId]: 'Late second tester' } }));
+    expect(screen.getByTestId(`profile-${first.id}`)).toHaveTextContent('profile-unavailable');
+    await act(async () => resolveOldPage({ issues: [second], total: 2, hasMore: false, memberNames: { [first.qaOwnerId]: 'Late old tester', [second.qaOwnerId]: 'Late second tester' }, memberProfiles: { [first.qaOwnerId]: { name: 'Late old profile', isExternal: true } } }));
     expect(screen.getByTestId(`owner-${first.id}`)).toHaveTextContent('name-unavailable');
     expect(screen.queryByTestId(`owner-${second.id}`)).not.toBeInTheDocument();
     expect(screen.queryByText('Late old tester')).not.toBeInTheDocument();
+    expect(screen.queryByText('Late old profile')).not.toBeInTheDocument();
   });
 });

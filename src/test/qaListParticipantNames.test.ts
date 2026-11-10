@@ -63,6 +63,9 @@ describe('QA list participant display labels', () => {
     } });
     expect(rosterCalls()).toHaveLength(2);
     expect(rosterCalls().map(call => call.body.p_project_id).sort()).toEqual(['project-a', 'project-b']);
+    expect(result.memberProfiles).toMatchObject({ 'member-example': { name: 'Example engineer', isExternal: false }, 'eqa-tester-a': { name: 'Example tester A', isExternal: true } });
+    expect(result.memberProfiles).not.toHaveProperty('eqa-unrelated');
+    expect(JSON.stringify(result.memberProfiles)).not.toMatch(/email|auth_id|role|job_title/);
     expect(result.memberNames).not.toHaveProperty('eqa-unrelated');
     expect(Object.keys(result.memberNames)).toHaveLength(3);
     expect(result).not.toHaveProperty('members');

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+import { taskCommentClient } from '@/lib/taskCommentClient';
 import { logActivity } from '@/lib/activityLog';
 import { getWorkspaceStorageLimitBytes } from '@/lib/workspaceQuota';
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '@/lib/uploadLimits';
@@ -41,11 +42,13 @@ export const useTaskAttachments = ({ task, currentMemberId, allTasks, setAllTask
   };
 
   const loadStorageUsage = async () => {
-    const { data: attachData } = await supabase.from('task_attachments').select('file_size');
-    const { data: commentData } = await supabase.from('comments').select('attachment_size');
-    const attachTotal = (attachData || []).reduce((sum, row) => sum + (Number(row.file_size) || 0), 0);
-    const commentTotal = (commentData || []).reduce((sum, row) => sum + (Number(row.attachment_size) || 0), 0);
-    setStorageUsed(attachTotal + commentTotal);
+    try{
+      if(!USING_MOCK_BACKEND){const summary=await taskCommentClient.summary([]);setStorageUsed(summary.storageUsedBytes);return;}
+      const {data:attachData,error:first}=await supabase.from('task_attachments').select('file_size');
+      const {data:commentData,error:second}=await supabase.from('comments').select('attachment_size');
+      if(first||second||!attachData||!commentData)throw new Error('storage_unknown');
+      setStorageUsed(attachData.reduce((sum,row)=>sum+(Number(row.file_size)||0),0)+commentData.reduce((sum,row)=>sum+(Number(row.attachment_size)||0),0));
+    }catch{setStorageUsed(null);}
   };
 
   // Load initial storage usage

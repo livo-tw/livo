@@ -1268,6 +1268,7 @@ CREATE INDEX IF NOT EXISTS idx_qa_events_issue ON qa_events(workspace_id,issue_i
 CREATE TABLE IF NOT EXISTS qa_upload_sessions (
   workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, actor_id TEXT NOT NULL,
   file_name TEXT NOT NULL, mime_type TEXT NOT NULL, expected_size INTEGER NOT NULL CHECK(expected_size>0 AND expected_size<=209715200),
+  purpose TEXT NOT NULL DEFAULT 'issue' CHECK(purpose IN ('issue','comment')), comment_ready_at TEXT,
   storage_key TEXT NOT NULL, multipart_id TEXT, state TEXT NOT NULL DEFAULT 'initializing'
     CHECK(state IN ('initializing','uploading','finalizing','aborting','complete','aborted')),
   created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
@@ -1302,7 +1303,7 @@ CREATE TRIGGER IF NOT EXISTS qa_upload_part_guard BEFORE INSERT ON qa_upload_par
 END;
 CREATE TABLE IF NOT EXISTS qa_attachments (
   workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, uploaded_by TEXT NOT NULL,
-  file_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, storage_key TEXT NOT NULL,
+  file_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, storage_key TEXT NOT NULL, comment_id TEXT,
   created_at TEXT NOT NULL, restored_by TEXT, PRIMARY KEY(workspace_id,id),
   FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
 );
@@ -1341,6 +1342,18 @@ CREATE TRIGGER IF NOT EXISTS qa_restored_attachment_guard BEFORE INSERT ON qa_at
     AND role='super_admin' AND is_active=1) THEN RAISE(ABORT,'qa_forbidden') END;
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM system_settings WHERE workspace_id=NEW.workspace_id
     AND key='feature_toggles' AND json_extract(value,'$.qa')=1) THEN RAISE(ABORT,'qa_disabled') END;
+END;
+DROP TRIGGER IF EXISTS qa_attachment_comment_scope_guard;
+CREATE TRIGGER qa_attachment_comment_scope_guard BEFORE INSERT ON qa_attachments WHEN NEW.comment_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM qa_comments c WHERE c.workspace_id=NEW.workspace_id
+    AND c.id=NEW.comment_id AND c.issue_id=NEW.issue_id AND c.actor_id=NEW.uploaded_by)
+    THEN RAISE(ABORT,'qa_invalid_comment_attachments') END;
+END;
+DROP TRIGGER IF EXISTS qa_attachment_comment_scope_update_guard;
+CREATE TRIGGER qa_attachment_comment_scope_update_guard BEFORE UPDATE OF comment_id,issue_id,uploaded_by ON qa_attachments WHEN NEW.comment_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM qa_comments c WHERE c.workspace_id=NEW.workspace_id
+    AND c.id=NEW.comment_id AND c.issue_id=NEW.issue_id AND c.actor_id=NEW.uploaded_by)
+    THEN RAISE(ABORT,'qa_invalid_comment_attachments') END;
 END;
 CREATE TABLE IF NOT EXISTS qa_slack_links (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL DEFAULT 'default', issue_id TEXT NOT NULL,
@@ -3009,3 +3022,69 @@ CREATE TRIGGER sprint_history_import_guard BEFORE INSERT ON task_planning_import
 WHEN EXISTS(SELECT 1 FROM sprint_task_history WHERE workspace_id=NEW.workspace_id)
  OR EXISTS(SELECT 1 FROM sprint_command_receipts WHERE workspace_id=NEW.workspace_id)
 BEGIN SELECT RAISE(ABORT,'work_history_requires_restore'); END;
+
+-- Private task-comment provider. No public object URL is exposed.
+CREATE TABLE IF NOT EXISTS task_comment_uploads (
+ workspace_id TEXT NOT NULL DEFAULT 'default', id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+ actor_id TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL, expected_size INTEGER NOT NULL,
+ storage_key TEXT NOT NULL UNIQUE, multipart_id TEXT, state TEXT NOT NULL DEFAULT 'initializing',
+ comment_id TEXT REFERENCES comments(id) ON DELETE SET NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ cleanup_token TEXT, cleanup_last_attempt_at TEXT, quota_released INTEGER NOT NULL DEFAULT 0 CHECK(quota_released IN (0,1)), CHECK(expected_size>0 AND expected_size<=209715200),
+ CHECK(state IN ('initializing','uploading','finalizing','complete','bound','cleaning','aborted'))
+);
+DROP TRIGGER IF EXISTS task_comment_upload_quota;
+CREATE TRIGGER task_comment_upload_quota BEFORE INSERT ON task_comment_uploads BEGIN
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM workspaces w WHERE w.id=NEW.workspace_id AND NEW.workspace_id<>'default'
+ AND w.storage_used_bytes+NEW.expected_size+COALESCE((SELECT SUM(expected_size) FROM qa_upload_sessions q WHERE q.workspace_id=NEW.workspace_id AND q.state IN ('initializing','uploading','finalizing','aborting')),0)>w.storage_limit_mb*1048576)
+ THEN RAISE(ABORT,'storage_quota_exceeded') END;
+END;
+DROP TRIGGER IF EXISTS task_comment_upload_charge;
+CREATE TRIGGER task_comment_upload_charge AFTER INSERT ON task_comment_uploads BEGIN
+ UPDATE workspaces SET storage_used_bytes=storage_used_bytes+NEW.expected_size WHERE id=NEW.workspace_id;
+END;
+CREATE INDEX IF NOT EXISTS task_comment_upload_scope ON task_comment_uploads(workspace_id,task_id,comment_id);
+CREATE INDEX IF NOT EXISTS task_comment_upload_expiry ON task_comment_uploads(workspace_id,expires_at);
+CREATE TABLE IF NOT EXISTS task_comment_upload_parts (
+ workspace_id TEXT NOT NULL, upload_id TEXT NOT NULL REFERENCES task_comment_uploads(id) ON DELETE CASCADE,
+ part_number INTEGER NOT NULL, digest TEXT NOT NULL, size INTEGER NOT NULL, etag TEXT,
+ PRIMARY KEY(workspace_id,upload_id,part_number)
+);
+CREATE TABLE IF NOT EXISTS task_comment_commands (
+ workspace_id TEXT NOT NULL, id TEXT PRIMARY KEY, task_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, body TEXT NOT NULL, upload_ids TEXT NOT NULL, notifications TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+DROP TRIGGER IF EXISTS task_comment_command_guard;
+CREATE TRIGGER task_comment_command_guard BEFORE INSERT ON task_comment_commands BEGIN
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id AND is_active=1)
+  OR NOT EXISTS(SELECT 1 FROM tasks WHERE workspace_id=NEW.workspace_id AND id=NEW.task_id)
+  THEN RAISE(ABORT,'task_comment_forbidden') END;
+ SELECT CASE WHEN json_array_length(NEW.upload_ids)>10 OR (trim(NEW.body)='' AND json_array_length(NEW.upload_ids)=0)
+  OR (SELECT count(DISTINCT value) FROM json_each(NEW.upload_ids))<>json_array_length(NEW.upload_ids)
+  OR EXISTS(SELECT 1 FROM json_each(NEW.upload_ids) x WHERE NOT EXISTS(
+    SELECT 1 FROM task_comment_uploads u WHERE u.workspace_id=NEW.workspace_id AND u.id=x.value
+     AND u.task_id=NEW.task_id AND u.actor_id=NEW.actor_id AND u.state='complete' AND u.comment_id IS NULL
+     AND u.expires_at>NEW.created_at)) THEN RAISE(ABORT,'task_comment_invalid_upload') END;
+END;
+DROP TRIGGER IF EXISTS task_comment_command_commit;
+CREATE TRIGGER task_comment_command_commit AFTER INSERT ON task_comment_commands BEGIN
+ INSERT INTO comments(workspace_id,id,task_id,user_id,content,created_at)
+ VALUES(NEW.workspace_id,NEW.id,NEW.task_id,NEW.actor_id,NEW.body,NEW.created_at);
+ UPDATE task_comment_uploads SET comment_id=NEW.id,state='bound'
+ WHERE workspace_id=NEW.workspace_id AND id IN(SELECT value FROM json_each(NEW.upload_ids));
+ UPDATE tasks SET comment_count=(SELECT count(*) FROM comments c WHERE c.workspace_id=NEW.workspace_id AND c.task_id=NEW.task_id)
+ WHERE workspace_id=NEW.workspace_id AND id=NEW.task_id;
+ INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,created_at)
+ SELECT NEW.workspace_id,NEW.id||':'||json_extract(j.value,'$.id'),json_extract(j.value,'$.id'),NEW.actor_id,
+ json_extract(j.value,'$.type'),NEW.task_id,json_extract(j.value,'$.content'),NEW.created_at
+ FROM json_each(NEW.notifications) j WHERE json_extract(j.value,'$.id')<>NEW.actor_id
+ AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=NEW.workspace_id AND m.id=json_extract(j.value,'$.id') AND m.is_active=1);
+END;
+
+-- The existing clear/import batch acquires this guard before its first deletion.
+DROP TRIGGER IF EXISTS task_comment_import_preserve;
+CREATE TRIGGER task_comment_import_preserve BEFORE INSERT ON task_planning_import_guard BEGIN
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM task_comment_uploads
+ WHERE workspace_id=NEW.workspace_id AND state<>'aborted')
+ THEN RAISE(ABORT,'task_comment_private_media_requires_full_restore') END;
+END;

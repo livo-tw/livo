@@ -1,3 +1,5 @@
+import { observeApiFetch } from '@/lib/apiReachability';
+
 const PROTECTED_API_ROUTES = ['auth', 'rest', 'functions'] as const;
 
 /** Bypass cached redirects for authenticated JSON APIs without changing the request. */
@@ -29,6 +31,9 @@ export function createProtectedApiFetch(
     // Request.cache affects HTTP-cache lookup, including previously stored
     // redirects. Response headers alone cannot prevent that old cache hit.
     // Do not add request headers or retry: a failed POST may already be committed.
-    return fetchImpl(input, protectedApi ? { ...init, cache: 'no-store' } : init);
+    if (!protectedApi) return fetchImpl(input, init);
+    const signal = init && 'signal' in init ? init.signal
+      : typeof input === 'object' && input !== null && 'signal' in input ? input.signal : undefined;
+    return observeApiFetch(() => fetchImpl(input, { ...init, cache: 'no-store' }), gateway?.origin, signal);
   };
 }

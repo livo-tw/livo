@@ -1,34 +1,22 @@
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import AdminBackupSection from '@/components/system-admin/AdminBackupSection';
+import AdminBackupSection, { taskCommentRestoreIssue } from '@/components/system-admin/AdminBackupSection';
 import { containsApprovalRestoreData } from '@/lib/approval/restoreGuard';
 
-const mocks = vi.hoisted(() => ({ from: vi.fn(), invoke: vi.fn(), mutation: vi.fn(), error: vi.fn(), confirm: vi.fn(), mode: '', mockBackend: true }));
+const mocks = vi.hoisted(() => ({ from: vi.fn(), invoke: vi.fn(), mutation: vi.fn(), error: vi.fn(), confirm: vi.fn(), coverage: vi.fn(), mode: '', mockBackend: true }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: mocks.from, functions: { invoke: mocks.invoke } }, get USING_MOCK_BACKEND() { return mocks.mockBackend; } }));
 vi.mock('@/components/ConfirmDialog', () => ({ useConfirmDialog: () => ({ confirm: mocks.confirm, ConfirmDialog: (): null => null }) }));
 vi.mock('@/components/UpgradePrompt', () => ({ default: (): null => null }));
 vi.mock('@/lib/activityLog', () => ({ logActivity: vi.fn() }));
+vi.mock('@/lib/taskCommentClient', () => ({ taskCommentClient: { coverage: mocks.coverage } }));
 vi.mock('sonner', () => ({ toast: { error: mocks.error, success: vi.fn() } }));
-
-describe('approval backup restore boundary', () => {
-  it.each(['approval_requests', 'approval_actions', 'approval_rules', 'approval_steps', 'approval_events', 'approval_command_receipts'])('blocks nonempty %s', table => {
-    expect(containsApprovalRestoreData({ [table]: [{ id: 'history-1' }] })).toBe(true);
-  });
-  it('rejects malformed approval sections and pointers even without history', () => {
-    expect(containsApprovalRestoreData({ approval_requests: null })).toBe(true);
-    expect(containsApprovalRestoreData({ approval_actions: {} })).toBe(true);
-    expect(containsApprovalRestoreData({ tasks: [{ current_approval_id: 'request-1' }] })).toBe(true);
-    expect(containsApprovalRestoreData({ tasks: [{ approval_status: 'pending_approval' }] })).toBe(true);
-  });
-  it('allows an ordinary requires-approval flag without approval state', () => {
-    expect(containsApprovalRestoreData({ tasks: [{ requires_approval: true, current_approval_id: null, approval_status: null }], approval_requests: [], approval_actions: [] })).toBe(false);
-  });
 
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.mode = '';
     mocks.mockBackend = true;
+    mocks.coverage.mockResolvedValue({kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata:0,commandReceiptsExcluded:true});
     mocks.confirm.mockResolvedValue(true);
     mocks.invoke.mockImplementation(async () => ({ data: { available: !['knowledgePages','knowledgeRevisions'].includes(mocks.mode) }, error: mocks.mode==='knowledgeReadError' ? {message:'read denied'} : null }));
     mocks.from.mockImplementation((table: string) => {
@@ -46,6 +34,20 @@ describe('approval backup restore boundary', () => {
       return query;
     });
   });
+describe('approval backup restore boundary', () => {
+  it.each(['approval_requests', 'approval_actions', 'approval_rules', 'approval_steps', 'approval_events', 'approval_command_receipts'])('blocks nonempty %s', table => {
+    expect(containsApprovalRestoreData({ [table]: [{ id: 'history-1' }] })).toBe(true);
+  });
+  it('rejects malformed approval sections and pointers even without history', () => {
+    expect(containsApprovalRestoreData({ approval_requests: null })).toBe(true);
+    expect(containsApprovalRestoreData({ approval_actions: {} })).toBe(true);
+    expect(containsApprovalRestoreData({ tasks: [{ current_approval_id: 'request-1' }] })).toBe(true);
+    expect(containsApprovalRestoreData({ tasks: [{ approval_status: 'pending_approval' }] })).toBe(true);
+  });
+  it('allows an ordinary requires-approval flag without approval state', () => {
+    expect(containsApprovalRestoreData({ tasks: [{ requires_approval: true, current_approval_id: null, approval_status: null }], approval_requests: [], approval_actions: [] })).toBe(false);
+  });
+
   it.each([{ approval_actions: [{ id: 'action-1' }] }, { tasks: [{ current_approval_id: 'pending-1' }] }])('stops the actual upload flow before any database writes', async backup => {
     const { container } = render(<AdminBackupSection currentMemberId="admin-1" hasFeature={() => true} backupSettings={null} setBackupSettings={vi.fn()} saveBackupSettings={vi.fn()} />);
     const input = container.querySelector('input[type="file"][accept=".json"]');
@@ -105,4 +107,29 @@ describe('approval backup restore boundary', () => {
     await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('knowledgeWork.errors.knowledge_requires_server_restore')));
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
+});
+
+describe('private task-comment JSON coverage', () => {
+ const zero={kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata:0,commandReceiptsExcluded:true};
+ it('allows a verified empty inventory and refuses unknown or malformed inventories',()=>{
+  expect(taskCommentRestoreIssue({},zero)).toBeNull();
+  for(const invalid of [null,{}, {...zero,retainedMetadata:-1},{...zero,retainedMetadata:'0'},{...zero,coveredByJsonBackup:true}])expect(taskCommentRestoreIssue({},invalid)).toBe('restoreCoverageUnknown');
+  expect(taskCommentRestoreIssue({}, {...zero,retainedMetadata:1})).toBe('restoreBlockedPrivate');
+ });
+ it('never replays private metadata or command receipts from JSON',()=>{
+  expect(taskCommentRestoreIssue({task_comment_commands:[{id:'command1'}]},zero)).toBe('restoreBlockedPrivate');
+  expect(taskCommentRestoreIssue({task_comment_uploads:[{id:'private1'}]},zero)).toBe('restoreBlockedPrivate');
+  expect(taskCommentRestoreIssue({task_comment_backup_manifest:[{...zero,coverageKnown:true,privateObjectBytesExcluded:true,commandReceiptsNeverReplayed:true,retainedMetadata:3}]},zero)).toBe('restoreBlockedPrivate');
+  expect(taskCommentRestoreIssue({task_comment_backup_manifest:[{...zero,coverageKnown:false,privateObjectBytesExcluded:true,commandReceiptsNeverReplayed:true}]},zero)).toBe('restoreCoverageUnknown');
+ });
+ it.each(['retained','unknown','malformed'])('checks fresh %s coverage before any ordinary deletion',async mode=>{
+  if(mode==='retained')mocks.coverage.mockResolvedValue({...zero,retainedMetadata:2});
+  else if(mode==='unknown')mocks.coverage.mockRejectedValue(new Error('inventory unavailable'));
+  else mocks.coverage.mockResolvedValue({...zero,retainedMetadata:null});
+  const backup: Record<string, unknown[]>={tasks:[],members:[],projects:[],statuses:[],sprints:[],product_lines:[]};
+  const {container}=render(<AdminBackupSection currentMemberId="admin-1" hasFeature={()=>true} backupSettings={null} setBackupSettings={vi.fn()} saveBackupSettings={vi.fn()} />);
+  fireEvent.change(container.querySelector('input[type=file]')!,{target:{files:[{text:async()=>JSON.stringify(backup)}]}});
+  await waitFor(()=>expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining(mode==='retained'?'commentAttachments.restoreBlockedPrivate':'commentAttachments.restoreCoverageUnknown')));
+  expect(mocks.coverage).toHaveBeenCalledTimes(1);expect(mocks.mutation).not.toHaveBeenCalled();
+ });
 });

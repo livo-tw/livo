@@ -8,7 +8,7 @@ import { QA_STATES, type QaListInput } from '@/lib/qa/domain';
 import { DEFAULT_QA_WORKFLOW, type QaWorkflow } from '@/lib/qa/workflow';
 import type { ProductLine, Project } from '@/types';
 
-const mocks = vi.hoisted(() => ({ people: [] as Array<{ id: string; name: string; isActive: boolean }>, getDisplaySettings: vi.fn().mockResolvedValue({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), list: vi.fn().mockResolvedValue({ issues: [], total: 0, hasMore: false }) }));
+const mocks = vi.hoisted(() => ({ people: [] as Array<{ id: string; name: string; isActive: boolean; isExternal?: boolean }>, getDisplaySettings: vi.fn().mockResolvedValue({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getWorkflow: vi.fn(), list: vi.fn().mockResolvedValue({ issues: [], total: 0, hasMore: false }) }));
 // Keep initialization exports available when an import graph loads the real i18n singleton.
 vi.mock('react-i18next', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-i18next')>(),
@@ -88,24 +88,24 @@ describe('shared coloured status select', () => {
 
 describe('QA status filtering', () => {
   it('filters by scoped external QA owners and historical reporters without offering them as repair assignees', async () => {
-    mocks.people = [{ id: 'eqa-example-active', name: 'Example scoped tester', isActive: true }, { id: 'eqa-example-history', name: 'Example historical tester', isActive: false }];
+    mocks.people = [{ id: 'eqa-example-active', name: 'Example scoped tester', isActive: true, isExternal: true }, { id: 'eqa-example-history', name: 'Example historical tester', isActive: false, isExternal: true }];
     mocks.getWorkflow.mockResolvedValue(DEFAULT_QA_WORKFLOW);
     render(<QaWorkspace />);
     await screen.findByLabelText('Filtered QA people');
     const owner = screen.getByRole('button', { name: 'common.all qa.qaOwner' });
     fireEvent.click(owner);
-    fireEvent.click(within(owner.parentElement!).getByRole('button', { name: 'Example historical tester (common.inactive)' }));
+    fireEvent.click(within(owner.parentElement!).getByRole('button', { name: 'Example historical tester (common.inactive) QA' }));
     await waitFor(() => expect(screen.getByLabelText('Filtered QA people')).toHaveTextContent('"qaOwnerIds":["eqa-example-history"]'));
     fireEvent.click(owner);
     const reporter = screen.getByRole('button', { name: 'common.all qa.reporter' });
     fireEvent.click(reporter);
-    fireEvent.click(within(reporter.parentElement!).getByRole('button', { name: 'Example scoped tester' }));
+    fireEvent.click(within(reporter.parentElement!).getByRole('button', { name: 'Example scoped tester QA' }));
     await waitFor(() => expect(screen.getByLabelText('Filtered QA people')).toHaveTextContent('"reporterIds":["eqa-example-active"]'));
     fireEvent.click(reporter);
     const assignee = screen.getByRole('button', { name: 'common.all qa.assignee' });
     fireEvent.click(assignee);
-    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example scoped tester' })).not.toBeInTheDocument();
-    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example historical tester (common.inactive)' })).not.toBeInTheDocument();
+    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example scoped tester QA' })).not.toBeInTheDocument();
+    expect(within(assignee.parentElement!).queryByRole('button', { name: 'Example historical tester (common.inactive) QA' })).not.toBeInTheDocument();
   });
 
   it('provides a list shortcut for bugs hidden from the default board', async () => {

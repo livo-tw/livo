@@ -4,6 +4,8 @@ import { useInitialLoad } from '@/context/hooks/useInitialLoad';
 import { useTaskQueries } from '@/context/hooks/useTaskQueries';
 import { useHighFreqSubs } from '@/context/hooks/useHighFreqSubs';
 import type { Task } from '@/types';
+const mediaApi=vi.hoisted(()=>({summary:vi.fn()}));
+vi.mock('@/lib/taskCommentClient',()=>({taskCommentClient:{summary:mediaApi.summary}}));
 type Reply = { data: unknown; error: unknown; count?: number };
 type TaskChange = { eventType: 'INSERT' | 'UPDATE' | 'DELETE'; new?: object; old?: object };
 interface Query extends PromiseLike<Reply> {
@@ -93,6 +95,7 @@ beforeEach(() => {
   api.holdPage = false; api.releasePage = undefined; api.onTaskChange = undefined;
   api.cappedMetadata = false; api.failMetadataPage = false; api.onMetadataChange.clear();
   api.rpc.mockClear(); api.from.mockClear(); api.error.mockClear(); api.publish.mockClear();
+  mediaApi.summary.mockImplementation(async(ids:string[])=>({workspaceId:'default',actorId:'member-example',counts:Object.fromEntries(ids.map(id=>[id,api.includeMetadata&&id==='fixture-0001'?1:0])),commentCounts:{},storageUsedBytes:0,storageUsageSource:'task_attachment_accounting'}));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const taskRequests = () => api.from.mock.calls.filter(([table]) => table === 'tasks');
@@ -263,4 +266,15 @@ describe('board task pagination', () => {
     expect(result.current.allTasks).toHaveLength(40);
     expect(taskRequests()).toHaveLength(1);
   });
+  it('keeps tasks available and preserves the last numeric count when a fresh private summary fails',async()=>{
+    api.total=40;api.includeMetadata=true;
+    const {result}=renderHook(()=>useTaskQueries());
+    await act(async()=>{await result.current.refreshTasks();});
+    expect(result.current.allTasks[0]).toMatchObject({attachmentCount:1,attachmentSummaryKnown:true});
+    mediaApi.summary.mockRejectedValue(new Error('summary unavailable'));api.includeMetadata=false;
+    await act(async()=>{await result.current.refreshTasks();});
+    expect(result.current.allTasks).toHaveLength(40);
+    expect(result.current.allTasks[0]).toMatchObject({attachmentCount:1,attachmentSummaryKnown:false});
+  });
+
 });

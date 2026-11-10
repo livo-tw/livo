@@ -92,6 +92,16 @@ describe('Internal QA operations are independent of reporter account origin', ()
       if (path === '/rest/v1/projects') return json([{ id: current.projectId, name: 'Example project', is_archived: false }]);
       if (['/rest/v1/qa_comments', '/rest/v1/qa_events', '/rest/v1/qa_project_coordination'].includes(path)) return json([]);
       if (path === '/rest/v1/qa_attachments') return json([attachment]);
+      if (path === '/rest/v1/rpc/livo_qa_attachment_for_download') {
+        expect(init.method).toBe('POST');
+        const body = JSON.parse(String(init.body));
+        // The service resolves the actual active login; the RPC only returns an attachment in its authorized issue.
+        if (body.p_auth_id !== authId) return Response.json({ code: '42501', message: 'qa_forbidden' }, { status: 403 });
+        if (body.p_attachment_id !== attachment.id || attachment.issue_id !== current.id || !context().projectIds.has(current.projectId)) {
+          return Response.json({ code: 'P0002', message: 'qa_attachment_not_found' }, { status: 404 });
+        }
+        return json(attachment);
+      }
       if (path === `/storage/v1/object/authenticated/qa-evidence/${attachment.storage_path}`) return new Response('example');
       throw new Error(`Unexpected request: ${init.method || 'GET'} ${path}`);
     }));
@@ -106,6 +116,10 @@ describe('Internal QA operations are independent of reporter account origin', ()
       expect(await response.text()).toBe('example');
       expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     }
+    const priorStorageReads = calls.filter(path => path.startsWith('/storage/')).length;
+    await expect(service.handle({ action: 'download', attachmentId: 'another-issue-attachment' })).rejects.toMatchObject({ code: 'qa_attachment_not_found', status: 404 });
+    expect(calls.filter(path => path.startsWith('/storage/'))).toHaveLength(priorStorageReads);
+    expect(calls.filter(path => path === '/rest/v1/rpc/livo_qa_attachment_for_download')).toHaveLength(3);
     expect(calls.some(path => path.includes('external_read'))).toBe(false);
   });
 });

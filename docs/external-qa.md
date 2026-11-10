@@ -34,6 +34,15 @@ is accepted as authority to assign an RD. It does not open the internal members 
 email, login, Slack identity, role, or other projects. With no project grants the
 profile contains no directory. Each request checks the current grant again.
 
+QA presentation preserves supplied avatars, colors and titles. Missing avatars
+use the first Unicode character of the display name and the standard fallback
+color. Only a positive server `isExternal: true` supplies the display subtitle
+`QA` when a title is absent; unknown identity kinds and internal members do not
+receive that subtitle. Raw member/actor job titles and knowledge permissions
+stay unchanged. List/detail `memberProfiles` metadata is limited to participants
+of the authorized page or issue, including historical inactive authors; it is
+not an assignment directory. Paging and scope changes discard stale profiles.
+
 New repair assignments must be active internal members. External QA accounts
 are separate QA owners and handoff candidates only within their granted project;
 they are not offered as internal RD. The database locks and rechecks a selected

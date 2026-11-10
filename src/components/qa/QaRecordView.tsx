@@ -5,14 +5,17 @@ import { toast } from 'sonner';
 import { useUIContext } from '@/context/UIContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
-import { copyText } from '@/lib/clipboard';
+import { copyCardLink } from '@/lib/clipboard';
+import { qaDeepLinkUrl } from '@/lib/appDeepLink';
+import { qaShortId } from '@/lib/qa/shortId';
 import { hasQaNavigationGuard } from '@/lib/qa/navigationGuard';
 import { IS_DEMO_PRO } from '@/lib/demoMode';
 import { DEMO_BANNER_HEIGHT } from '@/components/DemoModeBanner';
 import { RecordViewModeButtons } from '@/components/ui/record-view-mode-buttons';
 
-export default function QaRecordView({ title, creating = false, busy, suspended = false, onClose, children }: {
+export default function QaRecordView({ title, creating = false, busy, suspended = false, copyRecord, onClose, children }: {
   title: string; creating?: boolean; busy: boolean;
+  copyRecord?: { id: string; title: string };
   /** A task opened on top (a linked task, Ctrl+K, a notification): hidden, kept as is, shown again when the task closes. */
   suspended?: boolean;
   onClose: () => void; children: ReactNode;
@@ -36,7 +39,7 @@ export default function QaRecordView({ title, creating = false, busy, suspended 
         <h2 id={titleId} className="min-w-0 truncate text-sm font-semibold">{title}</h2>
         <div className="flex shrink-0 items-center gap-0.5">
           {!creating && !isMobile && <RecordViewModeButtons value={taskDisplayMode} onChange={value => { if (!busy && !hasQaNavigationGuard()) setTaskDisplayMode(value); }} disabled={busy} />}
-          {!creating && <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent sm:min-h-8 sm:min-w-8" aria-label={t('task.copyLink')} title={t('task.copyLink')} onClick={async () => { if (await copyText(window.location.href)) toast.success(t('qa.copyLinkSuccess')); }}><Link2 size={15} aria-hidden="true" /></button>}
+          {!creating && <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent sm:min-h-8 sm:min-w-8" aria-label={t('task.copyLink')} title={t('task.copyLink')} disabled={!copyRecord} onClick={async () => { if (!copyRecord) return; const url = qaDeepLinkUrl(copyRecord.id); if (await copyCardLink(url, `${qaShortId(copyRecord.id)} · ${copyRecord.title}`)) toast.success(t('qa.copyLinkSuccess')); else toast.error(t('common.copyFailed'), { description: url }); }}><Link2 size={15} aria-hidden="true" /></button>}
           <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-50 sm:min-h-8 sm:min-w-8" disabled={busy} aria-label={t('common.close')} title={t('common.close')} onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>

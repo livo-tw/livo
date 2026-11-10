@@ -1,4 +1,4 @@
-import { mrkdwnLine } from './slackNotifyCore.ts';
+import { fitText, mrkdwnLine } from './slackNotifyCore.ts';
 import { matchingChannels } from './slackTaskRoutes.ts';
 
 type Row = Record<string, any>;
@@ -40,7 +40,7 @@ export function recordFromUnfurlUrl(value: unknown, appUrl: string): RecordRefer
   try {
     const base = new URL(appUrl), url = new URL(value);
     if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash ||
-      url.origin !== base.origin || url.username || url.password || url.hash) return;
+      url.origin !== base.origin || url.username || url.password || url.hash || url.toString().replace(/\|/g, '%7C').length > 2048) return;
     const path = base.pathname.replace(/\/+$/, '');
     const allowed = [path || '/', path + '/', ...(path === '' ? ['/demo', '/demo/'] : [])];
     if (!allowed.includes(url.pathname)) return;
@@ -61,6 +61,21 @@ export function qaFromUnfurlUrl(value: unknown, appUrl: string): string | undefi
 }
 function audience(config: Row | undefined, project: Row, kind: RecordReference['kind']): string[] {
   return matchingChannels({ routes: kind === 'qa' ? config?.qaRoutes : config?.routes }, project);
+}
+/** Additional manual sharing is an explicit workspace setting. Missing Slack
+ * sharing metadata cannot authorize an audience outside the approved routes. */
+function isInternalChannel(channel: Row, team: string): boolean {
+  return channel.context_team_id === team && channel.is_shared === false &&
+    channel.is_ext_shared === false && channel.is_pending_ext_shared === false &&
+    channel.is_org_shared !== true && channel.is_ext_ws_shared !== true && channel.is_archived === false && channel.is_frozen !== true &&
+    (!channel.shared_team_ids || (Array.isArray(channel.shared_team_ids) && channel.shared_team_ids.every((id: unknown) => id === team))) &&
+    (!channel.pending_shared || (Array.isArray(channel.pending_shared) && channel.pending_shared.length === 0)) &&
+    (!channel.connected_team_ids || (Array.isArray(channel.connected_team_ids) && channel.connected_team_ids.length === 0)) &&
+    (!channel.pending_connected_team_ids || (Array.isArray(channel.pending_connected_team_ids) && channel.pending_connected_team_ids.length === 0));
+}
+function allowedPreview(config: Row | undefined, project: Row, kind: RecordReference['kind'], channel: Row, team: string): boolean {
+  return !project.is_archived && (audience(config, project, kind).includes(channel.id) ||
+    (config?.previewMode === 'internal_channels' && isInternalChannel(channel, team)));
 }
 function qaText(card: QaUnfurlCard): string {
   const issue = card.issue;
@@ -89,13 +104,15 @@ function previewAttachment(url: string, kind: RecordReference['kind'], title: un
   const key = typeof taskKey === 'string'
     ? taskKey.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').replace(/\s+/gu, ' ').trim().slice(0, 80) : '';
   const isTask = kind === 'task';
+  const href = new URL(url).toString().replace(/\|/g, '%7C');
+  const linkedTitle = fitText(mrkdwnLine(title, 300).replace(/\|/g, '｜'), 2995 - href.length);
   return {
     color: isTask ? '#3B82F6' : '#D97706',
     fallback,
     blocks: [
       { type: 'header', text: { type: 'plain_text', emoji: false,
         text: isTask ? 'LIVO · 任務' + (key ? ' ' + key : '') : 'LIVO · Bug' } },
-      { type: 'section', text: { type: 'mrkdwn', verbatim: true, text: '*' + mrkdwnLine(title, 300) + '*' } },
+      { type: 'section', text: { type: 'mrkdwn', verbatim: true, text: '*<' + href + '|' + linkedTitle + '>*' } },
       { type: 'divider' },
       { type: 'section', fields },
       { type: 'actions', elements: [{ type: 'button', action_id: OPEN_LINK_ACTION,
@@ -114,7 +131,7 @@ function qaAttachment(url: string, card: QaUnfurlCard): Row {
   return previewAttachment(url, 'qa', card.issue.title, fields, qaText(card));
 }
 
-/** Only the actor's readable card and its kind's approved notification audience
+/** Only the actor's readable card and an explicitly approved preview audience
  * may be unfurled. Composer and all DMs skip. Repeated calls update the same
  * message attachment; they never post a new message or DM. */
 export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions): Promise<Row> {
@@ -128,11 +145,11 @@ export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions
       typeof link.url === 'string' && !!link.reference);
   if (!links.length) return {};
   const config = await actions.config();
-  if (config?.enabled !== true || config.teamId !== team || !links.some(({ reference }) => {
+  if (config?.enabled !== true || config.teamId !== team || (config.previewMode !== 'internal_channels' && !links.some(({ reference }) => {
     const routes = reference.kind === 'qa' ? config.qaRoutes : config.routes;
     return Array.isArray(routes) && routes.some((route: Row) => route?.enabled !== false &&
       route?.channelId === event.channel && (route.projectId || route.lineId));
-  })) return {};
+  }))) return {};
   const actor = await actions.actor({ ...payload, user_id: event.user, team_id: team });
   if (!actor || actor.team !== team || actor.slack_user !== event.user) return {};
   const channel = (await actions.slack('conversations.info', { channel: event.channel })).channel;
@@ -146,12 +163,12 @@ export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions
     if (link.reference.kind === 'qa') {
       const card = await actions.qaCard?.(actor, link.reference.id);
       if (!card || !card.issue?.projectId || card.project.id !== card.issue.projectId ||
-        card.issue.id !== link.reference.id || !card.stateLabel || !audience(config, card.project, 'qa').includes(event.channel)) continue;
+        card.issue.id !== link.reference.id || !card.stateLabel || !allowedPreview(config, card.project, 'qa', channel, team)) continue;
       cards.push({ url: link.url, kind: 'qa', project: card.project, attachment: qaAttachment(link.url, card) });
     } else {
       const card = await actions.card(actor, link.reference.id);
       if (!card || !card.task.project_id || card.project.id !== card.task.project_id ||
-        card.status.id !== card.task.status_id || !audience(config, card.project, 'task').includes(event.channel)) continue;
+        card.status.id !== card.task.status_id || !allowedPreview(config, card.project, 'task', channel, team)) continue;
       const key = mrkdwnLine(card.task.task_key, 80), title = mrkdwnLine(card.task.title, 300);
       const fallback = '*' + (key ? key + ' · ' : '') + title + '*\n專案：' + mrkdwnLine(card.project.name, 100) +
         '　狀態：' + mrkdwnLine(card.status.name, 100);
@@ -163,9 +180,16 @@ export async function handleTaskUnfurl(payload: Row, actions?: TaskUnfurlActions
   if (!cards.length) return {};
   const freshConfig = await actions.config();
   if (freshConfig?.enabled !== true || freshConfig.teamId !== team) return {};
+  // A channel can become shared while its cards are being read. Recheck any
+  // added internal-channel audience immediately before publishing its preview.
+  const needsFreshChannel = cards.some(({ kind, project }) => !audience(freshConfig, project, kind).includes(event.channel));
+  const freshChannel = needsFreshChannel
+    ? (await actions.slack('conversations.info', { channel: event.channel })).channel : channel;
+  if (!freshChannel || freshChannel.id !== event.channel || freshChannel.is_im !== false || freshChannel.is_mpim !== false ||
+    !(freshChannel.is_channel === true || freshChannel.is_group === true) || freshChannel.is_member !== true) return {};
   const unfurls: Row = {};
   for (const { url, kind, project, attachment } of cards) {
-    if (!audience(freshConfig, project, kind).includes(event.channel)) continue;
+    if (!allowedPreview(freshConfig, project, kind, freshChannel, team)) continue;
     unfurls[url] = attachment;
   }
   if (Object.keys(unfurls).length) await actions.slack('chat.unfurl', { channel: event.channel, ts: event.message_ts, unfurls });

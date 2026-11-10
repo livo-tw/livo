@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { generateId } from '@/lib/generateId';
 import { logActivity } from '@/lib/activityLog';
@@ -8,6 +8,8 @@ import { mentionedMembers } from '@/lib/mentions';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import type { Comment, Task, User, Project, Status } from '@/types';
+import { useTaskCommentMedia } from './useTaskCommentMedia';
+import { taskCommentClient, type TaskAttachmentSummary } from '@/lib/taskCommentClient';
 
 type Deps = {
   task: Task | null;
@@ -15,7 +17,7 @@ type Deps = {
   currentMember: User | null;
   users: User[];
   allTasks: Task[];
-  setAllTasks: (tasks: Task[]) => void;
+  setAllTasks: Dispatch<SetStateAction<Task[]>>;
   globalComments: Comment[];
   project: Project | null;
   status: Status | null;
@@ -37,15 +39,42 @@ export const useTaskComments = ({
   const commentFileRef = useRef<HTMLInputElement>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentContent, setEditingCommentContent] = useState('');
+  const media = useTaskCommentMedia(task?.id, currentMemberId, error => toast.error(i18n.t('taskDetail.comments.sendFailed') + (error instanceof Error ? error.message : '')));
+  const activeScope = useRef('');
+  activeScope.current = `${currentMemberId}:${task?.id || ''}`;
 
   // Sync comments from global realtime
   useEffect(() => {
     if (!task) return;
     setTaskComments(globalComments.filter(c => c.taskId === task.id));
+    // Other users' new comments must bring their private attachment metadata too.
+    void media.refresh().catch((): void => undefined);
   }, [globalComments, task?.id]);
 
   const addComment = async () => {
     if (!task) return;
+    if (media.files.length || media.pending) {
+      const scope = activeScope.current;
+      const mentioned = mentionedMembers(newComment, users).filter(person => person.id !== currentMemberId);
+      try {
+        const result = await media.publish(newComment, mentioned.map(person => person.id));
+        if (activeScope.current !== scope) return;
+        const row = result.comment;
+        const comment: Comment = { id: row.id, taskId: row.task_id, userId: row.user_id, content: row.content, createdAt: row.created_at };
+        setTaskComments(previous => [...previous.filter(item => item.id !== comment.id), comment]);
+        setAllTasks(previous => previous.map(item => item.id === task.id ? { ...item, commentCount: result.commentCount,attachmentCount:result.attachmentCount??item.attachmentCount,attachmentSummaryKnown:typeof result.attachmentCount==='number' } : item));
+        // The transaction owns recipient deduplication and counters. The existing
+        // Slack endpoint derives destinations from this same stored comment ID.
+        const plain = row.content.replace(/<[^>]*>/g, '').trim();
+        sendSlackNotify({ type: 'comment_added', commentId: row.id, taskKey: task.taskKey, taskTitle: task.title, taskId: task.id,
+          projectName: project?.name, actorName: currentMember?.name || i18n.t('common.unknown'),
+          assigneeName: assignee?.name, statusName: status?.name, priority: task.priority,
+          commentPreview: plain.slice(0, 200), dmTargets: mentioned.map(person => ({email:person.email,name:person.name,reason:i18n.t('taskDetail.comments.mentionNotification')})) });
+        logActivity(currentMemberId, 'add_comment', plain.slice(0,100), task.id, task.taskKey);
+        setNewComment(''); loadStorageUsage();
+      } catch (error) { if (activeScope.current === scope && (error as Error)?.name !== 'AbortError') toast.error(i18n.t('taskDetail.comments.sendFailed') + (error instanceof Error ? error.message : '')); }
+      return;
+    }
     if (!newComment.trim() && !commentFile) return;
     setCommentFileUploading(true);
     let attachmentUrl: string | undefined;
@@ -134,7 +163,9 @@ export const useTaskComments = ({
     const newAttCount = deletedComment?.attachmentUrl
       ? Math.max(0, task.attachmentCount - 1)
       : task.attachmentCount;
-    setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, commentCount: newCount, attachmentCount: newAttCount } : t));
+    let summary:TaskAttachmentSummary|null=null;
+    try{summary=await taskCommentClient.summary([task.id]);}catch{/* Deleted content stays deleted; only its aggregate is unknown. */}
+    setAllTasks(prev => prev.map(t => t.id === task.id ? { ...t, commentCount: newCount, attachmentCount: summary?.counts[task.id]??newAttCount,attachmentSummaryKnown:Object.prototype.hasOwnProperty.call(summary?.counts||{},task.id) } : t));
     await supabase.from('tasks').update({ comment_count: newCount }).eq('id', task.id);
     logActivity(currentMemberId, 'delete_comment', '', task.id, task.taskKey);
     toast.success(i18n.t('taskDetail.comments.deleted'));
@@ -179,6 +210,16 @@ export const useTaskComments = ({
     commentFile, setCommentFile,
     commentFileUploading,
     commentFileRef,
+    commentFiles: media.files,
+    commentRejected: media.rejected,
+    addCommentFiles: media.add,
+    removeCommentFile: media.remove,
+    retryCommentUpload: media.retryUpload,
+    commentMediaBusy: media.busy,
+    commentCommandPending: media.pending,
+    commentAttachments: media.attachments,
+    downloadCommentAttachment: media.download,
+    commentAttachmentScope: media.scopeKey,
     editingCommentId, setEditingCommentId,
     editingCommentContent, setEditingCommentContent,
     addComment, deleteComment, startEditComment, saveEditComment,

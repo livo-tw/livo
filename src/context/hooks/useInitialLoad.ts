@@ -1,3 +1,4 @@
+import { taskCommentClient, type TaskAttachmentSummary } from '@/lib/taskCommentClient';
 import { useEffect, useRef, useState } from 'react';
 import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -142,6 +143,9 @@ export function useInitialLoad(deps: InitialLoadDeps) {
         safe(supabase.from('system_settings').select('*').eq('key', 'required_fields').maybeSingle(), 'required_fields'),
       ]);
       if (!activeRef.current) return;
+      let mediaSummary:TaskAttachmentSummary|null=null;
+      if(!USING_MOCK_BACKEND&&taskRows)try{mediaSummary=await taskCommentClient.summary(taskRows.map(row=>row.id));}catch{/* Keep task availability while marking unreadable aggregates unknown. */}
+      if(!activeRef.current)return;
 
       if (cfRows) deps.setCustomFields(cfRows.map(mapCustomField));
       if (cfvRows) deps.setCustomFieldValues(cfvRows.map(mapCustomFieldValue));
@@ -184,7 +188,7 @@ export function useInitialLoad(deps: InitialLoadDeps) {
           arr.push(tt.tag_id);
           tagMap.set(tt.task_id, arr);
         });
-        boardRead.publish(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: attCounts.get(r.id) || 0, tagIds: tagMap.get(r.id) || undefined })), dm);
+        boardRead.publish(taskRows.map(r => ({ ...mapTask(r), deployments: dm.get(r.id) || [], attachmentCount: mediaSummary?.counts[r.id] ?? (attCounts.get(r.id)||0), attachmentSummaryKnown: USING_MOCK_BACKEND || Object.prototype.hasOwnProperty.call(mediaSummary?.counts||{},r.id), tagIds: tagMap.get(r.id) || undefined })), dm);
       }
 
       const [sprintReads] = await Promise.all([sprintsPromise, featureTogglesPromise]);

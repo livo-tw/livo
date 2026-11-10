@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
+import { taskCommentClient } from '@/lib/taskCommentClient';
 import { fetchBoardRows, type BoardTaskEvent } from '@/lib/boardQueries';
 import type { Task, TaskDeployment, Comment, TaskSpec, TaskCheck, TaskTodo } from '@/types';
 import {
@@ -26,6 +27,23 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
     let active = true;
     let deployRead = 0;
     let tagRead = 0;
+    let attachmentTimer:ReturnType<typeof setTimeout>|undefined;
+    let attachmentRead=0;
+    const attachmentIds=new Set<string>();
+    const queueAttachmentSummary=(taskId:unknown)=>{
+      if(USING_MOCK_BACKEND||typeof taskId!=='string'||!taskId)return;
+      attachmentIds.add(taskId);if(attachmentTimer)return;
+      attachmentTimer=setTimeout(()=>{
+        attachmentTimer=undefined;const ids=[...attachmentIds];attachmentIds.clear();const read=++attachmentRead;
+        void taskCommentClient.summary(ids).then(summary=>{
+          if(!active||read!==attachmentRead)return;
+          deps.setAllTasks(previous=>previous.map(task=>ids.includes(task.id)?{...task,
+            attachmentCount:summary.counts[task.id]??task.attachmentCount,
+            commentCount:summary.commentCounts[task.id]??task.commentCount,
+            attachmentSummaryKnown:Object.prototype.hasOwnProperty.call(summary.counts,task.id)}:task));
+        }).catch(()=>{if(active&&read===attachmentRead)deps.setAllTasks(previous=>previous.map(task=>ids.includes(task.id)?{...task,attachmentSummaryKnown:false}:task));});
+      },50);
+    };
     const tasksChannel = supabase
       .channel('tasks-comments-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
@@ -40,11 +58,11 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
           const updated = mapTask(payload.new);
           deps.recordBoardTaskEvent({ kind: 'update', task: updated });
           deps.setAllTasks(prev => prev.map(t =>
-            t.id === updated.id ? { ...updated, deployments: t.deployments, attachmentCount: t.attachmentCount, tagIds: t.tagIds } : t
+            t.id === updated.id ? { ...updated, deployments: t.deployments, attachmentCount: t.attachmentCount, attachmentSummaryKnown:t.attachmentSummaryKnown, tagIds: t.tagIds } : t
           ));
           deps.setSelectedTask(prev => {
             if (prev && prev.id === updated.id) {
-              return { ...updated, deployments: prev.deployments, attachmentCount: prev.attachmentCount, tagIds: prev.tagIds };
+              return { ...updated, deployments: prev.deployments, attachmentCount: prev.attachmentCount, attachmentSummaryKnown:prev.attachmentSummaryKnown, tagIds: prev.tagIds };
             }
             return prev;
           });
@@ -56,6 +74,7 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, (payload) => {
+        queueAttachmentSummary((payload.eventType==='DELETE'?payload.old:payload.new as {task_id?:string})?.task_id);
         if (payload.eventType === 'INSERT') {
           const newComment = mapComment(payload.new);
           deps.setComments(prev => {
@@ -170,6 +189,7 @@ export function useHighFreqSubs(deps: HighFreqSubsDeps) {
 
     return () => {
       active = false;
+      if(attachmentTimer)clearTimeout(attachmentTimer);
       if (deployTimeoutRef.current) clearTimeout(deployTimeoutRef.current);
       if (tagTimeoutRef.current) clearTimeout(tagTimeoutRef.current);
       supabase.removeChannel(tasksChannel);

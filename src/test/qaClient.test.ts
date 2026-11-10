@@ -240,3 +240,51 @@ describe('QA client capability and isolated demo', () => {
     expect(parseQaNotification(JSON.stringify({ kind: 'qa', issueId: 'javascript:alert(1)', title: 'x' }))).toBeNull();
   });
 });
+
+describe('QA comment attachments', () => {
+  it('keeps draft uploads private until one attachment-only comment publishes them and replays once', async () => {
+    const ctx=context(), client=createQaClient({enabled:()=>true,context:()=>ctx,mock:true});
+    const issue=await client.create(input), resume:QaUploadResume={};
+    const file=new File(['image'],'proof.png',{type:'image/png'});
+    const pending=await client.uploadComment(issue.id,file,undefined,undefined,resume);
+    expect((await client.get(issue.id)).attachments).toEqual([]);
+    expect(await client.uploadComment(issue.id,file,undefined,undefined,resume)).toEqual(pending);
+    const first=await client.comment(issue.id,'','comment-fixture-one',[pending.id]);
+    expect(await client.comment(issue.id,'','comment-fixture-one',[pending.id])).toEqual(first);
+    const detail=await client.get(issue.id);expect(detail.comments).toHaveLength(1);
+    expect(detail.attachments).toEqual([expect.objectContaining({id:pending.id,commentId:first.id})]);
+    await expect(client.comment(issue.id,'changed','comment-fixture-one',[pending.id])).rejects.toMatchObject({status:409});
+  });
+  it('rejects duplicate, oversized, other-issue and other-owner attachment lists without publishing a comment', async () => {
+    const ctx=context(),client=createQaClient({enabled:()=>true,context:()=>ctx,mock:true});
+    const one=await client.create(input),two=await client.create(input);
+    const pending=await client.uploadComment(one.id,new File(['video'],'proof.mp4',{type:'video/mp4'}));
+    await expect(client.comment(one.id,'','duplicate',[pending.id,pending.id])).rejects.toMatchObject({code:'qa_invalid_comment_attachments'});
+    await expect(client.comment(one.id,'','oversized',Array.from({length:11},(_,i)=>'file-'+i))).rejects.toMatchObject({code:'qa_invalid_comment_attachments'});
+    await expect(client.comment(two.id,'','other-issue',[pending.id])).rejects.toMatchObject({code:'qa_invalid_comment_attachments'});
+    ctx.actor={id:'dev',role:'member'};
+    await expect(client.comment(one.id,'','other-owner',[pending.id])).rejects.toMatchObject({code:'qa_invalid_comment_attachments'});
+    await expect(client.download(pending.id)).rejects.toMatchObject({status:404});
+    expect((await client.get(one.id)).comments).toHaveLength(0);
+  });
+  it('refuses to reuse an issue upload reservation for a comment', async () => {
+    const ctx=context(),client=createQaClient({enabled:()=>true,context:()=>ctx,mock:true}),issue=await client.create(input),resume:QaUploadResume={};
+    const file=new File(['text'],'proof.txt',{type:'text/plain'});await client.upload(issue.id,file,undefined,undefined,resume);
+    await expect(client.uploadComment(issue.id,file,undefined,undefined,resume)).rejects.toMatchObject({code:'invalid_upload'});
+  });
+  it('sends comment purpose and exact IDs and preserves the reservation after a lost finalize response', async () => {
+    const calls:Record<string,unknown>[]=[],resume:QaUploadResume={};let completions=0;
+    vi.stubGlobal('fetch',vi.fn(async(_url,init)=>{const body=JSON.parse(String(init.body));calls.push(body);
+      if(body.action==='upload_init')return Response.json({id:'draft1',provider:'supabase',bucket:'qa-private',path:'b/draft1',token:'synthetic'});
+      if(body.action==='upload_complete'){if(++completions===1)throw new Error('connection lost');return Response.json({id:'draft1'});}
+      return Response.json({id:'comment1',attachmentIds:body.attachmentIds});
+    }));
+    const client=createQaClient({enabled:()=>true,context}),file=new File(['png'],'proof.png',{type:'image/png'});
+    await expect(client.uploadComment('bug1',file,undefined,undefined,resume)).rejects.toThrow('connection lost');
+    await client.uploadComment('bug1',file,undefined,undefined,resume);
+    await client.comment('bug1','','comment-fixture-command',['draft1']);
+    expect(calls.map(row=>row.action)).toEqual(['upload_init','upload_complete','upload_complete','comment']);
+    expect(calls[0].purpose).toBe('comment');expect(calls[3]).toMatchObject({commandId:'comment-fixture-command',attachmentIds:['draft1'],body:''});
+    expect(mocks.signedUpload).toHaveBeenCalledTimes(1);
+  });
+});

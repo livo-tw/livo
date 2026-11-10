@@ -2,6 +2,7 @@ import { containsApprovalRestoreData } from '@/lib/approval/restoreGuard';
 import { containsTaskWorkRestoreData } from '@/lib/taskWork/restoreGuard';
 import { assertKnowledgeRestoreSafe } from '@/lib/knowledgeWork/restoreGuard';
 import { fromTable } from '@/lib/supabaseQuery';
+import { taskCommentClient } from '@/lib/taskCommentClient';
 import { missingRestoreEnvironments, parseDeploymentEnvironments } from '@/lib/deploymentEnvironments';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -52,6 +53,27 @@ interface AdminBackupSectionProps {
   backupSettings: BackupSettings | null;
   setBackupSettings: React.Dispatch<React.SetStateAction<BackupSettings | null>>;
   saveBackupSettings: (updates: Partial<BackupSettings>) => Promise<void>;
+}
+
+type TaskCommentRestoreIssue = 'restoreBlockedPrivate' | 'restoreCoverageUnknown';
+/** This validates coverage, never grants database mutation authority. */
+export function taskCommentRestoreIssue(backup: Record<string, unknown>, input: unknown): TaskCommentRestoreIssue | null {
+  const valid = (value: unknown): value is Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const row = value as Record<string, unknown>;
+    return row.kind === 'task_comment_private_media' && row.coveredByJsonBackup === false && row.requiresDatabaseAndPrivateStorageBackup === true && row.commandReceiptsExcluded === true && Number.isSafeInteger(row.retainedMetadata) && Number(row.retainedMetadata) >= 0;
+  };
+  for (const table of ['task_comment_uploads','task_comment_commands']) {
+    if (table in backup && (!Array.isArray(backup[table]) || (backup[table] as unknown[]).length)) return 'restoreBlockedPrivate';
+  }
+  if (!valid(input)) return 'restoreCoverageUnknown';
+  if (Number(input.retainedMetadata) > 0) return 'restoreBlockedPrivate';
+  if (backup.task_comment_backup_manifest !== undefined) {
+    const rows = backup.task_comment_backup_manifest;
+    if (!Array.isArray(rows) || rows.length !== 1 || !valid(rows[0]) || rows[0].coverageKnown !== true || rows[0].commandReceiptsNeverReplayed !== true || rows[0].privateObjectBytesExcluded !== true) return 'restoreCoverageUnknown';
+    if (Number(rows[0].retainedMetadata) > 0) return 'restoreBlockedPrivate';
+  }
+  return null;
 }
 
 const AdminBackupSection = ({
@@ -217,6 +239,13 @@ const AdminBackupSection = ({
       // starts changing any ordinary table. QA itself is merged atomically.
       if (hasQa) await restoreQa(true);
 
+      // A fresh privileged count is required immediately before any destructive request.
+      // Real backends are already excluded above; this does not make the browser restore atomic.
+      let mediaCoverage: unknown;
+      try { mediaCoverage = await taskCommentClient.coverage(); }
+      catch { throw new Error(t('commentAttachments.restoreCoverageUnknown')); }
+      const mediaIssue = taskCommentRestoreIssue(backup, mediaCoverage);
+      if (mediaIssue) throw new Error(t(`commentAttachments.${mediaIssue}`));
       const deleteOrder = [
         'comments', 'task_checks', 'task_todos', 'task_specs',
         'task_deployments', 'status_logs', 'notifications',
@@ -403,6 +432,7 @@ const AdminBackupSection = ({
               </CardTitle>
               {/* Only the demo restores from JSON; a real workspace needs the server's database and file backups. */}
               <CardDescription>{t(USING_MOCK_BACKEND ? 'adminBackup.restoreDesc' : 'adminBackup.restoreServerOnly')}</CardDescription>
+              <p className="text-sm text-muted-foreground">{t('commentAttachments.backupCoverage')}</p>
             </CardHeader>
             {USING_MOCK_BACKEND && <CardContent className="space-y-3">
               <input ref={jsonRestoreRef} type="file" accept=".json" onChange={handleRestoreSelect} className="hidden" />

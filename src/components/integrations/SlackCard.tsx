@@ -30,6 +30,7 @@ import { Field, inputCls } from './shared';
 import SlackActionsSection from './SlackActionsSection';
 import SlackDeliveryChannels from './SlackDeliveryChannels';
 import SlackPersonalMessages from './SlackPersonalMessages';
+import SlackLinkPreviews from './SlackLinkPreviews';
 
 // The 7 Bot Token Scopes needed for channel posts, DMs and user lookup.
 // These are literal Slack scope identifiers — not translated.
@@ -363,6 +364,7 @@ const SlackCard = () => {
                 <SlackPersonalMessages configured={configured} isDemoMode={isDemoMode} />
               </> : <Field label={t('integrations.slack.channelPickerLabel')}>
                 <SearchableSelect
+                  aria-label={t('integrations.slack.channelPickerLabel')}
                   className={inputCls}
                   value={channelValue}
                   onChange={(e) => saveChannel(e.target.value)}
@@ -383,6 +385,8 @@ const SlackCard = () => {
                   </p>
                 )}
               </Field>}
+
+              <SlackLinkPreviews configured={configured} isDemoMode={isDemoMode} />
 
               {/* Setup guide */}
               <div>

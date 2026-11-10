@@ -42,7 +42,7 @@ export function useQaProjectPeople(client: PeopleClient, projectId: string) {
       if (!choices.has(person.id)) choices.set(person.id, {
         id: person.id, name: person.name, avatar: person.avatar ?? '', color: person.color ?? '',
         jobTitle: person.jobTitle ?? '', isActive: person.isActive, email: '', role: 'member', sortOrder: 0,
-        qaExternal: person.isExternal !== false,
+        qaExternal: person.isExternal !== false, isExternal: person.isExternal,
       });
     }
     return [...choices.values()];

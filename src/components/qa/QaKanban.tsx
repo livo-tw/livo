@@ -208,12 +208,13 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
     attemptedOffset.current = offset;
     const controller = new AbortController(); pending.current = controller;
     setLoading(true); setError(null);
-    if (offset === 0) setResult(previous => ({ ...previous, memberNames: undefined }));
+    if (offset === 0) setResult(previous => ({ ...previous, memberNames: undefined, memberProfiles: undefined }));
     try {
       const page = await client.list({ ...filters, state: undefined, states: stateKey.split(',') as QaState[], offset, limit: 20 }, controller.signal);
       if (!controller.signal.aborted) {
         nextOffset.current = offset + page.issues.length;
         setResult(previous => ({ ...page, memberNames: offset ? { ...previous.memberNames, ...page.memberNames } : page.memberNames,
+          memberProfiles: offset ? { ...previous.memberProfiles, ...page.memberProfiles } : page.memberProfiles,
           issues: offset ? [...previous.issues, ...page.issues.filter(issue => !previous.issues.some(old => old.id === issue.id))] : page.issues }));
         setLoadedRevision(revision);
         if (offset === 0) onLoaded(state, revision);
@@ -242,7 +243,7 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
     <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3"><h2 className="flex min-w-0 items-center gap-2 break-words text-sm font-semibold"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: qaStateColors[state] }} />{label}</h2><span className="rounded bg-background px-2 py-0.5 text-xs font-medium tabular-nums">{total}</span></header><div className="min-h-0 max-h-[max(240px,calc(100dvh-280px))] flex-1 space-y-3 overflow-y-auto overscroll-y-auto md:overscroll-y-contain p-2.5">
     {error !== null && <div className="mb-3 space-y-2"><QaFailure error={error} /><button className={qaButton} onClick={() => void load(attemptedOffset.current)}>{t('qa.refresh')}</button></div>}
     <ul className="space-y-2.5">{issues.map(issue => <QaDraggableCard key={issue.id} issue={issue} actor={actor} onOpen={onOpen} disabled={disabled}
-      memberNames={result.memberNames}
+      memberNames={result.memberNames} memberProfiles={result.memberProfiles}
       stateLabel={grouped ? getQaStateLabel(workflow,issue.state,state => t(`qa.state.${state}`)) : undefined} />)}</ul>
     {loading && <p role="status" className="py-4 text-center text-xs text-muted-foreground">{t('qa.loading')}</p>}
     {!loading && !error && !issues.length && <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/80 px-3 py-10 text-center text-xs text-muted-foreground"><Inbox size={22} strokeWidth={1.5} aria-hidden="true" />{t('qa.boardEmpty')}</div>}
@@ -251,14 +252,14 @@ function QaColumn({ client, actor, state, states, workflow, grouped, label, filt
   </section>;
 }
 
-function QaDraggableCard({ issue, actor, onOpen, stateLabel, disabled, memberNames }: { issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void; stateLabel?: string; disabled: boolean; memberNames?: Record<string, string> }) {
+function QaDraggableCard({ issue, actor, onOpen, stateLabel, disabled, memberNames, memberProfiles }: { issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void; stateLabel?: string; disabled: boolean; memberNames?: Record<string, string>; memberProfiles?: QaListResult['memberProfiles'] }) {
   const { t } = useTranslation();
   // Permission is explained visibly on drop; silently disabling drag looks like a broken board.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: issue.id, data: { issue }, disabled });
   return <li ref={setNodeRef} {...attributes} {...listeners} data-drag-surface aria-label={issue.title} className={`select-none rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary ${isDragging ? 'opacity-30' : ''}`}
     style={{ touchAction: 'pan-x pan-y', WebkitTouchCallout: 'none' }}
     onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter') { event.preventDefault(); onOpen(issue.id); } else listeners?.onKeyDown?.(event); }}>
-    <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} memberNames={memberNames} dragHandle={(
+    <QaIssueCard issue={issue} actor={actor} onOpen={onOpen} stateLabel={stateLabel} memberNames={memberNames} memberProfiles={memberProfiles} dragHandle={(
       <button {...attributes} {...listeners} type="button" data-drag-surface data-board-drag-handle
         aria-label={t('board.dragCard', { title: issue.title })}
         disabled={disabled}

@@ -1,3 +1,4 @@
+import QaPersonBadge from './QaPersonBadge';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AuthContext, type AuthContextType } from '@/context/AuthContext';
@@ -13,8 +14,7 @@ import { type QaCreateIntent } from '@/lib/qa/navigationGuard';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ProjectSelectOptions } from '@/components/project/ProjectOptions';
 import { groupProjectsByLine } from '@/lib/projectGroups';
-import type { ExternalQaProfile } from '@/lib/qa/externalProfile';
-import type { User } from '@/types';
+import type { ExternalQaProfile, QaProfileUser } from '@/lib/qa/externalProfile';
 import QaWorkspace from './QaWorkspace';
 
 function unavailable(): never { throw new Error('external-qa-unavailable'); }
@@ -44,11 +44,11 @@ export default function ExternalQaShell({ profile, reload }: { profile: External
     onAccepted?.();
   };
   const existingSelf = profile.members.find(member => member.id === profile.id);
-  const self: User = existingSelf ?? {
-    id: profile.id, name: profile.name, avatar: profile.name.slice(0, 1), color: '#64748b',
-    jobTitle: '', email: '', role: 'member', isActive: true, sortOrder: 0,
+  const self: QaProfileUser = existingSelf ? { ...existingSelf, isExternal: true } : {
+    id: profile.id, name: profile.name, avatar: '', color: '#64748b',
+    jobTitle: '', email: '', role: 'member', isActive: true, sortOrder: 0, isExternal: true,
   };
-  const users = existingSelf ? profile.members : [self, ...profile.members];
+  const users = existingSelf ? profile.members.map(member => member.id === self.id ? self : member) : [self, ...profile.members];
   const auth: AuthContextType = {
     currentMemberId: self.id, realMemberId: self.id, currentMember: self, realMember: self,
     setCurrentMemberId: unavailable, permissions: getPermissions('member'), userTheme: 'dark', setUserTheme: unavailable,
@@ -79,7 +79,7 @@ export default function ExternalQaShell({ profile, reload }: { profile: External
               <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
                 <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
                   <h1 className="mr-auto text-sm font-semibold">{t('qa.externalWorkspace')}</h1>
-                  <span className="text-sm text-muted-foreground">{profile.name}</span>
+                  <QaPersonBadge person={self} />
                   {canReport && <button type="button" className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={createBug}>
                     {t('qa.report')}
                   </button>}

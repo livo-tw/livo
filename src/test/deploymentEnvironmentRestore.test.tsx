@@ -59,3 +59,5 @@ describe('Deployment environment restore preflight',()=>{
     log.mockRestore();
   });
 });
+
+vi.mock('@/lib/taskCommentClient', () => ({ taskCommentClient: { coverage: vi.fn(async()=>({kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata:0,commandReceiptsExcluded:true})) } }));

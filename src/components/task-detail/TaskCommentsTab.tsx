@@ -10,6 +10,8 @@ import type { TaskDetailState } from './hooks/useTaskDetail';
 import { fixHtml } from './utils';
 import TaskSidebarFields from './TaskSidebarFields';
 import { toast } from 'sonner';
+import CommentAttachmentPicker from '@/components/comments/CommentAttachmentPicker';
+import CommentAttachmentList from '@/components/comments/CommentAttachmentList';
 
 type Props = { detail: TaskDetailState };
 
@@ -19,12 +21,13 @@ const TaskCommentsTab = ({ detail }: Props) => {
     task, users, currentMember, currentMemberId,
     taskComments, newComment, setNewComment,
     commentFile, setCommentFile, commentFileUploading,
-    commentFileRef,
     editingCommentId, setEditingCommentId,
     editingCommentContent, setEditingCommentContent,
     addComment, deleteComment, startEditComment, saveEditComment,
-    storageUsed, STORAGE_LIMIT, MAX_FILE_SIZE,
+    storageUsed, STORAGE_LIMIT,
     isMobile,
+    commentFiles = [], commentRejected = [], addCommentFiles, removeCommentFile, retryCommentUpload,
+    commentMediaBusy, commentCommandPending, commentAttachments = [], downloadCommentAttachment, commentAttachmentScope,
   } = detail;
 
   const [commentOrder, setCommentOrder] = useCommentOrder(currentMemberId);
@@ -70,7 +73,7 @@ const TaskCommentsTab = ({ detail }: Props) => {
                 </div>
                 {isEditing ? (
                   <div>
-                    <RichTextEditor content={editingCommentContent} onChange={setEditingCommentContent} placeholder={t('taskDetail.comments.editPlaceholder')} members={users} />
+                    <RichTextEditor content={editingCommentContent} onChange={setEditingCommentContent} placeholder={t('taskDetail.comments.editPlaceholder')} members={users} allowImageUpload={false} />
                     <div className="flex gap-1.5 mt-1.5">
                       <button onClick={saveEditComment} className="px-2.5 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90">{t('button.save')}</button>
                       <button onClick={() => setEditingCommentId(null)} className="px-2.5 py-1 text-xs rounded border border-border text-muted-foreground hover:bg-accent">{t('button.cancel')}</button>
@@ -90,6 +93,7 @@ const TaskCommentsTab = ({ detail }: Props) => {
                         <Download size={12} className="text-muted-foreground" />
                       </a>
                     )}
+                    <CommentAttachmentList attachments={commentAttachments.filter(file => file.commentId === comment.id)} download={downloadCommentAttachment} scopeKey={`${commentAttachmentScope}:${comment.id}`} onError={error => toast.error(error instanceof Error ? error.message : t('taskDetail.comments.attachmentUploadFailed'))} />
                   </>
                 )}
               </div>
@@ -104,7 +108,9 @@ const TaskCommentsTab = ({ detail }: Props) => {
           {currentMember?.avatar || '?'}
         </div>
         <div className="flex-1">
-          <RichTextEditor content={newComment} onChange={setNewComment} placeholder={t('taskDetail.comments.newPlaceholder')} members={users} />
+          <RichTextEditor content={newComment} onChange={setNewComment} placeholder={t('taskDetail.comments.newPlaceholder')} members={users} editable={!commentMediaBusy && !commentCommandPending} allowImageUpload={false} />
+          <CommentAttachmentPicker files={commentFiles} rejected={commentRejected} busy={commentMediaBusy || commentCommandPending} onFiles={addCommentFiles} onRemove={removeCommentFile} onRetry={retryCommentUpload} />
+          {commentCommandPending && <p role="status" className="mt-2 text-sm text-muted-foreground">{t('commentAttachments.pendingReceipt')}</p>}
           {commentFile && (
             <div className="mt-1.5 flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted border border-border">
               <Paperclip size={12} className="text-muted-foreground flex-shrink-0" />
@@ -116,30 +122,10 @@ const TaskCommentsTab = ({ detail }: Props) => {
           <div className="flex items-center gap-2 mt-1.5">
             <button
               onClick={addComment}
-              disabled={commentFileUploading || (!newComment.trim() && !commentFile) || (newComment === '<p></p>' && !commentFile)}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${(newComment.trim() && newComment !== '<p></p>') || commentFile ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-muted text-muted-foreground cursor-not-allowed'}`}
+              disabled={commentFileUploading || commentMediaBusy || (!newComment.trim() && !commentFile && !commentFiles.length && !commentCommandPending) || (newComment === '<p></p>' && !commentFile && !commentFiles.length && !commentCommandPending)}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${(newComment.trim() && newComment !== '<p></p>') || commentFile || commentFiles.length || commentCommandPending ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-muted text-muted-foreground cursor-not-allowed'}`}
             >
-              {commentFileUploading ? t('common.uploading') : t('button.save')}
-            </button>
-            <input
-              ref={commentFileRef}
-              type="file"
-              className="hidden"
-              accept={isMobile ? '*/*' : undefined}
-              onChange={e => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  if (file.size > MAX_FILE_SIZE) {
-                    toast.error(t('taskDetail.comments.fileSizeError', { size: MAX_FILE_SIZE / 1024 / 1024 }));
-                    return;
-                  }
-                  setCommentFile(file);
-                }
-                e.target.value = '';
-              }}
-            />
-            <button onClick={() => commentFileRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors" title={t('taskDetail.comments.attachFileTitle', { size: MAX_FILE_SIZE / 1024 / 1024 })}>
-              <Paperclip size={15} />
+              {commentFileUploading || commentMediaBusy ? t('common.uploading') : commentCommandPending ? t('qa.retryUpload') : t('button.save')}
             </button>
             {storageUsed !== null && (
               <div className="flex items-center gap-1.5 ml-auto text-xs text-muted-foreground">

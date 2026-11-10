@@ -97,6 +97,9 @@ describe('Canonical Docker QA detail member labels', () => {
     const before = JSON.stringify({ card, comments, events, attachments });
     const detail = await createQaService(env, 'normal-example-session').handle({ action: 'get', id: card.id });
     expect(detail.memberNames).toEqual({ [internal.id]: internal.name, ...Object.fromEntries(labels.filter(person => refs.includes(String(person.id))).map(person => [person.id, person.name])) });
+    expect(detail.memberProfiles[internal.id]).toEqual({ name: internal.name, isExternal: false });
+    for (const id of refs) expect(detail.memberProfiles[id]).toEqual({ name: labels.find(person => person.id === id)!.name, isExternal: true });
+    expect(detail.memberProfiles).not.toHaveProperty('eqa-unrelated');
     expect(detail.memberNames).not.toHaveProperty('eqa-unrelated');
     expect(JSON.stringify({ card, comments, events, attachments })).toBe(before);
     const labelRead = calls.findIndex(call => call.path === '/rest/v1/external_qa_accounts');

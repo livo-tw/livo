@@ -265,10 +265,10 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
               <span className="text-xs">{task.commentCount}</span>
             </span>
           )}
-          {f.attachmentCount && task.attachmentCount > 0 && (
+          {f.attachmentCount && (task.attachmentSummaryKnown === false || task.attachmentCount > 0) && (
             <span className="flex items-center gap-0.5 text-muted-foreground">
               <Paperclip size={14} />
-              <span className="text-xs">{task.attachmentCount}</span>
+              <span className="text-xs" title={task.attachmentSummaryKnown === false ? t('error.loadFailed') : undefined}>{task.attachmentSummaryKnown === false ? '?' : task.attachmentCount}</span>
             </span>
           )}
           {f.gitlabUrl && task.gitlabUrl && <GitBranch size={13} className="text-muted-foreground" />}

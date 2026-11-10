@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { appDeepLinkSearch } from '@/lib/appDeepLink';
 import { passwordChangeRequired } from '@/lib/passwordChangeRequired';
+import { useApiOfflineBanner } from '@/hooks/useApiOfflineBanner';
 import RequiredPasswordChange from '@/components/RequiredPasswordChange';
 import { useState, useEffect, lazy, Suspense } from "react";
 import type { Session } from '@supabase/supabase-js';
@@ -75,18 +76,7 @@ const SignupRoute = ({ session }: { session: Session | null }) => {
 const App = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
+  const offlineBanner = useApiOfflineBanner();
 
   useEffect(() => {
     let loginLogged = false;
@@ -220,7 +210,7 @@ const App = () => {
           <DemoModeBanner />
         </>
       )}
-      <OfflineBanner visible={!isOnline} />
+      <OfflineBanner visible={offlineBanner} />
       <Sonner />
       <div className={IS_DEMO_PRO ? 'livo-demo-on' : undefined}>
       <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>

@@ -1,3 +1,4 @@
+import { qaPersonDisplay, qaScopedProfile } from '@/lib/qa/peopleDisplay';
 import { qaRepairAssigneeOptions } from '@/lib/qa/assignmentPeople';
 import { useQaDisplayConfiguration } from '@/context/QaDisplaySettingsContext';
 import { getQaPriorityChoices } from '@/lib/qa/displaySettings';
@@ -12,15 +13,15 @@ import { useTaskContext } from '@/context/TaskContext';
 import { NO_QA_TASKS, useExternalQa } from '@/context/ExternalQaContext';
 import { getDepartmentPreferenceIds, getProjectDeveloperPreferenceIds } from '@/lib/memberSelection';
 import { groupProjectsByLine } from '@/lib/projectGroups';
-import type { QaCommand, QaIssue, QaSeverity } from '@/lib/qa/domain';
+import type { QaCommand, QaIssue, QaSeverity, QaPersonProfile } from '@/lib/qa/domain';
 import { QaField, QaSelect } from './QaFields';
 import { qaPriorities } from './QaBadges';
 import { useQaDetailDraft } from './QaDetailDraftContext';
 
 type Fields = Pick<QaIssue, 'projectId' | 'assigneeId' | 'qaOwnerId' | 'severity' | 'priority' | 'dueDate'>;
 
-export default function QaIssueSidebarFields({ issue, disabled, onCommand, assignmentOptions, memberNames }: {
-  issue: QaIssue; disabled: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>; onCommand: (command: QaCommand) => Promise<boolean>;
+export default function QaIssueSidebarFields({ issue, disabled, onCommand, assignmentOptions, memberNames, memberProfiles }: {
+  issue: QaIssue; disabled: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>; memberProfiles?: Record<string, QaPersonProfile>; onCommand: (command: QaCommand) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const configuration = useQaDisplayConfiguration();
@@ -56,11 +57,13 @@ export default function QaIssueSidebarFields({ issue, disabled, onCommand, assig
     {configuration?.showSeverity && <QaSelect label={t('qa.severity')} value={issue.severity} disabled={disabled} onChange={event => update({ severity: event.target.value as QaSeverity })}>
       {['untriaged', 'low', 'medium', 'high'].map(value => <option key={value} value={value}>{t(`qa.severityNames.${value}`)}</option>)}
     </QaSelect>}
-    <UserSelect label={t('qa.assignee')} options={qaRepairAssigneeOptions(assignmentOptions)} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
+    <UserSelect displayProfile={qaPersonDisplay} label={t('qa.assignee')} options={qaRepairAssigneeOptions(assignmentOptions)} activeOnly allowEmpty disabled={disabled} value={issue.assigneeId || ''}
+      fallbackProfile={qaScopedProfile(memberProfiles, issue.assigneeId) ? qaPersonDisplay(qaScopedProfile(memberProfiles, issue.assigneeId)!) : undefined}
       fallbackLabel={scopedMemberName(issue.assigneeId) || t('qa.memberUnavailable')}
       onChange={value => update({ assigneeId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} size="md" />
-    <UserSelect label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}
+    <UserSelect displayProfile={qaPersonDisplay} label={t('qa.qaOwner')} options={assignmentOptions} activeOnly allowEmpty disabled={disabled} value={issue.qaOwnerId || ''}
+      fallbackProfile={qaScopedProfile(memberProfiles, issue.qaOwnerId) ? qaPersonDisplay(qaScopedProfile(memberProfiles, issue.qaOwnerId)!) : undefined}
       fallbackLabel={scopedMemberName(issue.qaOwnerId) || t('qa.memberUnavailable')}
       onChange={value => update({ qaOwnerId: value || null })} emptyLabel={t('qa.unassigned')}
       preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} size="md" />

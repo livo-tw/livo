@@ -1862,6 +1862,18 @@
     }
   },
   "integrations": {
+    "slackPreviews": {
+      "title": "貼上卡片連結預覽",
+      "projectRoutes": "使用專案通知頻道",
+      "internalChannels": "已加入的內部頻道",
+      "projectHint": "在已設定該專案任務或 Bug 通知的 Slack 頻道顯示卡片預覽。",
+      "internalHint": "有權限的卡片可在 LIVO 機器人已加入的內部頻道預覽。私訊、群組私訊及外部共享頻道只顯示一般連結。",
+      "notificationsHint": "自動通知仍依任務與 Bug 的通知頻道設定傳送。",
+      "adminOnly": "只有超級管理員可以設定卡片連結預覽範圍。",
+      "loadFailed": "無法確認目前的預覽設定，請重新讀取。",
+      "saved": "卡片連結預覽設定已儲存。",
+      "requirementsHint": "目前需先完成既有的 Slack 啟用與工作區設定；此處儲存的是卡片預覽的頻道範圍。"
+    },
     "title": "服務整合",
     "desc": "設定外部服務的連接與通知行為",
     "servicesTab": "服務整合",
@@ -4489,5 +4501,31 @@
       "network_failed": "無法連線，請確認網路後重試。",
       "invalid_response": "伺服器回覆異常，請重新整理後重試。"
     }
+  },
+  "commentAttachments": {
+    "heading": "留言附件",
+    "add": "新增附件",
+    "drop": "點選或拖曳圖片、影片或檔案",
+    "hint": "每檔上限 200 MB，最多 {{count}} 個附件。",
+    "countLimit": "每則留言最多可附加 {{count}} 個檔案。",
+    "preview": "預覽 {{name}}",
+    "remove": "移除 {{name}}",
+    "progress": "上傳進度 {{percent}}%",
+    "retry": "重試未完成附件",
+    "closePreview": "關閉預覽",
+    "loading": "讀取中…",
+    "view": "檢視／下載",
+    "download": "下載",
+    "cancelDownload": "取消下載",
+    "pendingReceipt": "送出結果尚待確認。重試會核對同一則留言，不會重複新增。",
+    "status": {
+      "pending": "待上傳",
+      "uploading": "上傳中",
+      "complete": "已上傳，待送出留言",
+      "failed": "上傳失敗"
+    },
+    "backupCoverage": "JSON／CSV 匯出不包含一般任務留言私有附件的保留紀錄與檔案；完整復原需要資料庫與私有儲存備份。",
+    "restoreBlockedPrivate": "工作區仍有一般任務留言私有附件或上傳保留紀錄，已停止破壞式 JSON 還原。請使用完整資料庫與私有儲存備份。",
+    "restoreCoverageUnknown": "無法確認一般任務留言私有附件的備份範圍，已停止還原。請稍後再試或使用完整資料庫與私有儲存備份。"
   }
 }

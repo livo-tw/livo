@@ -28,6 +28,7 @@ import { runQuery, roleRank } from './db';
 import { handleRpc } from './rpc';
 import { handleUpload, handleDownload, handleRemove, isKnowledgeStoragePath } from './storage';
 import { handleQa } from './qa';
+import { handleTaskComments } from './taskComments';
 import { handleReleaseWorkspace } from './releases';
 import { handleApprovalCommand } from './approval';
 import { runApprovalDeliveries } from './approvalDelivery';
@@ -135,6 +136,8 @@ app.post('/rest/v1/rpc/:fn', (c) => handleRpc(c, c.req.param('fn'))); // legacy 
 
 // ── Functions (Edge Function ports) ───────────────────────────────────────
 app.post('/api/functions/qa', requireMember, handleQa); // read/write demo and opt-in guards are action-aware
+app.post('/api/functions/task-comments', requireMember, handleTaskComments);
+app.post('/functions/v1/task-comments', requireMember, handleTaskComments);
 app.post('/api/functions/task-work-command', requireMember, handleTaskWorkCommand);
 app.post('/api/functions/approval-command', requireMember, handleApprovalCommand);
 app.post('/api/functions/knowledge-work', requireMember, handleKnowledgeWork);

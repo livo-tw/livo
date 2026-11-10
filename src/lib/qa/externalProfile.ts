@@ -2,6 +2,8 @@ import { fnUrl } from '@/lib/apiBase';
 import { supabase } from '@/integrations/supabase/client';
 import type { Project, User } from '@/types';
 
+export type QaProfileUser = User & { isExternal?: boolean };
+
 export interface ExternalQaProfile {
   external: true;
   id: string;
@@ -9,7 +11,7 @@ export interface ExternalQaProfile {
   qaEnabled: boolean;
   environments: string[];
   projects: Project[];
-  members: User[];
+  members: QaProfileUser[];
 }
 
 type WorkspaceProfile = ExternalQaProfile | { external: false };
@@ -43,11 +45,11 @@ export function parseWorkspaceProfile(value: unknown): WorkspaceProfile {
     return { id: requiredText(project.id), name: requiredText(project.name), lineId: optionalText(project.lineId),
       color: optionalText(project.color), key: optionalText(project.key), isArchived: project.isArchived === true };
   });
-  const members: User[] = profile.members.map((value, sortOrder) => {
+  const members: QaProfileUser[] = profile.members.map((value, sortOrder) => {
     const member = record(value);
     return { id: requiredText(member.id), name: requiredText(member.name), avatar: optionalText(member.avatar),
       color: optionalText(member.color), jobTitle: optionalText(member.jobTitle), isActive: member.isActive === true,
-      role: 'member', email: '', sortOrder };
+      role: 'member', email: '', sortOrder, ...(typeof member.isExternal === 'boolean' ? { isExternal: member.isExternal } : {}) };
   });
   return { external: true, id: requiredText(profile.id), name: requiredText(profile.name), qaEnabled: profile.qaEnabled,
     environments: profile.environments.map(requiredText), projects, members };

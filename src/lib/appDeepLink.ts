@@ -10,9 +10,12 @@ export function appDeepLinkSearch(search: string): string {
   return encoded ? `?${encoded}` : '';
 }
 
-/** Use the saved ID so a concurrent task-key change cannot point at another task. */
-export function taskDeepLinkUrl(taskId: string): string {
+function recordDeepLinkUrl(kind: 'task' | 'qa', id: string): string {
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);
-  url.searchParams.set('task', taskId);
+  url.searchParams.set(kind, id);
   return url.toString();
 }
+
+/** Use the saved ID so a concurrent task-key change cannot point at another task. */
+export const taskDeepLinkUrl = (taskId: string): string => recordDeepLinkUrl('task', taskId);
+export const qaDeepLinkUrl = (issueId: string): string => recordDeepLinkUrl('qa', issueId);

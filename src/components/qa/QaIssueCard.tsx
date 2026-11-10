@@ -1,11 +1,13 @@
+import QaPersonBadge from './QaPersonBadge';
+import { qaPersonDisplay, qaScopedProfile } from '@/lib/qa/peopleDisplay';
 import type { ReactNode } from 'react';
 import { useProjectColor } from '@/hooks/useProjectColor';
 import { ArrowRight, CalendarDays, Hand, PauseCircle, Server, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { ProjectBadge, UserBadge } from '@/components/ui/badges';
+import { ProjectBadge } from '@/components/ui/badges';
 import { useProjectContext } from '@/context/ProjectContext';
 import { useMemberContext } from '@/context/MemberContext';
-import { canQaCommand, isHistoricalQaPass, isQaTerminal, requiredTargetsPassed, type QaActor, type QaCommand, type QaIssue } from '@/lib/qa/domain';
+import { canQaCommand, isHistoricalQaPass, isQaTerminal, requiredTargetsPassed, type QaActor, type QaCommand, type QaIssue, type QaPersonProfile } from '@/lib/qa/domain';
 import { qaShortId } from '@/lib/qa/shortId';
 import { QaPriorityBadge, QaSeverityBadge, QaStateBadge } from './QaBadges';
 
@@ -35,9 +37,9 @@ export function getQaNextAction(issue: QaIssue, actor: QaActor): { command: QaCo
 
 const localDay = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 
-export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = false, dragHandle, memberNames }: {
+export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = false, dragHandle, memberNames, memberProfiles }: {
   issue: QaIssue; actor: QaActor; onOpen: (id: string, action?: QaCommand['type']) => void;
-  stateLabel?: string; list?: boolean; dragHandle?: ReactNode; memberNames?: Record<string, string>;
+  stateLabel?: string; list?: boolean; dragHandle?: ReactNode; memberNames?: Record<string, string>; memberProfiles?: Record<string, QaPersonProfile>;
 }) {
   const { t } = useTranslation();
   const getProjectColor = useProjectColor();
@@ -47,6 +49,7 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
   const assignee = users.find(row => row.id === issue.assigneeId);
   const qaOwner = users.find(row => row.id === issue.qaOwnerId);
   const scopedMemberName = (id: string | null) => id && typeof memberNames?.[id] === 'string' ? memberNames[id].trim() : undefined;
+  const person = (id: string | null, user: typeof assignee) => { const profile = user ?? qaScopedProfile(memberProfiles, id); const name = scopedMemberName(id); return profile ? qaPersonDisplay(profile) : name ? qaPersonDisplay({ name }) : undefined; };
   const next = getQaNextAction(issue, actor);
   const open = !isQaTerminal(issue.state);
   const blocked = open && !!issue.holdReason;
@@ -72,7 +75,7 @@ export default function QaIssueCard({ issue, actor, onOpen, stateLabel, list = f
           {handoff && <span className="inline-flex items-center gap-1 text-primary"><Hand size={12} aria-hidden="true" />{t('qa.handoffOpen')}</span>}
         </div>}
         <div className="mt-2 grid grid-cols-2 gap-2 pt-1">
-          {[{ label: 'assignee', id: issue.assigneeId, user: assignee }, { label: 'qaOwner', id: issue.qaOwnerId, user: qaOwner }].map(({ label, id, user }) => <div key={label} className="min-w-0"><span className="mb-1 block text-[10px] text-muted-foreground">{t(`qa.${label}`)}</span>{user ? <UserBadge user={user} /> : <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><UserRound size={12} aria-hidden="true" />{scopedMemberName(id) || t(id ? 'qa.memberUnavailable' : 'qa.unassigned')}</span>}</div>)}
+          {[{ label: 'assignee', id: issue.assigneeId, user: assignee }, { label: 'qaOwner', id: issue.qaOwnerId, user: qaOwner }].map(({ label, id, user }) => { const profile = person(id, user); return <div key={label} className="min-w-0"><span className="mb-1 block text-[10px] text-muted-foreground">{t(`qa.${label}`)}</span>{profile ? <QaPersonBadge person={profile} /> : <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><UserRound size={12} aria-hidden="true" />{scopedMemberName(id) || t(id ? 'qa.memberUnavailable' : 'qa.unassigned')}</span>}</div>; })}
         </div>
       </div>
     </button>

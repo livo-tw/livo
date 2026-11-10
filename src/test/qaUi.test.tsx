@@ -167,3 +167,59 @@ describe('QA feature gate and conflict recovery', () => {
     expect(signal.aborted).toBe(false); view.unmount(); expect(signal.aborted).toBe(true);
   });
 });
+
+describe('QA comment attachment send recovery', () => {
+  it('keeps an attachment-only draft through upload failure and retries an unknown comment with the original command and file IDs', async () => {
+    vi.stubGlobal('URL',class extends URL { static createObjectURL(){return 'blob:qa-comment-fixture';} static revokeObjectURL(){} });
+    const attachment={id:'comment-file1',issueId:issue.id,fileName:'proof.mp4',mimeType:'video/mp4',size:5,uploadedBy:'admin',createdAt:'2026-11-10T00:00:00Z'};
+    const uploadComment=vi.fn().mockRejectedValueOnce(new Error('upload interrupted')).mockImplementation(async(_id,_file,progress,_signal,resume)=>{progress?.(100);resume.attachment=attachment;return attachment;});
+    const comment=vi.fn().mockRejectedValueOnce(new Error('response lost')).mockResolvedValue({id:'new-comment',body:'',attachmentIds:[attachment.id]});
+    const refresh=vi.fn().mockResolvedValue(undefined);
+    const client={getDisplaySettings:mocks.getDisplaySettings,getManualStateVisibility:mocks.getManualStateVisibility,getFieldConfiguration:mocks.getFieldConfiguration,versions:mocks.versions,uploadComment,comment} as unknown as QaClient;
+    const view=render(<QaIssueDetail detail={detail} client={client} actor={{id:'admin',role:'admin'}} onRefresh={refresh} onBack={vi.fn()} />);
+    fireEvent.click(document.getElementById('qa-tab-comments')!);
+    const field=screen.getByLabelText(/qa.commentBody/) as HTMLTextAreaElement;
+    const input=view.container.querySelector('input[type=file]') as HTMLInputElement;
+    fireEvent.change(input,{target:{files:[new File(['video'],'proof.mp4',{type:'video/mp4'})]}});
+    expect(field.required).toBe(false);
+    fireEvent.click(screen.getByRole('button',{name:'qa.addComment'}));
+    await waitFor(()=>expect(uploadComment).toHaveBeenCalledTimes(1));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'qa.addComment'})).not.toBeDisabled());
+    expect(comment).not.toHaveBeenCalled();expect(screen.getByText('proof.mp4')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'qa.addComment'}));
+    await waitFor(()=>expect(comment).toHaveBeenCalledTimes(1));
+    const first=comment.mock.calls[0];expect(first[1]).toBe('');expect(first[3]).toEqual([attachment.id]);
+    fireEvent.click(await screen.findByRole('button',{name:'qa.retryCommand'}));
+    await waitFor(()=>expect(refresh).toHaveBeenCalledTimes(1));
+    expect(uploadComment).toHaveBeenCalledTimes(2);expect(comment.mock.calls[1]).toEqual(first);
+    expect(screen.queryByText('proof.mp4')).toBeNull();
+  });
+});
+
+describe('QA unknown command remains immutable through lost authorization', () => {
+  it('retains the original command after response loss then 403 and recovers that receipt after authorization returns', async () => {
+    vi.stubGlobal('URL',class extends URL { static createObjectURL(){return 'blob:qa-unknown-fixture';} static revokeObjectURL(){} });
+    const attachment={id:'uncertain-file',issueId:issue.id,fileName:'proof.mp4',mimeType:'video/mp4',size:5,uploadedBy:'admin',createdAt:'2026-11-10T00:00:00Z'};
+    const uploadComment=vi.fn(async(_id,_file,_progress,_signal,resume)=>{resume.attachment=attachment;return attachment;});
+    const comment=vi.fn().mockRejectedValueOnce(new Error('response lost')).mockRejectedValueOnce(Object.assign(new Error('authorization revoked'),{status:403,code:'qa_forbidden'})).mockResolvedValue({id:'original-stored-comment',body:'Original',attachmentIds:[attachment.id]});
+    const refresh=vi.fn().mockResolvedValue(undefined);
+    const client={getDisplaySettings:mocks.getDisplaySettings,getManualStateVisibility:mocks.getManualStateVisibility,getFieldConfiguration:mocks.getFieldConfiguration,versions:mocks.versions,uploadComment,comment} as unknown as QaClient;
+    const view=render(<QaIssueDetail detail={detail} client={client} actor={{id:'admin',role:'admin'}} onRefresh={refresh} onBack={vi.fn()} />);
+    fireEvent.click(document.getElementById('qa-tab-comments')!);
+    const field=screen.getByLabelText(/qa.commentBody/) as HTMLTextAreaElement;
+    fireEvent.change(field,{target:{value:'Original'}});
+    fireEvent.change(view.container.querySelector('input[type=file]')!,{target:{files:[new File(['video'],'proof.mp4',{type:'video/mp4'})]}});
+    fireEvent.click(screen.getByRole('button',{name:'qa.addComment'}));
+    const retry=await screen.findByRole('button',{name:'qa.retryCommand'});
+    const first=comment.mock.calls[0];
+    await waitFor(()=>expect(retry).not.toBeDisabled());fireEvent.click(retry);
+    await waitFor(()=>expect(comment).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'qa.retryCommand'})).not.toBeDisabled());
+    expect(field).toBeDisabled();expect(field.value).toBe('Original');
+    expect(screen.getByRole('button',{name:'commentAttachments.remove'})).toBeDisabled();
+    expect(comment.mock.calls[1]).toEqual(first);expect(uploadComment).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button',{name:'qa.retryCommand'}));
+    await waitFor(()=>expect(refresh).toHaveBeenCalledTimes(1));
+    expect(comment.mock.calls[2]).toEqual(first);expect(uploadComment).toHaveBeenCalledTimes(1);
+  });
+});

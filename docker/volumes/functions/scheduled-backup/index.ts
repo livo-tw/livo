@@ -153,6 +153,12 @@ Deno.serve(async (req) => {
 
     const backup: Record<string, any[]> = {};
     backup.kb_backup_manifest=[{status:'excluded_requires_server_backup',scope:'knowledge_pages_revisions_permissions_private_storage',complete_workspace_backup:false}];
+    let retainedMetadata: number | null = null;
+    try {
+      const inventory = await supabase.from('task_comment_uploads').select('id',{count:'exact',head:true}).eq('workspace_id','default').neq('state','aborted');
+      if (!inventory.error && typeof inventory.count === 'number' && Number.isSafeInteger(inventory.count) && inventory.count >= 0) retainedMetadata = inventory.count;
+    } catch { /* Preserve unknown coverage without exposing private row contents. */ }
+    backup.task_comment_backup_manifest=[{kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata,coverageKnown:retainedMetadata!==null,privateObjectBytesExcluded:true,excludedTables:['task_comment_uploads','task_comment_commands'],commandReceiptsExcluded:true,commandReceiptsNeverReplayed:true}];
     for (const table of tables) {
       if (table.startsWith('qa_') || table.startsWith('approval_') || table.startsWith('release_') || ['task_deadline_history', 'task_reminder_preferences','task_work_events','task_work_receipts'].includes(table)) {
         // QA tables are service-only. Include every metadata page; storage

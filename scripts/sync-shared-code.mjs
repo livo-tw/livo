@@ -16,6 +16,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SHARED = [
+  { source:'src/lib/taskCommentAttachmentCore.ts', copies:['worker/src/taskCommentAttachmentCore.ts','docker/volumes/functions/task-comments/core.ts','supabase/functions/task-comments/core.ts'] },
+  ...['index.ts','service.ts'].map(file=>({source:`docker/volumes/functions/task-comments/${file}`,copies:[`supabase/functions/task-comments/${file}`]})),
+  { source:'docker/volumes/functions/qa-upload-cleanup/taskCommentCleanup.ts', copies:['supabase/functions/qa-upload-cleanup/taskCommentCleanup.ts'] },
   { source:'src/lib/slackTaskUnfurl.ts', copies:['worker/src/slackTaskUnfurl.ts','docker/volumes/functions/slack-interact/slackTaskUnfurl.ts','supabase/functions/slack-interact/slackTaskUnfurl.ts'] },
   { source:'src/lib/slackTaskRoutes.ts', copies:['worker/src/slackTaskRoutes.ts','docker/volumes/functions/slack-interact/slackTaskRoutes.ts','supabase/functions/slack-interact/slackTaskRoutes.ts','docker/volumes/functions/slack-deliver/slackTaskRoutes.ts','supabase/functions/slack-deliver/slackTaskRoutes.ts'] },
   { source:'src/lib/slackNotifyCore.ts', copies:['docker/volumes/functions/slack-interact/slackNotifyCore.ts','supabase/functions/slack-interact/slackNotifyCore.ts'] },

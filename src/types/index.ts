@@ -72,6 +72,8 @@ export interface Task {
   createdAt: string;
   commentCount: number;
   attachmentCount: number;
+  /** False keeps an unreadable attachment aggregate distinct from zero. */
+  attachmentSummaryKnown?: boolean;
   deployments: TaskDeployment[];
   sprintId?: string;
   department?: string;

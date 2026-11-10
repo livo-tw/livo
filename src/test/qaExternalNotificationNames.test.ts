@@ -45,6 +45,8 @@ describe('external QA notification participant labels', () => {
     const message = qaNotificationMessage(state!, created, 'https://example.com');
     expect(message.text).toContain('操作人：Example external tester');
     expect(message.text).toContain('修復：未指定｜驗證：Example external tester');
+    expect(message.blocks[0].text.text).toContain('操作人：Example external tester');
+    expect(message.blocks[0].text.text).toContain('修復：未指定｜驗證：Example external tester');
     expect(message.text).not.toContain('未知成員');
     expect(message.text).not.toContain('eqa-reporter');
     expect(message.text).toContain('*修復部署與驗證*\n尚未回報修復與部署，完成後由指定 QA 驗證。');
@@ -104,6 +106,29 @@ describe('external QA notification participant labels', () => {
     expect(message.text).not.toContain('Wrong external label');
     expect(state!.members).toEqual(internal);
     expect(db.rows.mock.calls.some(([table]) => table === 'external_qa_accounts')).toBe(false);
+  });
+
+  it('renders an eqa-looking internal actor and an external QA owner with their own names in both Slack formats', async () => {
+    const member = { id: 'eqa-internal', name: 'Example internal member', role: 'member', is_active: true };
+    const current: QaIssue = { ...issue, reporterId: member.id, assigneeId: 'member-example', qaOwnerId: 'eqa-reporter' };
+    const members = [...internal, member];
+    const db = database(current, members, [...external, { id: member.id, name: 'Wrong external identity', is_active: true }]);
+    const state = await loadQaDeliveryState(db as unknown as Database, issue.id, 'created', '', member.id);
+    const message = qaNotificationMessage(state!, { ...created, payload: { ...created.payload, actorId: member.id } }, 'https://example.com');
+
+    for (const summary of [message.text, message.blocks[0].text.text]) {
+      expect(summary).toContain('操作人：Example internal member');
+      expect(summary).toContain('修復：Example coordinator｜驗證：Example external tester');
+      expect(summary).not.toContain('Wrong external identity');
+      expect(summary).not.toContain('未知成員');
+      expect(summary).not.toContain(member.id);
+      expect(summary).not.toContain('eqa-reporter');
+    }
+    expect(state!.members).toEqual(members);
+    expect(state!.memberNames?.[member.id]).toBe(member.name);
+    expect(db.rows).toHaveBeenCalledWith('external_qa_accounts', {
+      select: 'id,name', id: 'in.(eqa-reporter)', limit: '20',
+    });
   });
 
   it('limits external name requests to valid referenced ids and keeps unresolved identities redacted', async () => {

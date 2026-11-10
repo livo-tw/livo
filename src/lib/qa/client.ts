@@ -1,6 +1,7 @@
 import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { createClient } from '@supabase/supabase-js';
 import { fnUrl } from '@/lib/apiBase';
+import { observeApiFetch } from '@/lib/apiReachability';
 import { SUPABASE_URL } from '@/lib/gatewayUrl';
 import { parseQaWorkflow, validateQaWorkflow, type QaWorkflow } from './workflow';
 import { parseQaManualStateVisibility, validateQaManualStateVisibility, type QaManualStateVisibility } from './manualStateVisibility';
@@ -8,7 +9,7 @@ import { defaultQaDisplaySettings, validateQaDisplaySettings, type QaDisplaySett
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, canQaDelete, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, QaError } from './domain';
+import { applyQaCommand, canQaDelete, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, qaCommentAttachmentIds, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload, QaCoordination } from './domain';
 
 export class QaClientError extends Error {
@@ -19,6 +20,7 @@ const qaInvalidFilter = (): never => { throw new QaError('qa_invalid_filter'); }
 // Demo data never leaves this tab or enters the real task tables.
 const demoIssues = new Map<string, QaDetail>();
 const demoFiles = new Map<string, Blob>();
+const demoPendingAttachments = new Map<string, { attachment: QaAttachment; workspaceId: string }>();
 const demoCommands = new Map<string, unknown>();
 const demoCommandPayloads = new Map<string,string>();
 const demoCoordination = new Map<string, QaCoordination>();
@@ -35,7 +37,7 @@ export function qaThrowIfAborted(signal?: AbortSignal): void {
 
 /** A draft keeps this in memory across retries; never persist signed capabilities. */
 export interface QaUploadResume {
-  issueId?: string; file?: File; upload?: QaUpload; attachment?: QaAttachment;
+  issueId?: string; file?: File; upload?: QaUpload; attachment?: QaAttachment; purpose?: 'issue' | 'comment';
   parts?: Array<{ partNumber: number; etag: string }>;
 }
 const commonFileTypes: Record<string, string[]> = {
@@ -56,7 +58,7 @@ export function qaValidateUploadFile(file: File): 'file_size' | 'file_type' | 'f
 }
 
 export type QaProjectPerson = { id: string; name: string; avatar?: string; color?: string; jobTitle?: string; isActive: boolean; isExternal?: boolean };
-export type QaFilterPerson = { id: string; name: string; isActive: boolean };
+export type QaFilterPerson = QaProjectPerson;
 export type QaTaskReference = { id: string; taskKey: string; title: string };
 
 export interface QaClientOptions { enabled: () => boolean; context: () => QaContext; mock?: boolean; }
@@ -85,7 +87,8 @@ export function createQaClient(options: QaClientOptions) {
   };
   const request = async <T,>(action: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
     const authHeaders = await headers();
-    const response = await checkResponse(await fetch(fnUrl('qa'), { method: 'POST', signal, headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...body }) }));
+    const url = fnUrl('qa');
+    const response = await checkResponse(await observeApiFetch(() => fetch(url, { method: 'POST', cache: 'no-store', signal, headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...body }) }), new URL(url, document.baseURI).origin, signal));
     return response.json();
   };
   const demoOnce = <T,>(commandId: string, work: () => T, payload?:unknown): T => {
@@ -251,28 +254,39 @@ export function createQaClient(options: QaClientOptions) {
       if (!canQaDelete(detail.issue, options.context().actor)) throw new QaClientError('qa_forbidden', 403);
       demoIssues.delete(issue.id);
     },
-    async comment(id: string, body: string, commandId = qaId()): Promise<QaComment> {
+    async comment(id: string, body: string, commandId = qaId(), inputAttachmentIds: string[] = []): Promise<QaComment> {
       ensureEnabled();
-      if (!mock) return request('comment', { id, commandId, body });
+      const attachmentIds = qaCommentAttachmentIds(inputAttachmentIds);
+      if ((!body.trim() && !attachmentIds.length) || body.length > 20000) throw new QaError('qa_invalid_comment');
+      if (!mock) return request('comment', { id, commandId, body, attachmentIds });
       return demoOnce(commandId, () => {
-        const ctx = options.context();
-        if (!body.trim() || body.length > 10000) throw new QaError('invalid_comment');
-        const comment = { id: qaId(), issueId: id, body: body.trim(), actorId: ctx.actor.id, createdAt: ctx.now };
-        getDemo(id).comments.push(comment); return comment;
-      });
+        const ctx = options.context(), detail = getDemo(id);
+        const files = attachmentIds.map(fileId => {
+          const pending = demoPendingAttachments.get(fileId);
+          if (!pending || pending.workspaceId !== ctx.workspaceId || pending.attachment.issueId !== id || pending.attachment.uploadedBy !== ctx.actor.id) throw new QaError('qa_invalid_comment_attachments');
+          return pending.attachment;
+        });
+        const comment = { id: qaId(), issueId: id, body: body.trim(), actorId: ctx.actor.id, createdAt: ctx.now, attachmentIds };
+        detail.comments.push(comment);
+        for (const file of files) { detail.attachments.push({ ...file, commentId: comment.id }); demoPendingAttachments.delete(file.id); }
+        return comment;
+      }, { id, body, attachmentIds });
     },
-    async upload(id: string, file: File, onProgress?: (percent: number) => void, signal?: AbortSignal, resume: QaUploadResume = {}): Promise<QaAttachment> {
+    async uploadComment(id: string, file: File, onProgress?: (percent: number) => void, signal?: AbortSignal, resume: QaUploadResume = {}): Promise<QaAttachment> {
+      return api.upload(id, file, onProgress, signal, resume, 'comment');
+    },
+    async upload(id: string, file: File, onProgress?: (percent: number) => void, signal?: AbortSignal, resume: QaUploadResume = {}, purpose: 'issue' | 'comment' = 'issue'): Promise<QaAttachment> {
       ensureEnabled();
       qaThrowIfAborted(signal);
       const fileError = qaValidateUploadFile(file);
       if (fileError) throw new QaClientError(fileError, 400);
-      if ((resume.file && resume.file !== file) || (resume.issueId && resume.issueId !== id)) throw new QaClientError('invalid_upload', 400);
-      resume.file = file; resume.issueId = id;
+      if ((resume.file && resume.file !== file) || (resume.issueId && resume.issueId !== id) || (resume.purpose && resume.purpose !== purpose)) throw new QaClientError('invalid_upload', 400);
+      resume.file = file; resume.issueId = id; resume.purpose = purpose;
       if (resume.attachment) { onProgress?.(100); return resume.attachment; }
       onProgress?.(0);
       if (mock) {
         const ctx = options.context(), attachment = { id: qaId(), issueId: id, fileName: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, uploadedBy: ctx.actor.id, createdAt: ctx.now };
-        getDemo(id).attachments.push(attachment); demoFiles.set(attachment.id, file); resume.attachment = clone(attachment); onProgress?.(100); return clone(attachment);
+        if (purpose === 'comment') demoPendingAttachments.set(attachment.id, { attachment, workspaceId: ctx.workspaceId }); else getDemo(id).attachments.push(attachment); demoFiles.set(attachment.id, file); resume.attachment = clone(attachment); onProgress?.(100); return clone(attachment);
       }
       const complete = async () => {
         const result = await request<QaAttachment>('upload_complete', { uploadId: resume.upload!.id,
@@ -294,7 +308,7 @@ export function createQaClient(options: QaClientOptions) {
           } else if (code !== 'qa_upload_incomplete' && code !== 'upload_incomplete') throw error;
         }
       }
-      if (!resume.upload) resume.upload = await request<QaUpload>('upload_init', { id, fileName: file.name, mimeType: file.type, size: file.size }, signal);
+      if (!resume.upload) resume.upload = await request<QaUpload>('upload_init', { id, fileName: file.name, mimeType: file.type, size: file.size, purpose }, signal);
       const upload = resume.upload;
       const parts = resume.parts ??= [];
       if (upload.provider === 'supabase') {
@@ -330,6 +344,8 @@ export function createQaClient(options: QaClientOptions) {
     async download(attachmentId: string, signal?: AbortSignal): Promise<Blob> {
       ensureEnabled();
       if (mock) {
+        const pending = demoPendingAttachments.get(attachmentId);
+        if (pending && (pending.workspaceId !== options.context().workspaceId || pending.attachment.uploadedBy !== options.context().actor.id)) throw new QaClientError('not_found', 404);
         const file = demoFiles.get(attachmentId);
         if (!file) throw new QaClientError('not_found', 404);
         return file;

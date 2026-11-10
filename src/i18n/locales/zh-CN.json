@@ -1862,6 +1862,18 @@
     }
   },
   "integrations": {
+    "slackPreviews": {
+      "title": "粘贴卡片链接预览",
+      "projectRoutes": "使用项目通知频道",
+      "internalChannels": "已加入的内部频道",
+      "projectHint": "在已设置该项目任务或 Bug 通知的 Slack 频道显示卡片预览。",
+      "internalHint": "有权限的卡片可在 LIVO 机器人已加入的内部频道预览。私信、群组私信及外部共享频道只显示普通链接。",
+      "notificationsHint": "自动通知仍按任务和 Bug 的通知频道设置发送。",
+      "adminOnly": "只有超级管理员可以设置卡片链接预览范围。",
+      "loadFailed": "无法确认当前预览设置，请重新读取。",
+      "saved": "卡片链接预览设置已保存。",
+      "requirementsHint": "当前需要先完成现有的 Slack 启用和工作区设置；此处保存的是卡片预览的频道范围。"
+    },
     "title": "服务整合",
     "desc": "设定外部服务的连接与通知行为",
     "servicesTab": "服务整合",
@@ -4489,5 +4501,31 @@
       "network_failed": "无法连接，请确认网络后重试。",
       "invalid_response": "服务器回复异常，请刷新后重试。"
     }
+  },
+  "commentAttachments": {
+    "heading": "评论附件",
+    "add": "添加附件",
+    "drop": "点击或拖放图片、视频或文件",
+    "hint": "每个文件上限 200 MB，最多 {{count}} 个附件。",
+    "countLimit": "每条评论最多可添加 {{count}} 个文件。",
+    "preview": "预览 {{name}}",
+    "remove": "移除 {{name}}",
+    "progress": "上传进度 {{percent}}%",
+    "retry": "重试未完成附件",
+    "closePreview": "关闭预览",
+    "loading": "加载中…",
+    "view": "查看／下载",
+    "download": "下载",
+    "cancelDownload": "取消下载",
+    "pendingReceipt": "提交结果尚待确认。重试会核对同一条评论，不会重复添加。",
+    "status": {
+      "pending": "待上传",
+      "uploading": "上传中",
+      "complete": "已上传，待提交评论",
+      "failed": "上传失败"
+    },
+    "backupCoverage": "JSON／CSV 导出不包含普通任务评论私有附件的保留记录与文件；完整恢复需要数据库与私有存储备份。",
+    "restoreBlockedPrivate": "工作区仍有普通任务评论私有附件或上传保留记录，已停止破坏式 JSON 恢复。请使用完整数据库与私有存储备份。",
+    "restoreCoverageUnknown": "无法确认普通任务评论私有附件的备份范围，已停止恢复。请稍后重试或使用完整数据库与私有存储备份。"
   }
 }

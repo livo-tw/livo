@@ -1,7 +1,7 @@
 import { parseDeploymentEnvironments } from './environments.ts';
-import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, QA_MAX_FILE_BYTES, QA_STATES,
+import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, qaCommentAttachmentIds, QA_MAX_FILE_BYTES, QA_STATES,
   type QaAttachment, type QaCommand, type QaContext, type QaCreateInput, type QaIssue,
-  type QaListInput, type QaListResult } from './domain.ts';
+  type QaListInput, type QaListResult, type QaPersonProfile } from './domain.ts';
 import { validateQaBackup } from './restore.ts';
 import { syncQaSlackIssue } from './slackSync.ts';
 import { parseQaWorkflow, validateQaWorkflow } from './workflow.ts';
@@ -42,7 +42,7 @@ function databaseError(body: Row, status: number): never {
   const message = String(body.message || '');
   const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
   if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
-  const known = ['qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
+  const known = ['qa_invalid_comment_attachments', 'qa_attachment_not_found', 'qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
     'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request',
     'qa_invalid_environment','qa_invalid_date','qa_invalid_priority','qa_task_unavailable','qa_duplicate_unavailable','qa_not_deployed'];
   const code = known.find(code => message.includes(code));
@@ -80,7 +80,7 @@ class Store {
 
 export function attachment(row: Row): QaAttachment {
   return { id: row.id, issueId: row.issue_id, fileName: row.file_name, mimeType: row.mime_type,
-    size: Number(row.size), uploadedBy: row.uploaded_by, createdAt: row.created_at };
+    size: Number(row.size), uploadedBy: row.uploaded_by, createdAt: row.created_at, commentId: row.comment_id ?? null };
 }
 
 /** Reusable by the HTTP handler and by Slack's verified short-lived member JWT.
@@ -129,8 +129,26 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
   const externalRead = (actor: Row, action: string, input: Row = {}) => db.rpc('livo_qa_external_read', {
     p_auth_id: actor.authId, p_action: action, p_input: input,
   });
+  const displayProfile = (person: Row, isExternal: boolean): QaPersonProfile => ({
+    name: person.name, isExternal,
+    ...Object.fromEntries(['avatar', 'color', 'jobTitle'].flatMap(key =>
+      typeof person[key] === 'string' && person[key].trim() ? [[key, person[key]]] : [])),
+  });
+  const displayMetadata = (memberProfiles: Record<string, QaPersonProfile>) => ({ memberProfiles,
+    memberNames: Object.fromEntries(Object.entries(memberProfiles).map(([id, person]) => [id, person.name])) });
+  async function classifyDirectory(people: Row[]): Promise<Row[]> {
+    const ids = [...new Set(people.map(person => id(person.id)))], internal = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const batch = ids.slice(offset, offset + 100);
+      for (const person of await db.rows('members', { select: 'id', id: `in.(${batch.join(',')})`, limit: 100 }))
+        if (batch.includes(person.id)) internal.add(person.id);
+    }
+    // The owning livo_qa_external_read(profile) RPC unions only members and external_qa_accounts rows.
+    // Its already-authorized IDs are classified without widening the directory.
+    return people.map(person => ({ ...person, isExternal: !internal.has(person.id) }));
+  }
   /** Display metadata for an already-authorized page, never assignment candidates. */
-  async function listMemberNames(issues: QaIssue[]): Promise<Record<string, string>> {
+  async function listMemberProfiles(issues: QaIssue[]): Promise<Record<string, QaPersonProfile>> {
     const byProject = new Map<string, Set<string>>();
     for (const issue of issues) {
       const people = [issue.assigneeId, issue.qaOwnerId].filter((value): value is string =>
@@ -145,8 +163,8 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     // Internal members keep their names even when an id resembles an external id.
     const internal = await db.rows('members', { select: 'id,name', id: `in.(${ids.join(',')})`, limit: ids.length });
     const internalIds = new Set(internal.map(person => person.id));
-    const labels = new Map<string, string>(internal.filter(person => ids.includes(person.id)
-      && typeof person.name === 'string' && person.name.trim()).map(person => [person.id, person.name]));
+    const labels = new Map<string, QaPersonProfile>(internal.filter(person => ids.includes(person.id)
+      && typeof person.name === 'string' && person.name.trim()).map(person => [person.id, displayProfile(person, false)]));
     await Promise.all([...byProject].map(async ([projectId, refs]) => {
       const missing = new Set([...refs].filter(person => !internalIds.has(person)));
       if (!missing.size) return;
@@ -154,11 +172,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       // global external-account scan. Revoked/ungranted strangers stay unknown.
       const roster: Row[] = await db.rpc('livo_qa_external_roster', { p_project_id: projectId });
       for (const person of roster) if (missing.has(person.id) && typeof person.name === 'string' && person.name.trim())
-        labels.set(person.id, person.name);
+        labels.set(person.id, displayProfile(person, true));
     }));
     return Object.fromEntries(labels);
   }
-  async function detailMemberNames(people: string[]): Promise<Record<string, string>> {
+  async function detailMemberProfiles(people: string[]): Promise<Record<string, QaPersonProfile>> {
     const names: Row[] = [];
     for (let offset = 0; offset < people.length; offset += 100) {
       const ids = people.slice(offset, offset + 100);
@@ -170,10 +188,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       }) : [];
       // The authorized detail itself proves these historical participants. An
       // inactive/revoked author stays a named author, never an assignment option.
-      names.push(...internal.filter(person => ids.includes(person.id)), ...external.filter(person => missing.includes(person.id)));
+      names.push(...internal.filter(person => ids.includes(person.id)).map(person => ({ id: person.id, ...displayProfile(person, false) })),
+        ...external.filter(person => missing.includes(person.id)).map(person => ({ id: person.id, ...displayProfile(person, true) })));
     }
     return Object.fromEntries(names.filter(person => typeof person.name === 'string' && person.name.trim())
-      .map(person => [person.id, person.name]));
+      .map(({ id, ...person }) => [id, person as QaPersonProfile]));
   }
   async function getIssue(issueId: string, actor: Row): Promise<QaIssue> {
     if (actor.external) return externalRead(actor, 'issue', { id: id(issueId) });
@@ -267,7 +286,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
   }
   return { async handle(raw: unknown): Promise<any> {
     const request = object(raw), actor = await authenticate(request.action === 'external_profile');
-    if (request.action === 'external_profile') return actor.external ? externalRead(actor, 'profile') : { external: false };
+    if (request.action === 'external_profile') {
+      if (!actor.external) return { external: false };
+      const profile = await externalRead(actor, 'profile');
+      return { ...profile, members: await classifyDirectory(profile.members) };
+    }
     if (actor.external && !EXTERNAL_QA_ACTIONS.has(request.action)) fail('qa_forbidden', 403);
     switch (request.action) {
       case 'task_references': {
@@ -328,8 +351,9 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const offset = request.offset ?? 0, projectIds = request.projectIds;
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000 || projectIds !== undefined &&
           (!Array.isArray(projectIds) || projectIds.length > 1000 || new Set(projectIds).size !== projectIds.length)) fail('qa_invalid_request');
-        return db.rpc('livo_qa_filter_people', { p_auth_id: actor.authId,
+        const page = await db.rpc('livo_qa_filter_people', { p_auth_id: actor.authId,
           p_project_ids: projectIds === undefined ? null : projectIds.map(id), p_offset: offset });
+        return { ...page, members: page.members.map((person: Row) => ({ ...person, isExternal: true })) };
       }
       case 'notification_people': return loadQaNotificationPeople(db, actor.id, request.notificationIds);
       case 'save_coordination': {
@@ -423,15 +447,33 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           // The scoped RPC must finish authorizing/filtering the page before
           // its participant IDs may be used for display metadata.
           const result: QaListResult = await externalRead(actor, 'list', { ...input, ...filters, offset, limit });
-          return { ...result, memberNames: await listMemberNames(result.issues) } satisfies QaListResult;
+          return { ...result, ...displayMetadata(await listMemberProfiles(result.issues)) } satisfies QaListResult;
         }
         const response = await db.raw('/rest/v1/qa_issues', 'GET', undefined, query, { Prefer: 'count=exact' });
         const rows = await response.json(), total = Number(response.headers.get('Content-Range')?.split('/')[1] ?? rows.length);
         const issues: QaIssue[] = rows.map((r: Row) => r.data);
-        return { issues, memberNames: await listMemberNames(issues), total, hasMore: offset + rows.length < total } satisfies QaListResult;
+        return { issues, ...displayMetadata(await listMemberProfiles(issues)), total, hasMore: offset + rows.length < total } satisfies QaListResult;
       }
       case 'get': {
-        if (actor.external) return externalRead(actor, 'get', { id: id(request.id) });
+        if (actor.external) {
+          const detail = await externalRead(actor, 'get', { id: id(request.id) });
+          const issue: QaIssue = detail.issue;
+          const people = [...new Set([issue.reporterId, issue.assigneeId, issue.qaOwnerId, issue.closedBy,
+            issue.handoff?.nextOwnerId, issue.handoff?.requestedBy, issue.handoff?.acceptedBy, issue.handoff?.resolvedBy,
+            ...issue.targets.map(target => target.deployedBy), ...issue.runs.map(run => run.testerId),
+            ...detail.comments.map((row: Row) => row.actorId), ...detail.events.map((row: Row) => row.actorId),
+            ...detail.events.flatMap((row: Row) => qaNotificationReferences(row.type, row.detail).members),
+            ...detail.attachments.map((row: Row) => row.uploadedBy),
+          ].filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value)))];
+          // External viewers keep the owning RPC's existing label scope. Do
+          // not resolve additional comment-only/revoked authors through service role.
+          const existing = people.flatMap(personId => Object.prototype.hasOwnProperty.call(detail.memberNames ?? {}, personId)
+            && typeof detail.memberNames[personId] === 'string' && detail.memberNames[personId].trim()
+            ? [{ id: personId, name: detail.memberNames[personId] }] : []);
+          const classified = await classifyDirectory(existing);
+          return { ...detail, memberProfiles: Object.fromEntries(classified.map(person =>
+            [person.id, displayProfile(person, person.isExternal)])) };
+        }
         const issue = await getIssue(request.id, actor);
         const [comments, events, attachments] = await Promise.all(['qa_comments', 'qa_events', 'qa_attachments'].map(table =>
           db.all(table, { issue_id: `eq.${issue.id}`, order: 'created_at,id' })));
@@ -444,7 +486,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           ...events.flatMap(event => qaNotificationReferences(event.type, event.detail).members),
           ...attachments.map(item => item.uploaded_by),
         ].filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value)))];
-        return { issue, memberNames: await detailMemberNames(people), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
+        return { issue, ...displayMetadata(await detailMemberProfiles(people)), coordination:await coordination(issue.projectId,true), comments: comments.map(c => ({ id: c.id, issueId: c.issue_id, actorId: c.actor_id, body: c.body, createdAt: c.created_at })),
           events: events.map(e => ({ id: e.id, issueId: e.issue_id, actorId: e.actor_id, type: e.type, detail: e.detail, version: e.version, createdAt: e.created_at })),
           attachments: attachments.map(attachment) };
       }
@@ -460,7 +502,9 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const issue = await getIssue(request.id, actor);
         if (request.action === 'comment') {
           if (!canQaComment(issue, { id: actor.id, role: actor.role })) fail('qa_forbidden', 403);
-          const comment = { id: crypto.randomUUID(), issueId: issue.id, actorId: actor.id, body: text(request.body, 20000), createdAt: now() };
+          const attachmentIds = qaCommentAttachmentIds(request.attachmentIds);
+          if (typeof request.body !== 'string' || request.body.length > 20000 || request.body.includes('\0') || (!request.body.trim() && !attachmentIds.length)) fail('qa_invalid_comment');
+          const comment = { id: crypto.randomUUID(), issueId: issue.id, actorId: actor.id, body: request.body.trim(), attachmentIds, createdAt: now() };
           return commit(actor, request, hash, comment, 'comment', 'comment', issue);
         }
         if (!Number.isInteger(request.expectedVersion) || request.expectedVersion < 1) fail('qa_invalid_version');
@@ -488,12 +532,13 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       case 'upload_init': {
         const issue = await getIssue(request.id, actor), fileName = text(request.fileName, 255), mimeType = text(request.mimeType, 100).toLowerCase();
         if (/[\\/\r\n]/.test(fileName) || !MIMES.has(mimeType) || !Number.isSafeInteger(request.size) || request.size < 1 || request.size > QA_MAX_FILE_BYTES) fail('qa_invalid_file');
+        const purpose = request.purpose ?? 'issue'; if (!['issue', 'comment'].includes(purpose)) fail('qa_invalid_file');
         const uploadId = crypto.randomUUID(), path = `default/${issue.id}/${uploadId}`, createdAt = now();
         if (actor.external) await db.rpc('livo_qa_external_reserve_upload', {
-          p_auth_id: actor.authId, p_issue_id: issue.id, p_upload_id: uploadId, p_name: fileName, p_mime: mimeType, p_size: request.size,
+          p_auth_id: actor.authId, p_issue_id: issue.id, p_upload_id: uploadId, p_name: fileName, p_mime: mimeType, p_size: request.size, p_purpose: purpose,
         });
         else await db.request('/rest/v1/qa_uploads', 'POST', { id: uploadId, workspace_id: WORKSPACE, issue_id: issue.id, actor_id: actor.id,
-          file_name: fileName, mime_type: mimeType, size: request.size, storage_path: path, created_at: createdAt,
+          file_name: fileName, mime_type: mimeType, size: request.size, storage_path: path, created_at: createdAt, purpose,
           expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() });
         const signed = await db.request(`/storage/v1/object/upload/sign/${BUCKET}/${storagePath(path)}`, 'POST', {});
         const token = new URL(signed.url, env.get('SUPABASE_URL')).searchParams.get('token');
@@ -503,8 +548,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
       case 'upload_complete': return attachment(await db.rpc('livo_qa_finalize_upload', { p_auth_id: actor.authId, p_upload_id: id(request.uploadId) }));
       case 'download': {
         const attachmentId = id(request.attachmentId);
-        const row = actor.external ? await externalRead(actor, 'attachment', { attachmentId })
-          : (await db.qaRows('qa_attachments', { select: '*', id: `eq.${attachmentId}`, limit: 1 }))[0];
+        const row = await db.rpc('livo_qa_attachment_for_download', { p_auth_id: actor.authId, p_attachment_id: attachmentId });
         if (!row) fail('qa_attachment_not_found', 404);
         if (!actor.external) await getIssue(row.issue_id, actor);
         const response = await db.raw(`/storage/v1/object/authenticated/${BUCKET}/${storagePath(row.storage_path)}`, 'GET', undefined, {}, {}, 300000);

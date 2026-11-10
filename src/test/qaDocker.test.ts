@@ -166,7 +166,7 @@ describe('Docker submit QA verification', () => {
     expect(calls.some(call => call.url.pathname.endsWith('/rpc/livo_qa_commit'))).toBe(false);
   });
 
-  it.each(['qa_invalid_environment', 'qa_invalid_date', 'qa_invalid_priority', 'qa_task_unavailable', 'qa_duplicate_unavailable', 'qa_not_deployed'])
+  it.each(['qa_invalid_environment', 'qa_invalid_date', 'qa_invalid_priority', 'qa_task_unavailable', 'qa_duplicate_unavailable', 'qa_not_deployed', 'qa_invalid_comment_attachments'])
     ('preserves actionable transaction-time rejection %s instead of reporting storage failure', async code => {
       rpcError = { code: '22023', message: code };
       await expect(service().handle(request())).rejects.toMatchObject({ code, status: 400 });
@@ -576,4 +576,11 @@ it('classifies project people using actual membership, including internal eqa-pr
     members: [{ ...externalPeople[0], isExternal: false }, { ...externalPeople[1], isExternal: true }] });
   const directory = calls.filter(call => call.url.pathname === '/rest/v1/members' && call.url.searchParams.get('id')?.startsWith('in.'));
   expect(directory).toHaveLength(1); expect(directory[0].url.searchParams.get('select')).toBe('id');
+});
+
+describe('Docker QA comment attachment backup references', () => {
+  const snapshot=()=>({...emptyBackup(),qa_issues:[issueRow()],qa_comments:[{id:'comment1',workspace_id:'default',issue_id:'issue-1',actor_id:'member-1',body:'',created_at:context.now}],qa_attachments:[{id:'file1',workspace_id:'default',issue_id:'issue-1',uploaded_by:'member-1',file_name:'example.png',mime_type:'image/png',size:7,storage_path:'default/issue-1/file1',created_at:context.now,comment_id:'comment1'}]});
+  it('round-trips an attachment-only comment without inventing a text body',()=>{const backup=snapshot();expect(validateQaBackup(backup)).toBe(backup);expect(backup.qa_attachments[0].comment_id).toBe('comment1');expect(backup.qa_comments[0].body).toBe('');});
+  it.each(['missing','wrong-issue','wrong-actor'])('rejects a broken %s association before invoking SQL restore',kind=>{const backup=snapshot();if(kind==='missing')backup.qa_attachments[0].comment_id='missing';else if(kind==='wrong-issue')backup.qa_attachments[0].issue_id='another';else backup.qa_attachments[0].uploaded_by='member-2';expect(()=>validateQaBackup(backup)).toThrow('qa_invalid_backup');});
+  it('does not allow empty unlinked comments',()=>{const backup=snapshot();backup.qa_attachments=[];expect(()=>validateQaBackup(backup)).toThrow('qa_invalid_backup');});
 });

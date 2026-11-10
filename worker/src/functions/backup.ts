@@ -46,11 +46,22 @@ interface BackupResult {
   slackNotified: boolean;
 }
 
+/** No private object paths, capabilities or command payloads enter the JSON manifest. */
+export async function taskCommentBackupManifest(env: Pick<Env, 'DB'>, ws: string): Promise<Record<string, unknown>> {
+  let retainedMetadata: number | null = null;
+  try {
+    const row = await env.DB.prepare("SELECT count(*) AS retained FROM task_comment_uploads WHERE workspace_id=? AND state<>'aborted'").bind(ws).first<{retained:number}>();
+    if (typeof row?.retained === 'number' && Number.isSafeInteger(row.retained) && row.retained >= 0) retainedMetadata = row.retained;
+  } catch { /* An unknown inventory is explicitly unknown, never zero. */ }
+  return {kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata,coverageKnown:retainedMetadata!==null,privateObjectBytesExcluded:true,excludedTables:['task_comment_uploads','task_comment_commands'],commandReceiptsExcluded:true,commandReceiptsNeverReplayed:true};
+}
+
 // ── Core backup ───────────────────────────────────────────────────────────
 
 async function performBackup(env: Env, ws: string, isManual: boolean): Promise<BackupResult> {
   const backup: Record<string, Record<string, unknown>[]> = {};
   backup.kb_backup_manifest=[{status:'excluded_requires_server_backup',scope:'knowledge_pages_revisions_permissions_private_storage',complete_workspace_backup:false}];
+  backup.task_comment_backup_manifest=[await taskCommentBackupManifest(env,ws)];
   for (const table of BACKUP_TABLES) {
     if (!IDENT_RE.test(table)) continue; // defense in depth (list is static)
     const meta = TABLES[table] ?? FALLBACK_META;

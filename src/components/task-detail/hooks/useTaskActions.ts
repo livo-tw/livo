@@ -7,7 +7,8 @@ import { logActivity } from '@/lib/activityLog';
 import i18n from '@/i18n';
 import { createNotification, type EnvName } from '../utils';
 import type { Task, Status, User, Project, TaskCustomFieldValue } from '@/types';
-import { copyText } from '@/lib/clipboard';
+import { copyCardLink } from '@/lib/clipboard';
+import { taskDeepLinkUrl } from '@/lib/appDeepLink';
 import { showTaskCreatedToast } from '@/lib/taskCreatedToast';
 import { applyTaskUpdate } from '@/lib/taskWork/projectMove';
 
@@ -191,8 +192,8 @@ export function useTaskActions(params: UseTaskActionsParams) {
 
   const handleCopyLink = () => {
     if (!task) return;
-    const url = `${window.location.origin}${import.meta.env.BASE_URL}?task=${task.taskKey}`;
-    void copyText(url).then(ok => {
+    const url = taskDeepLinkUrl(task.id);
+    void copyCardLink(url, `${task.taskKey} · ${task.title}`).then(ok => {
       if (ok) toast.success(i18n.t('task.linkCopied'));
       else toast.error(i18n.t('common.copyFailed'), { description: url });
     });

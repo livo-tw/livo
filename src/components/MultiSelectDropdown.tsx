@@ -128,7 +128,7 @@ const MultiSelectDropdown = memo(({ label, options, selected, onToggle }: MultiS
                   {opt.avatar && (
                     <div
                       className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
-                      style={{ backgroundColor: opt.avatarColor || '#6B778C' }}
+                      aria-hidden="true" style={{ backgroundColor: opt.avatarColor || '#6B778C' }}
                     >
                       {opt.avatar}
                     </div>

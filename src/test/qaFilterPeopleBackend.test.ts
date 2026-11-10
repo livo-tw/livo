@@ -30,7 +30,7 @@ describe('QA historical filter display directory', () => {
   it.each<{ projectIds?: string[] }>([{ projectIds: undefined }, { projectIds: [] }, { projectIds: ['project-example'] }])('forwards the verified caller and exact project scope $projectIds', async ({ projectIds }) => {
     const result = await service().handle({ action: 'filter_people', projectIds, offset: 100,
       actorId: 'spoofed-member', authId: 'spoofed-login', workspaceId: 'other-workspace' });
-    expect(result).toEqual({ members: [{ id: 'eqa-example', name: 'Example tester', isActive: false }], hasMore: false });
+    expect(result).toEqual({ members: [{ id: 'eqa-example', name: 'Example tester', isActive: false, isExternal: true }], hasMore: false });
     expect(calls.find(call => call.path.endsWith('/livo_qa_filter_people'))!.body).toEqual({
       p_auth_id: authId, p_project_ids: projectIds === undefined ? null : projectIds, p_offset: 100,
     });

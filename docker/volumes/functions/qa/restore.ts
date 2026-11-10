@@ -71,13 +71,14 @@ export function validateQaBackup(input: unknown): Record<string, any> {
         id(row.issue_id); date(row.created_at);
         if (table !== 'qa_slack_links') id(row.actor_id ?? row.uploaded_by);
         else { str(row.team_id, 100, true); str(row.channel_id, 100, true); str(row.thread_ts, 100, true); str(row.card_ts, 100, true); }
-        if (table === 'qa_comments') str(row.body, 20000, true);
+        if (table === 'qa_comments') str(row.body, 20000);
         if (table === 'qa_events') { integer(row.version, 1); str(row.type, 100, true); str(row.detail, 20000); }
         if (table === 'qa_commands' && (!/^[A-Za-z0-9][A-Za-z0-9_:-]{7,199}$/.test(row.id) || !/^[a-f0-9]{64}$/.test(row.payload_hash) || !row.response)) bad();
         if (table === 'qa_uploads' || table === 'qa_attachments') {
           integer(Number(row.size), 1, QA_MAX_FILE_BYTES); str(row.file_name, 255, true); str(row.mime_type, 100, true);
           if (row.storage_path !== `default/${row.issue_id}/${row.id}`) bad();
-          if (table === 'qa_uploads') { date(row.expires_at); date(row.completed_at, true); }
+          if (table === 'qa_uploads') { row.purpose ??= 'issue'; if (!['issue', 'comment'].includes(row.purpose)) bad(); date(row.expires_at); date(row.completed_at, true); }
+          if (table === 'qa_attachments' && row.comment_id != null) id(row.comment_id);
         }
       }
     }
@@ -88,6 +89,14 @@ export function validateQaBackup(input: unknown): Record<string, any> {
       if(table==='qa_project_coordination'){if(row.coordinator_id!==null)id(row.coordinator_id);integer(row.version,1);id(row.updated_by);date(row.updated_at);}
       else{id(row.project_id);id(row.actor_id);str(row.payload_hash,64,true);record(row.response);date(row.created_at);}
     }tables[table]=rows;
+  }
+  for (const attachment of tables.qa_attachments) {
+    if (attachment.comment_id == null) continue;
+    const comment = tables.qa_comments.find((row: Record<string, any>) => row.id === attachment.comment_id);
+    if (!comment || comment.issue_id !== attachment.issue_id || comment.actor_id !== attachment.uploaded_by) bad();
+  }
+  for (const comment of tables.qa_comments) {
+    if (!comment.body.trim() && !tables.qa_attachments.some((row: Record<string, any>) => row.comment_id === comment.id && row.issue_id === comment.issue_id && row.uploaded_by === comment.actor_id)) bad();
   }
   return tables;
 }

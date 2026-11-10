@@ -1,3 +1,5 @@
+import QaPersonBadge from './QaPersonBadge';
+import { qaPersonDisplay, qaScopedProfile } from '@/lib/qa/peopleDisplay';
 import { qaRepairAssigneeOptions } from '@/lib/qa/assignmentPeople';
 import { sortComments } from '@/lib/commentOrdering';
 import { useCommentOrder } from '@/hooks/useCommentOrder';
@@ -32,7 +34,10 @@ import type { QaActor, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/l
 import type { QaClient } from '@/lib/qa/client';
 import type { QaWorkflow } from '@/lib/qa/workflow';
 import type { QaActionDefaults } from '@/lib/qa/boardInteraction';
-import { qaId } from '@/lib/qa/client';
+import { qaId, QaClientError } from '@/lib/qa/client';
+import { CommentAttachmentPicker } from '@/components/comments/CommentAttachmentPicker';
+import { CommentAttachmentList } from '@/components/comments/CommentAttachmentList';
+import { useQaDraftFiles, uploadQaDraftFiles } from './QaDraftAttachments';
 import { QaField, QaSection, QaSelect, qaButton, qaPrimary } from './QaFields';
 import QaReportForm from './QaReportForm';
 import QaAttachments from './QaAttachments';
@@ -101,6 +106,12 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const [notice, setNotice] = useState('');
   const [tab, setTab] = useState<'details' | 'verification' | 'comments' | 'history'>(initialAction === 'record_verification' || initialAction === 'record_deployment' ? 'verification' : 'details');
   const [comment, setComment] = useState('');
+  const commentFiles = useQaDraftFiles();
+  const commentUpload = useRef<AbortController>();
+  const commentSending = useRef(false);
+  const commentScope = `${issue.id}:${baseActor.id}`;
+  const currentCommentScope = useRef(commentScope); currentCommentScope.current = commentScope;
+  const downloadCommentAttachment = useCallback((id: string, signal: AbortSignal) => client.download(id, signal), [client]);
   const canResolveFixed = isHistoricalQaPass(issue) || (['verified', 'verification'].includes(issue.state) && requiredTargetsPassed(issue));
   const [resolution, setResolution] = useState<QaResolution | ''>(() => initialDefaults?.resolution === 'wont_fix' ? 'wont_fix' : canResolveFixed ? 'fixed' : '');
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -112,7 +123,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     if (previous.has(id) === dirty) return previous;
     const next = new Set(previous); if (dirty) next.add(id); else next.delete(id); return next;
   }), []);
-  const refreshBlocked = busy || !!action || handoffOpen || comment !== '' || drafts.size > 0;
+  const refreshBlocked = busy || !!action || handoffOpen || comment !== '' || commentFiles.files.length > 0 || drafts.size > 0;
   useLayoutEffect(() => { onRefreshBlockedChange?.(refreshBlocked); return () => onRefreshBlockedChange?.(false); }, [onRefreshBlockedChange, refreshBlocked]);
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
@@ -136,7 +147,18 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   const versions = useQaVersions(client, action === 'submit_fix' ? issue.projectId : '');
   const pendingCommand = useRef<{ signature: string; id: string; command: QaCommand; issue: QaDetail['issue'] }>();
   const commandSending = useRef(false);
-  const pendingComment = useRef<{ body: string; id: string }>();
+  const pendingComment = useRef<{ body: string; id: string; attachmentIds: string[]; uncertain?: boolean }>();
+  useEffect(() => {
+    const abort = () => commentUpload.current?.abort();
+    window.addEventListener('livo:qa-abort', abort);
+    return () => { abort(); window.removeEventListener('livo:qa-abort', abort); };
+  }, [commentScope, client]);
+  useEffect(() => {
+    pendingComment.current = undefined; setUnknownCommand(false); setAttachmentBusy(false);
+    if (commentSending.current) { commentSending.current = false; setBusy(false); }
+    for (const file of [...commentFiles.current.current]) commentFiles.remove(file.id);
+    setComment('');
+  }, [commentScope]);
   // Comments have their own tab; the cloud also logs them as events.
   const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import' && event.type !== 'comment' && (!externalQa || event.type !== 'link_tasks'));
   const source = (issue as unknown as { legacySource?: { recordUrl?: string } }).legacySource;
@@ -146,6 +168,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   // Scoped historical names are display labels, never assignment candidates.
   const memberNames = new Map([...Object.entries(detail.memberNames ?? {}), ...[...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name] as const)]);
   const member = (id: string | null) => id ? memberNames.get(id) || t('qa.memberUnavailable') : '—';
+  const personBadge = (id: string | null) => { const person = users.find(user => user.id === id) ?? assignmentOptions?.find(user => user.id === id) ?? qaScopedProfile(detail.memberProfiles, id); return person ? <QaPersonBadge person={person} /> : member(id); };
   const eventText = { t, issue, showSeverity: display.configuration?.showSeverity ?? false, member: (id: string) => memberNames.get(id) ?? id, memberLabel: member, date: displayDate,
     task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
     project: (id: string) => allProjects.find(project => project.id === id)?.name || id,
@@ -290,13 +313,50 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     if (isQaTerminal(state) && !(await confirm({ title: t('qa.terminalConfirmTitle', { status: workflow?.labels[state] || t(`qa.state.${state}`) }), description: t('qa.terminalConfirmDesc') }))) return;
     void send({ type: 'set_state', state });
   };
+  const uploadCommentDrafts = async (signal: AbortSignal) => {
+    await uploadQaDraftFiles({ ...client, upload: client.uploadComment }, issue.id, commentFiles.current.current, signal, commentFiles.update);
+  };
+  const retryCommentUploads = async () => {
+    if (busy || commentSending.current) return;
+    const controller = new AbortController(); commentUpload.current = controller; setAttachmentBusy(true); setError(null);
+    try { await uploadCommentDrafts(controller.signal); }
+    catch (failure) { if (!controller.signal.aborted) setError(failure); }
+    finally { if (!controller.signal.aborted) setAttachmentBusy(false); }
+  };
   const postComment = async (event: React.FormEvent) => {
-    event.preventDefault(); if (commandBusy || attachmentBusy || (unknownCommand && !pendingComment.current) || !comment.trim()) return;
-    setBusy(true); setError(null);
-    if (pendingComment.current?.body !== comment) pendingComment.current = { body: comment, id: qaId() };
-    try { await client.comment(issue.id, comment, pendingComment.current.id); pendingComment.current = undefined; setUnknownCommand(false); setComment(''); await onRefresh(); }
-    catch (failure) { const status = (failure as { status?: number })?.status; if (pendingComment.current) { const unknown = !status || status >= 500; setUnknownCommand(unknown); if (!unknown) pendingComment.current = undefined; } setError(failure); toast.error(t('qa.failed')); }
-    finally { setBusy(false); }
+    event.preventDefault();
+    if (commandBusy || attachmentBusy || commentSending.current || (unknownCommand && !pendingComment.current) || (!comment.trim() && !commentFiles.current.current.length)) return;
+    const scope = commentScope, controller = new AbortController(); commentUpload.current = controller;
+    commentSending.current = true; setBusy(true); setError(null); let submitted = false;
+    try {
+      if (!pendingComment.current) {
+        await uploadCommentDrafts(controller.signal);
+        if (controller.signal.aborted || currentCommentScope.current !== scope) return;
+        const attachmentIds = commentFiles.current.current.map(file => file.resume.attachment!.id);
+        pendingComment.current = { body: comment, id: qaId(), attachmentIds };
+      }
+      const pending = pendingComment.current; submitted = true;
+      await client.comment(issue.id, pending.body, pending.id, pending.attachmentIds);
+      if (controller.signal.aborted || currentCommentScope.current !== scope) return;
+      pendingComment.current = undefined; setUnknownCommand(false); setComment(''); commentFiles.clearCompleted();
+      await onRefresh();
+    } catch (failure) {
+      if (controller.signal.aborted || currentCommentScope.current !== scope) return;
+      const status = (failure as { status?: number })?.status;
+      if (submitted && pendingComment.current) {
+        // A later authorization refusal cannot disprove an earlier response-lost commit.
+        const unknown = pendingComment.current.uncertain === true || !status || status >= 500;
+        pendingComment.current.uncertain = unknown; setUnknownCommand(unknown);
+        if (!unknown) {
+          pendingComment.current = undefined;
+          if ((failure as { code?: string })?.code === 'qa_invalid_comment_attachments') {
+            // The transaction was rejected: revalidate the original reservations on the next attempt.
+            for (const file of commentFiles.current.current) { file.resume.attachment = undefined; commentFiles.update(file.id, { status: 'pending', progress: 0 }); }
+          }
+        }
+      }
+      setError(failure); toast.error(t('qa.failed'));
+    } finally { commentSending.current = false; if (currentCommentScope.current === scope) setBusy(false); }
   };
   const commandRetryNotice = unknownCommand ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div> : null;
   const manualStateChoices = manualStates.configuration ? getQaManualStateChoices(workflow || DEFAULT_QA_WORKFLOW, manualStates.configuration) : [];
@@ -351,7 +411,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {issue.reopenReason && !isQaTerminal(issue.state) && <div className="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"><p className="font-medium">{t('qa.reopenReason')}</p><p className="mt-1 whitespace-pre-wrap break-words"><QaText text={issue.reopenReason} /></p></div>}
           {issue.resolution && <p className="mt-4 whitespace-pre-wrap rounded bg-muted p-3 text-sm">{t(`qa.resolution.${issue.resolution}`)} · {issue.resolutionReason}{issue.duplicateOfId && <> · <a className="underline" href={`?qa=${encodeURIComponent(issue.duplicateOfId)}`}>{issue.duplicateOfId}</a></>}</p>}
         </QaSection>
-        <QaSection title={t('qa.attachments')}>{!externalQa && <QaLegacyAttachments issue={issue} />}<QaAttachments compact issueId={issue.id} attachments={detail.attachments} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
+        <QaSection title={t('qa.attachments')}>{!externalQa && <QaLegacyAttachments issue={issue} />}<QaAttachments compact issueId={issue.id} attachments={detail.attachments.filter(file => !file.commentId)} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
         </>}
         {tab === 'verification' && <>
         <QaSection title={t('qa.targets')}>
@@ -364,19 +424,19 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         </QaSection>
         <QaSection title={t('qa.runs')}>
           {!issue.runs.length && <p className="text-sm text-muted-foreground">{t('qa.noRuns')}</p>}
-          <ol className="space-y-3">{[...issue.runs].reverse().map(run => <li key={run.id} className="rounded border border-border p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{t(`qa.result.${run.result}`)} · {[run.environment, run.component, run.build].filter(Boolean).join(' / ')}</strong><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: run.fixCycle })} · {member(run.testerId)} · {displayDate(run.createdAt)}</span></div><p className="mt-1 whitespace-pre-wrap break-words">{run.note}</p></li>)}</ol>
+          <ol className="space-y-3">{[...issue.runs].reverse().map(run => <li key={run.id} className="rounded border border-border p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{t(`qa.result.${run.result}`)} · {[run.environment, run.component, run.build].filter(Boolean).join(' / ')}</strong><span className="text-xs text-muted-foreground">{t('qa.cycle', { count: run.fixCycle })} · {personBadge(run.testerId)} · {displayDate(run.createdAt)}</span></div><p className="mt-1 whitespace-pre-wrap break-words">{run.note}</p></li>)}</ol>
         </QaSection>
         </>}
         {tab === 'comments' && <>
         <QaSection title={t('qa.comments')}>
           <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
-          <ol className="mb-4 space-y-3">{sortComments(detail.comments, commentOrder).map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{member(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p></li>)}</ol>
-          {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required maxLength={10000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><button className={qaPrimary} disabled={busy || !comment.trim()}>{t('qa.addComment')}</button></form>}
+          <ol className="mb-4 space-y-3">{sortComments(detail.comments, commentOrder).map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{personBadge(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p><CommentAttachmentList attachments={detail.attachments.filter(file => file.commentId === row.id)} download={downloadCommentAttachment} scopeKey={commentScope} onError={setError} /></li>)}</ol>
+          {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required={!commentFiles.files.length} maxLength={20000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><CommentAttachmentPicker files={commentFiles.files} rejected={commentFiles.rejected} busy={busy} onFiles={files => { if (files.length + commentFiles.current.current.length > 10) { setError(new QaClientError('qa_invalid_comment_attachments', 400)); return; } commentFiles.add(files); }} onRemove={commentFiles.remove} onRetry={() => void retryCommentUploads()} /><button className={qaPrimary} disabled={busy || (!comment.trim() && !commentFiles.files.length)}>{t('qa.addComment')}</button></form>}
         </QaSection>
         </>}
         {tab === 'history' && <>
-        <QaSection title={t('qa.history')}><>{!visibleEvents.length && <p className="text-sm text-muted-foreground">{t('qa.noHistory')}</p>}<ol className="space-y-3">{[...visibleEvents].reverse().map(event => { const text = qaEventText(event, eventText); return <li key={event.id} className="text-sm"><p className="font-medium">{qaEventTitle(event, t)} · {member(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{text && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"><QaText text={text} /></p>}</li>; })}</ol></></QaSection>
+        <QaSection title={t('qa.history')}><>{!visibleEvents.length && <p className="text-sm text-muted-foreground">{t('qa.noHistory')}</p>}<ol className="space-y-3">{[...visibleEvents].reverse().map(event => { const text = qaEventText(event, eventText); return <li key={event.id} className="text-sm"><p className="font-medium">{qaEventTitle(event, t)} · {personBadge(event.actorId)}</p><p className="text-xs text-muted-foreground">{displayDate(event.createdAt)}</p>{text && <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground"><QaText text={text} /></p>}</li>; })}</ol></></QaSection>
         </>}
       </div>
       </div>
@@ -384,8 +444,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {!isMobile && actionSection}
         <QaSection title={t('qa.properties')}>
           {!isMobile && stateControl}
-          <QaIssueSidebarFields issue={issue} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} disabled={busy || !can('update_fields')} onCommand={send} />
-          <dl className="mt-4 grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{value || '—'}</dd></div>)}</dl>
+          <QaIssueSidebarFields issue={issue} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} memberProfiles={detail.memberProfiles} disabled={busy || !can('update_fields')} onCommand={send} />
+          <dl className="mt-4 grid gap-4 sm:grid-cols-2">{[['environment', issue.observedEnvironment], ['observedVersion', issue.observedVersion], ['problemArea', issue.component], ['reporter', member(issue.reporterId)]].map(([key, value]) => <div key={key}><dt className="text-xs text-muted-foreground">{t(`qa.${key}`)}</dt><dd className="mt-1 break-words text-sm">{key === 'reporter' ? personBadge(issue.reporterId) : value || '—'}</dd></div>)}</dl>
         </QaSection>
         {fields.configuration && (fields.configuration.fields.length > 0) && <QaSection title={t('qa.customFields.title')}><QaCustomFieldDisplay fields={fields.configuration.fields} values={issue.customFields || {}} /></QaSection>}
         {fields.error !== null && <div role="alert" className="text-sm text-destructive">{t('qa.failed')} <button type="button" className={qaButton} onClick={fields.retry}>{t('qa.refresh')}</button></div>}
@@ -406,8 +466,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {action === 'edit' && can('edit') && <div className="mt-4 flex min-h-0 flex-1 overflow-hidden"><QaReportForm fixedFooter initial={issue} projects={allProjects} productLines={productLines} client={client} busy={busy} onCancel={() => setAction(null)} onSubmit={input => void send({ type: 'edit', title: input.title, actual: input.actual, expected: input.expected || '', steps: input.steps || '', observedEnvironment: input.observedEnvironment, observedVersion: input.observedVersion || '', component: input.component || '', customFields: input.customFields })} /></div>}
           {action && action !== 'edit' && can(action) && <form key={action} className="mt-4 min-h-0 space-y-3 overflow-y-auto overscroll-contain" onSubmit={submitAction}><fieldset disabled={busy || (action === 'triage' && !display.configuration)} className="space-y-3">
             {action === 'triage' && <>
-              <UserSelect label={t('qa.assignee')} name="assigneeId" options={qaRepairAssigneeOptions(assignmentOptions)} required activeOnly disabled={busy} preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} defaultValue={issue.assigneeId || ''} emptyLabel={t('qa.choose')} size="md" />
-              <UserSelect label={t('qa.qaOwner')} name="qaOwnerId" options={assignmentOptions} required activeOnly disabled={busy} preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} defaultValue={issue.qaOwnerId || ''} emptyLabel={t('qa.choose')} size="md" />
+              <UserSelect displayProfile={qaPersonDisplay} label={t('qa.assignee')} name="assigneeId" options={qaRepairAssigneeOptions(assignmentOptions)} required activeOnly disabled={busy} preferredUserIds={getProjectDeveloperPreferenceIds(users, allTasks, issue.projectId, issue.assigneeId)} defaultValue={issue.assigneeId || ''} emptyLabel={t('qa.choose')} size="md" />
+              <UserSelect displayProfile={qaPersonDisplay} label={t('qa.qaOwner')} name="qaOwnerId" options={assignmentOptions} required activeOnly disabled={busy} preferredUserIds={getDepartmentPreferenceIds(users, ['QA'])} defaultValue={issue.qaOwnerId || ''} emptyLabel={t('qa.choose')} size="md" />
               {display.configuration?.showSeverity && <QaSelect label={t('qa.severity')} name="severity" required defaultValue={issue.severity === 'untriaged' ? '' : issue.severity}><option value="">{t('qa.choose')}</option>{['low', 'medium', 'high'].map(s => <option value={s} key={s}>{t(`qa.severityNames.${s}`)}</option>)}</QaSelect>}
               <section className="rounded-lg border border-border p-3"><h3 className="text-sm font-medium">{t('qa.additionalDetails')}</h3><div className="mt-3 space-y-3"><QaSelect label={t('qa.priority')} name="priority" required defaultValue={issue.priority}>{display.configuration && getQaPriorityChoices(display.configuration, issue.priority).map(priority => <option key={priority} value={priority}>{t(`priority.${qaPriorities[priority - 1]}`)}</option>)}</QaSelect><QaField label={t('qa.dueDate')} name="dueDate" type="date" defaultValue={issue.dueDate || ''} /></div></section>
             </>}
@@ -434,7 +494,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         {error !== null && <QaFailure error={error} />}
         {commandRetryNotice}
         {notice && <div className="space-y-2"><p role="status" className="text-sm text-muted-foreground">{notice}</p><button type="button" className={qaButton} disabled={busy} onClick={() => void refresh()}>{t('qa.refresh')}</button></div>}
-        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} busy={busy} onCommand={send} />
+        <QaHandoffPanel key={`${actor.id}:${issue.id}`} issue={issue} actor={actor} assignmentOptions={assignmentOptions} memberNames={detail.memberNames} memberProfiles={detail.memberProfiles} busy={busy} onCommand={send} />
       </DialogContent>
     </Dialog>
     {ConfirmDialog}

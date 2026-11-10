@@ -7,6 +7,7 @@ import { sortMemberOptions } from '@/lib/memberSelection';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 
+type DisplayProfile = Pick<User, 'name' | 'avatar' | 'color' | 'jobTitle'>;
 interface UserSelectProps {
   value?: string;
   defaultValue?: string;
@@ -14,6 +15,8 @@ interface UserSelectProps {
   allowEmpty?: boolean;
   emptyLabel?: string;
   fallbackLabel?: string;
+  fallbackProfile?: DisplayProfile;
+  displayProfile?: (user: User) => DisplayProfile;
   className?: string;
   size?: 'sm' | 'md';
   name?: string;
@@ -26,7 +29,7 @@ interface UserSelectProps {
 }
 
 const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, allowEmpty = false,
-  emptyLabel = '—', fallbackLabel, className = '', size = 'sm', name, label, required = false, disabled = false,
+  emptyLabel = '—', fallbackLabel, fallbackProfile, displayProfile, className = '', size = 'sm', name, label, required = false, disabled = false,
   activeOnly = false, preferredUserIds = [], options }: UserSelectProps) => {
   const { t } = useTranslation();
   const { users } = useMemberContext();
@@ -41,13 +44,14 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
   const source = options ?? users;
   const candidate = source.find(user => user.id === value);
   const selected = candidate ?? users.find(user => user.id === value);
+  const selectedProfile = selected ? displayProfile?.(selected) ?? selected : value ? fallbackProfile : undefined;
   const unavailable = !!value && (!candidate || (activeOnly && candidate.isActive !== true));
   const formValue = unavailable ? '' : value;
   const avatarSize = size === 'sm' ? 'h-5 w-5 text-[7px]' : 'h-6 w-6 text-[8px]';
   const availableUsers = sortMemberOptions(source.filter(user => !activeOnly || user.isActive === true), preferredUserIds);
   const query = search.trim().toLocaleLowerCase();
   const filteredUsers = availableUsers.filter(user => !query ||
-    `${user.name} ${user.jobTitle || ''}`.toLocaleLowerCase().includes(query));
+    `${user.name} ${(displayProfile?.(user) ?? user).jobTitle || ''}`.toLocaleLowerCase().includes(query));
   const changeOpen = (next: boolean) => {
     setOpen(next && !disabled);
     if (!next) setSearch('');
@@ -70,10 +74,11 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
           aria-invalid={invalid || unavailable || undefined} aria-describedby={unavailable ? `${id}-hint` : undefined}
           onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); changeOpen(true); } }}
           className="flex w-full min-w-0 items-center gap-1.5 rounded border border-border bg-card px-2 py-1.5 text-foreground outline-none transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50">
-          {selected ? <>
-            <span aria-hidden="true" className={`${avatarSize} flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ backgroundColor: selected.color }}>{selected.avatar}</span>
-            <span className="truncate text-xs">{selected.name}{selected.isActive === false && <span className="ml-1 text-muted-foreground">({t('common.inactive')})</span>}</span>
+          {selectedProfile ? <>
+            <span aria-hidden="true" className={`${avatarSize} flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ backgroundColor: selectedProfile.color }}>{selectedProfile.avatar}</span>
+            <span className="truncate text-xs">{selectedProfile.name}{selected?.isActive === false && <span className="ml-1 text-muted-foreground">({t('common.inactive')})</span>}</span>
           </> : <span className="truncate text-xs text-muted-foreground">{value ? fallbackLabel ?? `${t('common.memberUnavailable')} · ${value}` : emptyLabel}</span>}
+          {displayProfile && selectedProfile?.jobTitle && <span className="ml-auto truncate text-[10px] text-muted-foreground">{selectedProfile.jobTitle}</span>}
           <ChevronDown size={12} className="ml-auto shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
       </PopoverTrigger>
@@ -91,8 +96,8 @@ const UserSelect = memo(({ value: controlledValue, defaultValue = '', onChange, 
             {allowEmpty && <CommandItem value="__empty__" onSelect={() => select('')} className="text-xs text-muted-foreground">{emptyLabel}{!value && <Check size={12} className="ml-auto" aria-hidden="true" />}</CommandItem>}
             {filteredUsers.length === 0 && <div role="status" className="px-3 py-3 text-center text-xs text-muted-foreground">{t('common.noResults')}</div>}
             {filteredUsers.map(user => <CommandItem key={user.id} value={user.id} onSelect={() => select(user.id)} className="min-w-0 gap-2 text-xs">
-              <span aria-hidden="true" className={`${avatarSize} flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ backgroundColor: user.color }}>{user.avatar}</span>
-              <span className="truncate">{user.name}</span><span className="ml-auto truncate text-muted-foreground">{user.jobTitle}</span>
+              <span aria-hidden="true" className={`${avatarSize} flex shrink-0 items-center justify-center rounded-full font-bold text-white`} style={{ backgroundColor: (displayProfile?.(user) ?? user).color }}>{(displayProfile?.(user) ?? user).avatar}</span>
+              <span className="truncate">{user.name}</span><span className="ml-auto truncate text-muted-foreground">{(displayProfile?.(user) ?? user).jobTitle}</span>
               {value === user.id && <Check size={12} className="shrink-0" aria-hidden="true" />}
             </CommandItem>)}
           </CommandList>

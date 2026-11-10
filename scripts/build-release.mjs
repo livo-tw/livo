@@ -307,7 +307,9 @@ for (const rel of ['docker-compose.yml', 'volumes/api/kong.yml', 'volumes/logs/v
   ...['core.ts','index.ts'].map(file => `volumes/functions/approval-command/${file}`),
   ...['index.ts','knowledgeImportCleanup.ts'].map(file => `volumes/functions/knowledge-import-cleanup/${file}`),
   ...['index.ts','qaUploadCleanup.ts'].map(file => `volumes/functions/qa-upload-cleanup/${file}`),
+  'volumes/functions/qa-upload-cleanup/taskCommentCleanup.ts',
   ...['core.ts','index.ts'].map(file => `volumes/functions/task-work-command/${file}`),
+  ...['core.ts','service.ts','index.ts'].map(file => `volumes/functions/task-comments/${file}`),
   ...['core.ts','engine.ts','access.ts','index.ts'].map(file => `volumes/functions/knowledge-work/${file}`),
   ...['knowledge-work-core.ts','knowledge-work-handler.ts','knowledge-work-backend.ts','knowledge-work-ui.ts'].map(file => `volumes/functions/slack-interact/${file}`),
   ...['core.ts','environments.ts','service.ts','index.ts'].map(file => `volumes/functions/release-workspace/${file}`),
@@ -371,6 +373,14 @@ const migFiles = fs.readdirSync(MIGRATIONS_SRC)
   .filter(f => f.toLowerCase().endsWith('.sql'))
   .sort(); // 檔名為時間戳前綴，字典序 = 時間序
 if (migFiles.length === 0) die('supabase/migrations/ 下找不到任何 .sql');
+for (const required of [
+  '20261118_qa_comment_attachments.sql',
+  '20261119_task_comment_attachments.sql',
+  '20261120_task_comment_import_guard.sql',
+  '20261121_task_comment_attachment_summary.sql',
+]) {
+  if (!migFiles.includes(required)) die(`Missing comment attachment migration: ${required}`);
+}
 const nowIso = new Date().toISOString();
 let schemaOut =
 `-- ============================================================

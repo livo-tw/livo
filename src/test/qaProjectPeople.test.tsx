@@ -1,3 +1,5 @@
+import { qaPersonDisplay } from '@/lib/qa/peopleDisplay';
+import { qaRepairAssigneeOptions } from '@/lib/qa/assignmentPeople';
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -18,17 +20,23 @@ const users = [internal];
 it.each([false, true])('uses project-eligible QA assignment options (external viewer: %s)', async viewerExternal => {
   const projectPeople = vi.fn(async (_projectId: string, offset: number) => offset === 0
     ? { members: [external], hasMore: true }
-    : { members: [{ id: 'eqa-internal-next', name: 'Next eligible QA', isActive: true, isExternal: false }], hasMore: false });
+    : { members: [{ id: 'eqa-internal-next', name: 'Next eligible QA', isActive: true, isExternal: false }, { id: 'unknown-kind', name: 'Unknown kind', isActive: true }], hasMore: false });
   const wrapper = ({ children }: { children: ReactNode }) => <ExternalQaContext.Provider value={viewerExternal}>
     <MemberContext.Provider value={{ users, refreshUsers: vi.fn(async () => {}) }}>{children}</MemberContext.Provider>
   </ExternalQaContext.Provider>;
   const { result } = renderHook(() => useQaProjectPeople({ projectPeople }, 'granted-project'), { wrapper });
-  const ids = viewerExternal ? ['external', 'eqa-internal-next'] : ['internal', 'external', 'eqa-internal-next'];
+  const ids = viewerExternal ? ['external', 'eqa-internal-next', 'unknown-kind'] : ['internal', 'external', 'eqa-internal-next', 'unknown-kind'];
   await waitFor(() => expect(result.current?.map(member => member.id)).toEqual(ids));
   expect(projectPeople.mock.calls.map(([projectId, offset]) => [projectId, offset])).toEqual([
     ['granted-project', 0], ['granted-project', 100],
   ]);
   expect(result.current?.find(member => member.id === 'eqa-internal-next')?.qaExternal).toBe(false);
   expect(result.current?.find(member => member.id === 'external')?.qaExternal).toBe(true);
+  const unknown = result.current!.find(member => member.id === 'unknown-kind')!;
+  expect(unknown.qaExternal).toBe(true);
+  expect(unknown.isExternal).toBeUndefined();
+  expect(qaPersonDisplay(unknown).jobTitle).toBe('');
+  expect(qaRepairAssigneeOptions(result.current)?.some(member => member.id === unknown.id)).toBe(false);
+  expect(qaPersonDisplay(result.current!.find(member => member.id === 'external')!).jobTitle).toBe('QA');
   expect(users).toEqual([internal]);
 });

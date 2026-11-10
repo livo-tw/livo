@@ -47,7 +47,7 @@ describe('Slack integration channel pickers across backends', () => {
   });
   it('keeps the existing Cloudflare channel setting and does not offer a Docker-only QA setting', async () => {
     state.cloud = true; render(<SlackCard />);
-    const select = await screen.findByRole('combobox') as HTMLSelectElement;
+    const select = await screen.findByRole('combobox', { name: 'integrations.slack.channelPickerLabel' }) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe('old-notify'));
     expect(screen.queryByLabelText('integrations.slack.qaChannelPickerLabel')).toBeNull();
     expect(state.tables).toEqual(['backup_settings']);

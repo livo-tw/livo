@@ -1,9 +1,11 @@
+import QaPersonBadge from './QaPersonBadge';
+import { qaPersonDisplay, qaScopedProfile } from '@/lib/qa/peopleDisplay';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import UserSelect from '@/components/UserSelect';
 import type { User } from '@/types';
 import { useMemberContext } from '@/context/MemberContext';
-import { canQaCommand, type QaActor, type QaCommand, type QaIssue } from '@/lib/qa/domain';
+import { canQaCommand, type QaActor, type QaCommand, type QaIssue, type QaPersonProfile } from '@/lib/qa/domain';
 import { QaField, QaSection, qaButton, qaPrimary } from './QaFields';
 
 export function handoffReplyTime(value: string): string | null {
@@ -15,8 +17,8 @@ export function handoffReplyTime(value: string): string | null {
 }
 
 type Draft = { version: number; reason: string; nextOwnerId: string; replyBy: string; externalDependency: string };
-export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignmentOptions, memberNames }: {
-  issue: QaIssue; actor: QaActor; busy: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>;
+export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignmentOptions, memberNames, memberProfiles }: {
+  issue: QaIssue; actor: QaActor; busy: boolean; assignmentOptions?: readonly User[]; memberNames?: Record<string, string>; memberProfiles?: Record<string, QaPersonProfile>;
   onCommand: (command: QaCommand, expectedVersion?: number) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
@@ -27,8 +29,9 @@ export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignme
   const submitting = useRef(false);
   const handoff = issue.handoff;
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const name = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name
+  const nameLabel = (id: string | null) => assignmentOptions?.find(user => user.id === id)?.name || users.find(user => user.id === id)?.name
     || (id && typeof memberNames?.[id] === 'string' ? memberNames[id].trim() : '') || t('qaHandoff.unavailableMember');
+  const name = (id: string | null) => { const person = users.find(user => user.id === id) ?? assignmentOptions?.find(user => user.id === id) ?? qaScopedProfile(memberProfiles, id); return person ? <QaPersonBadge person={person} /> : nameLabel(id); };
   const run = async (command: QaCommand, version: number) => {
     if (busy || submitting.current) return;
     if (version !== issue.version) { setError(t('qaHandoff.draftConflict')); return; }
@@ -66,7 +69,7 @@ export default function QaHandoffPanel({ issue, actor, busy, onCommand, assignme
     {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
     {draft && <form className="mt-4 space-y-3" onSubmit={event => void request(event)}><fieldset disabled={busy} className="space-y-3">
       {handoff && !handoff.resolvedAt && <p className="text-sm text-muted-foreground">{t('qaHandoff.replaceHint')}</p>}
-      <UserSelect options={assignmentOptions} name="nextOwnerId" label={t('qaHandoff.nextOwner')} activeOnly required disabled={busy} value={draft.nextOwnerId} onChange={nextOwnerId => setDraft(previous => previous && { ...previous, nextOwnerId })} emptyLabel={t('qa.choose')} />
+      <UserSelect displayProfile={qaPersonDisplay} options={assignmentOptions} name="nextOwnerId" label={t('qaHandoff.nextOwner')} activeOnly required disabled={busy} value={draft.nextOwnerId} onChange={nextOwnerId => setDraft(previous => previous && { ...previous, nextOwnerId })} emptyLabel={t('qa.choose')} />
       <QaField label={t('qaHandoff.reason')} multiline required maxLength={8000} value={draft.reason} onChange={event => setDraft(previous => previous && { ...previous, reason: event.target.value })} />
       <QaField label={t('qaHandoff.replyTime', { timezone })} type="datetime-local" value={draft.replyBy} onChange={event => setDraft(previous => previous && { ...previous, replyBy: event.target.value })} />
       <QaField label={t('qaHandoff.externalDependency')} multiline maxLength={2000} value={draft.externalDependency} onChange={event => setDraft(previous => previous && { ...previous, externalDependency: event.target.value })} />

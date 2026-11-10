@@ -11,7 +11,7 @@ import { isDeploymentQueueOperator } from './deploymentQueue';
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration } from './qa/fields';
 import { qaVersionSuggestions } from './qa/versions';
 import {
-  applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
+  applyQaCommand, qaCommentAttachmentIds, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, validateQaHandoff, QaError, QA_STATES,
   type QaCommand, type QaContext, type QaIssue, type QaComment, type QaEvent,
   type QaListInput, type QaCreateInput,
 } from './qa/domain';
@@ -121,13 +121,28 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   const event:QaEvent={id:crypto.randomUUID(),issueId:after.id,actorId:auth.member.id,type,detail:type,version:after.version,createdAt:now};
   // A changed catalog must abort the complete D1 batch, including its receipt.
   // NOT NULL request_hash deliberately turns a stale snapshot into a SQL error.
-  const hashSql=fieldConfigurationRaw===undefined?'?':"CASE WHEN (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ? THEN ? ELSE NULL END";
-  const hashArgs=fieldConfigurationRaw===undefined?[hash]:[ws,fieldConfigurationRaw,hash];
+  let hashSql=fieldConfigurationRaw===undefined?'?':"CASE WHEN (SELECT value FROM system_settings WHERE workspace_id=? AND key='qa_custom_fields') IS ? THEN ? ELSE NULL END";
+  let hashArgs: (string | number | null)[]=fieldConfigurationRaw===undefined?[hash]:[ws,fieldConfigurationRaw,hash];
+  const attachmentIds=qaCommentAttachmentIds(comment?.attachmentIds), attachmentJson=JSON.stringify(attachmentIds);
+  if(attachmentIds.length){
+    // A stale reservation aborts the entire transaction, including receipt and notifications.
+    hashSql=`CASE WHEN (SELECT count(*) FROM qa_upload_sessions s WHERE s.workspace_id=? AND s.issue_id=? AND s.actor_id=?
+      AND s.id IN (SELECT value FROM json_each(?)) AND s.purpose='comment' AND s.state='finalizing'
+      AND s.comment_ready_at IS NOT NULL AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND s.cleanup_token IS NULL
+      AND NOT EXISTS(SELECT 1 FROM qa_attachments a WHERE a.workspace_id=s.workspace_id AND (a.id=s.id OR a.storage_key=s.storage_key)))=? THEN ${hashSql} ELSE NULL END`;
+    hashArgs=[ws,after.id,auth.member.id,attachmentJson,attachmentIds.length,...hashArgs];
+  }
   const statements:D1PreparedStatement[]=[env.DB.prepare(`INSERT INTO qa_commands(workspace_id,id,issue_id,actor_id,actor_role,expected_version,operation,request_hash,issue_data,result_json,created_at,actor_auth_id) VALUES(?,?,?,?,?,?,?,${hashSql},?,?,?,?)`).bind(ws,commandId,after.id,auth.member.id,auth.member.role,before?.version??-1,type,...hashArgs,JSON.stringify(after),JSON.stringify(result),now,authId)];
   const fields=[after.projectId,after.state,after.assigneeId,after.qaOwnerId,after.reporterId,after.title,after.version,after.updatedAt,JSON.stringify(after)];
   if(!before) statements.push(env.DB.prepare('INSERT INTO qa_issues(project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data,workspace_id,id) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(...fields,ws,after.id));
   else statements.push(env.DB.prepare('UPDATE qa_issues SET project_id=?,state=?,assignee_id=?,qa_owner_id=?,reporter_id=?,title=?,version=?,updated_at=?,data=? WHERE workspace_id=? AND id=? AND version=?').bind(...fields,ws,after.id,before.version));
-  if(comment) statements.push(env.DB.prepare('INSERT INTO qa_comments(workspace_id,id,issue_id,actor_id,body,created_at) VALUES(?,?,?,?,?,?)').bind(ws,comment.id,after.id,auth.member.id,comment.body,comment.createdAt));
+  if(comment){
+    statements.push(env.DB.prepare('INSERT INTO qa_comments(workspace_id,id,issue_id,actor_id,body,created_at) VALUES(?,?,?,?,?,?)').bind(ws,comment.id,after.id,auth.member.id,comment.body,comment.createdAt));
+    if(attachmentIds.length)statements.push(env.DB.prepare(`INSERT INTO qa_attachments(workspace_id,id,issue_id,uploaded_by,file_name,mime_type,size,storage_key,created_at,comment_id)
+      SELECT workspace_id,id,issue_id,actor_id,file_name,mime_type,expected_size,storage_key,?,? FROM qa_upload_sessions
+      WHERE workspace_id=? AND issue_id=? AND actor_id=? AND id IN (SELECT value FROM json_each(?))`)
+      .bind(comment.createdAt,comment.id,ws,after.id,auth.member.id,attachmentJson));
+  }
   statements.push(env.DB.prepare('INSERT INTO qa_events(workspace_id,id,issue_id,actor_id,type,detail,version,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(ws,event.id,after.id,event.actorId,type,comment?'comment':qaEventDetail(after,type,before),after.version,now));
   // Durable in-app notifications are inserted in this same transaction. Realtime is only a wake-up.
   // Recipients follow the shared rule (qaNotificationRecipients), as on the self-hosted server.
@@ -143,7 +158,9 @@ async function commit(c:C, commandId:string, hash:string, before:QaIssue|null, a
   const recipients=qaNotificationRecipients(after,type as QaCommand['type']|'create'|'comment',auth.member.id,triagers);
   for(const recipient of recipients) statements.push(env.DB.prepare("INSERT INTO notifications(workspace_id,id,recipient_id,sender_id,type,task_id,content,is_read,created_at) SELECT ?,?,?,?,'qa_update',NULL,?,0,? WHERE EXISTS(SELECT 1 FROM members WHERE workspace_id=? AND id=? AND is_active=1)").bind(ws,crypto.randomUUID(),recipient,auth.member.id,JSON.stringify({kind:'qa',issueId:after.id,title:after.title,event:type}),now,ws,recipient));
   try { await env.DB.batch(statements); }
-  catch(err) {const prior=await receipt(env,ws,commandId,hash,auth.member.id);if(prior!==undefined)return prior;throw sqlError(err);}
+  catch(err) {const prior=await receipt(env,ws,commandId,hash,auth.member.id);if(prior!==undefined)return prior;
+    if(attachmentIds.length&&/NOT NULL constraint failed: qa_commands\.request_hash/i.test(String(err)))throw new QaError('qa_invalid_comment_attachments',409);
+    throw sqlError(err);}
   // Never make the client retry a committed command because the transport wake-up failed.
   try {notifyChanges(env,c.executionCtx,[{table:'qa_issues',eventType:before?'UPDATE':'INSERT',new:{id:after.id,workspace_id:ws,project_id:after.projectId,version:after.version},old:null}],ws);}catch{/* polling/readback still works */}
   try {c.executionCtx.waitUntil(syncQaSlackIssue(env,ws,after).catch(()=>console.error('qa_slack_sync_failed')));}catch{/* committed state never depends on Slack */}
@@ -232,7 +249,7 @@ const RESTORE_COLUMNS:Record<string,string[]>={
   qa_issues:['workspace_id','id','project_id','state','assignee_id','qa_owner_id','reporter_id','title','version','updated_at','data'],
   qa_comments:['workspace_id','id','issue_id','actor_id','body','created_at'],
   qa_events:['workspace_id','id','issue_id','actor_id','type','detail','version','created_at'],
-  qa_attachments:['workspace_id','id','issue_id','uploaded_by','file_name','mime_type','size','storage_key','created_at'],
+  qa_attachments:['workspace_id','id','issue_id','uploaded_by','file_name','mime_type','size','storage_key','created_at','comment_id'],
   qa_commands:['workspace_id','id','issue_id','actor_id','actor_role','actor_auth_id','expected_version','operation','request_hash','issue_data','result_json','created_at'],
   qa_project_coordination:['workspace_id','id','coordinator_id','version','updated_by','updated_at'],
   qa_coordination_commands:['workspace_id','id','project_id','actor_id','actor_auth_id','payload_hash','expected_version','response','created_at'],
@@ -281,11 +298,20 @@ async function restore(c:C,body:Body):Promise<unknown>{
     if(table==='qa_issues'||table==='qa_project_coordination'||table==='qa_coordination_commands')continue;
     if(!sourceIssues.has(String(row.issue_id)))await getQaIssue(c.env,ws,String(row.issue_id));
   }
+  for(const {table,row} of rows){
+    if(table==='qa_comments'&&(typeof row.body!=='string'||row.body.length>20000||(!row.body.trim()&&!rows.some(item=>item.table==='qa_attachments'&&item.row.comment_id===row.id&&item.row.issue_id===row.issue_id&&item.row.uploaded_by===row.actor_id))))throw new QaError('qa_invalid_backup');
+  }
   const pending:Array<{table:string;row:Record<string,unknown>}>=[];
   for(const item of rows){
     const {table,row}=item,columns=RESTORE_COLUMNS[table];
     if(table==='qa_attachments'){
       qaFileInput(row.file_name,row.mime_type,row.size);
+      if(row.comment_id!=null){
+        qaId(row.comment_id);
+        const supplied=rows.find(item=>item.table==='qa_comments'&&item.row.id===row.comment_id)?.row;
+        const linked=supplied??await c.env.DB.prepare('SELECT issue_id,actor_id FROM qa_comments WHERE workspace_id=? AND id=?').bind(ws,row.comment_id as string).first<Record<string,unknown>>();
+        if(!linked||linked.issue_id!==row.issue_id||linked.actor_id!==row.uploaded_by)throw new QaError('qa_invalid_backup');
+      }
       const path=String(row.storage_key),expected=`qa/${ws}/${row.issue_id}/${row.id}`;
       if(path!==expected)throw new QaError('qa_backup_asset_scope',403);
       const object=await c.env.ATTACHMENTS.head(path);
@@ -480,8 +506,9 @@ export async function handleQa(c:C):Promise<Response> {
     const before=await getQaIssue(c.env,ws,id);
     if(action==='comment') {
       if(!canQaComment(before,{id:auth.member.id,role:auth.member.role}))throw new QaError('qa_forbidden',403);
-      if(typeof body.body!=='string'||!body.body.trim()||body.body.length>20000)throw new QaError('qa_invalid_comment');
-      const now=new Date().toISOString(),comment:QaComment={id:crypto.randomUUID(),issueId:id,actorId:auth.member.id,body:body.body.trim(),createdAt:now};
+      const attachmentIds=qaCommentAttachmentIds(body.attachmentIds);
+      if(typeof body.body!=='string'||(!body.body.trim()&&!attachmentIds.length)||body.body.length>20000||body.body.includes('\0'))throw new QaError('qa_invalid_comment');
+      const now=new Date().toISOString(),comment:QaComment={id:crypto.randomUUID(),issueId:id,actorId:auth.member.id,body:body.body.trim(),createdAt:now,attachmentIds};
       const after={...before,version:before.version+1,updatedAt:now};
       return c.json(await commit(c,commandId,hash,before,after,'comment',comment,comment));
     }

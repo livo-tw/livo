@@ -1,5 +1,6 @@
+import { taskCommentClient, type TaskAttachmentSummary } from '@/lib/taskCommentClient';
 import { useState, useCallback, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import { fetchComments } from '@/lib/commentQueries';
 import { applyBoardTaskChanges, fetchBoardRows, type BeginBoardRead, type BoardTaskChanges, type BoardTaskEvent } from '@/lib/boardQueries';
 import type {
@@ -130,7 +131,7 @@ export function useTaskQueries() {
         if (sequence < publishedBoardRead.current) return;
         publishedBoardRead.current = sequence;
         setDeployMap(deployments);
-        setAllTasks(applyBoardTaskChanges(tasks, changes));
+        setAllTasks(previous=>applyBoardTaskChanges(tasks,changes).map(task=>task.attachmentSummaryKnown===false?{...task,attachmentCount:previous.find(old=>old.id===task.id)?.attachmentCount??task.attachmentCount}:task));
       },
     };
   }, []);
@@ -163,6 +164,9 @@ export function useTaskQueries() {
       return;
     }
     const [{ data: taskRows }, { data: deployRows }, { data: attRows }, { data: commentAtts }, { data: taskTagRows }] = results;
+    let mediaSummary:TaskAttachmentSummary|null=null;
+    if(!USING_MOCK_BACKEND&&taskRows)try{mediaSummary=await taskCommentClient.summary(taskRows.map(row=>row.id));}catch{/* Main task data remains usable; the summary is visibly unknown. */}
+    if(!boardRead.isCurrent())return;
     if (taskRows) {
       const dm = new Map<string, TaskDeployment[]>();
       (deployRows || []).forEach(d => {
@@ -188,7 +192,8 @@ export function useTaskQueries() {
         return {
           ...mapped,
           deployments: dm.get(r.id) || [],
-          attachmentCount: attCounts.get(r.id) || 0,
+          attachmentCount: mediaSummary?.counts[r.id] ?? (attCounts.get(r.id) || 0),
+          attachmentSummaryKnown: USING_MOCK_BACKEND || Object.prototype.hasOwnProperty.call(mediaSummary?.counts||{},r.id),
           tagIds: tagMap.get(r.id) || mapped.tagIds || undefined,
         };
       });
