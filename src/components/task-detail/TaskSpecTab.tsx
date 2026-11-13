@@ -1,5 +1,5 @@
 import { safeLinkHref } from '@/lib/safeLink';
-import { useState, memo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import RichTextEditor from '@/components/RichTextEditorLazy';
 import { BookOpen, FileText, StickyNote, ListChecks, CheckCircle2, Paperclip, Plus, Check, Pencil, X, ExternalLink, Trash2, Lock } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -66,6 +66,7 @@ const RichField = memo(({ label, value, onChange, placeholder, icon, editingFiel
   const fieldKey = label;
   const isEditing = editingField === fieldKey;
   const locker = getFieldLocker(fieldKey);
+  const displayHtml = useMemo(() => value && value !== '<p></p>' ? fixHtml(value) : placeholder, [value, placeholder]);
   return (
     <div>
       <div className="flex items-center gap-2 mb-1.5">
@@ -87,7 +88,7 @@ const RichField = memo(({ label, value, onChange, placeholder, icon, editingFiel
           aria-disabled={disabled || undefined}
           className={`w-full text-sm leading-relaxed border rounded px-3 py-2.5 min-h-[52px] rich-content bg-muted ${locker ? 'cursor-not-allowed opacity-60' : 'cursor-text'} ${value && value !== '<p></p>' ? 'text-foreground' : 'text-muted-foreground'}`}
           style={{ borderColor: locker ? 'hsl(var(--destructive))' : 'hsl(var(--border))' }}
-          dangerouslySetInnerHTML={{ __html: value && value !== '<p></p>' ? fixHtml(value) : placeholder }}
+          dangerouslySetInnerHTML={{ __html: displayHtml }}
         />
       )}
     </div>

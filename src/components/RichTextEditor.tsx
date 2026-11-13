@@ -1,4 +1,4 @@
-import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react';
+import { useEditor, useEditorState, EditorContent, ReactRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Color from '@tiptap/extension-color';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -7,7 +7,7 @@ import Underline from '@tiptap/extension-underline';
 import Placeholder from '@tiptap/extension-placeholder';
 import Mention from '@tiptap/extension-mention';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
-import { useRef, useCallback, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import { useRef, useCallback, useEffect, useState, forwardRef, useImperativeHandle, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -44,9 +44,12 @@ const TEXT_COLORS = [
   { labelKey: 'color.gray', value: '#97A0AF' },
 ];
 
-interface RichTextEditorProps {
+export interface RichTextDraft {
+  getHTML: () => string;
+}
+
+interface RichTextEditorOptions {
   content: string;
-  onChange: (html: string) => void;
   placeholder?: string;
   editable?: boolean;
   minimal?: boolean;
@@ -55,6 +58,28 @@ interface RichTextEditorProps {
   imageUploadPrefix?: string;
   /** Knowledge pages use private attachments, not public inline uploads. */
   allowImageUpload?: boolean;
+}
+
+type RichTextEditorProps = RichTextEditorOptions & (
+  | { onChange: (html: string) => void; draftRef?: never }
+  | { onChange?: never; draftRef: Ref<RichTextDraft> }
+);
+
+function ToolBtn({ active, onClick, children, title }: {
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  title: string;
+}) {
+  return <button
+    type="button"
+    onClick={onClick}
+    title={title}
+    aria-pressed={active}
+    className={`p-1 rounded transition-colors ${active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
+  >
+    {children}
+  </button>;
 }
 
 // Mention suggestion list component
@@ -119,7 +144,7 @@ const MentionList = forwardRef<{ onKeyDown: (props: { event: KeyboardEvent }) =>
 );
 MentionList.displayName = 'MentionList';
 
-const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads', allowImageUpload = true }: RichTextEditorProps) => {
+const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads', allowImageUpload = true }: RichTextEditorProps) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
@@ -127,6 +152,8 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
   mentionCallbackRef.current = onMention;
   const membersRef = useRef(members);
   membersRef.current = members;
+  const lastContent = useRef(content);
+  const draftChanged = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -233,22 +260,52 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
     content,
     editable,
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      if (onChange) {
+        const html = editor.getHTML();
+        lastContent.current = html;
+        onChange(html);
+      } else {
+        draftChanged.current = true;
+      }
     },
   });
 
-  // Sync content from outside
+  // The controlled caller can echo an edit back without reading the document again.
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content);
+    if (editor && content !== lastContent.current) {
+      editor.commands.setContent(content, { emitUpdate: false });
+      lastContent.current = content;
+      draftChanged.current = false;
     }
-  }, [content]);
+  }, [content, editor]);
 
   useEffect(() => {
     if (editor) {
-      editor.setEditable(editable);
+      editor.setEditable(editable, false);
     }
   }, [editable, editor]);
+
+  useImperativeHandle(draftRef, () => ({
+    // Keep saved HTML intact on a metadata-only save, even if TipTap normalized it on load.
+    getHTML: () => (draftChanged.current ? editor?.getHTML() ?? content : content),
+  }), [editor, content]);
+
+  const activeTools = useEditorState({
+    editor,
+    selector: ({ editor }) => ({
+      bold: editor?.isActive('bold') ?? false,
+      italic: editor?.isActive('italic') ?? false,
+      underline: editor?.isActive('underline') ?? false,
+      strike: editor?.isActive('strike') ?? false,
+      heading1: editor?.isActive('heading', { level: 1 }) ?? false,
+      heading2: editor?.isActive('heading', { level: 2 }) ?? false,
+      heading3: editor?.isActive('heading', { level: 3 }) ?? false,
+      bulletList: editor?.isActive('bulletList') ?? false,
+      orderedList: editor?.isActive('orderedList') ?? false,
+      quote: editor?.isActive('blockquote') ?? false,
+      table: editor?.isActive('table') ?? false,
+    }),
+  });
 
   const handleImageUpload = useCallback(async (file: File) => {
     if (!editor || !allowImageUpload) return;
@@ -277,55 +334,44 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
 
   if (!editor) return null;
 
-  const ToolBtn = ({ active, onClick, children, title }: { active?: boolean; onClick: () => void; children: React.ReactNode; title: string }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`p-1 rounded transition-colors ${active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
-    >
-      {children}
-    </button>
-  );
-
   return (
     <div className="border border-border rounded-md overflow-hidden bg-card">
       {editable && (
         <div className="flex flex-wrap items-center gap-0.5 px-2 py-1 border-b border-border bg-muted/30">
-          <ToolBtn active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} title={t('editor.bold')}>
+          <ToolBtn active={activeTools?.bold} onClick={() => editor.chain().focus().toggleBold().run()} title={t('editor.bold')}>
             <Bold size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} title={t('editor.italic')}>
+          <ToolBtn active={activeTools?.italic} onClick={() => editor.chain().focus().toggleItalic().run()} title={t('editor.italic')}>
             <Italic size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()} title={t('editor.underline')}>
+          <ToolBtn active={activeTools?.underline} onClick={() => editor.chain().focus().toggleUnderline().run()} title={t('editor.underline')}>
             <UnderlineIcon size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} title={t('editor.strikethrough')}>
+          <ToolBtn active={activeTools?.strike} onClick={() => editor.chain().focus().toggleStrike().run()} title={t('editor.strikethrough')}>
             <Strikethrough size={14} />
           </ToolBtn>
 
           <span className="w-px h-4 bg-border mx-1" />
 
-          <ToolBtn active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title={t('editor.heading1')}>
+          <ToolBtn active={activeTools?.heading1} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title={t('editor.heading1')}>
             <Heading1 size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title={t('editor.heading2')}>
+          <ToolBtn active={activeTools?.heading2} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title={t('editor.heading2')}>
             <Heading2 size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title={t('editor.heading3')}>
+          <ToolBtn active={activeTools?.heading3} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title={t('editor.heading3')}>
             <Heading3 size={14} />
           </ToolBtn>
 
           <span className="w-px h-4 bg-border mx-1" />
 
-          <ToolBtn active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} title={t('editor.bulletList')}>
+          <ToolBtn active={activeTools?.bulletList} onClick={() => editor.chain().focus().toggleBulletList().run()} title={t('editor.bulletList')}>
             <List size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} title={t('editor.orderedList')}>
+          <ToolBtn active={activeTools?.orderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()} title={t('editor.orderedList')}>
             <ListOrdered size={14} />
           </ToolBtn>
-          <ToolBtn active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} title={t('editor.quote')}>
+          <ToolBtn active={activeTools?.quote} onClick={() => editor.chain().focus().toggleBlockquote().run()} title={t('editor.quote')}>
             <Quote size={14} />
           </ToolBtn>
 
@@ -368,7 +414,7 @@ const RichTextEditor = ({ content, onChange, placeholder = '', editable = true, 
           <ToolBtn onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} title={t('editor.insertTable')}>
             <TableIcon size={14} />
           </ToolBtn>
-          {editor.isActive('table') && (
+          {activeTools?.table && (
             <>
               <ToolBtn onClick={() => editor.chain().focus().addRowAfter().run()} title={t('editor.addRow')}>
                 <span className="flex items-center text-[9px] font-bold">{t('editor.rowShort')}<Plus size={10} /></span>

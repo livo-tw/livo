@@ -319,7 +319,7 @@ describe('QA detail uses shared controls with a focused next action', () => {
       { id: 'old-other', projectId: 'p2', taskKey: 'EX-3', title: 'Previously linked elsewhere' },
     ] as Task[];
     const linked = { ...issue, taskIds: ['old-other', 'missing-task'] };
-    const { command } = renderDetail({ issue: linked });
+    const { command, props, rerender } = renderDetail({ issue: linked });
     fireEvent.click(screen.getByRole('button', { name: 'qa.moreActions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'qa.taskLinks' }));
     const dialog = await screen.findByRole('dialog', { name: 'qa.taskLinks' });
@@ -332,9 +332,42 @@ describe('QA detail uses shared controls with a focused next action', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: /Previously linked elsewhere/ }));
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'missing-task' }));
     fireEvent.click(within(dialog).getByRole('checkbox', { name: /This project task/ }));
+    const previousTasks = state.tasks;
+    state.tasks = state.tasks.map(task => task.id === 'same' ? { ...task, projectId: 'p2' } : task);
+    rerender(<QaIssueDetail {...props} />);
+    expect(within(dialog).getByRole('button', { name: 'qa.save' })).toBeDisabled();
+    fireEvent.submit(dialog.querySelector('form')!);
+    expect(command).not.toHaveBeenCalled();
+    state.tasks = previousTasks;
+    rerender(<QaIssueDetail {...props} />);
+    expect(within(dialog).getByRole('checkbox', { name: /This project task/ })).toBeChecked();
     fireEvent.click(within(dialog).getByRole('button', { name: 'qa.save' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(linked, { type: 'link_tasks', taskIds: ['same'] }, expect.any(String)));
     expect(linked.taskIds).toEqual(['old-other', 'missing-task']);
+  });
+
+  it('keeps evidence and comment files scoped when the attachment list refreshes during a comment draft', () => {
+    const baseFile = { issueId: issue.id, mimeType: 'text/plain', size: 1, uploadedBy: 'qa', createdAt: issue.createdAt };
+    const evidence = { ...baseFile, id: 'evidence', fileName: 'evidence.txt' };
+    const first = { ...baseFile, id: 'first-file', fileName: 'first.txt', commentId: 'first' };
+    const second = { ...baseFile, id: 'second-file', fileName: 'second.txt', commentId: 'second' };
+    const comments = [
+      { id: 'first', issueId: issue.id, actorId: 'qa', body: 'First comment', createdAt: issue.createdAt },
+      { id: 'second', issueId: issue.id, actorId: 'qa', body: 'Second comment', createdAt: issue.createdAt },
+    ];
+    const { props, rerender } = renderDetail({ comments, attachments: [evidence, first] });
+    expect(screen.getByText('evidence.txt')).toBeVisible();
+    expect(screen.queryByText('first.txt')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: /qa.comments/ }));
+    const firstComment = screen.getByText('First comment').closest('li')!;
+    expect(within(firstComment).getByText('first.txt')).toBeVisible();
+    expect(screen.queryByText('evidence.txt')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: /^qa\.commentBody/ }), { target: { value: 'Unsent draft' } });
+    rerender(<QaIssueDetail {...props} detail={{ ...props.detail, attachments: [evidence, second] }} />);
+    expect(screen.queryByText('first.txt')).toBeNull();
+    const secondComment = screen.getByText('Second comment').closest('li')!;
+    expect(within(secondComment).getByText('second.txt')).toBeVisible();
+    expect(screen.getByRole('textbox', { name: /^qa\.commentBody/ })).toHaveValue('Unsent draft');
   });
 
   it('prioritizes issue content and existing files; reveals upload only on demand and locks it during upload', async () => {

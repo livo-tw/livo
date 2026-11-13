@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useState, useRef, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { generateId } from '@/lib/generateId';
 import { logActivity } from '@/lib/activityLog';
@@ -13,6 +13,7 @@ import { taskCommentClient, type TaskAttachmentSummary } from '@/lib/taskComment
 
 type Deps = {
   task: Task | null;
+  showCommentAttachments?: boolean;
   currentMemberId: string;
   currentMember: User | null;
   users: User[];
@@ -29,7 +30,7 @@ type Deps = {
 };
 
 export const useTaskComments = ({
-  task, currentMemberId, currentMember, users, allTasks, setAllTasks,
+  task, showCommentAttachments = true, currentMemberId, currentMember, users, allTasks, setAllTasks,
   globalComments, project, status, assignee, MAX_FILE_SIZE, loadStorageUsage, confirm,
 }: Deps) => {
   const [taskComments, setTaskComments] = useState<Comment[]>([]);
@@ -39,17 +40,30 @@ export const useTaskComments = ({
   const commentFileRef = useRef<HTMLInputElement>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentContent, setEditingCommentContent] = useState('');
-  const media = useTaskCommentMedia(task?.id, currentMemberId, error => toast.error(i18n.t('taskDetail.comments.sendFailed') + (error instanceof Error ? error.message : '')));
+  const taskId = task?.id;
+  const savedComments = useMemo(
+    () => taskId ? globalComments.filter(comment => comment.taskId === taskId) : [],
+    [globalComments, taskId],
+  );
+  // Private attachments are added on publish and removed with their comment.
+  // Body edits and realtime changes on other cards do not invalidate this list.
+  const attachmentRevision = useMemo(
+    () => showCommentAttachments ? JSON.stringify(savedComments.map(comment => comment.id).sort()) : undefined,
+    [savedComments, showCommentAttachments],
+  );
+  const media = useTaskCommentMedia(
+    taskId,
+    currentMemberId,
+    error => toast.error(i18n.t('taskDetail.comments.sendFailed') + (error instanceof Error ? error.message : '')),
+    { visible: showCommentAttachments, revision: attachmentRevision },
+  );
   const activeScope = useRef('');
   activeScope.current = `${currentMemberId}:${task?.id || ''}`;
 
   // Sync comments from global realtime
   useEffect(() => {
-    if (!task) return;
-    setTaskComments(globalComments.filter(c => c.taskId === task.id));
-    // Other users' new comments must bring their private attachment metadata too.
-    void media.refresh().catch((): void => undefined);
-  }, [globalComments, task?.id]);
+    setTaskComments(savedComments);
+  }, [savedComments]);
 
   const addComment = async () => {
     if (!task) return;

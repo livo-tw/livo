@@ -28,6 +28,7 @@ import { groupProjectsByLine } from '@/lib/projectGroups';
 import { MAX_UPLOAD_MB } from '@/lib/uploadLimits';
 import { knowledgeClient as supabase } from '@/integrations/supabase/knowledgeClient';
 import RichTextEditor from '@/components/RichTextEditorLazy';
+import type { RichTextDraft } from '@/components/RichTextEditor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -61,6 +62,7 @@ export default function KnowledgeBaseView() {
   const [permissionTarget, setPermissionTarget] = useState<'page' | 'new' | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState<KnowledgePage | null>(null);
+  const bodyEditor = useRef<RichTextDraft>(null);
   // Leaving the knowledge base with a page open for editing asks first, like switching pages here does.
   useUnsavedDraft('view', !!draft, t('kb.discard'));
   const [busy, setBusy] = useState(false);
@@ -227,12 +229,13 @@ export default function KnowledgeBaseView() {
   }
   async function save() {
     if (!draft || !hasEditAccess) return;
+    const body = bodyEditor.current?.getHTML() ?? draft.body;
     await run(async () => {
       validateKnowledgeTree(pages.map(p => p.id === draft.id ? draft : p));
       // Send placement fields only when they changed; moving a page is a separate right.
       const original = pages.find(p => p.id === draft.id);
       const moved = (key: 'project_id' | 'parent_id' | 'sort_order') => !original || (original[key] ?? null) !== (draft[key] ?? null);
-      await update(draft, { title: draft.title.trim(), body: draft.body, category: draft.category || 'general',
+      await update(draft, { title: draft.title.trim(), body, category: draft.category || 'general',
         ...(moved('project_id') ? { project_id: draft.project_id } : {}), ...(moved('parent_id') ? { parent_id: draft.parent_id } : {}),
         ...(moved('sort_order') ? { sort_order: draft.sort_order } : {}),
         ...(admin && (!original || original.admin_only !== draft.admin_only) ? { admin_only: draft.admin_only } : {}) });
@@ -424,7 +427,7 @@ export default function KnowledgeBaseView() {
               </div>
             </details>
             <p className="text-xs text-muted-foreground">{t('kb.privateFilesHint')}</p>
-            <RichTextEditor content={draft.body} onChange={body => setDraft(d => d ? { ...d, body } : d)} editable={!busy && !lockedBy && hasEditAccess} allowImageUpload={false} members={users} />
+            <RichTextEditor key={draft.id} content={draft.body} draftRef={bodyEditor} editable={!busy && !lockedBy && hasEditAccess} allowImageUpload={false} members={users} />
           </div> : <KnowledgeReadingBody body={page.body || `<p>${t('kb.emptyBody')}</p>`} meeting={page.category === 'meeting'} />}
           {!draft && <KnowledgeWorkflowPanel key={`${page.id}:workflow`} pageId={page.id} canEdit={canEdit} category={page.category} pageProjectId={page.project_id} />}
           {/* Shown while editing too: the source versions are what an edit is checked against. */}

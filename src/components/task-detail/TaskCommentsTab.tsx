@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { sortComments } from '@/lib/commentOrdering';
 import { useCommentOrder } from '@/hooks/useCommentOrder';
 import { CommentOrderSelect } from '@/components/CommentOrderSelect';
@@ -12,8 +13,10 @@ import TaskSidebarFields from './TaskSidebarFields';
 import { toast } from 'sonner';
 import CommentAttachmentPicker from '@/components/comments/CommentAttachmentPicker';
 import CommentAttachmentList from '@/components/comments/CommentAttachmentList';
+import type { CommentMedia } from '@/lib/taskCommentAttachmentCore';
 
 type Props = { detail: TaskDetailState };
+const emptyAttachments: readonly CommentMedia[] = [];
 
 const TaskCommentsTab = ({ detail }: Props) => {
   const { t } = useTranslation();
@@ -27,10 +30,25 @@ const TaskCommentsTab = ({ detail }: Props) => {
     storageUsed, STORAGE_LIMIT,
     isMobile,
     commentFiles = [], commentRejected = [], addCommentFiles, removeCommentFile, retryCommentUpload,
-    commentMediaBusy, commentCommandPending, commentAttachments = [], downloadCommentAttachment, commentAttachmentScope,
+    commentMediaBusy, commentCommandPending, commentAttachments = emptyAttachments, downloadCommentAttachment, commentAttachmentScope,
   } = detail;
 
   const [commentOrder, setCommentOrder] = useCommentOrder(currentMemberId);
+  const sortedComments = useMemo(() => sortComments(taskComments, commentOrder), [taskComments, commentOrder]);
+  const commentHtml = useMemo(
+    () => new Map(taskComments.map(comment => [comment.id, fixHtml(comment.content)])),
+    [taskComments],
+  );
+  const attachmentsByComment = useMemo(() => {
+    const grouped = new Map<string, CommentMedia[]>();
+    for (const file of commentAttachments) {
+      if (!file.commentId) continue;
+      const files = grouped.get(file.commentId);
+      if (files) files.push(file);
+      else grouped.set(file.commentId, [file]);
+    }
+    return grouped;
+  }, [commentAttachments]);
 
   if (!task) return null;
 
@@ -39,7 +57,7 @@ const TaskCommentsTab = ({ detail }: Props) => {
       <div className="flex-1 space-y-3">
         <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
         {taskComments.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">{t('taskDetail.comments.empty')}</p>}
-        {sortComments(taskComments, commentOrder).map(comment => {
+        {sortedComments.map(comment => {
           const user = users.find(u => u.id === comment.userId);
           const date = new Date(comment.createdAt);
           const isOwner = comment.userId === currentMemberId;
@@ -82,7 +100,7 @@ const TaskCommentsTab = ({ detail }: Props) => {
                 ) : (
                   <>
                     {comment.content && (
-                      <div className="text-sm leading-relaxed px-3 py-2 rich-content bg-muted text-foreground" style={{ borderRadius: '0 8px 8px 8px' }} dangerouslySetInnerHTML={{ __html: fixHtml(comment.content) }} />
+                      <div className="text-sm leading-relaxed px-3 py-2 rich-content bg-muted text-foreground" style={{ borderRadius: '0 8px 8px 8px' }} dangerouslySetInnerHTML={{ __html: commentHtml.get(comment.id) ?? '' }} />
                     )}
                     {safeLinkHref(comment.attachmentUrl) && (
                       <a href={safeLinkHref(comment.attachmentUrl)!} target="_blank" rel="noopener noreferrer"
@@ -93,7 +111,7 @@ const TaskCommentsTab = ({ detail }: Props) => {
                         <Download size={12} className="text-muted-foreground" />
                       </a>
                     )}
-                    <CommentAttachmentList attachments={commentAttachments.filter(file => file.commentId === comment.id)} download={downloadCommentAttachment} scopeKey={`${commentAttachmentScope}:${comment.id}`} onError={error => toast.error(error instanceof Error ? error.message : t('taskDetail.comments.attachmentUploadFailed'))} />
+                    <CommentAttachmentList attachments={attachmentsByComment.get(comment.id) ?? emptyAttachments} download={downloadCommentAttachment} scopeKey={`${commentAttachmentScope}:${comment.id}`} onError={error => toast.error(error instanceof Error ? error.message : t('taskDetail.comments.attachmentUploadFailed'))} />
                   </>
                 )}
               </div>

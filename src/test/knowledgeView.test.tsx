@@ -1,4 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { useImperativeHandle, useRef, type Ref } from 'react';
+import type { RichTextDraft } from '@/components/RichTextEditor';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import KnowledgeBaseView from '@/components/KnowledgeBaseView';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,7 +17,13 @@ vi.mock('@/context/AuthContext', () => ({ useAuthContext: () => ({ currentMember
 vi.mock('@/context/ProjectContext', async () => ({ ...(await vi.importActual<typeof import('@/context/ProjectContext')>('@/context/ProjectContext')), useProjectContext: () => ({ allProjects: state.projects, productLines: [] as {id:string;name:string}[], selectedProjectId: state.projectId }) }));
 vi.mock('@/context/MemberContext', async () => ({ ...(await vi.importActual<typeof import('@/context/MemberContext')>('@/context/MemberContext')), useMemberContext: () => ({ users: [{ id: 'm-001', name: 'Example Member' }] }) }));
 vi.mock('@/hooks/usePresenceLock', () => ({ usePresenceLock: () => ({ acquireLock: state.acquire, releaseLock: vi.fn(), isLockedBy: (): null => null }) }));
-vi.mock('@/components/RichTextEditorLazy', () => ({ default: ({ content, onChange }: { content: string; onChange: (v: string) => void }) => <textarea aria-label="Body" value={content} onChange={e => onChange(e.target.value)} /> }));
+vi.mock('@/components/RichTextEditorLazy', () => ({
+  default: function TestEditor({ content, draftRef }: { content: string; draftRef: Ref<RichTextDraft> }) {
+    const input = useRef<HTMLTextAreaElement>(null);
+    useImperativeHandle(draftRef, () => ({ getHTML: () => input.current?.value ?? content }), [content]);
+    return <textarea ref={input} aria-label="Body" defaultValue={content} />;
+  },
+}));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, opts?: Record<string, unknown>) => {
   let value: unknown = en;
   for (const part of key.split('.')) value = (value as Record<string, unknown>)?.[part];

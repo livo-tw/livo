@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { randomUUID } from '@/lib/generateId';
 import { COMMENT_FILE_COUNT, CommentAttachmentError, commentFileError, type CommentMedia } from '@/lib/taskCommentAttachmentCore';
 import { taskCommentClient, uploadTaskCommentFile, type TaskCommentResume, type TaskCommentReceipt } from '@/lib/taskCommentClient';
@@ -7,25 +7,38 @@ export type TaskCommentDraftFile = { id:string;file:File;preview?:string;progres
 type Rejected={name:string;code:'file_size'|'file_type'|'file_name'};
 type PublishInput={taskId:string;commandId:string;body:string;uploadIds:string[];mentionIds:string[]};
 const revoke=(file:TaskCommentDraftFile)=>{if(file.preview)URL.revokeObjectURL(file.preview);};
-export function useTaskCommentMedia(taskId:string|undefined,actorId:string,onError:(error:unknown)=>void){
-  const [files,setFiles]=useState<TaskCommentDraftFile[]>([]),[rejected,setRejected]=useState<Rejected[]>([]),[busy,setBusy]=useState(false),[attachments,setAttachments]=useState<CommentMedia[]>([]),[pending,setPending]=useState(false);
-  const current=useRef<TaskCommentDraftFile[]>([]),generation=useRef(0),running=useRef(false),controller=useRef<AbortController>(),readController=useRef<AbortController>(),command=useRef<PublishInput>();
+const emptyAttachments: CommentMedia[] = [];
+export function useTaskCommentMedia(
+  taskId: string | undefined,
+  actorId: string,
+  onError: (error: unknown) => void,
+  { visible = true, revision }: { visible?: boolean; revision?: string } = {},
+) {
+  const scopeKey = JSON.stringify([actorId, taskId]);
+  const [attachmentList, setAttachmentList] = useState<{ scope: string; items: CommentMedia[] }>();
+  const [files,setFiles]=useState<TaskCommentDraftFile[]>([]),[rejected,setRejected]=useState<Rejected[]>([]),[busy,setBusy]=useState(false),[pending,setPending]=useState(false);
+  const current=useRef<TaskCommentDraftFile[]>([]),generation=useRef(0),running=useRef(false),controller=useRef<AbortController>(),command=useRef<PublishInput>();
   const commandOutcomeUnknown=useRef(false);
   const listVersion=useRef(0);
   const errorCallback=useRef(onError);errorCallback.current=onError;
   const update=(id:string,patch:Partial<TaskCommentDraftFile>)=>{current.current=current.current.map(file=>file.id===id?{...file,...patch}:file);setFiles(current.current);};
-  const refresh=async(signal?:AbortSignal)=>{
+  const refresh=useCallback(async(signal?:AbortSignal)=>{
     if(!taskId)return;const key=generation.current,version=++listVersion.current;
     const result=await taskCommentClient.list(taskId,signal);
-    if(key===generation.current&&version===listVersion.current&&!signal?.aborted)setAttachments(result.attachments);
-  };
+    if(key===generation.current&&version===listVersion.current&&!signal?.aborted)setAttachmentList({ scope: scopeKey, items: result.attachments });
+  }, [taskId, scopeKey]);
   useEffect(()=>{
-    const key=++generation.current;current.current.forEach(revoke);current.current=[];setFiles([]);setRejected([]);setAttachments([]);command.current=undefined;commandOutcomeUnknown.current=false;setPending(false);running.current=false;setBusy(false);
-    const read=new AbortController();readController.current=read;
-    const version=++listVersion.current;
-    if(taskId)void taskCommentClient.list(taskId,read.signal).then(result=>{if(key===generation.current&&version===listVersion.current&&!read.signal.aborted)setAttachments(result.attachments);}).catch(error=>{if(!read.signal.aborted)errorCallback.current(error);});
-    return()=>{generation.current++;read.abort();controller.current?.abort();current.current.forEach(revoke);};
+    generation.current++;current.current.forEach(revoke);current.current=[];setFiles([]);setRejected([]);setAttachmentList(undefined);command.current=undefined;commandOutcomeUnknown.current=false;setPending(false);running.current=false;setBusy(false);
+    return()=>{generation.current++;controller.current?.abort();current.current.forEach(revoke);};
   },[taskId,actorId]);
+  useEffect(() => {
+    if (!taskId || !actorId || !visible) return;
+    const read = new AbortController();
+    void refresh(read.signal).catch(error => {
+      if (!read.signal.aborted) errorCallback.current(error);
+    });
+    return () => read.abort();
+  }, [taskId, actorId, visible, revision, refresh]);
   const upload=async(signal:AbortSignal)=>{
     if(!taskId)throw new CommentAttachmentError('task_unavailable');const key=generation.current;
     for(const entry of current.current){
@@ -37,7 +50,9 @@ export function useTaskCommentMedia(taskId:string|undefined,actorId:string,onErr
     }
   };
   return {
-    files,rejected,busy,pending,attachments,refresh,scopeKey:`${actorId}:${taskId||''}`,
+    files,rejected,busy,pending,
+    attachments: attachmentList?.scope === scopeKey ? attachmentList.items : emptyAttachments,
+    scopeKey,
     add(incoming:File[]){
       if(running.current||command.current)return;const failures:Rejected[]=[],added:TaskCommentDraftFile[]=[];
       for(const file of incoming){

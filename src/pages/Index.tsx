@@ -21,11 +21,8 @@ import TaskDetailModal from '@/components/TaskDetailModal';
 import StandupPanel from '@/components/StandupPanel';
 import CreateProjectModal from '@/components/CreateProjectModal';
 import CreateTaskModal from '@/components/CreateTaskModal';
-import ActivityLogView from '@/components/ActivityLogView';
 import MyTasksView from '@/components/MyAssignments';
 import { MyAssignmentsProvider } from '@/context/MyAssignmentsContext';
-import MySettingsView from '@/components/MySettingsView';
-import TeamManageView from '@/components/TeamManageView';
 import PendingApprovalList from '@/components/approval/PendingApprovalList';
 import { NotificationToastProvider } from '@/components/notifications/NotificationToastProvider';
 import { useTaskHistory } from '@/hooks/useTaskHistory';
@@ -41,6 +38,9 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 const DashboardView = lazy(() => import('@/components/DashboardView'));
 const GanttView = lazy(() => import('@/components/GanttView'));
 const AllListView = lazy(() => import('@/components/AllListView'));
+const ActivityLogView = lazy(() => import('@/components/ActivityLogView'));
+const MySettingsView = lazy(() => import('@/components/MySettingsView'));
+const TeamManageView = lazy(() => import('@/components/TeamManageView'));
 const SystemAdminView = lazy(() => import('@/components/SystemAdminView'));
 const WorkReportView = lazy(() => import('@/components/WorkReportView'));
 const TeamIntroView = lazy(() => import('@/components/TeamIntroView'));
@@ -208,15 +208,15 @@ const AppContent = () => {
               {currentView === 'all-list' && <Suspense fallback={<ViewFallback />}><AllListView /></Suspense>}
               {currentView === 'dashboard' && (hasFeature('dashboard') ? <Suspense fallback={<ViewFallback />}><DashboardView /></Suspense> : <UpgradePrompt feature="dashboard" />)}
               {currentView === 'gantt' && <Suspense fallback={<ViewFallback />}><GanttView /></Suspense>}
-              {currentView === 'team-manage' && permissions.canViewMemberList && <TeamManageView />}
-              {currentView === 'status-manage' && permissions.canViewMemberList && <TeamManageView initialTab="task-config" />}
-              {currentView === 'template-manage' && permissions.canViewMemberList && <TeamManageView initialTab="task-config" />}
+              {currentView === 'team-manage' && permissions.canViewMemberList && <Suspense fallback={<ViewFallback />}><TeamManageView /></Suspense>}
+              {currentView === 'status-manage' && permissions.canViewMemberList && <Suspense fallback={<ViewFallback />}><TeamManageView initialTab="task-config" /></Suspense>}
+              {currentView === 'template-manage' && permissions.canViewMemberList && <Suspense fallback={<ViewFallback />}><TeamManageView initialTab="task-config" /></Suspense>}
               {currentView === 'system-admin' && permissions.canManageMembers && <Suspense fallback={<ViewFallback />}><SystemAdminView /></Suspense>}
               {currentView === 'team-intro' && <Suspense fallback={<ViewFallback />}><TeamIntroView /></Suspense>}
               {currentView === 'knowledge-base' && <Suspense fallback={<ViewFallback />}><KnowledgeBaseView /></Suspense>}
               {currentView === 'releases' && <Suspense fallback={<ViewFallback />}><ReleaseWorkspaceView /></Suspense>}
-              {currentView === 'activity-log' && (hasFeature('activity-log') ? <ActivityLogView /> : <UpgradePrompt feature="activity-log" />)}
-              {currentView === 'my-settings' && <MySettingsView />}
+              {currentView === 'activity-log' && (hasFeature('activity-log') ? <Suspense fallback={<ViewFallback />}><ActivityLogView /></Suspense> : <UpgradePrompt feature="activity-log" />)}
+              {currentView === 'my-settings' && <Suspense fallback={<ViewFallback />}><MySettingsView /></Suspense>}
               {deploymentQueueEnabled && currentView === 'deployment-queue' && <Suspense fallback={<ViewFallback />}><DeploymentQueueView /></Suspense>}
               {currentView === 'my-tasks' && <MyTasksView />}
               {qaEnabled && (currentView === 'qa' || currentView === 'my-qa') && <Suspense fallback={<ViewFallback />}><QaWorkspace mine={currentView === 'my-qa'} /></Suspense>}

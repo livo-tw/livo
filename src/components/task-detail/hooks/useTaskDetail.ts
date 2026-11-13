@@ -149,6 +149,7 @@ export const useTaskDetail = () => {
 
   const comments = useTaskComments({
     task,
+    showCommentAttachments: ui.activeTab === 'comments',
     currentMemberId,
     currentMember,
     users,

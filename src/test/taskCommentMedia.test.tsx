@@ -57,4 +57,28 @@ describe('task comment draft retry and account scope',()=>{
     act(()=>result.current.add([new File(['12345678'],'example.png',{type:'image/png'})]));rerender({actor:'other-member'});
     await act(async()=>{finish({attachments:[media]});});await waitFor(()=>expect(result.current.files).toHaveLength(0));expect(result.current.attachments).toHaveLength(0);
   });
+
+  it('loads only for the visible tab, cancels an obsolete read and keeps the draft between tabs', async () => {
+    let finish!: (value: { attachments: typeof media[] }) => void;
+    mock.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { result, rerender } = renderHook(
+      ({ visible, revision }) => useTaskCommentMedia('task-example', 'member-example', vi.fn(), { visible, revision }),
+      { initialProps: { visible: false, revision: 'first' } },
+    );
+    expect(mock.list).not.toHaveBeenCalled();
+    act(() => result.current.add([new File(['12345678'], 'example.png', { type: 'image/png' })]));
+    rerender({ visible: true, revision: 'first' });
+    expect(mock.list).toHaveBeenCalledTimes(1);
+    const firstRead = mock.list.mock.calls[0][1] as AbortSignal;
+    rerender({ visible: false, revision: 'first' });
+    expect(firstRead.aborted).toBe(true);
+    rerender({ visible: false, revision: 'second' });
+    expect(mock.list).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ attachments: [media] }); });
+    expect(result.current.attachments).toHaveLength(0);
+    expect(result.current.files).toHaveLength(1);
+    await act(async () => { rerender({ visible: true, revision: 'second' }); });
+    expect(mock.list).toHaveBeenCalledTimes(2);
+    expect(result.current.files).toHaveLength(1);
+  });
 });

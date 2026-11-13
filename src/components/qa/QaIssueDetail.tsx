@@ -22,7 +22,7 @@ import QaTargetEditor, { type QaTargetDraft } from './QaTargetEditor';
 import QaVerificationPanel, { type QaVerificationCommand } from './QaVerificationPanel';
 import QaIssueSidebarFields from './QaIssueSidebarFields';
 import { QaText } from './QaText';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMemberContext } from '@/context/MemberContext';
 import { useProjectContext } from '@/context/ProjectContext';
@@ -30,7 +30,7 @@ import { useTaskContext } from '@/context/TaskContext';
 import { NO_QA_TASKS, useExternalQa } from '@/context/ExternalQaContext';
 import { useUIContext } from '@/context/UIContext';
 import { canQaComment, canQaCommand, canQaDelete, isHistoricalQaPass, isQaTerminal, qaIdSearch, requiredTargetsPassed } from '@/lib/qa/domain';
-import type { QaActor, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/lib/qa/domain';
+import type { QaActor, QaAttachment, QaCommand, QaDetail, QaResolution, QaSeverity } from '@/lib/qa/domain';
 import type { QaClient } from '@/lib/qa/client';
 import type { QaWorkflow } from '@/lib/qa/workflow';
 import type { QaActionDefaults } from '@/lib/qa/boardInteraction';
@@ -127,8 +127,26 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
   useLayoutEffect(() => { onRefreshBlockedChange?.(refreshBlocked); return () => onRefreshBlockedChange?.(false); }, [onRefreshBlockedChange, refreshBlocked]);
   const [taskSearch, setTaskSearch] = useState('');
   const [links, setLinks] = useState(issue.taskIds);
-  const projectTasks = allTasks.filter(task => task.projectId === issue.projectId);
-  const unavailableLinks = externalQa ? [] : links.filter(id => !projectTasks.some(task => task.id === id));
+  const pickingInternalTasks = action === 'link_tasks' && !externalQa;
+  const projectTasks = useMemo(
+    () => pickingInternalTasks ? allTasks.filter(task => task.projectId === issue.projectId) : NO_QA_TASKS,
+    [pickingInternalTasks, allTasks, issue.projectId],
+  );
+  const projectTaskIds = useMemo(() => new Set(projectTasks.map(task => task.id)), [projectTasks]);
+  const unavailableLinks = useMemo(
+    () => pickingInternalTasks ? links.filter(id => !projectTaskIds.has(id)) : [],
+    [pickingInternalTasks, links, projectTaskIds],
+  );
+  const matchingTasks = useMemo(() => {
+    const query = taskSearch.toLowerCase();
+    const matches: typeof projectTasks = [];
+    for (const task of projectTasks) {
+      if (!`${task.taskKey} ${task.title}`.toLowerCase().includes(query)) continue;
+      matches.push(task);
+      if (matches.length === 100) break;
+    }
+    return matches;
+  }, [projectTasks, taskSearch]);
   const [targets, setTargets] = useState<QaTargetDraft[]>(() => issue.targets.length ? issue.targets.map(target => ({ environment: target.environment, component: target.component, build: target.build, required: target.required })) : [{ environment: issue.observedEnvironment, component: '', build: '', required: true }]);
   const [fixSummary, setFixSummary] = useState('');
   const actionBaseline = useRef({ links, targets });
@@ -159,16 +177,47 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
     for (const file of [...commentFiles.current.current]) commentFiles.remove(file.id);
     setComment('');
   }, [commentScope]);
+  const { issueAttachments, commentAttachments } = useMemo(() => {
+    const issueAttachments: QaAttachment[] = [];
+    const commentAttachments = new Map<string, QaAttachment[]>();
+    for (const file of detail.attachments) {
+      if (!file.commentId) {
+        issueAttachments.push(file);
+      } else {
+        const files = commentAttachments.get(file.commentId);
+        if (files) files.push(file);
+        else commentAttachments.set(file.commentId, [file]);
+      }
+    }
+    return { issueAttachments, commentAttachments };
+  }, [detail.attachments]);
+  const sortedComments = useMemo(() => tab === 'comments'
+    ? sortComments(detail.comments, commentOrder) : [], [tab, detail.comments, commentOrder]);
   // Comments have their own tab; the cloud also logs them as events.
-  const visibleEvents = detail.events.filter(event => event.type !== 'legacy_import' && event.type !== 'comment' && (!externalQa || event.type !== 'link_tasks'));
+  const visibleEvents = useMemo(() => detail.events.filter(event => event.type !== 'legacy_import'
+    && event.type !== 'comment' && (!externalQa || event.type !== 'link_tasks')), [detail.events, externalQa]);
   const source = (issue as unknown as { legacySource?: { recordUrl?: string } }).legacySource;
   const sourceUrl = !externalQa && source?.recordUrl && /^https:\/\/[^/]+\.slack\.com\//i.test(source.recordUrl) ? source.recordUrl : null;
   const nextAction = getQaNextAction(issue, actor);
   const can = (type: ActionType) => canQaCommand(issue, actor, type);
   // Scoped historical names are display labels, never assignment candidates.
-  const memberNames = new Map([...Object.entries(detail.memberNames ?? {}), ...[...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name] as const)]);
-  const member = (id: string | null) => id ? memberNames.get(id) || t('qa.memberUnavailable') : '—';
-  const personBadge = (id: string | null) => { const person = users.find(user => user.id === id) ?? assignmentOptions?.find(user => user.id === id) ?? qaScopedProfile(detail.memberProfiles, id); return person ? <QaPersonBadge person={person} /> : member(id); };
+  const memberNames = useMemo(() => new Map([
+    ...Object.entries(detail.memberNames ?? {}),
+    ...[...users, ...(assignmentOptions ?? [])].map(user => [user.id, user.name] as const),
+  ]), [detail.memberNames, users, assignmentOptions]);
+  const member = useCallback((id: string | null) => id ? memberNames.get(id) || t('qa.memberUnavailable') : '—', [memberNames, t]);
+  const personBadge = useCallback((id: string | null) => {
+    const person = users.find(user => user.id === id) ?? assignmentOptions?.find(user => user.id === id) ?? qaScopedProfile(detail.memberProfiles, id);
+    return person ? <QaPersonBadge person={person} /> : member(id);
+  }, [users, assignmentOptions, detail.memberProfiles, member]);
+  const commentRows = useMemo(() => sortedComments.map(row => {
+    const attachments = commentAttachments.get(row.id);
+    return <li key={row.id} className="border-b border-border pb-3 text-sm">
+      <div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{personBadge(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div>
+      <p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p>
+      {attachments && <CommentAttachmentList attachments={attachments} download={downloadCommentAttachment} scopeKey={commentScope} onError={setError} />}
+    </li>;
+  }), [sortedComments, commentAttachments, personBadge, downloadCommentAttachment, commentScope]);
   const eventText = { t, issue, showSeverity: display.configuration?.showSeverity ?? false, member: (id: string) => memberNames.get(id) ?? id, memberLabel: member, date: displayDate,
     task: (id: string) => { const task = allTasks.find(row => row.id === id); return task ? `${task.taskKey} · ${task.title}` : id; },
     project: (id: string) => allProjects.find(project => project.id === id)?.name || id,
@@ -411,7 +460,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {issue.reopenReason && !isQaTerminal(issue.state) && <div className="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"><p className="font-medium">{t('qa.reopenReason')}</p><p className="mt-1 whitespace-pre-wrap break-words"><QaText text={issue.reopenReason} /></p></div>}
           {issue.resolution && <p className="mt-4 whitespace-pre-wrap rounded bg-muted p-3 text-sm">{t(`qa.resolution.${issue.resolution}`)} · {issue.resolutionReason}{issue.duplicateOfId && <> · <a className="underline" href={`?qa=${encodeURIComponent(issue.duplicateOfId)}`}>{issue.duplicateOfId}</a></>}</p>}
         </QaSection>
-        <QaSection title={t('qa.attachments')}>{!externalQa && <QaLegacyAttachments issue={issue} />}<QaAttachments compact issueId={issue.id} attachments={detail.attachments.filter(file => !file.commentId)} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
+        <QaSection title={t('qa.attachments')}>{!externalQa && <QaLegacyAttachments issue={issue} />}<QaAttachments compact issueId={issue.id} attachments={issueAttachments} client={client} onChanged={onRefresh} onError={setError} onBusyChange={setAttachmentBusy} /></QaSection>
         </>}
         {tab === 'verification' && <>
         <QaSection title={t('qa.targets')}>
@@ -431,7 +480,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
         <QaSection title={t('qa.comments')}>
           <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
-          <ol className="mb-4 space-y-3">{sortComments(detail.comments, commentOrder).map(row => <li key={row.id} className="border-b border-border pb-3 text-sm"><div className="mb-1 flex flex-wrap justify-between gap-2"><strong>{personBadge(row.actorId)}</strong><span className="text-xs text-muted-foreground">{displayDate(row.createdAt)}</span></div><p className="whitespace-pre-wrap break-words"><QaText text={row.body} /></p><CommentAttachmentList attachments={detail.attachments.filter(file => file.commentId === row.id)} download={downloadCommentAttachment} scopeKey={commentScope} onError={setError} /></li>)}</ol>
+          <ol className="mb-4 space-y-3">{commentRows}</ol>
           {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required={!commentFiles.files.length} maxLength={20000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><CommentAttachmentPicker files={commentFiles.files} rejected={commentFiles.rejected} busy={busy} onFiles={files => { if (files.length + commentFiles.current.current.length > 10) { setError(new QaClientError('qa_invalid_comment_attachments', 400)); return; } commentFiles.add(files); }} onRemove={commentFiles.remove} onRetry={() => void retryCommentUploads()} /><button className={qaPrimary} disabled={busy || (!comment.trim() && !commentFiles.files.length)}>{t('qa.addComment')}</button></form>}
         </QaSection>
         </>}
@@ -482,7 +531,7 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
               client={client} projectId={issue.projectId} links={links} onChange={setLinks} />}
             {action === 'link_tasks' && !externalQa && <><p className="text-sm text-muted-foreground">{t('qa.taskLinksHint')}</p><QaField label={t('qa.taskSearch')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)} />
               {unavailableLinks.length > 0 && <div className="space-y-2 rounded-lg border border-amber-500/30 p-3"><p className="text-sm text-muted-foreground">{t('qa.linkedTaskUnavailable')}</p>{unavailableLinks.map(id => { const task = allTasks.find(row => row.id === id); return <label key={id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked onChange={() => setLinks(previous => previous.filter(link => link !== id))} /><span>{task ? `${task.taskKey} · ${task.title}` : id}</span></label>; })}</div>}
-              <div className="max-h-60 space-y-2 overflow-y-auto">{projectTasks.filter(task => `${task.taskKey} ${task.title}`.toLowerCase().includes(taskSearch.toLowerCase())).slice(0, 100).map(task => <label key={task.id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={links.includes(task.id)} onChange={event => setLinks(previous => event.target.checked ? [...previous, task.id] : previous.filter(id => id !== task.id))} /><span>{task.taskKey} · {task.title}</span></label>)}</div></>}
+              <div className="max-h-60 space-y-2 overflow-y-auto">{matchingTasks.map(task => <label key={task.id} className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={links.includes(task.id)} onChange={event => setLinks(previous => event.target.checked ? [...previous, task.id] : previous.filter(id => id !== task.id))} /><span>{task.taskKey} · {task.title}</span></label>)}</div></>}
             <p className="text-xs text-muted-foreground">{t('qa.unsent')}</p>
             <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-border bg-card py-3 pb-[max(12px,env(safe-area-inset-bottom))]"><button className={qaPrimary} type="submit" disabled={(action === 'submit_fix' && !environments.ready) || (action === 'link_tasks' && unavailableLinks.length > 0)}>{t('qa.save')}</button><button className={qaButton} type="button" onClick={() => setAction(null)}>{t('qa.cancel')}</button></div>
           </fieldset></form>}
