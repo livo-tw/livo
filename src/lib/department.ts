@@ -62,10 +62,13 @@ const NAME_ORDER: Record<string, number> = {
   '鄧雅文': 70, '方彥廷': 71,
 };
 
-export function sortUsersByDept<T extends { sortOrder?: number; name: string; jobTitle: string }>(users: T[]): T[] {
-  return [...users].sort((a, b) => {
-    const oA = a.sortOrder ?? 99;
-    const oB = b.sortOrder ?? 99;
-    return oA - oB;
-  });
+/** Team management is the default order everywhere; IDs make equal ranks deterministic. */
+export function compareMemberOrder(a: { sortOrder?: number; id?: string }, b: { sortOrder?: number; id?: string }): number {
+  const rank = (a.sortOrder ?? 99) - (b.sortOrder ?? 99);
+  if (rank || !a.id || !b.id) return rank;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export function sortUsersByDept<T extends { sortOrder?: number; id?: string }>(users: readonly T[]): T[] {
+  return [...users].sort(compareMemberOrder);
 }

@@ -5,6 +5,7 @@ import { USE_CF_BACKEND } from '@/lib/apiBase';
 import { USING_MOCK_BACKEND } from '@/integrations/supabase/client';
 import type { QaClient, QaProjectPerson } from '@/lib/qa/client';
 import type { QaAssignmentUser } from '@/lib/qa/assignmentPeople';
+import { qaPersonSortOrder, sortQaPeople } from '@/lib/qa/peopleOrder';
 
 const NO_PEOPLE: QaAssignmentUser[] = [];
 type PeopleClient = Partial<Pick<QaClient, 'projectPeople'>>;
@@ -41,10 +42,10 @@ export function useQaProjectPeople(client: PeopleClient, projectId: string) {
     for (const person of snapshot.members) {
       if (!choices.has(person.id)) choices.set(person.id, {
         id: person.id, name: person.name, avatar: person.avatar ?? '', color: person.color ?? '',
-        jobTitle: person.jobTitle ?? '', isActive: person.isActive, email: '', role: 'member', sortOrder: 0,
+        jobTitle: person.jobTitle ?? '', isActive: person.isActive, email: '', role: 'member', sortOrder: qaPersonSortOrder(person.sortOrder),
         qaExternal: person.isExternal !== false, isExternal: person.isExternal,
       });
     }
-    return [...choices.values()];
+    return sortQaPeople([...choices.values()]);
   }, [enabled, externalQa, projectId, snapshot, users]);
 }

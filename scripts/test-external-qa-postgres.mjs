@@ -6,6 +6,7 @@ import { plan as qaPlan } from './test-qa-auto-close-postgres.mjs';
 import { runPostgres } from './task-work-postgres-runtime.mjs';
 import { runNativePostgres } from './native-postgres-runtime.mjs';
 import { addAuthRecoveryCases } from './lib/external-qa-auth-recovery-postgres.mjs';
+import { addMemberDisplayOrderCases } from './lib/qa-member-display-order-postgres.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = name => fs.readFileSync(path.join(root, 'supabase/migrations', name), 'utf8');
@@ -16,7 +17,7 @@ const admin = "'00000000-0000-0000-0000-000000000003'::uuid";
 const actor = 'eqa-example';
 const names = ['20261110_external_qa_scope.sql', '20261110_qa_external_reads.sql', '20261111_external_qa_admin.sql',
   '20261112_external_qa_gateway_privacy.sql', '20261113_external_qa_auth_recovery.sql', '20261116_external_qa_assignment_directory.sql',
-  '20261117_qa_participant_display.sql'];
+  '20261117_qa_participant_display.sql', '20261122_qa_member_display_order.sql'];
 
 export function plan() {
   const baseline = qaPlan();
@@ -66,6 +67,7 @@ export function plan() {
     "INSERT INTO external_qa_accounts(id,auth_id,name) VALUES('eqa-conflict'," + admin + ",'Conflict')", '42501', 'qa_external_identity_conflict');
   cases.push("INSERT INTO qa_issues(id,project_id,state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data) SELECT 'issue-external-other','p-other',state,assignee_id,qa_owner_id,reporter_id,title,version,updated_at,data || '{\"id\":\"issue-external-other\",\"projectId\":\"p-other\"}'::jsonb FROM qa_issues WHERE id='example-stale';");
   check('profile lists only granted projects', read('profile') + "->'projects'->0->>'id'='p-test' AND jsonb_array_length(" + read('profile') + "->'projects')=1");
+  addMemberDisplayOrderCases({ cases, check, error, auth, admin, quote, json });
   addAssignmentCases({ cases, check, error, auth, quote, json });
   check('mixed project query cannot count other project', read('list', { projectIds: ['p-other'] }) + "->>'total'='0'");
   check('current issue read works inside project', read('issue', { id: 'example-stale' }) + "->>'id'='example-stale'");
@@ -144,7 +146,7 @@ export function plan() {
     // table, UUID default, indexes and RLS policies still apply unchanged.
     activity.slice(0, publicationStart),
     'GRANT ALL ON TABLE public.activity_logs TO service_role;',
-    "ALTER TABLE members ADD COLUMN email text NOT NULL DEFAULT '', ADD COLUMN name text NOT NULL DEFAULT 'Example member', ADD COLUMN avatar text NOT NULL DEFAULT '', ADD COLUMN color text NOT NULL DEFAULT '', ADD COLUMN job_title text NOT NULL DEFAULT '', ADD COLUMN is_qa_admin boolean NOT NULL DEFAULT false;",
+    "ALTER TABLE members ADD COLUMN email text NOT NULL DEFAULT '', ADD COLUMN name text NOT NULL DEFAULT 'Example member', ADD COLUMN avatar text NOT NULL DEFAULT '', ADD COLUMN color text NOT NULL DEFAULT '', ADD COLUMN job_title text NOT NULL DEFAULT '', ADD COLUMN is_qa_admin boolean NOT NULL DEFAULT false, ADD COLUMN sort_order integer;",
     "ALTER TABLE projects ADD COLUMN name text NOT NULL DEFAULT 'Example project', ADD COLUMN line_id text NOT NULL DEFAULT 'line-test', ADD COLUMN color text NOT NULL DEFAULT '';",
     "ALTER TABLE tasks ADD COLUMN task_key text NOT NULL DEFAULT 'EX-1', ADD COLUMN title text NOT NULL DEFAULT 'Example task';",
     "CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,encrypted_password text,raw_app_meta_data jsonb NOT NULL DEFAULT '{}',raw_user_meta_data jsonb NOT NULL DEFAULT '{}',last_sign_in_at timestamptz,updated_at timestamptz); INSERT INTO auth.users(id,email) VALUES (" + auth + ",'external@example.com');",
@@ -164,6 +166,12 @@ export function plan() {
       GRANT EXECUTE ON FUNCTION qa_test.commit_by_dependency(uuid,text,text,text,integer,text,jsonb,jsonb) TO service_role;`,
     migration('20261019_active_member_gate.sql'),
     migrations,
+    `CREATE TABLE qa_test.member_order_identity AS SELECT oid,proowner,proacl,
+      (SELECT count(*) FROM members) AS roster_count FROM pg_proc WHERE oid IN (
+      'public.livo_qa_external_read(uuid,text,jsonb)'::regprocedure,
+      'public.livo_qa_member_display_page(uuid,text,text,integer)'::regprocedure);
+      GRANT SELECT ON qa_test.member_order_identity TO service_role;`,
+    migration('20261122_qa_member_display_order.sql'),
   ];
   return { sql: [baseline.sql, ...fixture, ...cases].join('\n'), summary: { assertions, migrationApplications: 2, migrations: names } };
 }

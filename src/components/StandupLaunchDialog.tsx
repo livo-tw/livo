@@ -11,6 +11,7 @@ import { useStandupSettings, type SortMode } from '@/hooks/useStandupSettings';
 import { Switch } from '@/components/ui/switch';
 import { useStandupGrouping } from '@/hooks/useStandupGrouping';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { sortUsersByDept } from '@/lib/department';
 import { StandupQueueEditor } from './standup/StandupQueueEditor';
 import type { StandupGroup } from '@/hooks/useStandupGrouping';
 import { applyStandupOrder, restoreStandupGroups, saveStandupLaunch, shuffleStandupOrder, standupOrderFromGroups, type StandupOrder } from '@/lib/standupLaunch';
@@ -57,7 +58,7 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
     setLastExclusion(undefined);
   }, [open]);
 
-  const activeUsers = users.filter(user => user.isActive === true);
+  const activeUsers = sortUsersByDept(users.filter(user => user.isActive === true));
   const memberIds = activeUsers.map(u => u.id);
   const {
     settings,
@@ -93,8 +94,12 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   // so every exclusion can be recovered, including repeated project reports.
   const applyEligibleOrder = (nextGroups: StandupGroup[], source: 'manual' | 'shuffle') => {
     keepCurrentSettings();
-    setOrder(standupOrderFromGroups(applyStandupOrder(fullGroups, standupOrderFromGroups(nextGroups))));
-    setOrderSource(source);
+    const nextOrder = standupOrderFromGroups(applyStandupOrder(fullGroups, standupOrderFromGroups(nextGroups)));
+    const changed = JSON.stringify(nextOrder) !== JSON.stringify(standupOrderFromGroups(sortedGroups));
+    // Returning to the default releases the draft too, so a later team reorder
+    // is not captured by an unchanged shuffle or a reverted manual edit.
+    setOrder(changed ? nextOrder : undefined);
+    setOrderSource(changed ? source : undefined);
     setLastExclusion(undefined);
   };
   const excludeMember = (memberId: string) => {
@@ -106,15 +111,8 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
   const restoreMember = (memberId: string) => {
     if (!excludedMemberIds.includes(memberId)) return;
     keepCurrentSettings();
-    const previouslyHiddenGroups = new Set(fullGroups.filter(group => group.members.every(member => excludedMemberIds.includes(member.id))).map(group => group.group_key));
-    const restored = fullGroups.map(group => ({ ...group, members: [
-      ...group.members.filter(member => member.id !== memberId),
-      ...group.members.filter(member => member.id === memberId),
-    ] }));
-    const appendGroups = new Set(restored.filter(group => group.members.some(member => member.id === memberId) &&
-      (settings.sortMode === 'by_member' || previouslyHiddenGroups.has(group.group_key))).map(group => group.group_key));
-    setOrder(standupOrderFromGroups([...restored.filter(group => !appendGroups.has(group.group_key)), ...restored.filter(group => appendGroups.has(group.group_key))]));
-    setOrderSource('manual');
+    // Restoring participation is not a custom reorder. Reuse the person's
+    // existing team-order slot, or their slot in an explicitly edited draft.
     setExcludedMemberIds(ids => ids.filter(id => id !== memberId));
     setLastExclusion(undefined);
   };
@@ -146,7 +144,12 @@ const StandupLaunchDialog = ({ open, onOpenChange, onConfirm, onCancel }: Standu
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
-  const handleConfirm = () => { if (!groups.length) return; saveStandupLaunch(settings, fullGroups, excludedMemberIds); onConfirm?.(); onOpenChange(false); };
+  const handleConfirm = () => {
+    if (!groups.length) return;
+    const changed = JSON.stringify(standupOrderFromGroups(fullGroups)) !== JSON.stringify(standupOrderFromGroups(sortedGroups));
+    saveStandupLaunch(settings, fullGroups, excludedMemberIds, changed && orderSource ? orderSource : 'default');
+    onConfirm?.(); onOpenChange(false);
+  };
 
   if (!open) return null;
 

@@ -6,6 +6,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { useMemberContext } from '@/context/MemberContext';
 import { Field, inputCls } from './shared';
 import { personalMessageSettings, withPersonalMessages, type SlackDeliverySetting as Delivery } from '@/lib/slackPersonalMessages';
+import { sortUsersByDept } from '@/lib/department';
 
 type Props = { configured: boolean; isDemoMode: boolean };
 
@@ -48,8 +49,7 @@ export default function SlackPersonalMessages({ configured, isDemoMode }: Props)
     return () => { alive = false; };
   }, [configured, isDemoMode, apply]);
 
-  const active = useMemo(() => users.filter(u => u.isActive !== false)
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name)), [users]);
+  const active = useMemo(() => sortUsersByDept(users.filter(u => u.isActive !== false)), [users]);
   const activeIds = useMemo(() => new Set(active.map(u => u.id)), [active]);
   const chosen = memberIds.filter(id => activeIds.has(id));
   const q = query.trim().toLowerCase();

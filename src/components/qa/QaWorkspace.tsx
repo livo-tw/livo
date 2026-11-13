@@ -10,7 +10,8 @@ import { useBoardFilters } from '@/hooks/useBoardFilters';
 import { useProjectScope, useScopedProjectFilter } from '@/hooks/useProjectScope';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useMemberContext } from '@/context/MemberContext';
-import { getDepartment, sortUsersByDept, type Department } from '@/lib/department';
+import { getDepartment, type Department } from '@/lib/department';
+import { sortQaPeople } from '@/lib/qa/peopleOrder';
 import { qaBoardSort, readBoardSort, writeBoardSort, type BoardSort } from '@/lib/boardSort';
 import type { Priority } from '@/types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -158,11 +159,14 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   useEffect(() => { setOffset(0); }, [filterKey]);
   const memberOptions = useMemo(() => {
     const label = (name: string, active: boolean) => active ? name : `${name} (${t('common.inactive')})`;
-    const options = new Map(sortUsersByDept(users).map(user => { const display = qaPersonDisplay(user); return [user.id, { id: user.id, label: label(user.name, user.isActive), avatar: display.avatar, avatarColor: display.color, subtitle: display.jobTitle }] as const; }));
-    for (const person of [...(filterPeople.people ?? [])].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!options.has(person.id)) { const display = qaPersonDisplay(person); options.set(person.id, { id: person.id, label: label(person.name, person.isActive), avatar: display.avatar, avatarColor: display.color, subtitle: display.jobTitle }); }
+    const people = new Map<string, typeof users[number] | NonNullable<typeof filterPeople.people>[number]>(users.map(user => [user.id, user]));
+    for (const person of filterPeople.people ?? []) {
+      if (!people.has(person.id)) people.set(person.id, person);
     }
-    return [...options.values()];
+    return sortQaPeople([...people.values()]).map(person => {
+      const display = qaPersonDisplay(person);
+      return { id: person.id, label: label(person.name, person.isActive), avatar: display.avatar, avatarColor: display.color, subtitle: display.jobTitle };
+    });
   }, [users, filterPeople.people, t]);
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) => setter(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
   const clearAll = () => { boardFilters.clearFilters(); setSeverities([]); setReporters([]); setSearch(''); setSearchDraft(''); };

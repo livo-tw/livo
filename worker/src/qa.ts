@@ -390,8 +390,8 @@ export async function handleQa(c:C):Promise<Response> {
       await coordination(c.env,ws,qaId(body.projectId));
       const offset=body.offset??0,search=typeof body.search==='string'?body.search.trim():'';
       if(!Number.isSafeInteger(offset)||Number(offset)<0||Number(offset)>100000||search.length>100)throw new QaError('qa_invalid_request');
-      const rows=await c.env.DB.prepare('SELECT id,name FROM members WHERE workspace_id=? AND is_active=1 AND instr(lower(name),lower(?))>0 ORDER BY name,id LIMIT 100 OFFSET ?').bind(ws,search,offset as number).all();
-      return c.json({members:rows.results,hasMore:rows.results.length===100});
+      const rows=await c.env.DB.prepare('SELECT id,name,COALESCE(sort_order,99) AS sortOrder FROM members WHERE workspace_id=? AND is_active=1 AND instr(lower(name),lower(?))>0 ORDER BY COALESCE(sort_order,99),id LIMIT 101 OFFSET ?').bind(ws,search,offset as number).all();
+      return c.json({members:rows.results.slice(0,100).map(row=>({...row,isExternal:false})),hasMore:rows.results.length>100});
     }
     if(action==='save_coordination'){
       const projectId=qaId(body.projectId),coordinatorId=body.coordinatorId===null?null:qaId(body.coordinatorId),expectedVersion=body.expectedVersion;

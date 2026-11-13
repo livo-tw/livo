@@ -24,6 +24,7 @@ interface UserSelectProps {
   required?: boolean;
   disabled?: boolean;
   activeOnly?: boolean;
+  /** Legacy system suggestions do not override the team management order. */
   preferredUserIds?: readonly string[];
   options?: readonly User[];
 }

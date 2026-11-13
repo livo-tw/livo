@@ -42,7 +42,7 @@ if (process.argv.includes('--update')) {
 }
 
 const remaining = new Map();
-if (existsSync(baselinePath)) for (const key of readFileSync(baselinePath, 'utf8').split('\n').filter(Boolean)) remaining.set(key, (remaining.get(key) || 0) + 1);
+if (existsSync(baselinePath)) for (const key of readFileSync(baselinePath, 'utf8').split(/\r?\n/).filter(Boolean)) remaining.set(key, (remaining.get(key) || 0) + 1);
 const fresh = [];
 for (const error of current) {
   const left = remaining.get(error.key) || 0;

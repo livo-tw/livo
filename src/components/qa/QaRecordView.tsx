@@ -27,6 +27,13 @@ export default function QaRecordView({ title, creating = false, busy, suspended 
   const focus = useFocusTrap(mode === 'modal' && !suspended);
   const titleId = useId();
   const top = IS_DEMO_PRO ? DEMO_BANNER_HEIGHT : 0;
+  // The workspace owns scrolling in page mode. A nested scroll container
+  // with overscroll containment blocks the wheel from reaching that workspace.
+  const contentClass = creating
+    ? 'overflow-hidden overscroll-contain'
+    : mode === 'page'
+      ? 'pb-[env(safe-area-inset-bottom)]'
+      : 'overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]';
   const close = () => { if (!busy && !hasQaNavigationGuard()) onClose(); else toast.info(t('qa.finishPending')); };
   return <div ref={focus} role="dialog" aria-modal={mode === 'modal' || undefined} aria-labelledby={titleId} hidden={suspended}
     className={suspended ? 'hidden' : mode === 'page' ? 'flex min-h-0 w-full flex-1 flex-col bg-card' : mode === 'side' ? 'fixed bottom-0 right-0 z-50 flex w-[min(960px,100vw)] flex-col border-l border-border bg-card shadow-xl' : 'fixed inset-0 z-50 flex items-start justify-center bg-black/50 md:pt-6'}
@@ -43,7 +50,7 @@ export default function QaRecordView({ title, creating = false, busy, suspended 
           <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-50 sm:min-h-8 sm:min-w-8" disabled={busy} aria-label={t('common.close')} title={t('common.close')} onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>
-      <div className={`min-h-0 min-w-0 flex-1 overscroll-contain ${creating ? 'overflow-hidden' : 'overflow-y-auto pb-[env(safe-area-inset-bottom)]'}`}>{children}</div>
+      <div className={`min-h-0 min-w-0 flex-1 ${contentClass}`}>{children}</div>
     </div>
   </div>;
 }

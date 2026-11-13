@@ -2,13 +2,14 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { User } from '@/types';
 import { mapUser } from '../mappers';
+import { sortUsersByDept } from '@/lib/department';
 
 export function useMemberState() {
   const [users, setUsersInternal] = useState<User[]>([]);
   const [usersLoaded, setUsersLoaded] = useState(false);
 
   const setUsers = useCallback((u: User[]) => {
-    setUsersInternal(u);
+    setUsersInternal(sortUsersByDept(u));
     setUsersLoaded(true);
   }, []);
 

@@ -1,10 +1,11 @@
 import type { Task, User } from '@/types';
 import { getDepartment, sortUsersByDept, type Department } from '@/lib/department';
+import { sortQaPeople } from '@/lib/qa/peopleOrder';
 
-/** Preferences change presentation order; they never restrict who can be selected. */
-export function sortMemberOptions(users: User[], preferredUserIds: readonly string[] = []): User[] {
-  const preferred = new Set(preferredUserIds);
-  return sortUsersByDept(users).sort((a, b) => Number(preferred.has(b.id)) - Number(preferred.has(a.id)));
+/** System suggestions are not a saved personal order and cannot override the team order. */
+export function sortMemberOptions(users: User[], _preferredUserIds: readonly string[] = []): User[] {
+  return users.some(user => 'isExternal' in user || 'qaExternal' in user)
+    ? sortQaPeople(users) : sortUsersByDept(users);
 }
 
 export function getDepartmentPreferenceIds(users: User[], departments: readonly Department[]): string[] {

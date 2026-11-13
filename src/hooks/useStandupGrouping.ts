@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import i18n from '@/i18n';
 import type { User, Task, Project } from '@/types';
-import { DEPARTMENTS, getDepartment } from '@/lib/department';
+import { DEPARTMENTS, compareMemberOrder, getDepartment, sortUsersByDept } from '@/lib/department';
 import { restoreStandupGroups, type StandupLaunchSnapshot } from '@/lib/standupLaunch';
 import type { SortMode } from '@/hooks/useStandupSettings';
 import { matchesStandupMember } from '@/lib/standupTasks';
@@ -61,7 +61,7 @@ export function groupMembers(
   bufferSeconds: number,
   includeReviewTasks = false,
 ): StandupGroup[] {
-  members = members.filter(member => member.isActive === true);
+  members = sortUsersByDept(members.filter(member => member.isActive === true));
   switch (sortMode) {
     case 'by_member': {
       return members.map(m => {
@@ -195,7 +195,16 @@ export function useStandupGrouping(
   includeReviewTasks = false,
 ) {
   const groups = useMemo(
-    () => launch ? restoreStandupGroups(launch, members, tasks, getDuration, bufferSeconds) : groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds, includeReviewTasks),
+    () => {
+      if (!launch) return groupMembers(members, tasks, projects, sortMode, getDuration, bufferSeconds, includeReviewTasks);
+      const restored = restoreStandupGroups(launch, members, tasks, getDuration, bufferSeconds);
+      if (launch.orderSource === 'manual' || launch.orderSource === 'shuffle') return restored;
+      // Keep the launched report turns and their keys stable during the meeting,
+      // while default member order follows the current team order.
+      const defaults = restored.map(group => ({ ...group, members: sortUsersByDept(group.members) }));
+      return launch.settings.sortMode === 'by_member'
+        ? defaults.sort((a, b) => compareMemberOrder(a.members[0], b.members[0])) : defaults;
+    },
     [members, tasks, projects, sortMode, getDuration, bufferSeconds, launch, includeReviewTasks],
   );
 

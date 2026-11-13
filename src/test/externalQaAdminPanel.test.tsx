@@ -88,3 +88,24 @@ it('recovers a pending registration using its exact registration and revision', 
     initialPassword: 'Example-reissued-2',
   });
 });
+
+it('keeps the same name and id order on initial read and after changing active state', async () => {
+  const roster = [
+    { ...account, id: 'external-z', name: 'alpha', isActive: true },
+    { ...account, id: 'external-last', name: 'Zulu', isActive: true },
+    { ...account, id: 'external-a', name: 'Alpha', isActive: false },
+  ];
+  api.call.mockResolvedValueOnce({ ok: true, data: { accounts: roster } });
+  render(<ExternalQaAdminPanel />);
+  const editOrder = () => screen.getAllByRole('button', { name: /^common\.edit:/ }).map(button => button.getAttribute('aria-label'));
+  await screen.findByRole('button', { name: 'common.edit: alpha' });
+  expect(editOrder()).toEqual(['common.edit: Alpha', 'common.edit: alpha', 'common.edit: Zulu']);
+  fireEvent.click(screen.getByRole('button', { name: 'common.edit: Alpha' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'externalQaAdmin.active' }));
+  api.call.mockResolvedValueOnce({ ok: true, data: { account: { ...roster[2], isActive: true, revision: 2 } } });
+  fireEvent.click(screen.getByRole('button', { name: 'common.save' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'common.save' })).not.toBeInTheDocument());
+  expect(api.call).toHaveBeenLastCalledWith('external-qa-admin', expect.objectContaining({ id: 'external-a', isActive: true }));
+  expect(editOrder()).toEqual(['common.edit: Alpha', 'common.edit: alpha', 'common.edit: Zulu']);
+  expect(roster.map(person => person.id)).toEqual(['external-z', 'external-last', 'external-a']);
+});

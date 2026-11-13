@@ -1,6 +1,7 @@
 import { fnUrl } from '@/lib/apiBase';
 import { supabase } from '@/integrations/supabase/client';
 import type { Project, User } from '@/types';
+import { qaPersonSortOrder, sortQaPeople } from '@/lib/qa/peopleOrder';
 
 export type QaProfileUser = User & { isExternal?: boolean };
 
@@ -45,12 +46,13 @@ export function parseWorkspaceProfile(value: unknown): WorkspaceProfile {
     return { id: requiredText(project.id), name: requiredText(project.name), lineId: optionalText(project.lineId),
       color: optionalText(project.color), key: optionalText(project.key), isArchived: project.isArchived === true };
   });
-  const members: QaProfileUser[] = profile.members.map((value, sortOrder) => {
+  const members = sortQaPeople(profile.members.map((value): QaProfileUser => {
     const member = record(value);
     return { id: requiredText(member.id), name: requiredText(member.name), avatar: optionalText(member.avatar),
       color: optionalText(member.color), jobTitle: optionalText(member.jobTitle), isActive: member.isActive === true,
-      role: 'member', email: '', sortOrder, ...(typeof member.isExternal === 'boolean' ? { isExternal: member.isExternal } : {}) };
-  });
+      role: 'member', email: '', sortOrder: qaPersonSortOrder(member.sortOrder),
+      ...(typeof member.isExternal === 'boolean' ? { isExternal: member.isExternal } : {}) };
+  }));
   return { external: true, id: requiredText(profile.id), name: requiredText(profile.name), qaEnabled: profile.qaEnabled,
     environments: profile.environments.map(requiredText), projects, members };
 }

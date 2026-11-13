@@ -7,6 +7,7 @@ import { useProjectContext } from '@/context/ProjectContext';
 import { callFunction } from '@/lib/callFunction';
 import { groupProjectsByLine } from '@/lib/projectGroups';
 import { randomUUID } from '@/lib/generateId';
+import { sortExternalQaPeople } from '@/lib/qa/peopleOrder';
 
 interface ExternalQaAccount {
   id: string;
@@ -46,7 +47,7 @@ export default function ExternalQaAdminPanel() {
     try {
       const result = await callFunction<AdminResponse>('external-qa-admin', { action: 'list' });
       if (!result.ok || !Array.isArray(result.data?.accounts)) throw new Error('external_qa_request_failed');
-      setAccounts(result.data.accounts);
+      setAccounts(sortExternalQaPeople(result.data.accounts));
     } catch {
       setError('external_qa_request_failed');
     } finally {
@@ -77,9 +78,8 @@ export default function ExternalQaAdminPanel() {
         setError(result.data?.error || 'external_qa_request_failed');
         return;
       }
-      setAccounts(previous => [...(previous ?? []).filter(a => a.id !== account.id),
-        { ...(previous ?? []).find(a => a.id === account.id), ...account }]
-        .sort((a, b) => a.name.localeCompare(b.name)));
+      setAccounts(previous => sortExternalQaPeople([...(previous ?? []).filter(a => a.id !== account.id),
+        { ...(previous ?? []).find(a => a.id === account.id), ...account }]));
       setDraft(null);
       if (temporaryPassword && account.email) {
         setCredential({ name: account.name, email: account.email, password: temporaryPassword });

@@ -20,7 +20,7 @@ import BoardApprovalModal from '@/components/board/BoardApprovalModal';
 import type { ApprovalConfirmPayload } from '@/components/board/BoardApprovalModal';
 import { Task, Priority } from '@/types';
 import { GitBranch, MessageSquare, Paperclip, Lock, ListTree, CornerDownRight, AlertTriangle, Calendar, GitMerge, Flag, UserCircle, Circle } from 'lucide-react';
-import { taskDepartment, deptColors } from '@/lib/department';
+import { taskDepartment, deptColors, sortUsersByDept } from '@/lib/department';
 import { priorityConfig } from '@/components/ui/badges';
 // CardFieldVisibility lives in fieldRegistry (single source of truth)
 import type { CardFieldVisibility } from '@/lib/fieldRegistry';
@@ -115,7 +115,7 @@ const TaskCard = memo(({ task, fields, subtaskMode, customCardFields, interactiv
   // Long member lists can be narrowed by typing, as in the shared searchable selects.
   const [assigneeQuery, setAssigneeQuery] = useState('');
   useEffect(() => { if (quickEdit !== 'assignee') setAssigneeQuery(''); }, [quickEdit]);
-  const activeUsers = useMemo(() => users.filter(u => u.isActive), [users]);
+  const activeUsers = useMemo(() => sortUsersByDept(users.filter(u => u.isActive)), [users]);
   const matchingUsers = useMemo(() => {
     const query = assigneeQuery.trim().toLowerCase();
     return query ? activeUsers.filter(u => `${u.name} ${u.jobTitle || ''} ${u.email || ''}`.toLowerCase().includes(query)) : activeUsers;

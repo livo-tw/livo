@@ -21,7 +21,8 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 vi.mock('@/lib/standupQueries', () => ({ sessionQueries: { fetchActive: mocks.fetchActive, update: mocks.update }, memberDurationQueries: { fetchBySession: mocks.durations } }));
 import StandupLaunchDialog from '@/components/StandupLaunchDialog';
 import StandupPanel from '@/components/StandupPanel';
-import { groupMembers, type QueueItem } from '@/hooks/useStandupGrouping';
+import { groupMembers, useStandupGrouping, type QueueItem } from '@/hooks/useStandupGrouping';
+import { useStandupQueue } from '@/hooks/useStandupQueue';
 import { useStandupSettings, type SortMode, type StandupSettings } from '@/hooks/useStandupSettings';
 import { applyStandupOrder, clearStandupLaunch, getStandupLaunch, resolveStandupCursor, restoreStandupGroups, saveStandupLaunch, shuffleStandupOrder, standupQueueKey } from '@/lib/standupLaunch';
 
@@ -49,6 +50,50 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); clearStandupLaunch(); });
 
 describe('standup launch order and active participants', () => {
+  it.each<SortMode>(['by_member', 'by_project', 'by_department', 'by_due_date'])('uses team member order inside every %s group without mutating the roster', sortMode => {
+    const roster = [
+      { ...member('a', 'Alex', 'FE'), sortOrder: 20 },
+      { ...member('b', 'Blair', 'FE'), sortOrder: 0 },
+      { ...member('c', 'Casey', 'FE'), sortOrder: 10 },
+    ];
+    const tasks = roster.map(user => ({ id: `task-${user.id}`, assigneeId: user.id, projectId: 'alpha' } as Task));
+    const groups = groupMembers(roster, tasks, mocks.projects, sortMode, () => 120, 15);
+    expect(groups.flatMap(group => group.members.map(user => user.id))).toEqual(['b', 'c', 'a']);
+    expect(roster.map(user => user.id)).toEqual(['a', 'b', 'c']);
+  });
+  it.each<SortMode>(['by_member', 'by_project', 'by_department', 'by_due_date'])('keeps launched %s report turns stable when member order and task grouping inputs change', sortMode => {
+    const initialUsers = mocks.users.map((user, sortOrder) => ({ ...user, sortOrder }));
+    const initialTasks = mocks.tasks;
+    const groups = groupMembers(initialUsers, initialTasks, mocks.projects, sortMode, () => 120, 15);
+    saveStandupLaunch({ ...settings, sortMode }, groups);
+    const launch = getStandupLaunch()!;
+    const { result, rerender } = renderHook(({ users, tasks }) => useStandupGrouping(users, tasks, mocks.projects, sortMode, () => 120, 15, launch),
+      { initialProps: { users: initialUsers, tasks: initialTasks } });
+    const turns = result.current.flatQueue.map(standupQueueKey).sort();
+    const nextUsers = [...initialUsers.map(user => ({ ...user, jobTitle: 'QA', sortOrder: user.id === 'c' ? 0 : user.id === 'b' ? 1 : 2 })), member('d', 'Drew', 'QA')];
+    const nextTasks = initialTasks.map(task => ({ ...task, projectId: 'zeta', dueDate: '2000-01-01' }));
+    rerender({ users: nextUsers, tasks: nextTasks });
+    expect(result.current.flatQueue.map(standupQueueKey).sort()).toEqual(turns);
+    expect(result.current.groups.map(group => group.group_key)).toEqual(sortMode === 'by_member' ? ['c', 'b', 'a'] : groups.map(group => group.group_key));
+    for (const group of result.current.groups) {
+      expect(group.members.map(user => user.id)).toEqual([...group.members].sort((a, b) => a.sortOrder! - b.sortOrder!).map(user => user.id));
+    }
+  });
+  it('shows excluded participants in team order across project groups', () => {
+    const roster = mocks.users.map((user, sortOrder) => ({ ...user, sortOrder }));
+    const groups = groupMembers(roster, mocks.tasks, mocks.projects, 'by_project', () => 120, 15);
+    const { result } = renderHook(() => useStandupQueue(groups, ['a', 'b', 'c']));
+    expect(result.current.excludedMembers.map(user => user.id)).toEqual(['a', 'b', 'c']);
+  });
+  it('treats an unmarked launch as default and retains its grouping and exclusions', () => {
+    saveStandupLaunch(settings, groupMembers(mocks.users, mocks.tasks, mocks.projects, 'by_member', () => 120, 15), ['b']);
+    delete getStandupLaunch()!.orderSource;
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'c' ? 0 : user.id === 'b' ? 1 : 2 }));
+    render(<StandupPanel />);
+    expect(visibleOrder()).toEqual(['Casey', 'Alex']);
+    expect(screen.getByRole('button', { name: 'standup.queue.restoreNamed Blair' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Casey' })).toHaveAttribute('aria-current', 'step');
+  });
   it.each<SortMode>(['by_member', 'by_project', 'by_department', 'by_due_date'])('uses the preview order in the active %s meeting, without a second database settings read', async sortMode => {
     render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
     const label = { by_member: 'byMember', by_project: 'byProject', by_department: 'byDepartment', by_due_date: 'byDueDate' }[sortMode];
@@ -86,6 +131,7 @@ describe('standup launch order and active participants', () => {
     const callsBeforeStart = random.mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
     expect(visibleOrder()).toEqual(previewNames); expect(random).toHaveBeenCalledTimes(callsBeforeStart);
+    expect(getStandupLaunch()?.orderSource).toBe('shuffle');
     view.rerender(<LaunchFlow />); expect(visibleOrder()).toEqual(previewNames); expect(random).toHaveBeenCalledTimes(callsBeforeStart);
   });
   it('retains project grouping while shuffling and filters orphan IDs when restoring the launch', () => {
@@ -161,6 +207,97 @@ describe('editing the standup report roster', () => {
   const control = (action: 'moveUp' | 'moveDown' | 'excludeNamed' | 'restoreNamed', name: string) => screen.getByRole('button', { name: `standup.queue.${action} ${name}` });
   const previewNames = () => within(screen.getByRole('list', { name: 'standup.settings.preview' })).getAllByRole('listitem').map(row => mocks.users.find(user => row.textContent?.includes(user.name))?.name);
   const estimatedMinutes = () => screen.getByText(/standup.settings.totalDuration/).textContent;
+
+  it('refreshes a default draft after a team reorder, including an excluded member restored later', async () => {
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'b' ? 0 : user.id === 'a' ? 1 : 2 }));
+    const view = render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    expect(previewNames()).toEqual(['Blair', 'Alex', 'Casey']);
+    fireEvent.click(control('excludeNamed', 'Alex'));
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'a' ? 0 : user.id === 'c' ? 1 : 2 }));
+    view.rerender(<LaunchFlow />);
+    expect(previewNames()).toEqual(['Casey', 'Blair']);
+    fireEvent.click(control('restoreNamed', 'Alex'));
+    expect(previewNames()).toEqual(['Alex', 'Casey', 'Blair']);
+    fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
+    expect(getStandupLaunch()?.orderSource).toBe('default');
+    expect(visibleOrder()).toEqual(['Alex', 'Casey', 'Blair']);
+  });
+
+  it('restores participation into an already edited draft without changing its custom slots', async () => {
+    render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    fireEvent.click(control('moveDown', 'Alex'));
+    fireEvent.click(control('excludeNamed', 'Blair'));
+    fireEvent.click(control('restoreNamed', 'Blair'));
+    expect(previewNames()).toEqual(['Blair', 'Alex', 'Casey']);
+    fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
+    expect(getStandupLaunch()?.orderSource).toBe('manual');
+    expect(visibleOrder()).toEqual(['Blair', 'Alex', 'Casey']);
+  });
+
+  it('discards a custom draft on cancel and reopens in the current team order', async () => {
+    const onOpenChange = vi.fn();
+    const view = render(<StandupLaunchDialog open onOpenChange={onOpenChange} />);
+    await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    fireEvent.click(control('moveDown', 'Alex'));
+    expect(previewNames()).toEqual(['Blair', 'Alex', 'Casey']);
+    expect(getStandupLaunch()).toBeUndefined();
+    fireEvent.click(screen.getByLabelText('common.cancel'));
+    expect(getStandupLaunch()).toBeUndefined();
+    view.rerender(<StandupLaunchDialog open={false} onOpenChange={onOpenChange} />);
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'c' ? 0 : user.id === 'b' ? 1 : 2 }));
+    view.rerender(<StandupLaunchDialog open onOpenChange={onOpenChange} />);
+    expect(previewNames()).toEqual(['Casey', 'Blair', 'Alex']);
+  });
+
+  it.each(['manual', 'shuffle'] as const)('preserves only the explicitly changed and started %s order after a team reorder', async action => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const view = render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    fireEvent.click(action === 'manual' ? control('moveDown', 'Alex') : screen.getByRole('button', { name: 'standup.settings.shuffle' }));
+    const expected = previewNames();
+    expect(getStandupLaunch()).toBeUndefined();
+    fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
+    expect(getStandupLaunch()?.orderSource).toBe(action);
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'c' ? 0 : user.id === 'b' ? 1 : 2 }));
+    view.rerender(<LaunchFlow />);
+    expect(visibleOrder()).toEqual(expected);
+  });
+
+  it.each(['reverted', 'unchanged shuffle'] as const)('saves a default launch after an %s ordering action', async action => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    const view = render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    if (action === 'reverted') {
+      fireEvent.click(control('moveDown', 'Alex'));
+      fireEvent.click(control('moveUp', 'Alex'));
+    } else fireEvent.click(screen.getByRole('button', { name: 'standup.settings.shuffle' }));
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'c' ? 0 : user.id === 'b' ? 1 : 2 }));
+    view.rerender(<LaunchFlow />);
+    expect(previewNames()).toEqual(['Casey', 'Blair', 'Alex']);
+    fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
+    expect(getStandupLaunch()?.orderSource).toBe('default');
+    expect(visibleOrder()).toEqual(['Casey', 'Blair', 'Alex']);
+  });
+
+  it('refreshes default pending order while preserving completed reports, current speaker and timer', async () => {
+    mocks.users = [...mocks.users.filter(user => user.isActive), member('d', 'Drew', 'FE')].map((user, sortOrder) => ({ ...user, sortOrder }));
+    const view = render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
+    fireEvent.click(screen.getByRole('button', { name: 'button.skipToNext' }));
+    vi.useFakeTimers(); fireEvent.click(screen.getByRole('button', { name: 'button.play' }));
+    act(() => { vi.advanceTimersByTime(2000); });
+    mocks.users = mocks.users.map((user, index) => ({ ...user, sortOrder: 4 - index }));
+    view.rerender(<LaunchFlow />);
+    expect(visibleOrder()).toEqual(['Blair', 'Drew', 'Casey']);
+    expect(within(screen.getByText('standup.queue.completed (1)').parentElement!).getByText('Alex')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Blair' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('1:58')).toBeTruthy();
+    fireEvent.click(control('excludeNamed', 'Drew'));
+    fireEvent.click(control('restoreNamed', 'Drew'));
+    mocks.users = mocks.users.map(user => ({ ...user, sortOrder: user.id === 'c' ? 0 : user.id === 'd' ? 1 : 2 }));
+    view.rerender(<LaunchFlow />);
+    expect(visibleOrder()).toEqual(['Blair', 'Casey', 'Drew']);
+    expect(within(screen.getByText('standup.queue.completed (1)').parentElement!).getByText('Alex')).toBeTruthy();
+    expect(screen.getByText('1:58')).toBeTruthy();
+  });
 
   it('starts the meeting in the manually adjusted preview order', async () => {
     render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
@@ -270,14 +407,16 @@ describe('editing the standup report roster', () => {
     expect(queue.getByRole('button', { name: 'Casey' })).toBeTruthy();
   });
 
-  it('restores a member at the end of the report roster and restores the estimate', async () => {
+  it('restores a member to the team-order slot without saving a custom order and restores the estimate', async () => {
     render(<LaunchFlow />); await waitFor(() => expect(mocks.durations).toHaveBeenCalledTimes(1));
     fireEvent.click(control('excludeNamed', 'Alex'));
     fireEvent.click(control('restoreNamed', 'Alex'));
-    expect(previewNames()).toEqual(['Blair', 'Casey', 'Alex']);
+    expect(previewNames()).toEqual(['Alex', 'Blair', 'Casey']);
+    expect(screen.queryByText('standup.queue.manual')).toBeNull();
     expect(estimatedMinutes()).toContain('7 common.minutes');
     fireEvent.click(screen.getByRole('button', { name: 'standup.startButton' }));
-    expect(visibleOrder()).toEqual(['Blair', 'Casey', 'Alex']);
+    expect(visibleOrder()).toEqual(['Alex', 'Blair', 'Casey']);
+    expect(getStandupLaunch()?.orderSource).toBe('default');
   });
 
   it('preserves exclusions when shuffling or resetting the order', async () => {

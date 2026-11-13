@@ -180,8 +180,8 @@ describe('shared UserSelect form and dialog behavior', () => {
 });
 
 describe('QA detail uses shared controls with a focused next action', () => {
-  it('prefers QA and project developers in the direct sidebar while allowing every active member', async () => {
-    state.users = [person('pm', 'Morgan', true, 'PM'), person('other', 'Reese', true, 'FE'), person('qa', 'Blair', true, 'QA'), person('dev', 'Alex', true, 'BE'), person('reviewer', 'Taylor', true, 'SRE'), person('inactive', 'Casey', false, 'QA')];
+  it('uses the same team order for repair and QA owners while allowing every active member', async () => {
+    state.users = [person('pm', 'Morgan', true, 'PM'), person('other', 'Reese', true, 'FE'), person('qa', 'Blair', true, 'QA'), person('dev', 'Alex', true, 'BE'), person('reviewer', 'Taylor', true, 'SRE'), person('inactive', 'Casey', false, 'QA')].map((user, sortOrder) => ({ ...user, sortOrder }));
     state.tasks = [{ id: 'same', projectId: 'p1', assigneeId: 'dev', reviewerId: 'reviewer' }, { id: 'other', projectId: 'p2', assigneeId: 'other' }] as Task[];
     const { command } = renderDetail();
     command.mockImplementation(async (current, next) => { const { type, ...patch } = next; return type === 'update_fields' ? { ...current, ...patch, version: current.version + 1 } : current; });
@@ -190,14 +190,14 @@ describe('QA detail uses shared controls with a focused next action', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.assignee' }));
     let options = within(await screen.findByRole('listbox')).getAllByRole('option');
     expect(options).toHaveLength(6); expect(options[0]).toHaveTextContent('qa.unassigned');
-    ['Alex', 'Taylor', 'Morgan', 'Reese', 'Blair'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
+    ['Morgan', 'Reese', 'Blair', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
     expect(screen.queryByRole('option', { name: /Casey/ })).toBeNull();
     fireEvent.click(screen.getByRole('option', { name: /Morgan/ }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.assignee' })).toHaveTextContent('Morgan'));
     fireEvent.click(screen.getByRole('combobox', { name: 'qa.qaOwner' }));
     options = within(await screen.findByRole('listbox')).getAllByRole('option');
     expect(options).toHaveLength(6);
-    ['Blair', 'Morgan', 'Reese', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
+    ['Morgan', 'Reese', 'Blair', 'Alex', 'Taylor'].forEach((name, index) => expect(options[index + 1]).toHaveTextContent(name));
     fireEvent.change(screen.getByRole('combobox', { name: 'common.search · qa.qaOwner' }), { target: { value: 'Morgan' } });
     fireEvent.click(await screen.findByRole('option', { name: /Morgan/ }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'qa.qaOwner' })).toHaveTextContent('Morgan'));

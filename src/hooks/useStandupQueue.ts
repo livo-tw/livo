@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { QueueItem, StandupGroup } from './useStandupGrouping';
 import { standupQueueKey } from '@/lib/standupLaunch';
+import { sortUsersByDept } from '@/lib/department';
 
 function flatten(groups: StandupGroup[]): QueueItem[] {
   return groups.flatMap((group, groupIndex) => group.members.map((member, indexInGroup) => ({ member, group, groupIndex, indexInGroup })));
@@ -48,7 +49,7 @@ export function useStandupQueue(groups: StandupGroup[], initialExcluded: string[
   const pendingQueue = remainingQueue.filter(item => standupQueueKey(item) !== currentKey);
   const pendingGroups = regroup(pendingQueue);
   const flatQueue = [...completedQueue, ...(currentItem ? [currentItem] : []), ...pendingQueue];
-  const excludedMembers = [...new Map(orderedQueue.filter(item => excludedMemberIds.includes(item.member.id)).map(item => [item.member.id, item.member])).values()];
+  const excludedMembers = sortUsersByDept([...new Map(orderedQueue.filter(item => excludedMemberIds.includes(item.member.id)).map(item => [item.member.id, item.member])).values()]);
 
   useEffect(() => {
     if (finished) return;
@@ -70,14 +71,8 @@ export function useStandupQueue(groups: StandupGroup[], initialExcluded: string[
 
   const restoreMember = (memberId: string) => {
     const recovered = orderedQueue.filter(item => item.member.id === memberId && !completedKeys.includes(standupQueueKey(item)) && standupQueueKey(item) !== currentKey);
-    const nextGroups = pendingGroups.map(group => ({ ...group, members: [...group.members] }));
-    for (const item of recovered) {
-      const group = nextGroups.find(candidate => candidate.group_key === item.group.group_key);
-      if (group) {
-        if (!group.members.some(member => member.id === memberId)) group.members.push(item.member);
-      } else nextGroups.push({ ...item.group, members: [item.member] });
-    }
-    setOrder([...completedQueue.map(standupQueueKey), ...(currentKey ? [currentKey] : []), ...flatten(nextGroups).map(standupQueueKey)]);
+    // Excluding/restoring changes participation only. Retain the existing team
+    // or custom slot instead of manufacturing a frozen order on restoration.
     setExcludedMemberIds(previous => previous.filter(id => id !== memberId));
     // Restoring during an empty/completed meeting makes the recovered report available.
     if (finished && recovered.length) {

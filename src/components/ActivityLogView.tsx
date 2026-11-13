@@ -1,4 +1,5 @@
 import { isEventEnabled } from '@/lib/featureToggles';
+import { sortUsersByDept } from '@/lib/department';
 import { taskWorkActivityDetail } from '@/lib/taskWork/feedback';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useMemberContext } from '@/context/MemberContext';
@@ -65,7 +66,7 @@ const ActivityLogView = () => {
 
   const activeUsers = useMemo(() => {
     const userIds = Object.keys(logsByUser);
-    return users.filter(u => userIds.includes(u.id)).sort((a, b) => a.sortOrder - b.sortOrder);
+    return sortUsersByDept(users.filter(u => userIds.includes(u.id)));
   }, [logsByUser, users]);
 
   // Timeline: all logs, limited to latest 200

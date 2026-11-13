@@ -4,7 +4,10 @@ import type { StandupSettings } from '@/hooks/useStandupSettings';
 import type { StandupGroup, QueueItem } from '@/hooks/useStandupGrouping';
 
 export interface StandupOrder { groupKeys: string[]; memberIds: Record<string, string[]> }
+export type StandupOrderSource = 'default' | 'manual' | 'shuffle';
 export interface StandupLaunchSnapshot {
+  /** Only an explicit custom marker establishes a saved ordering exception. */
+  orderSource?: StandupOrderSource;
   settings: StandupSettings;
   groups: Array<Omit<StandupGroup, 'members'> & { memberIds: string[] }>;
   excludedMemberIds?: string[];
@@ -13,8 +16,8 @@ export interface StandupLaunchSnapshot {
 // A launch is local to this running UI. Never round-trip the preview through an
 // asynchronous database read: that can replace it with the previous meeting order.
 let launchSnapshot: StandupLaunchSnapshot | undefined;
-export function saveStandupLaunch(settings: StandupSettings, groups: StandupGroup[], excludedMemberIds: string[] = []) {
-  launchSnapshot = { settings: { ...settings, memberDurations: { ...settings.memberDurations } },
+export function saveStandupLaunch(settings: StandupSettings, groups: StandupGroup[], excludedMemberIds: string[] = [], orderSource: StandupOrderSource = 'default') {
+  launchSnapshot = { orderSource, settings: { ...settings, memberDurations: { ...settings.memberDurations } },
     groups: groups.map(({ members, ...group }) => ({ ...group, memberIds: members.map(member => member.id) })),
     excludedMemberIds: [...new Set(excludedMemberIds)] };
 }

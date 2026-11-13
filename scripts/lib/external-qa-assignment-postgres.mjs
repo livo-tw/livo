@@ -14,7 +14,7 @@ export function addAssignmentCases({ cases, check, error, auth, quote, json }) {
     `NOT (${read('profile')}->'members' @> '[{"id":"m-unused-disabled"}]'::jsonb)`);
   check('directory exposes no email login Slack or private job title',
     `NOT EXISTS(SELECT 1 FROM jsonb_array_elements(${read('members', { projectId: 'p-test' })}->'members') m
-      WHERE (m-ARRAY['id','name','avatar','color','jobTitle','isActive'])<>'{}'::jsonb OR COALESCE(m->>'jobTitle','')<>'')
+      WHERE (m-ARRAY['id','name','avatar','color','jobTitle','isActive','isExternal','sortOrder'])<>'{}'::jsonb OR COALESCE(m->>'jobTitle','')<>'')
       AND ${read('profile')}::text NOT LIKE '%private@example.com%' AND ${read('profile')}::text NOT LIKE '%Private title%'`);
   check('candidate validation accepts all active internal people through the scoped RPC',
     `${read('people', { projectId: 'p-test', ids: ['m-other-project'] })}='[{"id":"m-other-project"}]'::jsonb`);

@@ -1,11 +1,11 @@
 import { accountOf, typedMentions, usableMentionPerson, withoutPickedMentionLabels, type MentionPerson } from './mentionMatching';
+import { compareMemberOrder } from './department';
 
 export { typedMentions, type MentionPerson } from './mentionMatching';
 
 /**
- * Members offered after "@": names that start with the query first, then names that
- * contain it, then e-mail accounts that contain it, so "@irene" also finds a member
- * shown under another name. Inactive members are not offered.
+ * Search names and e-mail accounts while preserving the team management order.
+ * Inactive members are not offered.
  */
 export function mentionSuggestions<T extends MentionPerson>(members: T[], query: string): T[] {
   const q = query.trim().toLowerCase();
@@ -17,7 +17,7 @@ export function mentionSuggestions<T extends MentionPerson>(members: T[], query:
     return accountOf(person).includes(q) ? 2 : -1;
   };
   return members.filter(usableMentionPerson).map(person => ({ person, rank: rank(person) })).filter(row => row.rank >= 0)
-    .sort((a, b) => a.rank - b.rank || (a.person.sortOrder ?? 0) - (b.person.sortOrder ?? 0)).map(row => row.person);
+    .sort((a, b) => compareMemberOrder(a.person, b.person)).map(row => row.person);
 }
 
 /** Readable text of editor HTML, entities decoded (mentions read "@Name"). */

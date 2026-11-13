@@ -344,8 +344,11 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
           return { ...page, members: page.members.map((person: Row) => ({ ...person, isExternal: true })) };
         }
         await coordination(projectId);
-        const rows=await db.rows('members',{select:'id,name',is_active:'eq.true',order:'name,id',offset,limit:100,...(search?{name:`ilike.*${search.replace(/[\\%_*]/g,'\\$&')}*`}:{})});
-        return {members:rows,hasMore:rows.length===100};
+        // The database orders the complete authorized roster before pagination;
+        // null ranks use the same 99 fallback as team management.
+        return db.rpc('livo_qa_member_display_page', {
+          p_auth_id: actor.authId, p_project_id: projectId, p_search: search, p_offset: offset,
+        });
       }
       case 'filter_people': {
         const offset = request.offset ?? 0, projectIds = request.projectIds;
