@@ -58,6 +58,7 @@ for (const [table, column, definition] of [
   ['auth_login_reservations', 'pair_window', 'TEXT'],
   ['qa_upload_sessions', 'purpose', "TEXT NOT NULL DEFAULT 'issue' CHECK (purpose IN ('issue','comment'))"],
   ['qa_attachments', 'comment_id', 'TEXT'],
+  ['qa_attachments', 'event_id', 'TEXT CHECK(event_id IS NULL OR comment_id IS NULL)'],
   ['qa_upload_sessions', 'comment_ready_at', 'TEXT'],
   ['qa_upload_sessions', 'cleanup_token', 'TEXT'],
   ['qa_upload_sessions', 'cleanup_lease_until', 'TEXT'],

@@ -53,7 +53,7 @@ export async function taskCommentBackupManifest(env: Pick<Env, 'DB'>, ws: string
     const row = await env.DB.prepare("SELECT count(*) AS retained FROM task_comment_uploads WHERE workspace_id=? AND state<>'aborted'").bind(ws).first<{retained:number}>();
     if (typeof row?.retained === 'number' && Number.isSafeInteger(row.retained) && row.retained >= 0) retainedMetadata = row.retained;
   } catch { /* An unknown inventory is explicitly unknown, never zero. */ }
-  return {kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata,coverageKnown:retainedMetadata!==null,privateObjectBytesExcluded:true,excludedTables:['task_comment_uploads','task_comment_commands'],commandReceiptsExcluded:true,commandReceiptsNeverReplayed:true};
+  return {kind:'task_comment_private_media',coveredByJsonBackup:false,requiresDatabaseAndPrivateStorageBackup:true,retainedMetadata,coverageKnown:retainedMetadata!==null,privateObjectBytesExcluded:true,excludedTables:['task_comment_uploads','task_comment_commands','task_comment_edit_commands'],commandReceiptsExcluded:true,commandReceiptsNeverReplayed:true};
 }
 
 // ── Core backup ───────────────────────────────────────────────────────────

@@ -13,9 +13,11 @@ export function plan(){
  const fixture=read('scripts/lib/qa-postgres-fixture.sql');
  const migration=read('supabase/migrations/20261119_task_comment_attachments.sql');
  const summaryMigration=read('supabase/migrations/20261121_task_comment_attachment_summary.sql');
+ const editMigration=read('supabase/migrations/20261124_task_comment_attachment_edit.sql');
  const member="SET ROLE authenticated; SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false);";
  const first='10000000-0000-4000-8000-000000000001',second='10000000-0000-4000-8000-000000000002',third='10000000-0000-4000-8000-000000000003';
  const command='20000000-0000-4000-8000-000000000001';
+ const appendFile='10000000-0000-4000-8000-000000000006',editId='30000000-0000-4000-8000-000000000001';
  cases.push(`ALTER TABLE tasks ADD COLUMN assignee_id text,ADD COLUMN reviewer_id text,ADD COLUMN comment_count integer NOT NULL DEFAULT 0;
  CREATE TABLE comments(id text PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,user_id text NOT NULL REFERENCES members(id),content text NOT NULL,attachment_url text,attachment_size bigint DEFAULT 0,created_at text NOT NULL DEFAULT to_char(now(),'YYYY-MM-DD"T"HH24:MI:SS"Z"'));
  CREATE TABLE task_attachments(id uuid PRIMARY KEY,task_id text NOT NULL REFERENCES tasks(id),file_size bigint NOT NULL DEFAULT 0);
@@ -31,7 +33,7 @@ export function plan(){
  GRANT SELECT,INSERT,UPDATE,DELETE ON task_attachments TO service_role;
  UPDATE tasks SET assignee_id='m-assignee',reviewer_id='m-assignee' WHERE id='t-test';
  INSERT INTO tasks(id,project_id) VALUES('t-other','p-test');`,
- read('supabase/migrations/20261019_active_member_gate.sql'),read('supabase/migrations/20261018_comment_author_guard.sql'),migration,migration,summaryMigration,summaryMigration);
+ read('supabase/migrations/20261019_active_member_gate.sql'),read('supabase/migrations/20261018_comment_author_guard.sql'),migration,migration,summaryMigration,summaryMigration,editMigration,editMigration);
  check('private bucket remains private after repeated migration',"(SELECT public=false FROM storage.buckets WHERE id='task-comment-media')");
  cases.push('SET ROLE anon;');error('anonymous cannot invoke aggregate',"SELECT livo_task_comment_attachment_summary('m-member','00000000-0000-0000-0000-000000000001','{}')",'42501');error('anonymous cannot read reservations','SELECT * FROM task_comment_uploads','42501');
  cases.push('RESET ROLE;',member);
@@ -67,6 +69,22 @@ export function plan(){
  error('a new command cannot reuse a bound file',`SELECT livo_task_comment_publish('t-test','20000000-0000-4000-8000-000000000002','','{${first}}','{}','other')`,'42501');
  cases.push(`SELECT livo_task_comment_upload_init('t-other','${second}','image.png','image/png',8);`, 'RESET ROLE; SET ROLE service_role;',`INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('task-comment-media','default/t-other/${second}','{"size":8,"mimetype":"image/png"}');SELECT livo_task_comment_upload_complete('${second}','m-member');`, 'RESET ROLE;',member);
  error('file cannot be attached to another task',`SELECT livo_task_comment_publish('t-test','20000000-0000-4000-8000-000000000003','','{${second}}','{}','other-task')`,'42501');
+ const edit=(id,file,before='',after='Edited comment',actor='m-member',auth='00000000-0000-0000-0000-000000000001')=>
+  `SELECT livo_task_comment_edit('${auth}','${actor}','t-test','${command}','${id}',${quote(before)},${quote(after)},'{${file}}','edit-hash')`;
+ error('member cannot invoke edit using the service RPC',edit(editId,appendFile),'42501');
+ cases.push(`SELECT livo_task_comment_upload_init('t-test','${appendFile}','image.png','image/png',8);`,
+  'RESET ROLE; SET ROLE service_role;',
+  `INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('task-comment-media','default/t-test/${appendFile}','{"size":8,"mimetype":"image/png"}');
+   SELECT livo_task_comment_upload_complete('${appendFile}','m-member');`);
+ error('service edit may not attach a file from another task',edit(editId,second),'PT409');
+ error('service edit may not act for another comment owner',edit(editId,appendFile,'','Edited comment','m-admin','00000000-0000-0000-0000-000000000002'),'42501');
+ error('service edit rejects a stale comment body',edit(editId,appendFile,'stale'),'PT409');
+ cases.push(`${edit(editId,appendFile)};`,`${edit(editId,appendFile)};`);
+ check('edit binds files and changes only the original comment',`(SELECT count(*)=1 FROM comments)
+   AND (SELECT content='Edited comment' FROM comments WHERE id='${command}')
+   AND (SELECT count(*)=2 FROM task_comment_uploads WHERE comment_id='${command}' AND state='bound')
+   AND (SELECT count(*)=1 FROM notifications)`);
+ cases.push('RESET ROLE;',member);
  cases.push(`SELECT livo_task_comment_upload_init('t-test','${third}','image.png','image/png',8);`, 'RESET ROLE;',`UPDATE task_comment_uploads SET expires_at=now()-interval '1 day' WHERE id IN('${first}','${third}');`, 'SET ROLE service_role;');
  check('TTL cleanup retains referenced content',`NOT EXISTS(SELECT 1 FROM livo_task_comment_cleanup_claim('test-cleanup') WHERE id='${first}')`);
  check('expired unreferenced file is claimed',`(SELECT state='cleaning' FROM task_comment_uploads WHERE id='${third}')`);
@@ -93,7 +111,7 @@ export function plan(){
   error(name+' cannot steal another uploader file',`SELECT livo_task_comment_publish('t-other','20000000-0000-4000-8000-00000000000${Number(suffix)+3}','','{${second}}','{}','steal')`,'42501');
  }
  cases.push('RESET ROLE;',"SELECT json_build_object('status','passed','assertions',(SELECT count(*) FROM qa_test.results));");
- return{sql:[fixture,...cases].join('\n'),summary:{assertions,migrationApplications:4,migrations:['20261119_task_comment_attachments.sql','20261121_task_comment_attachment_summary.sql']}};
+ return{sql:[fixture,...cases].join('\n'),summary:{assertions,migrationApplications:6,migrations:['20261119_task_comment_attachments.sql','20261121_task_comment_attachment_summary.sql','20261124_task_comment_attachment_edit.sql']}};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const args=process.argv.slice(2),arg=k=>args.includes(k)?args[args.indexOf(k)+1]:undefined,current=plan();

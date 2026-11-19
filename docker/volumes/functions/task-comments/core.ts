@@ -50,4 +50,10 @@ export function commentPublishInput(body: Record<string, unknown>) {
   commentNeed(body.body.replace(/<[^>]*>/g, '').trim() || uploads.length, 'invalid_comment');
   return { taskId, commandId, body: body.body.trim(), uploadIds: uploads, mentionIds: mentions };
 }
+export function commentEditInput(body: Record<string, unknown>) {
+  const input = commentPublishInput({ ...body, mentionIds: [] });
+  const targetId = commentId(body.commentId);
+  commentNeed(typeof body.previousBody === 'string' && body.previousBody.length <= 20000 && input.uploadIds.length, 'invalid_comment');
+  return { ...input, commentId: targetId, previousBody: body.previousBody };
+}
 export type CommentMedia = { id: string; commentId?: string; taskId: string; fileName: string; mimeType: string; size: number };

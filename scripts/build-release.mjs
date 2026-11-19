@@ -378,6 +378,8 @@ for (const required of [
   '20261119_task_comment_attachments.sql',
   '20261120_task_comment_import_guard.sql',
   '20261121_task_comment_attachment_summary.sql',
+  '20261123_qa_workflow_attachments.sql',
+  '20261124_task_comment_attachment_edit.sql',
 ]) {
   if (!migFiles.includes(required)) die(`Missing comment attachment migration: ${required}`);
 }

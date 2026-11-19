@@ -38,7 +38,7 @@ export function qaCheckSignature(mime:string,bytes:Uint8Array):void {
   if(!valid)throw new QaError('qa_file_signature_mismatch');
 }
 export function qaAttachmentWire(row:Record<string,unknown>):QaAttachment {
-  return {id:String(row.id),issueId:String(row.issue_id),fileName:String(row.file_name),mimeType:String(row.mime_type),size:Number(row.size),uploadedBy:String(row.uploaded_by),createdAt:String(row.created_at),commentId:row.comment_id==null?null:String(row.comment_id)};
+  return {id:String(row.id),issueId:String(row.issue_id),fileName:String(row.file_name),mimeType:String(row.mime_type),size:Number(row.size),uploadedBy:String(row.uploaded_by),createdAt:String(row.created_at),commentId:row.comment_id==null?null:String(row.comment_id), ...(row.event_id==null?{}:{eventId:String(row.event_id)})};
 }
 async function session(c:C,id:string):Promise<Session>{
   const auth=c.get('auth'),ws=auth.member.workspaceId;
@@ -119,7 +119,7 @@ async function complete(c:C,body:Record<string,unknown>):Promise<Response>{
   if(!object||object.size!==row.expected_size||object.customMetadata?.workspace!==ws||object.customMetadata?.upload!==id)throw new QaError('qa_upload_size_mismatch');
   await requireQaEnabled(c.env,ws);
   const now=new Date().toISOString();
-  // Comment files remain private reservations until the comment transaction publishes them.
+  // Files staged for a comment or workflow event stay private until that record commits.
   if(row.purpose==='comment'){
     const ready=await c.env.DB.prepare("UPDATE qa_upload_sessions SET comment_ready_at=coalesce(comment_ready_at,?) WHERE workspace_id=? AND id=? AND purpose='comment' AND state='finalizing' AND expires_at>? AND cleanup_token IS NULL RETURNING id").bind(now,ws,id,now).first();
     if(!ready)throw new QaError('qa_upload_conflict',409);

@@ -1,5 +1,5 @@
 import { parseDeploymentEnvironments } from './environments.ts';
-import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, qaCommentAttachmentIds, QA_MAX_FILE_BYTES, QA_STATES,
+import { applyQaCommand, canQaComment, canQaDelete, createQaIssue, normalizeQaListFilters, qaEventDetail, qaIdSearch, qaNotificationRecipients, QaError, qaCommentAttachmentIds, qaEventAttachmentIds, QA_MAX_FILE_BYTES, QA_STATES,
   type QaAttachment, type QaCommand, type QaContext, type QaCreateInput, type QaIssue,
   type QaListInput, type QaListResult, type QaPersonProfile } from './domain.ts';
 import { validateQaBackup } from './restore.ts';
@@ -42,7 +42,7 @@ function databaseError(body: Row, status: number): never {
   const message = String(body.message || '');
   const fieldCode = message.match(/qa_(?:invalid_(?:field_configuration|custom_fields|custom_field_value)|custom_field_(?:required|unavailable)|field_identity_immutable|forbidden)/)?.[0];
   if (fieldCode) return fail(fieldCode, body.code === '42501' ? 403 : 400);
-  const known = ['qa_invalid_comment_attachments', 'qa_attachment_not_found', 'qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
+  const known = ['qa_invalid_comment_attachments', 'qa_invalid_event_attachments', 'qa_attachment_not_found', 'qa_invalid_display_settings', 'qa_disabled', 'qa_invalid_workflow', 'member_inactive', 'invalid_command', 'command_id_reused', 'issue_exists', 'issue_not_found',
     'version_conflict', 'invalid_issue', 'upload_not_found', 'upload_expired', 'upload_incomplete', 'upload_metadata_mismatch', 'qa_upload_unavailable', 'restore_conflict','qa_forbidden','qa_project_unavailable','qa_member_unavailable','qa_version_conflict','qa_command_id_reused','qa_invalid_request',
     'qa_invalid_environment','qa_invalid_date','qa_invalid_priority','qa_task_unavailable','qa_duplicate_unavailable','qa_not_deployed'];
   const code = known.find(code => message.includes(code));
@@ -80,7 +80,8 @@ class Store {
 
 export function attachment(row: Row): QaAttachment {
   return { id: row.id, issueId: row.issue_id, fileName: row.file_name, mimeType: row.mime_type,
-    size: Number(row.size), uploadedBy: row.uploaded_by, createdAt: row.created_at, commentId: row.comment_id ?? null };
+    size: Number(row.size), uploadedBy: row.uploaded_by, createdAt: row.created_at, commentId: row.comment_id ?? null,
+    ...(row.event_id ? { eventId: row.event_id } : {}) };
 }
 
 /** Reusable by the HTTP handler and by Slack's verified short-lived member JWT.
@@ -273,12 +274,14 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
     if (receipt.actor_id !== actor.id || receipt.issue_id !== request.id || receipt.payload_hash !== hash) fail('qa_command_id_reused', 409);
     return receipt.response;
   }
-  async function commit(actor: Row, request: Row, hash: string, data: unknown, kind: string, type: string, sourceIssue?: QaIssue, before?: QaIssue) {
+  async function commit(actor: Row, request: Row, hash: string, data: unknown, kind: string, type: string, sourceIssue?: QaIssue, before?: QaIssue,
+    attachmentIds: string[] = []) {
     const issue = sourceIssue || data as QaIssue;
     const recipients = qaNotificationRecipients(issue, type === 'created' ? 'create' : type as QaCommand['type'] | 'comment', actor.id, type === 'created' ? await triagers(issue.projectId) : []);
     const result = await db.rpc('livo_qa_commit', { p_auth_id: actor.authId, p_issue_id: request.id,
       p_command_id: commandId(request.commandId), p_payload_hash: hash, p_expected_version: request.expectedVersion ?? null,
-      p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, slackSource:actor.slackSource, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients } });
+      p_kind: kind, p_data: data, p_event: { slackIdentity:actor.slackIdentity, slackSource:actor.slackSource, id: crypto.randomUUID(), type, detail: qaEventDetail(issue, type, before), recipients,
+        ...(attachmentIds.length ? { attachmentIds } : {}) } });
     const sync = syncQaSlackIssue(env, kind === 'comment' ? issue : result).catch(() => console.error('QA Slack card refresh failed'));
     const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil?: (work: Promise<unknown>) => void } };
     if (runtime.EdgeRuntime?.waitUntil) runtime.EdgeRuntime.waitUntil(sync); else await sync;
@@ -498,6 +501,7 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         const hash = await qaPayloadHash(request), previous = await replay(actor, request, hash);
         if (previous !== undefined) return previous;
         if (request.action === 'create') {
+          qaEventAttachmentIds(request.attachmentIds, 'created');
           const input = object(request.input) as QaCreateInput;
           const issue = createQaIssue(input, request.id, await context(actor, input.projectId, undefined, undefined, input));
           return commit(actor, request, hash, issue, 'create', 'created');
@@ -513,8 +517,9 @@ export function createQaService(env: QaEnvironment, sessionToken: string) {
         if (!Number.isInteger(request.expectedVersion) || request.expectedVersion < 1) fail('qa_invalid_version');
         if (issue.version !== request.expectedVersion) fail('qa_version_conflict', 409);
         const command = object(request.command) as QaCommand;
+        const attachmentIds = qaEventAttachmentIds(request.attachmentIds, command.type);
         const next = applyQaCommand(issue, command, await context(actor, issue.projectId, issue, command));
-        return commit(actor, request, hash, next, 'command', command.type, undefined, issue);
+        return commit(actor, request, hash, next, 'command', command.type, undefined, issue, attachmentIds);
       }
       case 'delete': {
         const issue = await getIssue(request.id, actor);

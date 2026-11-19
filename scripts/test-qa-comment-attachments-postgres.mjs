@@ -6,6 +6,8 @@ import { runPostgres } from './task-work-postgres-runtime.mjs';
 import { runNativePostgres } from './native-postgres-runtime.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const name='20261118_qa_comment_attachments.sql',migration=fs.readFileSync(path.join(root,'supabase/migrations',name),'utf8');
+const workflowName='20261123_qa_workflow_attachments.sql';
+const workflowMigration=fs.readFileSync(path.join(root,'supabase/migrations',workflowName),'utf8');
 const quote=v=>"'"+String(v).replaceAll("'","''")+"'",json=v=>quote(JSON.stringify(v))+'::jsonb';
 export function plan(){
  const base=retentionPlan(),cases=[];let assertions=base.summary.assertions;
@@ -22,7 +24,7 @@ export function plan(){
  const data=id=>({id,workspaceId:'default',projectId:'p-test',state:'new',reporterId:'m-member',assigneeId:null,qaOwnerId:null,title:'Synthetic comment attachments',actual:'Synthetic only',observedEnvironment:'Stage',observedVersion:'',steps:'',expected:'',component:'',severity:'untriaged',priority:3,dueDate:null,fixCycle:0,fixSummary:'',targets:[],runs:[],taskIds:[],resolution:null,resolutionReason:'',duplicateOfId:null,closedAt:null,closedBy:null,reopenedAt:null,holdReason:'',reopenReason:'',version:1,createdAt:'2026-11-10T00:00:00Z',updatedAt:'2026-11-10T00:00:00Z',handoff:null,customFields:{}});
  const comment=(id,ids,body='')=>({id,issueId:issue,actorId:'m-member',body,attachmentIds:ids,createdAt:'2026-11-10T00:00:00Z'});
  const commit=(id,ids,body='',auth=member,command=id+'-command')=>`public.livo_qa_commit(${auth},${quote(issue)},${quote(command)},${quote('a'.repeat(64))},NULL,'comment',${json(comment(id,ids,body))},${json({id:id+'-event',type:'comment',recipients:[]})})`;
- cases.push('RESET ROLE;',migration,migration,'SET ROLE service_role;',"UPDATE public.system_settings SET value='{\"qa\":true}' WHERE key='feature_toggles';",
+ cases.push('RESET ROLE;',migration,migration,workflowMigration,workflowMigration,'SET ROLE service_role;',"UPDATE public.system_settings SET value='{\"qa\":true}' WHERE key='feature_toggles';",
   "UPDATE public.external_qa_accounts SET is_active=true WHERE id='eqa-example'; INSERT INTO public.external_qa_project_grants(account_id,project_id) VALUES('eqa-example','p-test') ON CONFLICT DO NOTHING;");
  for(const id of[issue,other])cases.push(`INSERT INTO qa_issues(id,project_id,state,reporter_id,title,version,updated_at,data) VALUES(${quote(id)},'p-test','new','m-member','Synthetic comment attachments',1,now(),${json(data(id))});`);
  const reserve=(id,actor='m-member',issueId=issue,purpose='comment',object=true)=>{
@@ -47,6 +49,51 @@ export function plan(){
  error('more than ten attachments are rejected',`SELECT ${commit('reject-eleven',Array.from({length:11},(_,i)=>'file-'+i))}`,'22023','qa_invalid_comment_attachments');
  check('all rejected transactions roll back comments and command receipts',"NOT EXISTS(SELECT 1 FROM qa_comments WHERE id LIKE 'reject-%') AND NOT EXISTS(SELECT 1 FROM qa_commands WHERE id LIKE 'reject-%')");
  error('a published file cannot move to another comment',`SELECT ${commit('reject-rebind',['comment-png'])}`,'22023','qa_invalid_comment_attachments');
+
+ const inProgress={...data(other),state:'in_progress',assigneeId:'m-member',qaOwnerId:'m-member'};
+ const target={id:'workflow-target',environment:'Stage',component:'',build:'example-build',required:true,
+  deployedAt:null,deployedBy:null,deploymentEvidence:''};
+ const fixed={...inProgress,state:'verification',version:2,fixCycle:1,fixSummary:'',targets:[target],updatedAt:'2026-11-10T00:01:00Z'};
+ const deployedAt='2026-11-10T00:02:00Z';
+ const deployed={...fixed,version:3,updatedAt:deployedAt,targets:[{...target,deployedAt,deployedBy:'m-member'}]};
+ const verifiedAt='2026-11-10T00:03:00Z';
+ const verified={...deployed,version:4,updatedAt:verifiedAt,state:'closed',resolution:'fixed',closedAt:verifiedAt,closedBy:'m-member',
+  runs:[{id:'workflow-run',targetId:target.id,sequence:1,fixCycle:1,environment:target.environment,component:target.component,
+    build:target.build,testerId:'m-member',result:'pass',note:'',createdAt:verifiedAt}]};
+ const workflow=(eventId,type,next,attachmentIds,command=eventId+'-command')=>
+  `public.livo_qa_commit(${member},${quote(other)},${quote(command)},${quote('b'.repeat(64))},${next.version-1},'command',${json(next)},${json({id:eventId,type,attachmentIds,recipients:[]})})`;
+ cases.push(`UPDATE qa_issues SET state='in_progress',assignee_id='m-member',qa_owner_id='m-member',data=${json(inProgress)} WHERE id=${quote(other)};`);
+ for(const id of ['workflow-fix-file','workflow-deploy-file','workflow-verify-file','workflow-extra-file'])reserve(id,'m-member',other);
+ reserve('workflow-missing-file','m-member',other,'comment',false);
+ error('missing verification evidence aborts the original fix transaction',
+  `SELECT ${workflow('workflow-rollback','submit_fix',fixed,['workflow-fix-file','workflow-missing-file'])}`,'22023','qa_upload_incomplete');
+ check('failed workflow command leaves revision, event, receipt and staged files intact',
+  `(SELECT version FROM qa_issues WHERE id=${quote(other)})=1 AND NOT EXISTS(SELECT 1 FROM qa_events WHERE id='workflow-rollback')
+  AND NOT EXISTS(SELECT 1 FROM qa_commands WHERE id='workflow-rollback-command')
+  AND NOT EXISTS(SELECT 1 FROM qa_uploads WHERE id='workflow-fix-file' AND completed_at IS NOT NULL)`);
+ rpcThenCheck('fix publishes to the exact immutable event',
+  workflow('workflow-fix','submit_fix',fixed,['workflow-fix-file']),
+  "result->>'state'='verification' AND EXISTS(SELECT 1 FROM qa_attachments WHERE id='workflow-fix-file' AND event_id='workflow-fix' AND comment_id IS NULL)");
+ error('stale issue version preserves staged files without publishing a second event',
+  `SELECT ${workflow('workflow-stale','submit_fix',fixed,['workflow-extra-file'])}`,'PT409','version_conflict');
+ check('stale attempt never marks upload complete',
+  "NOT EXISTS(SELECT 1 FROM qa_attachments WHERE id='workflow-extra-file') AND NOT EXISTS(SELECT 1 FROM qa_uploads WHERE id='workflow-extra-file' AND completed_at IS NOT NULL)");
+ error('workflow attachment cannot be reassigned or shared with a second event',
+  `SELECT ${workflow('workflow-rebind','record_deployment',deployed,['workflow-fix-file'])}`,'22023','qa_invalid_event_attachments');
+ rpcThenCheck('deployment evidence uses the target timestamp and corresponding event',
+  workflow('workflow-deploy','record_deployment',deployed,['workflow-deploy-file']),
+  `result->>'version'='3' AND EXISTS(SELECT 1 FROM qa_attachments a JOIN qa_events e ON e.id=a.event_id
+    WHERE a.id='workflow-deploy-file' AND e.id='workflow-deploy' AND e.created_at=${quote(deployedAt)}::timestamptz)`);
+ rpcThenCheck('PASS auto-closes while publishing verification evidence',
+  workflow('workflow-verify','record_verification',verified,['workflow-verify-file']),
+  "result->>'state'='closed' AND EXISTS(SELECT 1 FROM qa_attachments WHERE id='workflow-verify-file' AND event_id='workflow-verify')");
+ rpcThenCheck('lost verification response replays the original evidence and event',
+  workflow('different-generated-id','record_verification',verified,['workflow-verify-file'],'workflow-verify-command'),
+  `result->>'version'='4' AND (SELECT count(*) FROM qa_attachments WHERE issue_id=${quote(other)})=3
+    AND NOT EXISTS(SELECT 1 FROM qa_events WHERE id='different-generated-id')`);
+ check('external detail includes authorized event association and excludes pending files',
+  `public.livo_qa_external_read(${external},'get',${json({id:other})})->'attachments' @> '[{"id":"workflow-verify-file","eventId":"workflow-verify"}]'::jsonb
+    AND NOT (public.livo_qa_external_read(${external},'get',${json({id:other})})->'attachments' @> '[{"id":"workflow-extra-file"}]'::jsonb)`);
  cases.push(`SELECT public.livo_qa_external_reserve_upload(${external},${quote(issue)},'comment-external-pending','example.png','image/png',7,'comment'); INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('qa-evidence',${quote('default/'+issue+'/comment-external-pending')},'{"size":7,"mimetype":"image/png"}');`);
  check('external pending files stay out of authorized detail',`NOT (public.livo_qa_external_read(${external},'get',${json({id:issue})})->'attachments' @> '[{"id":"comment-external-pending"}]'::jsonb)`);
  cases.push("DELETE FROM external_qa_project_grants WHERE account_id='eqa-example' AND project_id='p-test';");
@@ -56,7 +103,7 @@ export function plan(){
  cases.push('RESET ROLE; SET ROLE authenticated;');
  error('member SQL cannot invoke the service publication helper',`SELECT public.livo_qa_publish_comment_attachments(${member},${quote(issue)},'{}')`,'42501','permission denied');
  cases.push("RESET ROLE; SELECT json_build_object('status','passed','assertions',(SELECT count(*) FROM qa_test.results));");
- return{sql:[base.sql,...cases].join('\n'),summary:{assertions,migrationApplications:2,migrations:[...base.summary.migrations,name]}};
+ return{sql:[base.sql,...cases].join('\n'),summary:{assertions,migrationApplications:2,migrations:[...base.summary.migrations,name,workflowName]}};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const args=process.argv.slice(2),option=k=>args.includes(k)?args[args.indexOf(k)+1]:undefined,current=plan();

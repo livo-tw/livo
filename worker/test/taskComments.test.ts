@@ -26,6 +26,9 @@ describe('task comment production SQLite transaction triggers',()=>{
   const stamp='2026-01-01T00:00:00Z';
   const reserve=(id:string,size=8,actor='actor-a',task='task-a',ws='ws-a')=>db.prepare('INSERT INTO task_comment_uploads(workspace_id,id,task_id,actor_id,file_name,mime_type,expected_size,storage_key,state,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(ws,id,task,actor,'example.png','image/png',size,`task-comment/${ws}/${task}/${id}`,'complete',stamp,'2099-01-01T00:00:00Z');
   const publish=(id:string,uploads:string[],actor='actor-a',task='task-a',ws='ws-a')=>db.prepare('INSERT INTO task_comment_commands(workspace_id,id,task_id,actor_id,payload_hash,body,upload_ids,notifications,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(ws,id,task,actor,'hash','',JSON.stringify(uploads),JSON.stringify([{id:'other-a',type:'comment',content:''}]),stamp);
+  const edit = (id:string, uploads:string[], before='', actor='actor-a', task='task-a', ws='ws-a') =>
+    db.prepare('INSERT INTO task_comment_edit_commands(workspace_id,id,task_id,actor_id,comment_id,payload_hash,previous_body,body,upload_ids,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run(ws,id,task,actor,'original-comment','edit-hash',before,'edited',JSON.stringify(uploads),stamp);
   const value=(sql:string)=>Object.values(db.prepare(sql).get()!)[0];
   const context=(storage:unknown)=>{
     const statement=(sql:string,args:unknown[]=[])=>({
@@ -49,6 +52,20 @@ describe('task comment production SQLite transaction triggers',()=>{
     expect(()=>publish('other-ws',['upload-a'],'actor-b','task-b','ws-b')).toThrow();
     expect(value('SELECT count(*) FROM comments')).toBe(0);expect(value('SELECT count(*) FROM notifications')).toBe(0);
     expect(value("SELECT comment_id FROM task_comment_uploads WHERE id='upload-a'")).toBeNull();
+  });
+  it('appends private attachments to the original comment with the body and leaves its count unchanged', () => {
+    reserve('original-file'); publish('original-comment', ['original-file']);
+    reserve('new-file'); edit('valid-edit', ['new-file']);
+    expect(value("SELECT content FROM comments WHERE id='original-comment'")).toBe('edited');
+    expect(value("SELECT count(*) FROM task_comment_uploads WHERE comment_id='original-comment' AND state='bound'")).toBe(2);
+    expect(value("SELECT comment_count FROM tasks WHERE id='task-a'")).toBe(1);
+    expect(value('SELECT count(*) FROM notifications')).toBe(1);
+    reserve('another-file');
+    expect(() => edit('stale-edit', ['another-file'])).toThrow('task_comment_edit_conflict');
+    expect(() => edit('foreign-edit', ['another-file'], 'edited', 'other-a')).toThrow('task_comment_forbidden');
+    expect(() => edit('wrong-task-edit', ['another-file'], 'edited', 'actor-a', 'task-other')).toThrow('task_comment_forbidden');
+    expect(value("SELECT comment_id FROM task_comment_uploads WHERE id='another-file'")).toBeNull();
+    expect(value('SELECT count(*) FROM task_comment_edit_commands')).toBe(1);
   });
   it('accounts for pending QA and existing storage using the same workspace aggregate',()=>{
     db.exec("UPDATE workspaces SET storage_used_bytes=500000 WHERE id='ws-a';INSERT INTO qa_upload_sessions VALUES('ws-a',400000,'uploading');");

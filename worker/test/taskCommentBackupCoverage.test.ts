@@ -8,7 +8,7 @@ describe('private task-comment JSON manifest',()=>{
   const manifest=await taskCommentBackupManifest({DB:{prepare}} as unknown as Pick<Env,'DB'>,'example-workspace');
   expect(bind).toHaveBeenCalledWith('example-workspace');expect(prepare.mock.calls[0][0]).toContain("state<>'aborted'");
   expect(manifest).toMatchObject({kind:'task_comment_private_media',retainedMetadata:count,coverageKnown:true,coveredByJsonBackup:false,privateObjectBytesExcluded:true,commandReceiptsExcluded:true,commandReceiptsNeverReplayed:true,requiresDatabaseAndPrivateStorageBackup:true});
-  expect(manifest.excludedTables).toEqual(['task_comment_uploads','task_comment_commands']);expect(manifest).not.toHaveProperty('storage_key');
+  expect(manifest.excludedTables).toEqual(['task_comment_uploads','task_comment_commands','task_comment_edit_commands']);expect(manifest).not.toHaveProperty('storage_key');
  });
  it.each([undefined,{retained:null},{retained:'0'},{retained:-1}])('never converts incomplete inventory %j to zero',async row=>{
   const manifest=await taskCommentBackupManifest({DB:{prepare:()=>({bind:()=>({first:async()=>row})})}} as unknown as Pick<Env,'DB'>,'example-workspace');

@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mock=vi.hoisted(()=>({list:vi.fn(),upload:vi.fn(),readback:vi.fn(),publish:vi.fn(),download:vi.fn()}));
-vi.mock('@/lib/taskCommentClient',()=>({taskCommentClient:{list:mock.list,readback:mock.readback,publish:mock.publish,download:mock.download},uploadTaskCommentFile:mock.upload}));
+const mock=vi.hoisted(()=>({list:vi.fn(),upload:vi.fn(),readback:vi.fn(),publish:vi.fn(),download:vi.fn(),edit:vi.fn(),editReadback:vi.fn()}));
+vi.mock('@/lib/taskCommentClient',()=>({taskCommentClient:{list:mock.list,readback:mock.readback,publish:mock.publish,download:mock.download,edit:mock.edit,editReadback:mock.editReadback},uploadTaskCommentFile:mock.upload}));
 import { useTaskCommentMedia } from '@/components/task-detail/hooks/useTaskCommentMedia';
 import { CommentAttachmentError } from '@/lib/taskCommentAttachmentCore';
 const media={id:'10000000-0000-4000-8000-000000000001',taskId:'task-example',fileName:'example.png',mimeType:'image/png',size:8};
@@ -21,6 +21,23 @@ describe('task comment draft retry and account scope',()=>{
     await act(async()=>{expect(await result.current.publish('changed draft is not a new command',[])).toEqual(receipt);});
     expect(mock.readback.mock.calls.at(-1)?.[0]).toBe(original.commandId);
     expect(mock.publish).toHaveBeenCalledTimes(1);expect(mock.upload).toHaveBeenCalledTimes(1);expect(result.current.files).toHaveLength(0);
+  });
+  it('reconciles an uncertain edit against its original comment without publishing a new comment', async () => {
+    const editTarget = { commentId: receipt.comment.id, previousBody: '<p>Before</p>' };
+    mock.editReadback.mockRejectedValue(new CommentAttachmentError('command_not_found',404));
+    mock.edit.mockRejectedValueOnce(new TypeError('network_lost'));
+    const { result } = renderHook(() => useTaskCommentMedia('task-example','member-example',vi.fn(),{ visible:false, editTarget }));
+    act(() => result.current.add([new File(['12345678'],'example.png',{type:'image/png'})]));
+    await act(async () => { await expect(result.current.publish('<p>After</p>', [])).rejects.toThrow('network_lost'); });
+    expect(mock.edit.mock.calls[0][0]).toMatchObject({ ...editTarget, body:'<p>After</p>', uploadIds:[media.id] });
+    expect(result.current.pending).toBe(true);
+    mock.editReadback.mockResolvedValueOnce(receipt);
+    await act(async () => { expect(await result.current.publish('still pending', [])).toEqual(receipt); });
+    expect(mock.editReadback.mock.calls.at(-1)?.[0]).toBe(mock.edit.mock.calls[0][0].commandId);
+    expect(mock.edit).toHaveBeenCalledTimes(1);
+    expect(mock.upload).toHaveBeenCalledTimes(1);
+    expect(mock.publish).not.toHaveBeenCalled();
+    expect(result.current.files).toHaveLength(0);
   });
   it('retries a known upload failure while preserving earlier completed files',async()=>{
     let attempts=0;mock.upload.mockImplementation(async(_task,_file,resume)=>{if(++attempts===2)throw new Error('upload_failed');resume.attachment={...media,id:String(attempts)};return resume.attachment;});

@@ -6,18 +6,19 @@ import { taskCommentClient, uploadTaskCommentFile, type TaskCommentResume, type 
 export type TaskCommentDraftFile = { id:string;file:File;preview?:string;progress:number;status:'pending'|'uploading'|'complete'|'failed';resume:TaskCommentResume };
 type Rejected={name:string;code:'file_size'|'file_type'|'file_name'};
 type PublishInput={taskId:string;commandId:string;body:string;uploadIds:string[];mentionIds:string[]};
+type EditTarget = { commentId: string; previousBody: string };
 const revoke=(file:TaskCommentDraftFile)=>{if(file.preview)URL.revokeObjectURL(file.preview);};
 const emptyAttachments: CommentMedia[] = [];
 export function useTaskCommentMedia(
   taskId: string | undefined,
   actorId: string,
   onError: (error: unknown) => void,
-  { visible = true, revision }: { visible?: boolean; revision?: string } = {},
+  { visible = true, revision, editTarget }: { visible?: boolean; revision?: string | readonly unknown[]; editTarget?: EditTarget } = {},
 ) {
   const scopeKey = JSON.stringify([actorId, taskId]);
   const [attachmentList, setAttachmentList] = useState<{ scope: string; items: CommentMedia[] }>();
   const [files,setFiles]=useState<TaskCommentDraftFile[]>([]),[rejected,setRejected]=useState<Rejected[]>([]),[busy,setBusy]=useState(false),[pending,setPending]=useState(false);
-  const current=useRef<TaskCommentDraftFile[]>([]),generation=useRef(0),running=useRef(false),controller=useRef<AbortController>(),command=useRef<PublishInput>();
+  const current=useRef<TaskCommentDraftFile[]>([]),generation=useRef(0),running=useRef(false),controller=useRef<AbortController>(),command=useRef<PublishInput & { editTarget?: EditTarget }>();
   const commandOutcomeUnknown=useRef(false);
   const listVersion=useRef(0);
   const errorCallback=useRef(onError);errorCallback.current=onError;
@@ -30,7 +31,7 @@ export function useTaskCommentMedia(
   useEffect(()=>{
     generation.current++;current.current.forEach(revoke);current.current=[];setFiles([]);setRejected([]);setAttachmentList(undefined);command.current=undefined;commandOutcomeUnknown.current=false;setPending(false);running.current=false;setBusy(false);
     return()=>{generation.current++;controller.current?.abort();current.current.forEach(revoke);};
-  },[taskId,actorId]);
+  },[taskId,actorId,editTarget?.commentId]);
   useEffect(() => {
     if (!taskId || !actorId || !visible) return;
     const read = new AbortController();
@@ -53,6 +54,7 @@ export function useTaskCommentMedia(
     files,rejected,busy,pending,
     attachments: attachmentList?.scope === scopeKey ? attachmentList.items : emptyAttachments,
     scopeKey,
+    refresh,
     add(incoming:File[]){
       if(running.current||command.current)return;const failures:Rejected[]=[],added:TaskCommentDraftFile[]=[];
       for(const file of incoming){
@@ -74,20 +76,26 @@ export function useTaskCommentMedia(
       running.current=true;setBusy(true);const request=new AbortController();controller.current=request;const key=generation.current;
       let attemptedPublish=false;
       try{
-        if(!command.current){await upload(request.signal);command.current={taskId,commandId:randomUUID(),body,uploadIds:current.current.map(file=>file.resume.attachment!.id),mentionIds};commandOutcomeUnknown.current=false;setPending(true);}
+        if(!command.current){await upload(request.signal);command.current={taskId,commandId:randomUUID(),body,uploadIds:current.current.map(file=>file.resume.attachment!.id),mentionIds,editTarget};commandOutcomeUnknown.current=false;setPending(true);}
         const input=command.current;
         // Retry the immutable original command first. Unknown outcomes never create a second comment.
         let result:TaskCommentReceipt;
-        try{result=await taskCommentClient.readback(input.commandId,request.signal);}
-        catch(error){if((error as CommentAttachmentError).code!=='command_not_found')throw error;attemptedPublish=true;result=await taskCommentClient.publish(input,request.signal);}
+        try {
+          result=await (input.editTarget ? taskCommentClient.editReadback : taskCommentClient.readback)(input.commandId,request.signal);
+        } catch(error) {
+          if((error as CommentAttachmentError).code!=='command_not_found')throw error;
+          attemptedPublish=true;
+          const { editTarget: target, ...payload } = input;
+          result=target ? await taskCommentClient.edit({ ...payload, ...target },request.signal) : await taskCommentClient.publish(payload,request.signal);
+        }
         if(key!==generation.current||request.signal.aborted)throw new DOMException('Aborted','AbortError');
         current.current.forEach(revoke);current.current=[];setFiles([]);command.current=undefined;commandOutcomeUnknown.current=false;setPending(false);setRejected([]);
-        await refresh(request.signal).catch(error=>{if(!request.signal.aborted)errorCallback.current(error);});
+        if (!input.editTarget) await refresh(request.signal).catch(error=>{if(!request.signal.aborted)errorCallback.current(error);});
         return result;
       }catch(error){
         const failure=error as CommentAttachmentError;
         if(key===generation.current){
-          const knownRejected=[400,403,410,413,422].includes(failure.status)||failure.code==='invalid_upload';
+          const knownRejected=[400,403,410,413,422].includes(failure.status)||['invalid_upload','comment_edit_conflict'].includes(failure.code);
           if(attemptedPublish&&!knownRejected)commandOutcomeUnknown.current=true;
           // A later denial cannot prove that an earlier unknown write did not commit.
           if(knownRejected&&!commandOutcomeUnknown.current){command.current=undefined;setPending(false);}

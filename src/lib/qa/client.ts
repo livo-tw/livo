@@ -9,7 +9,7 @@ import { defaultQaDisplaySettings, validateQaDisplaySettings, type QaDisplaySett
 import { canManageQaConfiguration, parseQaFieldConfiguration, validateQaFieldConfiguration, type QaFieldConfiguration } from './fields';
 import { qaVersionSuggestions } from './versions';
 import { randomUUID } from '@/lib/generateId';
-import { applyQaCommand, canQaDelete, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, qaCommentAttachmentIds, QaError } from './domain';
+import { applyQaCommand, canQaDelete, compareQaIssues, createQaIssue, matchesQaListFilters, normalizeQaListFilters, qaEventAttachmentIds, qaEventDetail, qaIdSearch, QA_MAX_FILE_BYTES, QA_PART_BYTES, QA_STATES, qaCommentAttachmentIds, QaError } from './domain';
 import type { QaAttachment, QaCommand, QaComment, QaContext, QaCreateInput, QaDetail, QaIssue, QaListInput, QaListResult, QaUpload, QaCoordination } from './domain';
 
 export class QaClientError extends Error {
@@ -230,20 +230,32 @@ export function createQaClient(options: QaClientOptions) {
         return issue;
       });
     },
-    async command(issue: QaIssue, command: QaCommand, commandId = qaId()): Promise<QaIssue> {
+    async command(issue: QaIssue, command: QaCommand, commandId = qaId(), inputAttachmentIds?: string[]): Promise<QaIssue> {
       ensureEnabled();
-      if (!mock) return request('command', { id: issue.id, expectedVersion: issue.version, commandId, command });
+      const attachmentIds = qaEventAttachmentIds(inputAttachmentIds, command.type);
+      const attachments = attachmentIds.length ? { attachmentIds } : {};
+      if (!mock) return request('command', { id: issue.id, expectedVersion: issue.version, commandId, command, ...attachments });
       return demoOnce(commandId, () => {
         const detail = getDemo(issue.id);
         if (detail.issue.version !== issue.version) throw new QaClientError('conflict', 409);
         const ctx = { ...options.context(), fieldConfiguration: parseQaFieldConfiguration(demoFieldConfigurations.get(options.context().workspaceId)), duplicateIssueIds: new Set([...demoIssues.values()].filter(d => d.issue.workspaceId === issue.workspaceId).map(d => d.issue.id)) };
         const coordinator=demoConfig(issue.projectId);
         ctx.actor={...ctx.actor,qaCoordinatorProjectIds:coordinator.coordinatorId===ctx.actor.id?[issue.projectId]:[]};
+        const files = attachmentIds.map(fileId => {
+          const pending = demoPendingAttachments.get(fileId);
+          if (!pending || pending.workspaceId !== ctx.workspaceId || pending.attachment.issueId !== issue.id || pending.attachment.uploadedBy !== ctx.actor.id) throw new QaError('qa_invalid_event_attachments');
+          return pending.attachment;
+        });
         const before = detail.issue;
         detail.issue = applyQaCommand(before, command, ctx);
-        detail.events.push({ id: qaId(), issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: qaEventDetail(detail.issue, command.type, before), createdAt: ctx.now, version: detail.issue.version });
+        const eventId = qaId();
+        detail.events.push({ id: eventId, issueId: issue.id, actorId: ctx.actor.id, type: command.type, detail: qaEventDetail(detail.issue, command.type, before), createdAt: ctx.now, version: detail.issue.version });
+        for (const file of files) {
+          detail.attachments.push({ ...file, eventId });
+          demoPendingAttachments.delete(file.id);
+        }
         return detail.issue;
-      },{id:issue.id,version:issue.version,command});
+      },{id:issue.id,version:issue.version,command,...attachments});
     },
     /** Permanent. The servers re-check the version and canQaDelete before removing anything. */
     async delete(issue: QaIssue): Promise<void> {

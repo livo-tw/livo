@@ -40,25 +40,37 @@ export const useTaskComments = ({
   const commentFileRef = useRef<HTMLInputElement>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentContent, setEditingCommentContent] = useState('');
+  const [editingOriginalBody, setEditingOriginalBody] = useState('');
+  const [editingTextBusy, setEditingTextBusy] = useState(false);
+  const editSending = useRef(false);
   const taskId = task?.id;
   const savedComments = useMemo(
     () => taskId ? globalComments.filter(comment => comment.taskId === taskId) : [],
     [globalComments, taskId],
   );
-  // Private attachments are added on publish and removed with their comment.
-  // Body edits and realtime changes on other cards do not invalidate this list.
-  const attachmentRevision = useMemo(
-    () => showCommentAttachments ? JSON.stringify(savedComments.map(comment => comment.id).sort()) : undefined,
-    [savedComments, showCommentAttachments],
-  );
+  // Realtime replaces the changed comment even on an attachment-only edit.
+  // Keep the same array when events affect only a different task's comments.
+  const attachmentRevision = useRef(savedComments);
+  if (savedComments.length !== attachmentRevision.current.length ||
+    savedComments.some((comment, index) => comment !== attachmentRevision.current[index])) {
+    attachmentRevision.current = savedComments;
+  }
   const media = useTaskCommentMedia(
     taskId,
     currentMemberId,
     error => toast.error(i18n.t('taskDetail.comments.sendFailed') + (error instanceof Error ? error.message : '')),
-    { visible: showCommentAttachments, revision: attachmentRevision },
+    { visible: showCommentAttachments, revision: attachmentRevision.current },
   );
+  const editMedia = useTaskCommentMedia(taskId, currentMemberId, error => {
+    toast.error(i18n.t('taskDetail.comments.updateFailed') + (error instanceof Error ? error.message : ''));
+  }, { visible: false, editTarget: editingCommentId ? { commentId: editingCommentId, previousBody: editingOriginalBody } : undefined });
   const activeScope = useRef('');
   activeScope.current = `${currentMemberId}:${task?.id || ''}`;
+  useEffect(() => {
+    setEditingCommentId(null);
+    setEditingCommentContent('');
+    setEditingOriginalBody('');
+  }, [taskId, currentMemberId]);
 
   // Sync comments from global realtime
   useEffect(() => {
@@ -186,36 +198,63 @@ export const useTaskComments = ({
   };
 
   const startEditComment = (comment: Comment) => {
+    if (editSending.current || editMedia.busy || editMedia.pending) return;
     setEditingCommentId(comment.id);
     setEditingCommentContent(comment.content);
+    setEditingOriginalBody(comment.content);
   };
 
   const saveEditComment = async () => {
-    if (!editingCommentId || !editingCommentContent.trim()) return;
-    const before = taskComments.find(c => c.id === editingCommentId)?.content ?? '';
-    setTaskComments(prev =>
-      prev.map(c => c.id === editingCommentId ? { ...c, content: editingCommentContent } : c)
-    );
-    const { error } = await supabase.from('comments').update({ content: editingCommentContent }).eq('id', editingCommentId);
-    if (error) {
-      setTaskComments(prev => prev.map(c => c.id === editingCommentId ? { ...c, content: before } : c));
-      toast.error(i18n.t('taskDetail.comments.updateFailed') + error.message);
-      return;
-    }
-    const editPlain = editingCommentContent.replace(/<[^>]*>/g, '').trim();
-    logActivity(currentMemberId, 'edit_comment', editPlain.slice(0, 100), task?.id, task?.taskKey);
-    // Only people added by this edit are told; those already mentioned were told when it was posted.
-    if (task) {
+    if (!task || !editingCommentId || editSending.current || editMedia.busy) return;
+    const withFiles = editMedia.files.length > 0 || editMedia.pending;
+    if (!editingCommentContent.trim() && !withFiles) return;
+    const scope = activeScope.current;
+    const commentId = editingCommentId;
+    const before = editingOriginalBody;
+    editSending.current = true;
+    setEditingTextBusy(true);
+    try {
+      let content = editingCommentContent;
+      if (withFiles) {
+        const saved = await editMedia.publish(content, []);
+        if (scope !== activeScope.current) return;
+        content = saved.comment.content;
+        setAllTasks(previous => previous.map(item => item.id === task.id ? {
+          ...item, attachmentCount: saved.attachmentCount ?? item.attachmentCount,
+          attachmentSummaryKnown: typeof saved.attachmentCount === 'number',
+        } : item));
+        void media.refresh().catch(() => {
+          if (scope === activeScope.current) toast.error(i18n.t('taskDetail.comments.attachmentLoadFailed'));
+        });
+        loadStorageUsage();
+      } else {
+        const { error } = await supabase.from('comments').update({ content }).eq('id', commentId);
+        if (error) throw error;
+        if (scope !== activeScope.current) return;
+      }
+      setTaskComments(previous => previous.map(comment => comment.id === commentId ? { ...comment, content } : comment));
+      const plain = content.replace(/<[^>]*>/g, '').trim();
+      logActivity(currentMemberId, 'edit_comment', plain.slice(0, 100), task.id, task.taskKey);
       const already = new Set(mentionedMembers(before, users).map(person => person.id));
-      for (const person of mentionedMembers(editingCommentContent, users)) {
+      for (const person of mentionedMembers(content, users)) {
         if (person.id === currentMemberId || already.has(person.id)) continue;
-        createNotification(person.id, currentMemberId, 'mention', task.id, editPlain.slice(0, 100));
+        createNotification(person.id, currentMemberId, 'mention', task.id, plain.slice(0, 100));
         logActivity(currentMemberId, 'mention', `@${person.name}`, task.id, task.taskKey);
       }
+      setEditingCommentId(null);
+      setEditingCommentContent('');
+      setEditingOriginalBody('');
+      toast.success(i18n.t('taskDetail.comments.updated'));
+    } catch (error) {
+      const failure = error as { code?: string; name?: string; message?: string };
+      if (scope !== activeScope.current || failure?.name === 'AbortError') return;
+      toast.error(failure?.code === 'comment_edit_conflict'
+        ? i18n.t('taskDetail.comments.editConflict')
+        : i18n.t('taskDetail.comments.updateFailed') + (failure?.message || ''));
+    } finally {
+      editSending.current = false;
+      setEditingTextBusy(false);
     }
-    setEditingCommentId(null);
-    setEditingCommentContent('');
-    toast.success(i18n.t('taskDetail.comments.updated'));
   };
 
   return {
@@ -234,6 +273,13 @@ export const useTaskComments = ({
     commentAttachments: media.attachments,
     downloadCommentAttachment: media.download,
     commentAttachmentScope: media.scopeKey,
+    editCommentFiles: editMedia.files,
+    editCommentRejected: editMedia.rejected,
+    addEditCommentFiles: editMedia.add,
+    removeEditCommentFile: editMedia.remove,
+    retryEditCommentUpload: editMedia.retryUpload,
+    editCommentBusy: editingTextBusy || editMedia.busy,
+    editCommentPending: editMedia.pending,
     editingCommentId, setEditingCommentId,
     editingCommentContent, setEditingCommentContent,
     addComment, deleteComment, startEditComment, saveEditComment,

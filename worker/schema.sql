@@ -1304,6 +1304,7 @@ END;
 CREATE TABLE IF NOT EXISTS qa_attachments (
   workspace_id TEXT NOT NULL, id TEXT NOT NULL, issue_id TEXT NOT NULL, uploaded_by TEXT NOT NULL,
   file_name TEXT NOT NULL, mime_type TEXT NOT NULL, size INTEGER NOT NULL, storage_key TEXT NOT NULL, comment_id TEXT,
+  event_id TEXT CHECK(event_id IS NULL OR comment_id IS NULL),
   created_at TEXT NOT NULL, restored_by TEXT, PRIMARY KEY(workspace_id,id),
   FOREIGN KEY(workspace_id,issue_id) REFERENCES qa_issues(workspace_id,id)
 );
@@ -1354,6 +1355,20 @@ CREATE TRIGGER qa_attachment_comment_scope_update_guard BEFORE UPDATE OF comment
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM qa_comments c WHERE c.workspace_id=NEW.workspace_id
     AND c.id=NEW.comment_id AND c.issue_id=NEW.issue_id AND c.actor_id=NEW.uploaded_by)
     THEN RAISE(ABORT,'qa_invalid_comment_attachments') END;
+END;
+DROP TRIGGER IF EXISTS qa_attachment_event_scope_guard;
+CREATE TRIGGER qa_attachment_event_scope_guard BEFORE INSERT ON qa_attachments WHEN NEW.event_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM qa_events e WHERE e.workspace_id=NEW.workspace_id
+    AND e.id=NEW.event_id AND e.issue_id=NEW.issue_id AND e.actor_id=NEW.uploaded_by
+    AND e.type IN ('submit_fix','record_deployment','record_verification','hold','reopen','close','request_handoff','resolve_handoff'))
+    THEN RAISE(ABORT,'qa_invalid_event_attachments') END;
+END;
+DROP TRIGGER IF EXISTS qa_attachment_event_scope_update_guard;
+CREATE TRIGGER qa_attachment_event_scope_update_guard BEFORE UPDATE OF event_id,workspace_id,issue_id,uploaded_by ON qa_attachments WHEN NEW.event_id IS NOT NULL BEGIN
+  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM qa_events e WHERE e.workspace_id=NEW.workspace_id
+    AND e.id=NEW.event_id AND e.issue_id=NEW.issue_id AND e.actor_id=NEW.uploaded_by
+    AND e.type IN ('submit_fix','record_deployment','record_verification','hold','reopen','close','request_handoff','resolve_handoff'))
+    THEN RAISE(ABORT,'qa_invalid_event_attachments') END;
 END;
 CREATE TABLE IF NOT EXISTS qa_slack_links (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL DEFAULT 'default', issue_id TEXT NOT NULL,
@@ -3079,6 +3094,37 @@ CREATE TRIGGER task_comment_command_commit AFTER INSERT ON task_comment_commands
  json_extract(j.value,'$.type'),NEW.task_id,json_extract(j.value,'$.content'),NEW.created_at
  FROM json_each(NEW.notifications) j WHERE json_extract(j.value,'$.id')<>NEW.actor_id
  AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=NEW.workspace_id AND m.id=json_extract(j.value,'$.id') AND m.is_active=1);
+END;
+
+CREATE TABLE IF NOT EXISTS task_comment_edit_commands (
+ workspace_id TEXT NOT NULL, id TEXT PRIMARY KEY, task_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+ comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+ payload_hash TEXT NOT NULL, previous_body TEXT NOT NULL, body TEXT NOT NULL, upload_ids TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_comment_edit_commands_comment ON task_comment_edit_commands(comment_id);
+DROP TRIGGER IF EXISTS task_comment_edit_guard;
+CREATE TRIGGER task_comment_edit_guard BEFORE INSERT ON task_comment_edit_commands BEGIN
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM members WHERE workspace_id=NEW.workspace_id AND id=NEW.actor_id AND is_active=1)
+  OR NOT EXISTS(SELECT 1 FROM comments c JOIN tasks t ON t.id=c.task_id AND t.workspace_id=c.workspace_id
+    WHERE c.workspace_id=NEW.workspace_id AND c.id=NEW.comment_id AND c.task_id=NEW.task_id AND c.user_id=NEW.actor_id)
+  THEN RAISE(ABORT,'task_comment_forbidden') END;
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM comments WHERE id=NEW.comment_id AND content<>NEW.previous_body)
+  THEN RAISE(ABORT,'task_comment_edit_conflict') END;
+ SELECT CASE WHEN json_array_length(NEW.upload_ids) NOT BETWEEN 1 AND 10
+  OR json_array_length(NEW.upload_ids)+(SELECT count(*) FROM task_comment_uploads
+    WHERE workspace_id=NEW.workspace_id AND task_id=NEW.task_id AND comment_id=NEW.comment_id AND state='bound')>10
+  OR (SELECT count(DISTINCT value) FROM json_each(NEW.upload_ids))<>json_array_length(NEW.upload_ids)
+  OR EXISTS(SELECT 1 FROM json_each(NEW.upload_ids) x WHERE NOT EXISTS(
+    SELECT 1 FROM task_comment_uploads u WHERE u.workspace_id=NEW.workspace_id AND u.id=x.value
+     AND u.task_id=NEW.task_id AND u.actor_id=NEW.actor_id AND u.state='complete' AND u.comment_id IS NULL
+     AND u.expires_at>NEW.created_at)) THEN RAISE(ABORT,'task_comment_invalid_upload') END;
+END;
+DROP TRIGGER IF EXISTS task_comment_edit_commit;
+CREATE TRIGGER task_comment_edit_commit AFTER INSERT ON task_comment_edit_commands BEGIN
+ UPDATE comments SET content=NEW.body WHERE workspace_id=NEW.workspace_id AND id=NEW.comment_id;
+ UPDATE task_comment_uploads SET comment_id=NEW.comment_id,state='bound'
+  WHERE workspace_id=NEW.workspace_id AND id IN(SELECT value FROM json_each(NEW.upload_ids));
 END;
 
 -- The existing clear/import batch acquires this guard before its first deletion.

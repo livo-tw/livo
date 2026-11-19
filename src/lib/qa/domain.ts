@@ -72,7 +72,7 @@ export interface QaContext {
 }
 export interface QaComment { id: string; issueId: string; actorId: string; body: string; createdAt: string; attachmentIds?: string[]; }
 export interface QaEvent { id: string; issueId: string; actorId: string; type: string; detail: string; createdAt: string; version: number; }
-export interface QaAttachment { id: string; issueId: string; fileName: string; mimeType: string; size: number; uploadedBy: string; createdAt: string; commentId?: string | null; }
+export interface QaAttachment { id: string; issueId: string; fileName: string; mimeType: string; size: number; uploadedBy: string; createdAt: string; commentId?: string | null; eventId?: string | null; }
 export interface QaPersonProfile { name: string; avatar?: string; color?: string; jobTitle?: string; isExternal?: boolean; }
 export interface QaDetail { memberProfiles?: Record<string, QaPersonProfile>; memberNames?: Record<string,string>; coordination?: QaCoordination; issue: QaIssue; comments: QaComment[]; events: QaEvent[]; attachments: QaAttachment[]; }
 /** Board sort keys shared with the task board (src/lib/boardSort.ts); 'updated' is the default. */
@@ -91,10 +91,21 @@ export class QaError extends Error {
   constructor(public readonly code: string, public readonly status = 400) { super(code); this.name = 'QaError'; }
 }
 export const QA_MAX_COMMENT_ATTACHMENTS = 10;
-export function qaCommentAttachmentIds(value: unknown): string[] {
+function qaAttachmentIds(value: unknown, error: string): string[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > QA_MAX_COMMENT_ATTACHMENTS || value.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(id)) || new Set(value).size !== value.length) throw new QaError('qa_invalid_comment_attachments');
+  if (!Array.isArray(value) || value.length > QA_MAX_COMMENT_ATTACHMENTS || value.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(id)) || new Set(value).size !== value.length) throw new QaError(error);
   return value;
+}
+export function qaCommentAttachmentIds(value: unknown): string[] {
+  return qaAttachmentIds(value, 'qa_invalid_comment_attachments');
+}
+export function mayAttachToQaEvent(commandType: unknown): boolean {
+  return ['submit_fix', 'record_deployment', 'record_verification', 'hold', 'reopen', 'close', 'request_handoff', 'resolve_handoff'].some(type => type === commandType);
+}
+export function qaEventAttachmentIds(value: unknown, commandType: unknown): string[] {
+  const ids = qaAttachmentIds(value, 'qa_invalid_event_attachments');
+  if (ids.length && !mayAttachToQaEvent(commandType)) throw new QaError('qa_invalid_event_attachments');
+  return ids;
 }
 export const QA_MAX_FILE_BYTES = 200 * 1024 * 1024;
 export const QA_PART_BYTES = 5 * 1024 * 1024;

@@ -5,7 +5,7 @@ import { ensureKnowledgeImportUsageReconciled } from './knowledgeImportStorage';
 import { notifyChanges } from './notify';
 import { sendNotificationEmails } from './functions/emailNotify';
 import { dispatchWebhooks } from './functions/webhooks';
-import { COMMENT_PART_BYTES, CommentAttachmentError, commentNeed as need, commentId, commentUUID, commentFileError, commentSignature, commentPublishInput } from './taskCommentAttachmentCore';
+import { COMMENT_PART_BYTES, CommentAttachmentError, commentNeed as need, commentId, commentUUID, commentFileError, commentSignature, commentPublishInput, commentEditInput } from './taskCommentAttachmentCore';
 
 type C = Context<AppContext>;
 type Row = Record<string, any>;
@@ -167,14 +167,57 @@ async function publish(c: C, body: Row) {
   }
   return c.json(result);
 }
+async function editReceipt(c: C, commandId: string) {
+  const actor = c.get('auth').member;
+  const row = await c.env.DB.prepare('SELECT task_id,comment_id FROM task_comment_edit_commands WHERE workspace_id=? AND id=? AND actor_id=?')
+    .bind(actor.workspaceId, commandId, actor.id).first<Row>();
+  need(row, 'command_not_found', 404);
+  await task(c, row.task_id);
+  const comment = await c.env.DB.prepare('SELECT * FROM comments WHERE workspace_id=? AND id=? AND task_id=? AND user_id=?')
+    .bind(actor.workspaceId, row.comment_id, row.task_id, actor.id).first<Row>();
+  need(comment, 'comment_unavailable', 404);
+  const summary = await taskAttachmentSummary(c, [row.task_id]);
+  return { comment, commentCount: summary.commentCounts[row.task_id], attachmentCount: summary.counts[row.task_id] };
+}
+async function edit(c: C, body: Row) {
+  const input = commentEditInput(body);
+  const actor = c.get('auth').member;
+  const digest = await hash(JSON.stringify(input));
+  await task(c, input.taskId);
+  const previous = () => c.env.DB.prepare('SELECT payload_hash FROM task_comment_edit_commands WHERE workspace_id=? AND id=? AND actor_id=?')
+    .bind(actor.workspaceId, input.commandId, actor.id).first<Row>();
+  const known = await previous();
+  if (known) {
+    need(known.payload_hash === digest, 'command_id_reused', 409);
+    return c.json(await editReceipt(c, input.commandId));
+  }
+  const before = await c.env.DB.prepare('SELECT * FROM comments WHERE workspace_id=? AND id=? AND task_id=? AND user_id=?')
+    .bind(actor.workspaceId, input.commentId, input.taskId, actor.id).first<Row>();
+  need(before, 'forbidden', 403);
+  let inserted = true;
+  try {
+    await c.env.DB.prepare(`INSERT INTO task_comment_edit_commands
+      (workspace_id,id,task_id,actor_id,comment_id,payload_hash,previous_body,body,upload_ids,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(actor.workspaceId, input.commandId, input.taskId, actor.id, input.commentId, digest,
+        input.previousBody, input.body, JSON.stringify(input.uploadIds), now()).run();
+  } catch (error) {
+    const won = await previous();
+    if (!won) throw error;
+    need(won.payload_hash === digest, 'command_id_reused', 409);
+    inserted = false;
+  }
+  const result = await editReceipt(c, input.commandId);
+  if (inserted) notifyChanges(c.env, c.executionCtx, [{ table: 'comments', eventType: 'UPDATE', new: result.comment, old: before }], actor.workspaceId);
+  return c.json(result);
+}
 export async function handleTaskComments(c: C): Promise<Response> {
   try{
     c.header('Cache-Control','no-store');
     const queryAction=c.req.query('action');
-    const body:Row=queryAction==='upload_part'?{}:JSON.parse(new TextDecoder().decode(await readBytes(c,65536)));
+    const body:Row=queryAction==='upload_part'?{}:JSON.parse(new TextDecoder().decode(await readBytes(c,262144)));
     const action=queryAction || body.action;
     need(typeof action==='string','invalid_action');
-    if(!['list','download','readback','coverage','summary'].includes(action))need(!isDemoMember(c.env,c.get('auth')),'demo_write_forbidden',403);
+    if(!['list','download','readback','edit_readback','coverage','summary'].includes(action))need(!isDemoMember(c.env,c.get('auth')),'demo_write_forbidden',403);
     if(action==='upload_part')return await part(c);
     if(action==='summary'){
       need(Array.isArray(body.taskIds)&&body.taskIds.length<=1000,'invalid_task_summary');
@@ -189,6 +232,8 @@ export async function handleTaskComments(c: C): Promise<Response> {
     if(action==='upload_init')return await initialize(c,body);
     if(action==='upload_complete')return await complete(c,body);
     if(action==='publish')return await publish(c,body);
+    if(action==='edit')return await edit(c,body);
+    if(action==='edit_readback')return c.json(await editReceipt(c,commentUUID(body.commandId)));
     if(action==='readback')return c.json(await receipt(c,commentUUID(body.commandId)));
     if(action==='list'){
       const id=commentId(body.taskId),offset=Number(body.offset||0);need(Number.isSafeInteger(offset)&&offset>=0&&offset<=100000,'invalid_offset');await task(c,id);
@@ -200,5 +245,5 @@ export async function handleTaskComments(c: C): Promise<Response> {
       return new Response(object.body,{headers:{'Content-Type':row.mime_type,'Content-Length':String(object.size),'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(row.file_name)}`,'Content-Security-Policy':"sandbox; default-src 'none'"}});
     }
     throw new CommentAttachmentError('invalid_action');
-  }catch(error){const message=String(error);const e=error instanceof CommentAttachmentError?error:error instanceof SyntaxError?new CommentAttachmentError('invalid_json'):message.includes('storage_quota_exceeded')?new CommentAttachmentError('storage_quota_exceeded',413):message.includes('task_comment_invalid_upload')?new CommentAttachmentError('invalid_upload',409):message.includes('task_comment_forbidden')?new CommentAttachmentError('forbidden',403):new CommentAttachmentError('task_comment_failed',500);return c.json({error:{code:e.code,message:e.code}},e.status as 400);}
+  }catch(error){const message=String(error);const e=error instanceof CommentAttachmentError?error:error instanceof SyntaxError?new CommentAttachmentError('invalid_json'):message.includes('storage_quota_exceeded')?new CommentAttachmentError('storage_quota_exceeded',413):message.includes('task_comment_invalid_upload')?new CommentAttachmentError('invalid_upload',409):message.includes('task_comment_edit_conflict')?new CommentAttachmentError('comment_edit_conflict',409):message.includes('task_comment_forbidden')?new CommentAttachmentError('forbidden',403):new CommentAttachmentError('task_comment_failed',500);return c.json({error:{code:e.code,message:e.code}},e.status as 400);}
 }

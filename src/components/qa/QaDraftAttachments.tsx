@@ -24,14 +24,14 @@ export function useQaDraftFiles() {
   const current = useRef<QaDraftFile[]>([]);
   const mounted = useRef(true);
   const change = (next: QaDraftFile[]) => { current.current = next; if (mounted.current) setFiles(next); };
+  const clear = () => { current.current.forEach(revoke); change([]); setRejected([]); };
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { current.current.forEach(revoke); change([]); setRejected([]); };
     window.addEventListener('livo:qa-abort', clear);
     return () => { mounted.current = false; current.current.forEach(revoke); window.removeEventListener('livo:qa-abort', clear); };
   }, []);
   return {
-    files, rejected, current,
+    files, rejected, current, clear,
     add(incoming: File[]): QaDraftFile[] {
       const failures: FileFailure[] = [], added: QaDraftFile[] = [];
       for (const file of incoming) {
@@ -55,7 +55,7 @@ export async function uploadQaDraftFiles(client: QaClient, issueId: string, file
     if (entry.status === 'complete' || entry.resume.attachment) { update(entry.id, { status: 'complete', progress: 100 }); continue; }
     qaThrowIfAborted(signal); update(entry.id, { status: 'uploading', progress: 0 });
     try {
-      await client.upload(issueId, entry.file, percent => { if (!signal.aborted) update(entry.id, { progress: percent }); }, signal, entry.resume);
+      entry.resume.attachment = await client.upload(issueId, entry.file, percent => { if (!signal.aborted) update(entry.id, { progress: percent }); }, signal, entry.resume);
       qaThrowIfAborted(signal); update(entry.id, { status: 'complete', progress: 100 });
     } catch (error) { if (!signal.aborted) update(entry.id, { status: 'failed' }); else update(entry.id, { status: 'pending' }); throw error; }
   }

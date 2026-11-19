@@ -13,7 +13,7 @@ import TaskSidebarFields from './TaskSidebarFields';
 import { toast } from 'sonner';
 import CommentAttachmentPicker from '@/components/comments/CommentAttachmentPicker';
 import CommentAttachmentList from '@/components/comments/CommentAttachmentList';
-import type { CommentMedia } from '@/lib/taskCommentAttachmentCore';
+import { COMMENT_FILE_COUNT, type CommentMedia } from '@/lib/taskCommentAttachmentCore';
 
 type Props = { detail: TaskDetailState };
 const emptyAttachments: readonly CommentMedia[] = [];
@@ -31,6 +31,8 @@ const TaskCommentsTab = ({ detail }: Props) => {
     isMobile,
     commentFiles = [], commentRejected = [], addCommentFiles, removeCommentFile, retryCommentUpload,
     commentMediaBusy, commentCommandPending, commentAttachments = emptyAttachments, downloadCommentAttachment, commentAttachmentScope,
+    editCommentFiles = [], editCommentRejected = [], addEditCommentFiles, removeEditCommentFile, retryEditCommentUpload,
+    editCommentBusy, editCommentPending,
   } = detail;
 
   const [commentOrder, setCommentOrder] = useCommentOrder(currentMemberId);
@@ -84,25 +86,27 @@ const TaskCommentsTab = ({ detail }: Props) => {
                   </span>
                   {isOwner && !isEditing && (
                     <div className={`${isMobile ? '' : 'opacity-0 group-hover:opacity-100'} flex items-center gap-1 transition-opacity`}>
-                      <button onClick={() => startEditComment(comment)} className="text-xs text-muted-foreground hover:text-primary">{t('taskDetail.comments.editButton')}</button>
+                      <button onClick={() => startEditComment(comment)} disabled={editCommentBusy || editCommentPending} className="text-xs text-muted-foreground hover:text-primary disabled:opacity-50">{t('taskDetail.comments.editButton')}</button>
                       <button onClick={() => deleteComment(comment.id)} className="text-xs text-muted-foreground hover:text-destructive">{t('taskDetail.comments.deleteButton')}</button>
                     </div>
                   )}
                 </div>
                 {isEditing ? (
                   <div>
-                    <RichTextEditor content={editingCommentContent} onChange={setEditingCommentContent} placeholder={t('taskDetail.comments.editPlaceholder')} members={users} allowImageUpload={false} />
+                    <RichTextEditor content={editingCommentContent} onChange={setEditingCommentContent} placeholder={t('taskDetail.comments.editPlaceholder')} members={users} editable={!editCommentBusy && !editCommentPending} allowImageUpload={false} />
+                    <CommentAttachmentPicker files={editCommentFiles} rejected={editCommentRejected}
+                      busy={editCommentBusy || editCommentPending} maxFiles={Math.max(0, COMMENT_FILE_COUNT - (attachmentsByComment.get(comment.id)?.length ?? 0))}
+                      onFiles={addEditCommentFiles} onRemove={removeEditCommentFile} onRetry={retryEditCommentUpload} />
+                    {editCommentPending && <p role="status" className="mt-2 text-sm text-muted-foreground">{t('commentAttachments.pendingReceipt')}</p>}
                     <div className="flex gap-1.5 mt-1.5">
-                      <button onClick={saveEditComment} className="px-2.5 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90">{t('button.save')}</button>
-                      <button onClick={() => setEditingCommentId(null)} className="px-2.5 py-1 text-xs rounded border border-border text-muted-foreground hover:bg-accent">{t('button.cancel')}</button>
+                      <button onClick={saveEditComment} disabled={editCommentBusy || (!editingCommentContent.trim() && !editCommentFiles.length && !editCommentPending)} className="px-2.5 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{t('button.save')}</button>
+                      <button onClick={() => setEditingCommentId(null)} disabled={editCommentBusy || editCommentPending} className="px-2.5 py-1 text-xs rounded border border-border text-muted-foreground hover:bg-accent disabled:opacity-50">{t('button.cancel')}</button>
                     </div>
                   </div>
-                ) : (
-                  <>
-                    {comment.content && (
-                      <div className="text-sm leading-relaxed px-3 py-2 rich-content bg-muted text-foreground" style={{ borderRadius: '0 8px 8px 8px' }} dangerouslySetInnerHTML={{ __html: commentHtml.get(comment.id) ?? '' }} />
-                    )}
-                    {safeLinkHref(comment.attachmentUrl) && (
+                ) : comment.content && (
+                  <div className="text-sm leading-relaxed px-3 py-2 rich-content bg-muted text-foreground" style={{ borderRadius: '0 8px 8px 8px' }} dangerouslySetInnerHTML={{ __html: commentHtml.get(comment.id) ?? '' }} />
+                )}
+                {safeLinkHref(comment.attachmentUrl) && (
                       <a href={safeLinkHref(comment.attachmentUrl)!} target="_blank" rel="noopener noreferrer"
                         className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-muted hover:bg-accent transition-colors border border-border">
                         <Paperclip size={12} className="text-muted-foreground" />
@@ -110,10 +114,8 @@ const TaskCommentsTab = ({ detail }: Props) => {
                         {comment.attachmentSize && <span className="text-muted-foreground">({(comment.attachmentSize / 1024).toFixed(0)} KB)</span>}
                         <Download size={12} className="text-muted-foreground" />
                       </a>
-                    )}
-                    <CommentAttachmentList attachments={attachmentsByComment.get(comment.id) ?? emptyAttachments} download={downloadCommentAttachment} scopeKey={`${commentAttachmentScope}:${comment.id}`} onError={error => toast.error(error instanceof Error ? error.message : t('taskDetail.comments.attachmentUploadFailed'))} />
-                  </>
                 )}
+                <CommentAttachmentList attachments={attachmentsByComment.get(comment.id) ?? emptyAttachments} download={downloadCommentAttachment} scopeKey={`${commentAttachmentScope}:${comment.id}`} onError={error => toast.error(error instanceof Error ? error.message : t('taskDetail.comments.attachmentUploadFailed'))} />
               </div>
             </div>
           );

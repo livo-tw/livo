@@ -50,6 +50,7 @@ export const TABLES: TableRegistry = {
   task_comment_uploads: { pk:'id', clientAccess:'none' },
   task_comment_upload_parts: { pk:'upload_id', clientAccess:'none' },
   task_comment_commands: { pk:'id', clientAccess:'none', jsonCols:['upload_ids','notifications'] },
+  task_comment_edit_commands: { pk:'id', clientAccess:'none', jsonCols:['upload_ids'] },
   qa_slack_links: { pk:'id', clientAccess:'none' },
   qa_slack_receipts: { pk:'id', clientAccess:'none' },
   qa_slack_inbox: { pk:'id', clientAccess:'none' },

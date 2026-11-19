@@ -40,9 +40,10 @@ async function choose(label: string, name: RegExp) {
 }
 function renderDetail(overrides: Partial<QaDetail> = {}, actor: QaActor = { id: 'admin', role: 'admin' }) {
   const command = vi.fn().mockResolvedValue(issue), upload = vi.fn().mockResolvedValue({ id: 'file1' });
-  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
+  const uploadComment = vi.fn().mockResolvedValue({ id: 'comment-file' });
+  const client = { getDisplaySettings: async (): Promise<QaDisplaySettings> => ({ version: 1, showSeverity: true, hiddenPriorityChoices: [], hiddenBoardStates: [] }), getManualStateVisibility: async (): Promise<QaManualStateVisibility> => ({ version: 1, hiddenStates: [] as QaState[] }), getFieldConfiguration: vi.fn().mockResolvedValue({ version: 1, fields: [] }), command, upload, uploadComment, versions: vi.fn().mockResolvedValue([]) } as unknown as QaClient;
   const props = { detail: { ...detail, ...overrides }, client, actor, onRefresh: vi.fn().mockResolvedValue(undefined), onBack: vi.fn() };
-  return { ...render(<QaIssueDetail {...props} />), command, upload, props };
+  return { ...render(<QaIssueDetail {...props} />), command, upload, uploadComment, props };
 }
 
 describe('QA direct state selection', () => {
@@ -388,5 +389,41 @@ describe('QA detail uses shared controls with a focused next action', () => {
     expect(container.querySelector('input[type=file]')).toBeDisabled();
     await act(async () => finish({ id: 'uploaded' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'qa.back' })).toBeEnabled());
+  });
+
+  it('submits a PASS attachment with its verification, replays the same command, and displays the file on its event', async () => {
+    const target = { id: 'target-stage', environment: 'Stage', component: '', build: '1.0', required: true,
+      deployedAt: issue.createdAt, deployedBy: 'dev', deploymentEvidence: '' };
+    const verifying: QaDetail['issue'] = { ...issue, state: 'verification', qaOwnerId: 'qa', assigneeId: 'dev', targets: [target], fixCycle: 1 };
+    const saved: QaDetail['issue'] = { ...verifying, state: 'closed', resolution: 'fixed', version: verifying.version + 1 };
+    const { container, command, uploadComment, props, rerender } = renderDetail({ issue: verifying });
+    command.mockRejectedValueOnce({ status: 503 }).mockResolvedValueOnce(saved);
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    const picker = container.querySelector('input[type=file]')!;
+    const evidence = new File(['proof'], 'verification.txt', { type: 'text/plain' });
+    fireEvent.change(picker, { target: { files: [evidence] } });
+    expect(screen.getByText('verification.txt')).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: /qa.details/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /qa.verificationTab/ }));
+    expect(screen.getByText('verification.txt')).toBeVisible();
+    fireEvent.submit(screen.getByRole('button', { name: 'qa.verification' }).closest('form')!);
+    await waitFor(() => expect(uploadComment).toHaveBeenCalledTimes(1));
+    const retry = await screen.findByRole('button', { name: 'qa.retryCommand' });
+    expect(command).toHaveBeenCalledWith(verifying,
+      { type: 'record_verification', targetId: target.id, build: target.build, result: 'pass', note: '' },
+      expect.any(String), ['comment-file']);
+    fireEvent.click(retry);
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledTimes(1));
+    expect(command.mock.calls[1]).toEqual(command.mock.calls[0]);
+    expect(uploadComment).toHaveBeenCalledTimes(1);
+    const event = { id: 'verification-event', issueId: issue.id, actorId: 'admin', type: 'record_verification',
+      detail: '第 1 輪 · 第 1 次驗證\nStage · - · 1.0\nPASS\n', createdAt: issue.createdAt, version: saved.version };
+    const file = { id: 'comment-file', issueId: issue.id, fileName: evidence.name, mimeType: evidence.type, size: evidence.size,
+      uploadedBy: 'admin', createdAt: issue.createdAt, eventId: event.id };
+    rerender(<QaIssueDetail {...props} detail={{ ...props.detail, issue: saved, events: [event], attachments: [file] }} />);
+    expect(screen.getByText(evidence.name)).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: /qa.history/ }));
+    expect(screen.getAllByText(evidence.name).some(node => !node.closest('[hidden]') &&
+      node.closest('li')?.parentElement?.closest('li')?.textContent?.includes('Stage'))).toBe(true);
   });
 });

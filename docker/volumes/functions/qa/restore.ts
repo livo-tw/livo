@@ -1,4 +1,4 @@
-import { QaError, validateQaHandoff, QA_MAX_FILE_BYTES, QA_STATES, type QaIssue } from './domain.ts';
+import { mayAttachToQaEvent, QaError, validateQaHandoff, QA_MAX_FILE_BYTES, QA_STATES, type QaIssue } from './domain.ts';
 
 const bad = (): never => { throw new QaError('qa_invalid_backup'); };
 const record = (v: unknown): Record<string, any> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : bad();
@@ -78,7 +78,10 @@ export function validateQaBackup(input: unknown): Record<string, any> {
           integer(Number(row.size), 1, QA_MAX_FILE_BYTES); str(row.file_name, 255, true); str(row.mime_type, 100, true);
           if (row.storage_path !== `default/${row.issue_id}/${row.id}`) bad();
           if (table === 'qa_uploads') { row.purpose ??= 'issue'; if (!['issue', 'comment'].includes(row.purpose)) bad(); date(row.expires_at); date(row.completed_at, true); }
-          if (table === 'qa_attachments' && row.comment_id != null) id(row.comment_id);
+          if (table === 'qa_attachments') {
+            if (row.comment_id != null) id(row.comment_id);
+            if (row.event_id != null) id(row.event_id);
+          }
         }
       }
     }
@@ -90,10 +93,18 @@ export function validateQaBackup(input: unknown): Record<string, any> {
       else{id(row.project_id);id(row.actor_id);str(row.payload_hash,64,true);record(row.response);date(row.created_at);}
     }tables[table]=rows;
   }
+  const events = new Map<string, Record<string, any>>(tables.qa_events.map((row: Record<string, any>) => [row.id, row]));
+  const comments = new Map<string, Record<string, any>>(tables.qa_comments.map((row: Record<string, any>) => [row.id, row]));
   for (const attachment of tables.qa_attachments) {
-    if (attachment.comment_id == null) continue;
-    const comment = tables.qa_comments.find((row: Record<string, any>) => row.id === attachment.comment_id);
-    if (!comment || comment.issue_id !== attachment.issue_id || comment.actor_id !== attachment.uploaded_by) bad();
+    if (attachment.event_id != null) {
+      const event = events.get(attachment.event_id);
+      if (attachment.comment_id != null || !event || !mayAttachToQaEvent(event.type) ||
+        event.issue_id !== attachment.issue_id || event.actor_id !== attachment.uploaded_by) bad();
+    }
+    if (attachment.comment_id != null) {
+      const comment = comments.get(attachment.comment_id);
+      if (!comment || comment.issue_id !== attachment.issue_id || comment.actor_id !== attachment.uploaded_by) bad();
+    }
   }
   for (const comment of tables.qa_comments) {
     if (!comment.body.trim() && !tables.qa_attachments.some((row: Record<string, any>) => row.comment_id === comment.id && row.issue_id === comment.issue_id && row.uploaded_by === comment.actor_id)) bad();

@@ -87,6 +87,9 @@ export const taskCommentClient = {
     throw new CommentAttachmentError('attachment_list_incomplete');
   },
   publish: (input: {taskId:string;commandId:string;body:string;uploadIds:string[];mentionIds:string[]}, signal?:AbortSignal) => taskCommentRequest<TaskCommentReceipt>('publish',input,signal),
+  edit: (input: {taskId:string;commandId:string;commentId:string;body:string;previousBody:string;uploadIds:string[]}, signal?:AbortSignal) =>
+    taskCommentRequest<TaskCommentReceipt>('edit',input,signal),
+  editReadback: (commandId:string,signal?:AbortSignal) => taskCommentRequest<TaskCommentReceipt>('edit_readback',{commandId},signal),
   readback: (commandId:string,signal?:AbortSignal) => taskCommentRequest<TaskCommentReceipt>('readback',{commandId},signal),
   async download(attachmentId:string,signal?:AbortSignal):Promise<Blob>{
     return (await checked(await fetch(fnUrl('task-comments'),{method:'POST',signal,headers:{...await headers(),'Content-Type':'application/json'},body:JSON.stringify({action:'download',attachmentId})}))).blob();

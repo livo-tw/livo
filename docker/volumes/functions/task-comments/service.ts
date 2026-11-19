@@ -1,4 +1,4 @@
-import { commentNeed as need, CommentAttachmentError, commentId, commentUUID, commentFileError, commentSignature, commentPublishInput } from './core.ts';
+import { commentNeed as need, CommentAttachmentError, commentId, commentUUID, commentFileError, commentSignature, commentPublishInput, commentEditInput } from './core.ts';
 type Row=Record<string,any>;
 type Environment={get(name:string):string|undefined};
 const wire=(row:Row)=>({id:row.id,taskId:row.task_id,commentId:row.comment_id||undefined,fileName:row.file_name,mimeType:row.mime_type,size:Number(row.expected_size)});
@@ -86,6 +86,25 @@ export function createTaskCommentService(env:Environment,token:string){
       const input=commentPublishInput(body);await task(input.taskId);
       const result=await rpc('livo_task_comment_publish',{p_task:input.taskId,p_id:input.commandId,p_body:input.body,p_uploads:input.uploadIds,p_mentions:input.mentionIds,p_hash:await digest(JSON.stringify(input))});
       const current=await summary([input.taskId],actor);return{...result,commentCount:current.commentCounts[input.taskId],attachmentCount:current.counts[input.taskId]};
+    }
+    if(action==='edit'){
+      const input=commentEditInput(body);await task(input.taskId);
+      const result=await rpc('livo_task_comment_edit',{
+        p_auth:actor.auth_id,p_actor:actor.id,p_task:input.taskId,p_comment:input.commentId,p_id:input.commandId,
+        p_previous_body:input.previousBody,p_body:input.body,p_uploads:input.uploadIds,p_hash:await digest(JSON.stringify(input)),
+      },true);
+      const current=await summary([input.taskId],actor);
+      return {...result,commentCount:current.commentCounts[input.taskId],attachmentCount:current.counts[input.taskId]};
+    }
+    if(action==='edit_readback'){
+      const commandId=commentUUID(body.commandId);
+      const found=await rows('task_comment_commands',{workspace_id:'eq.default',id:'eq.'+commandId,actor_id:'eq.'+actor.id,limit:'1'},true);
+      const receipt=found[0];
+      need(receipt?.payload?.comment,'command_not_found',404);await task(receipt.task_id);
+      const comments=await rows('comments',{select:'*',id:'eq.'+receipt.payload.comment,task_id:'eq.'+receipt.task_id,user_id:'eq.'+actor.id,limit:'1'});
+      need(comments.length===1,'comment_unavailable',404);
+      const current=await summary([receipt.task_id],actor);
+      return {comment:comments[0],commentCount:current.commentCounts[receipt.task_id],attachmentCount:current.counts[receipt.task_id]};
     }
     if(action==='readback'){
       const found=await rows('task_comment_commands',{workspace_id:'eq.default',id:'eq.'+commentUUID(body.commandId),actor_id:'eq.'+actor.id,limit:'1'},true);need(found.length===1,'command_not_found',404);await task(found[0].task_id);

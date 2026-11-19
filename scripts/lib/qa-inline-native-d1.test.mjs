@@ -73,6 +73,47 @@ describe('QA inline metadata and optional workflow with native SQLite and real W
   i=await command(i,{type:'record_verification',targetId:i.targets[0].id,build:'',result:'fail',note:''},'tester');expect(i.state).toBe('failed');expect(i.runs[0].note).toBe('');
   await expect(command(i,{type:'close',resolution:'fixed',reason:''},'tester')).rejects.toThrow('qa_verification_required');expect(read(i.id)).toEqual(i);
  });
+ it('commits scoped verification attachments with the exact evidence event, including when PASS closes the bug',async()=>{
+  let issue=await candidate();
+  for(const target of issue.targets){
+   issue=await command(issue,{type:'record_deployment',targetId:target.id,build:'',evidence:''},'developer');
+  }
+  issue=await command(issue,{type:'record_verification',targetId:issue.targets[0].id,build:'',result:'pass',note:''},'tester');
+  await create('another-issue');
+  const reserve=db.prepare(`INSERT INTO qa_upload_sessions(workspace_id,id,issue_id,actor_id,file_name,mime_type,
+   expected_size,storage_key,state,created_at,expires_at,purpose,comment_ready_at)
+   VALUES('a',?,?,?,'evidence.png','image/png',32,?,'finalizing',?,'2099-01-01T00:00:00.000Z','comment',?)`);
+  for(const [upload,issueId,actorId] of [['valid',issue.id,'tester'],['foreign',issue.id,'developer'],['other','another-issue','tester'],['expired',issue.id,'tester']]){
+   reserve.run(upload,issueId,actorId,`qa/a/${issueId}/${upload}`,issue.updatedAt,issue.updatedAt);
+  }
+  const verified={type:'record_verification',targetId:issue.targets[1].id,build:'',result:'pass',note:''};
+  const body={action:'command',id:issue.id,expectedVersion:issue.version,commandId:'verify-attachment',command:verified,attachmentIds:['valid']};
+  expect((await api({action:'get',id:issue.id},'tester')).attachments).toEqual([]);
+  await expect(api({...body,command:{type:'set_state',state:'closed'}},'tester')).rejects.toMatchObject({code:'qa_invalid_event_attachments'});
+  for(const upload of ['foreign','other']){
+   await expect(api({...body,attachmentIds:['valid',upload]},'tester')).rejects.toMatchObject({code:'qa_invalid_event_attachments'});
+  }
+  beforeBatch=()=>db.exec("UPDATE qa_upload_sessions SET expires_at='2000-01-01T00:00:00.000Z' WHERE id='expired'");
+  await expect(api({...body,attachmentIds:['valid','expired']},'tester')).rejects.toMatchObject({code:'qa_invalid_event_attachments'});
+  expect(read(issue.id)).toEqual(issue);
+  expect(rows("SELECT id FROM qa_commands WHERE id='verify-attachment'")).toEqual([]);
+  expect(rows('SELECT id FROM qa_attachments')).toEqual([]);
+  const closed=await api(body,'tester');
+  expect(closed).toMatchObject({state:'closed',closedBy:'tester'});
+  expect(await api(body,'tester')).toEqual(closed);
+  await expect(api({...body,attachmentIds:[]},'tester')).rejects.toMatchObject({code:'qa_idempotency_conflict'});
+  const detail=await api({action:'get',id:issue.id},'tester');
+  const event=detail.events.find(event=>event.type==='record_verification'&&event.version===closed.version);
+  expect(event.createdAt).toBe(closed.runs.at(-1).createdAt);
+  expect(detail.attachments).toEqual([expect.objectContaining({id:'valid',eventId:event.id,commentId:null})]);
+  expect(rows("SELECT storage_used_bytes FROM workspaces WHERE id='a'")).toEqual([{storage_used_bytes:32}]);
+  expect(rows("SELECT state FROM qa_upload_sessions WHERE id='valid'")).toEqual([{state:'complete'}]);
+  expect(()=>db.prepare("UPDATE qa_attachments SET event_id=? WHERE id='valid'").run(detail.events[0].id)).toThrow('qa_invalid_event_attachments');
+  const [saved]=rows("SELECT * FROM qa_attachments WHERE id='valid'");
+  env.ATTACHMENTS={head:async()=>({size:32,customMetadata:{workspace:'a',issue:issue.id,upload:'valid'},httpMetadata:{contentType:'image/png'}})};
+  await expect(api({action:'restore',tables:{qa_attachments:[{...saved,event_id:detail.events[0].id}]}},'super')).rejects.toMatchObject({code:'qa_invalid_backup'});
+  expect(await api({action:'restore',tables:{qa_attachments:[saved]}},'super')).toMatchObject({skipped:1,conflicts:[],missingAssets:[]});
+ });
  it('optional workflow and its receipts/events survive a real restore into a fresh database',async()=>{
   const i=await complete();const tables=Object.fromEntries(['qa_issues','qa_events','qa_commands'].map(name=>[name,rows('SELECT * FROM '+name)]));
   await Promise.all(pending);pending=[];db.close();bootstrap();
