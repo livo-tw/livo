@@ -176,11 +176,12 @@ describe('QA comment attachment send recovery', () => {
     const comment=vi.fn().mockRejectedValueOnce(new Error('response lost')).mockResolvedValue({id:'new-comment',body:'',attachmentIds:[attachment.id]});
     const refresh=vi.fn().mockResolvedValue(undefined);
     const client={getDisplaySettings:mocks.getDisplaySettings,getManualStateVisibility:mocks.getManualStateVisibility,getFieldConfiguration:mocks.getFieldConfiguration,versions:mocks.versions,uploadComment,comment} as unknown as QaClient;
-    const view=render(<QaIssueDetail detail={detail} client={client} actor={{id:'admin',role:'admin'}} onRefresh={refresh} onBack={vi.fn()} />);
-    fireEvent.click(document.getElementById('qa-tab-comments')!);
+    render(<QaIssueDetail detail={detail} client={client} actor={{id:'admin',role:'admin'}} onRefresh={refresh} onBack={vi.fn()} />);
     const field=screen.getByLabelText(/qa.commentBody/) as HTMLTextAreaElement;
-    const input=view.container.querySelector('input[type=file]') as HTMLInputElement;
+    const input=screen.getByLabelText('commentAttachments.add', { selector: 'input' });
     fireEvent.change(input,{target:{files:[new File(['video'],'proof.mp4',{type:'video/mp4'})]}});
+    fireEvent.click(document.getElementById('qa-tab-comments')!);
+    expect(screen.getByLabelText(/qa.commentBody/)).toBe(field);
     expect(field.required).toBe(false);
     fireEvent.click(screen.getByRole('button',{name:'qa.addComment'}));
     await waitFor(()=>expect(uploadComment).toHaveBeenCalledTimes(1));

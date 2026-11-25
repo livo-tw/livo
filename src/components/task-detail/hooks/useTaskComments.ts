@@ -67,6 +67,8 @@ export const useTaskComments = ({
   const activeScope = useRef('');
   activeScope.current = `${currentMemberId}:${task?.id || ''}`;
   useEffect(() => {
+    setNewComment('');
+    setCommentFile(null);
     setEditingCommentId(null);
     setEditingCommentContent('');
     setEditingOriginalBody('');

@@ -475,7 +475,8 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
       setError(failure); toast.error(t('qa.failed'));
     } finally { commentSending.current = false; if (currentCommentScope.current === scope) setBusy(false); }
   };
-  const commandRetryNotice = unknownCommand ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, undefined, true); else if (pendingComment.current) void postComment({ preventDefault() {} } as React.FormEvent); }}>{t('qa.retryCommand')}</button></div> : null;
+  const commentRetryPending = unknownCommand && !!pendingComment.current;
+  const commandRetryNotice = unknownCommand && !commentRetryPending ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><span>{t('qa.commandRetryHint')}</span><button type="button" className={qaPrimary} disabled={commandBusy || attachmentBusy} onClick={() => { if (pendingCommand.current) void send(pendingCommand.current.command, pendingCommand.current.issue.version, undefined, true); }}>{t('qa.retryCommand')}</button></div> : null;
   const manualStateChoices = manualStates.configuration ? getQaManualStateChoices(workflow || DEFAULT_QA_WORKFLOW, manualStates.configuration) : [];
   const stateControl = <div className="mb-4"><ColoredStatusSelect label={t('qa.changeState')} value={issue.state}
             disabled={busy || !can('set_state') || !manualStates.configuration || !manualStateChoices.length}
@@ -492,7 +493,10 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           {(moreActions.length > 0 || canDelete || canOpenHandoff) && <DropdownMenu><DropdownMenuTrigger asChild><button type="button" className={`${qaButton} mt-3 w-full`} disabled={busy}><MoreHorizontal size={15} aria-hidden="true" />{t('qa.moreActions')}</button></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-48" onCloseAutoFocus={event => { if (focusOwnerAfterMenuClose.current) { event.preventDefault(); focusOwnerAfterMenuClose.current = false; focusOwners(); } }}>{moreActions.map(type => <DropdownMenuItem key={type} onSelect={() => { if (['start_fix', 'submit_fix'].includes(type) && unavailableOwnerField) focusOwnerAfterMenuClose.current = true; openAction(type); }}>{t(`qa.${actionLabels[type]}`)}</DropdownMenuItem>)}{canOpenHandoff && <DropdownMenuItem onSelect={() => setHandoffOpen(true)}>{t('qaHandoff.title')}</DropdownMenuItem>}{canDelete && <>{moreActions.length > 0 && <div role="separator" className="my-1 h-px bg-border" />}<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void removeIssue()}><Trash2 size={15} aria-hidden="true" />{t('qa.delete')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>}
           {!canDelete && !Object.keys(actionLabels).some(type => can(type as ActionType)) && <p className="text-sm text-muted-foreground">{t('qa.noPermission')}</p>}
         </QaSection>;
-  return <QaDetailDraftContext.Provider value={reportDraft}><QaDisplaySettingsContext.Provider value={display.configuration}><div className="w-full min-w-0 space-y-4 p-3 md:p-5">
+  return <QaDetailDraftContext.Provider value={reportDraft}><QaDisplaySettingsContext.Provider value={display.configuration}>
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div className="space-y-4 p-3 pb-[max(12px,env(safe-area-inset-bottom))] md:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2"><button className={qaButton} onClick={onBack} disabled={busy}><ArrowLeft size={15} aria-hidden="true" />{t('qa.back')}</button><button className={qaButton} onClick={() => void refresh()} disabled={busy}><RefreshCw size={15} aria-hidden="true" />{t('qa.refresh')}</button></div>
     {externalUpdatePending && refreshBlocked && <p role="status" className="rounded-lg border border-border p-3 text-sm text-muted-foreground">{t('qa.externalRefreshDeferred')}</p>}
     {externalRefreshError != null && <QaFailure error={externalRefreshError} />}
@@ -558,7 +562,6 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
           <CommentOrderSelect order={commentOrder} onChange={setCommentOrder} />
           {!detail.comments.length && <p className="mb-3 text-sm text-muted-foreground">{t('qa.noComments')}</p>}
           <ol className="mb-4 space-y-3">{commentRows}</ol>
-          {canQaComment(issue, actor) && <form className="space-y-2" onSubmit={postComment}><QaField label={t('qa.commentBody')} multiline required={!commentFiles.files.length} maxLength={20000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} /><CommentAttachmentPicker files={commentFiles.files} rejected={commentFiles.rejected} busy={busy} onFiles={files => { if (files.length + commentFiles.current.current.length > 10) { setError(new QaClientError('qa_invalid_comment_attachments', 400)); return; } commentFiles.add(files); }} onRemove={commentFiles.remove} onRetry={() => void retryCommentUploads()} /><button className={qaPrimary} disabled={busy || (!comment.trim() && !commentFiles.files.length)}>{t('qa.addComment')}</button></form>}
         </QaSection>
         </>}
         {tab === 'history' && <>
@@ -583,6 +586,37 @@ export default function QaIssueDetail({ detail, client, actor: baseActor, workfl
 
       </div>
     </div>
+    </div>
+    </div>
+    {(canQaComment(issue, actor) || commentRetryPending) && (
+      <form className="comment-composer" onSubmit={postComment}>
+        <div className="min-h-14 overflow-y-auto overscroll-contain [&_textarea]:resize-none">
+          <QaField label={t('qa.commentBody')} multiline rows={2} required={!commentFiles.files.length && !commentRetryPending}
+            maxLength={20000} value={comment} onChange={event => setComment(event.target.value)} disabled={busy} />
+        </div>
+        {commentRetryPending && <p role="status" className="shrink-0 text-xs text-muted-foreground">{t('qa.commandRetryHint')}</p>}
+        <CommentAttachmentPicker
+          files={commentFiles.files}
+          rejected={commentFiles.rejected}
+          busy={busy}
+          onFiles={files => {
+            if (files.length + commentFiles.current.current.length > 10) {
+              setError(new QaClientError('qa_invalid_comment_attachments', 400));
+              return;
+            }
+            commentFiles.add(files);
+          }}
+          onRemove={commentFiles.remove}
+          onRetry={() => void retryCommentUploads()}
+          actions={
+            <button type="submit" className={`${qaPrimary} shrink-0`}
+              disabled={commandBusy || attachmentBusy || (!commentRetryPending && (unknownCommand || (!comment.trim() && !commentFiles.files.length)))}>
+              {t(commentRetryPending ? 'qa.retryCommand' : 'qa.addComment')}
+            </button>
+          }
+        />
+      </form>
+    )}
     <Dialog open={!!action} onOpenChange={open => { if (!open && !busy) cancelAction(); }}>
       <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100%-24px)] max-w-4xl flex-col overflow-hidden p-4 sm:p-6" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onCloseAutoFocus={event => { if (focusOwnerAfterClose.current) { event.preventDefault(); focusOwnerAfterClose.current = false; focusOwners(); } }}>
         <DialogHeader><DialogTitle>{action ? t(`qa.${actionLabels[action]}`) : ''}</DialogTitle></DialogHeader>

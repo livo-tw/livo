@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { useTaskDetail } from './hooks/useTaskDetail';
 import TaskSpecTab from './TaskSpecTab';
 import TaskCommentsTab from './TaskCommentsTab';
+import TaskCommentComposer from './TaskCommentComposer';
 import TaskMetricsTab from './TaskMetricsTab';
 import TaskActivityTab from './TaskActivityTab';
 import TaskSubtasksTab from './TaskSubtasksTab';
@@ -197,13 +198,18 @@ const TaskDetailContent = ({ onClose }: Props) => {
           </div>
 
           {/* Tab content */}
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[max(12px,env(safe-area-inset-bottom))] md:p-5">
-            {activeTab === 'spec'      && <><TaskSpecTab detail={detail} /><RelatedKnowledge targetKind="task" targetId={task.id} /></>}
-            {activeTab === 'comments'  && <TaskCommentsTab detail={detail} />}
-            {activeTab === 'metrics'   && <TaskMetricsTab  detail={detail} />}
-            {activeTab === 'time'      && <TaskTimeTab     detail={detail} />}
-            {activeTab === 'activity'  && <TaskActivityTab detail={detail} />}
-            {activeTab === 'subtasks'  && <TaskSubtasksTab detail={detail} />}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <div className="p-3 pb-[max(12px,env(safe-area-inset-bottom))] md:p-5">
+                {activeTab === 'spec'      && <><TaskSpecTab detail={detail} /><RelatedKnowledge targetKind="task" targetId={task.id} /></>}
+                {activeTab === 'comments'  && <TaskCommentsTab detail={detail} />}
+                {activeTab === 'metrics'   && <TaskMetricsTab  detail={detail} />}
+                {activeTab === 'time'      && <TaskTimeTab     detail={detail} />}
+                {activeTab === 'activity'  && <TaskActivityTab detail={detail} />}
+                {activeTab === 'subtasks'  && <TaskSubtasksTab detail={detail} />}
+              </div>
+            </div>
+            <TaskCommentComposer detail={detail} />
           </div>
         </div>
 

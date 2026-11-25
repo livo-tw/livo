@@ -124,6 +124,7 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
   }, [baseActor, coordinated, coordination, selectedProjectId]);
   // Same rule as QaRecordView: on a phone a bug opens full screen as a dialog.
   const recordMode = isMobile ? 'modal' : taskDisplayMode;
+  const pageRecordOpen = !!issueId && !creating && recordMode === 'page';
   // One floating record at a time: a task opened on top of a bug dialog or side panel
   // (a linked task, Ctrl+K, a notification) hides it until the task closes.
   const recordSuspended = !!selectedTask && (creating || recordMode !== 'page');
@@ -257,8 +258,8 @@ function QaWorkspaceContent({ mine }: { mine: boolean }) {
     wasRecordOpen.current = recordOpen;
   }, [recordOpen]);
   if (settingsOpen && canConfigure && workflow && !creating && !issueId) return <QaSettingsPage client={client} actor={actor} workflow={workflow} onWorkflowSaved={setWorkflow} onCoordinationSaved={() => setRevision(value => value + 1)} onClose={() => { setSettingsOpen(false); display.retry(); }} />;
-  return <QaDisplaySettingsContext.Provider value={display.configuration}><div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-board p-3 md:p-5">
-    <div ref={background} aria-hidden={modalOpen || undefined} className="w-full min-w-0 space-y-4" hidden={!!issueId && !creating && recordMode === 'page'}>
+  return <QaDisplaySettingsContext.Provider value={display.configuration}><div className={`min-h-0 min-w-0 flex-1 overscroll-contain bg-board p-3 md:p-5 ${pageRecordOpen ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
+    <div ref={background} aria-hidden={modalOpen || undefined} className="w-full min-w-0 space-y-4" hidden={pageRecordOpen}>
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3"><div className="rounded-xl border border-primary/15 bg-primary/10 p-2.5 text-primary"><Bug size={22} aria-hidden="true" /></div><div><h1 className="text-xl font-bold">{t(mine ? 'qa.myTitle' : 'qa.title')}</h1><p className="mt-0.5 text-xs text-muted-foreground">{t('qa.workspaceIntro')}</p>{USING_MOCK_BACKEND && <p className="mt-1 text-xs text-muted-foreground">{t('qa.demo')}</p>}</div></div>
         {/* Reporting a bug uses the top bar's create button (it reads 「+ 回報 Bug」 here), so there is one entry. */}

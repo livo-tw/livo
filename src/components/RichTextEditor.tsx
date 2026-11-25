@@ -53,6 +53,7 @@ interface RichTextEditorOptions {
   placeholder?: string;
   editable?: boolean;
   minimal?: boolean;
+  compact?: boolean;
   members?: User[];
   onMention?: (userId: string) => void;
   imageUploadPrefix?: string;
@@ -144,7 +145,7 @@ const MentionList = forwardRef<{ onKeyDown: (props: { event: KeyboardEvent }) =>
 );
 MentionList.displayName = 'MentionList';
 
-const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editable = true, minimal = false, members = [], onMention, imageUploadPrefix = 'uploads', allowImageUpload = true }: RichTextEditorProps) => {
+const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editable = true, minimal = false, compact = false, members = [], onMention, imageUploadPrefix = 'uploads', allowImageUpload = true }: RichTextEditorProps) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
@@ -259,6 +260,7 @@ const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editabl
     ],
     content,
     editable,
+    editorProps: compact ? { attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': placeholder } } : undefined,
     onUpdate: ({ editor }) => {
       if (onChange) {
         const html = editor.getHTML();
@@ -335,9 +337,9 @@ const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editabl
   if (!editor) return null;
 
   return (
-    <div className="border border-border rounded-md overflow-hidden bg-card">
+    <div className={`border border-border rounded-md overflow-hidden bg-card ${compact ? 'flex min-h-16 flex-col' : ''}`}>
       {editable && (
-        <div className="flex flex-wrap items-center gap-0.5 px-2 py-1 border-b border-border bg-muted/30">
+        <div className={`flex items-center gap-0.5 px-2 py-1 border-b border-border bg-muted/30 ${compact ? 'shrink-0 overflow-x-auto overscroll-x-contain scrollbar-hide [&>*]:shrink-0' : 'flex-wrap'}`}>
           <ToolBtn active={activeTools?.bold} onClick={() => editor.chain().focus().toggleBold().run()} title={t('editor.bold')}>
             <Bold size={14} />
           </ToolBtn>
@@ -445,7 +447,7 @@ const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editabl
         </div>
       )}
 
-      <EditorContent editor={editor} className="tiptap-editor" />
+      <EditorContent editor={editor} className={compact ? 'tiptap-editor min-h-0 max-h-24 overflow-y-auto overscroll-contain' : 'tiptap-editor'} />
       {allowImageUpload && <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />}
     </div>
   );
