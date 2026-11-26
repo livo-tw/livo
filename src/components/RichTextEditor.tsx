@@ -260,7 +260,7 @@ const RichTextEditor = ({ content, onChange, draftRef, placeholder = '', editabl
     ],
     content,
     editable,
-    editorProps: compact ? { attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': placeholder } } : undefined,
+    editorProps: compact ? { attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': placeholder } } : {},
     onUpdate: ({ editor }) => {
       if (onChange) {
         const html = editor.getHTML();
